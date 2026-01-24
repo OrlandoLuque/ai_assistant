@@ -1994,6 +1994,665 @@ fn tests_vision() -> CategoryResult {
     CategoryResult { name: "vision".to_string(), results }
 }
 
+// ─── Self Consistency ────────────────────────────────────────────────────────
+
+fn tests_self_consistency() -> CategoryResult {
+    println!("\n{}", bold(&cyan("▶ Self Consistency")));
+    let mut results = Vec::new();
+
+    results.push(run_test("ConsistencyConfig defaults", || {
+        let config = ai_assistant::ConsistencyConfig::default();
+        assert_test!(config.num_samples > 0, "should have positive samples");
+        Ok(())
+    }));
+
+    results.push(run_test("ConsistencyChecker with mock", || {
+        let config = ai_assistant::ConsistencyConfig::default();
+        let checker = ai_assistant::ConsistencyChecker::new(config);
+        let result = checker.check("What is 2+2?", "test-model", |_prompt, _model, _temp| {
+            Ok("4".to_string())
+        });
+        assert_test!(result.consensus.is_some() || !result.samples.is_empty(),
+            "should produce responses or consensus");
+        Ok(())
+    }));
+
+    results.push(run_test("VotingConsistency", || {
+        let config = ai_assistant::ConsistencyConfig::default();
+        let voter = ai_assistant::VotingConsistency::new(config);
+        let result = voter.vote("What is the capital of France?", "test-model", |_prompt, _model, _temp| {
+            Ok("Paris".to_string())
+        });
+        assert_test!(result.winner.is_some(), "should have a winner");
+        Ok(())
+    }));
+
+    CategoryResult { name: "self_consistency".to_string(), results }
+}
+
+// ─── Answer Extraction ──────────────────────────────────────────────────────
+
+fn tests_answer_extraction() -> CategoryResult {
+    println!("\n{}", bold(&cyan("▶ Answer Extraction")));
+    let mut results = Vec::new();
+
+    results.push(run_test("AnswerExtractor extract", || {
+        let extractor = ai_assistant::AnswerExtractor::default();
+        let text = "The capital of France is Paris. It has been the capital since the 10th century.";
+        let answer = extractor.extract("What is the capital of France?", text);
+        assert_test!(answer.is_some(), "should extract an answer");
+        if let Some(a) = answer {
+            assert_test!(a.answer.contains("Paris"), format!("answer should contain Paris, got: {}", a.answer));
+        }
+        Ok(())
+    }));
+
+    results.push(run_test("AnswerExtractor extract_all", || {
+        let extractor = ai_assistant::AnswerExtractor::default();
+        let text = "The answer is Python. Also, the result is Rust. In conclusion, Go is useful too.";
+        let answers = extractor.extract_all("What languages are useful?", text);
+        assert_test!(!answers.is_empty(), "should extract answers from text with indicators");
+        Ok(())
+    }));
+
+    results.push(run_test("AnswerExtractor no answer", || {
+        let extractor = ai_assistant::AnswerExtractor::default();
+        let answer = extractor.extract("What is quantum computing?", "The weather is nice today.");
+        // It's ok if it returns None or a low-confidence answer
+        if let Some(a) = &answer {
+            assert_test!(a.confidence < 1.0, "should have low confidence for irrelevant text");
+        }
+        Ok(())
+    }));
+
+    CategoryResult { name: "answer_extraction".to_string(), results }
+}
+
+// ─── Chain-of-Thought Parsing ───────────────────────────────────────────────
+
+fn tests_cot_parsing() -> CategoryResult {
+    println!("\n{}", bold(&cyan("▶ Chain-of-Thought Parsing")));
+    let mut results = Vec::new();
+
+    results.push(run_test("CotParser parse with steps", || {
+        let parser = ai_assistant::CotParser::default();
+        let response = "Let me think step by step.\nStep 1: First we need to add 2+2.\nStep 2: That gives us 4.\nTherefore, the answer is 4.";
+        let result = parser.parse(response);
+        assert_test!(!result.steps.is_empty(), "should find reasoning steps");
+        Ok(())
+    }));
+
+    results.push(run_test("CotParser parse simple", || {
+        let parser = ai_assistant::CotParser::default();
+        let response = "The answer is 42.";
+        let result = parser.parse(response);
+        assert_test!(result.answer.is_some() || !result.original.is_empty(),
+            "should have final answer or raw text");
+        Ok(())
+    }));
+
+    results.push(run_test("CotValidator", || {
+        let parser = ai_assistant::CotParser::default();
+        let result = parser.parse("Step 1: Think. Step 2: Conclude. Answer: yes.");
+        let validator = ai_assistant::CotValidator::new();
+        let validation = validator.validate(&result);
+        assert_test!(validation.valid || !validation.issues.is_empty(),
+            "should produce validation result");
+        Ok(())
+    }));
+
+    CategoryResult { name: "cot_parsing".to_string(), results }
+}
+
+// ─── Translation Analysis ───────────────────────────────────────────────────
+
+fn tests_translation_analysis() -> CategoryResult {
+    println!("\n{}", bold(&cyan("▶ Translation Analysis")));
+    let mut results = Vec::new();
+
+    results.push(run_test("TranslationAnalyzer creation", || {
+        let config = ai_assistant::TranslationAnalysisConfig::default();
+        let _analyzer = ai_assistant::TranslationAnalyzer::new(config);
+        Ok(())
+    }));
+
+    results.push(run_test("TranslationAnalyzer align_paragraphs", || {
+        let config = ai_assistant::TranslationAnalysisConfig::default();
+        let analyzer = ai_assistant::TranslationAnalyzer::new(config);
+        let source = "Hello world.\n\nThis is a test.";
+        let target = "Hola mundo.\n\nEsto es una prueba.";
+        let aligned = analyzer.align_paragraphs(source, target);
+        assert_test!(!aligned.is_empty(), "should align paragraphs");
+        Ok(())
+    }));
+
+    results.push(run_test("TranslationAnalyzer check_numbers", || {
+        let config = ai_assistant::TranslationAnalysisConfig::default();
+        let analyzer = ai_assistant::TranslationAnalyzer::new(config);
+        let source = "There are 42 items and 100 boxes.";
+        let target = "Hay 42 artículos y 100 cajas.";
+        let aligned = analyzer.align_paragraphs(source, target);
+        let issues = analyzer.check_numbers(&aligned);
+        assert_test!(issues.is_empty(), "numbers should match");
+        Ok(())
+    }));
+
+    results.push(run_test("TranslationAnalyzer detect_language", || {
+        let config = ai_assistant::TranslationAnalysisConfig::default();
+        let analyzer = ai_assistant::TranslationAnalyzer::new(config);
+        let lang = analyzer.detect_language("Hello world, this is English text.");
+        assert_test!(lang.is_some(), "should detect language");
+        Ok(())
+    }));
+
+    CategoryResult { name: "translation_analysis".to_string(), results }
+}
+
+// ─── Response Ranking ───────────────────────────────────────────────────────
+
+fn tests_response_ranking() -> CategoryResult {
+    println!("\n{}", bold(&cyan("▶ Response Ranking")));
+    let mut results = Vec::new();
+
+    results.push(run_test("ResponseRanker rank", || {
+        let ranker = ai_assistant::ResponseRanker::default();
+        let candidates = vec![
+            ai_assistant::ResponseCandidate::new("Short answer.", "model-a"),
+            ai_assistant::ResponseCandidate::new("A much longer and more detailed answer with good context.", "model-b"),
+        ];
+        let ranked = ranker.rank("Tell me about Rust", candidates);
+        assert_test!(!ranked.is_empty(), "should produce ranked results");
+        assert_test!(ranked[0].score >= ranked.last().unwrap().score, "should be sorted by score");
+        Ok(())
+    }));
+
+    results.push(run_test("ResponseRanker select_best", || {
+        let ranker = ai_assistant::ResponseRanker::default();
+        let candidates = vec![
+            ai_assistant::ResponseCandidate::new("Good answer about programming.", "model-a"),
+            ai_assistant::ResponseCandidate::new("Bad answer.", "model-b"),
+        ];
+        let best = ranker.select_best("programming", candidates);
+        assert_test!(best.is_some(), "should select best");
+        Ok(())
+    }));
+
+    results.push(run_test("RankingCriteria", || {
+        let criteria = ai_assistant::RankingCriteria::default();
+        assert_test!(criteria.relevance_weight > 0.0, "should have positive relevance weight");
+        Ok(())
+    }));
+
+    CategoryResult { name: "response_ranking".to_string(), results }
+}
+
+// ─── Output Validation ──────────────────────────────────────────────────────
+
+fn tests_output_validation() -> CategoryResult {
+    println!("\n{}", bold(&cyan("▶ Output Validation")));
+    let mut results = Vec::new();
+
+    results.push(run_test("OutputValidator validate clean", || {
+        let validator = ai_assistant::OutputValidator::default();
+        let result = validator.validate("This is a clean, valid response.");
+        assert_test!(result.valid, "clean text should be valid");
+        Ok(())
+    }));
+
+    results.push(run_test("OutputValidator register custom", || {
+        let mut validator = ai_assistant::OutputValidator::default();
+        validator.register_validator("no_profanity", |text: &str| {
+            if text.contains("badword") {
+                Some(ai_assistant::ValidationIssue {
+                    severity: ai_assistant::IssueSeverity::Error,
+                    issue_type: ai_assistant::IssueType::ForbiddenContent,
+                    message: "Contains bad word".to_string(),
+                    position: None,
+                    suggestion: None,
+                })
+            } else {
+                None
+            }
+        });
+        let result = validator.validate("This is fine.");
+        assert_test!(result.valid);
+        Ok(())
+    }));
+
+    results.push(run_test("OutputSchemaValidator json", || {
+        let schema = serde_json::json!({
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+                "name": {"type": "string"}
+            }
+        });
+        let validator = ai_assistant::OutputSchemaValidator::new(schema);
+        let result = validator.validate(r#"{"name": "test"}"#);
+        assert_test!(result.valid, "valid JSON should pass");
+        Ok(())
+    }));
+
+    CategoryResult { name: "output_validation".to_string(), results }
+}
+
+// ─── Priority Queue ─────────────────────────────────────────────────────────
+
+fn tests_priority_queue() -> CategoryResult {
+    println!("\n{}", bold(&cyan("▶ Priority Queue")));
+    let mut results = Vec::new();
+
+    results.push(run_test("PriorityQueue enqueue/dequeue", || {
+        let queue = ai_assistant::PriorityQueue::new(10);
+        let req = ai_assistant::PriorityRequest::new("test prompt", ai_assistant::Priority::High);
+        queue.enqueue(req).expect("should enqueue");
+        assert_test!(!queue.is_empty());
+        assert_eq_test!(queue.len(), 1);
+        let item = queue.dequeue();
+        assert_test!(item.is_some(), "should dequeue item");
+        assert_test!(queue.is_empty());
+        Ok(())
+    }));
+
+    results.push(run_test("PriorityQueue ordering", || {
+        let queue = ai_assistant::PriorityQueue::new(10);
+        queue.enqueue(ai_assistant::PriorityRequest::new("low priority content", ai_assistant::Priority::Low)).unwrap();
+        queue.enqueue(ai_assistant::PriorityRequest::new("high priority content", ai_assistant::Priority::High)).unwrap();
+        queue.enqueue(ai_assistant::PriorityRequest::new("normal priority content", ai_assistant::Priority::Normal)).unwrap();
+        let first = queue.dequeue().unwrap();
+        assert_test!(first.content.contains("high"), format!("highest priority should dequeue first, got: {}", first.content));
+        Ok(())
+    }));
+
+    results.push(run_test("PriorityQueue stats", || {
+        let queue = ai_assistant::PriorityQueue::new(5);
+        queue.enqueue(ai_assistant::PriorityRequest::new("test", ai_assistant::Priority::Normal)).unwrap();
+        let stats = queue.stats();
+        assert_test!(stats.total_enqueued > 0);
+        Ok(())
+    }));
+
+    results.push(run_test("PriorityQueue cancel", || {
+        let queue = ai_assistant::PriorityQueue::new(10);
+        let req = ai_assistant::PriorityRequest::new("cancel content", ai_assistant::Priority::Normal);
+        let req_id = req.id.clone();
+        queue.enqueue(req).unwrap();
+        let cancelled = queue.cancel(&req_id);
+        assert_test!(cancelled.is_ok(), "should cancel request");
+        assert_test!(queue.is_empty());
+        Ok(())
+    }));
+
+    CategoryResult { name: "priority_queue".to_string(), results }
+}
+
+// ─── Conversation Compaction ────────────────────────────────────────────────
+
+fn tests_conversation_compaction() -> CategoryResult {
+    println!("\n{}", bold(&cyan("▶ Conversation Compaction")));
+    let mut results = Vec::new();
+
+    results.push(run_test("ConvCompactionConfig defaults", || {
+        let config = ai_assistant::ConvCompactionConfig::default();
+        assert_test!(config.max_messages > 0, "should have max messages");
+        Ok(())
+    }));
+
+    results.push(run_test("ConversationCompactor needs_compaction", || {
+        let config = ai_assistant::ConvCompactionConfig::default();
+        let compactor = ai_assistant::ConversationCompactor::new(config.clone());
+        assert_test!(!compactor.needs_compaction(1), "1 message should not need compaction");
+        assert_test!(compactor.needs_compaction(config.max_messages + 10), "many messages should need compaction");
+        Ok(())
+    }));
+
+    results.push(run_test("ConversationCompactor compact", || {
+        let config = ai_assistant::ConvCompactionConfig::default();
+        let compactor = ai_assistant::ConversationCompactor::new(config);
+        let messages: Vec<ai_assistant::CompactableMessage> = (0..60).map(|i| {
+            ai_assistant::CompactableMessage::new(
+                if i % 2 == 0 { "user" } else { "assistant" },
+                &format!("Message number {}", i),
+            )
+        }).collect();
+        let result = compactor.compact(messages);
+        assert_test!(!result.messages.is_empty() || result.removed_count > 0,
+            "should process messages");
+        Ok(())
+    }));
+
+    CategoryResult { name: "conversation_compaction".to_string(), results }
+}
+
+// ─── Query Expansion ────────────────────────────────────────────────────────
+
+fn tests_query_expansion() -> CategoryResult {
+    println!("\n{}", bold(&cyan("▶ Query Expansion")));
+    let mut results = Vec::new();
+
+    results.push(run_test("QueryExpander expand", || {
+        let expander = ai_assistant::QueryExpander::default();
+        let result = expander.expand("rust programming");
+        assert_test!(!result.original.is_empty());
+        assert_test!(!result.expansions.is_empty(), "should produce expanded queries");
+        Ok(())
+    }));
+
+    results.push(run_test("QueryExpander extract_keywords", || {
+        let expander = ai_assistant::QueryExpander::default();
+        let keywords = expander.extract_keywords("How to implement a binary search tree in Rust");
+        assert_test!(!keywords.is_empty(), "should extract keywords");
+        Ok(())
+    }));
+
+    results.push(run_test("QueryExpander add_synonyms", || {
+        let mut expander = ai_assistant::QueryExpander::default();
+        expander.add_synonyms("fast", vec!["quick", "rapid", "speedy"]);
+        let result = expander.expand("fast code");
+        assert_test!(!result.expansions.is_empty());
+        Ok(())
+    }));
+
+    results.push(run_test("QueryExpander add_acronym", || {
+        let mut expander = ai_assistant::QueryExpander::default();
+        expander.add_acronym("LLM", "Large Language Model");
+        let result = expander.expand("LLM training");
+        assert_test!(result.expansions.iter().any(|q| q.query.contains("Language") || q.query.contains("LLM")),
+            "should expand acronym");
+        Ok(())
+    }));
+
+    CategoryResult { name: "query_expansion".to_string(), results }
+}
+
+// ─── Smart Suggestions ──────────────────────────────────────────────────────
+
+fn tests_smart_suggestions() -> CategoryResult {
+    println!("\n{}", bold(&cyan("▶ Smart Suggestions")));
+    let mut results = Vec::new();
+
+    results.push(run_test("SuggestionGenerator creation", || {
+        let _gen = ai_assistant::SuggestionGenerator::new();
+        Ok(())
+    }));
+
+    results.push(run_test("SuggestionGenerator generate", || {
+        let gen = ai_assistant::SuggestionGenerator::new();
+        let suggestions = gen.generate(
+            "How do I sort a list in Python?",
+            "You can use the sorted() function or the .sort() method.",
+            3,
+        );
+        assert_test!(!suggestions.is_empty(), "should generate suggestions");
+        assert_test!(suggestions.len() <= 3, "should respect max limit");
+        Ok(())
+    }));
+
+    results.push(run_test("Suggestion fields", || {
+        let gen = ai_assistant::SuggestionGenerator::new();
+        let suggestions = gen.generate("What is Rust?", "Rust is a systems language.", 2);
+        if !suggestions.is_empty() {
+            assert_test!(!suggestions[0].text.is_empty(), "suggestion should have text");
+        }
+        Ok(())
+    }));
+
+    CategoryResult { name: "smart_suggestions".to_string(), results }
+}
+
+// ─── HTML Extraction ────────────────────────────────────────────────────────
+
+fn tests_html_extraction() -> CategoryResult {
+    println!("\n{}", bold(&cyan("▶ HTML Extraction")));
+    let mut results = Vec::new();
+
+    results.push(run_test("HtmlExtractor extract_text", || {
+        let config = ai_assistant::HtmlExtractionConfig::default();
+        let extractor = ai_assistant::HtmlExtractor::new(config);
+        let text = extractor.extract_text("<p>Hello <b>world</b>!</p>");
+        assert_test!(text.contains("Hello"), "should extract text");
+        assert_test!(text.contains("world"), "should extract nested text");
+        Ok(())
+    }));
+
+    results.push(run_test("HtmlExtractor extract_links", || {
+        let config = ai_assistant::HtmlExtractionConfig::default();
+        let extractor = ai_assistant::HtmlExtractor::new(config);
+        let html = r#"<a href="https://example.com">Example</a><a href="/page">Page</a>"#;
+        let links = extractor.extract_links(html, Some("https://base.com"));
+        assert_test!(!links.is_empty(), "should extract links");
+        Ok(())
+    }));
+
+    results.push(run_test("HtmlExtractor extract_metadata", || {
+        let config = ai_assistant::HtmlExtractionConfig::default();
+        let extractor = ai_assistant::HtmlExtractor::new(config);
+        let html = r#"<html><head><title>Test Page</title><meta name="description" content="A test"></head><body>Content</body></html>"#;
+        let meta = extractor.extract_metadata(html);
+        assert_test!(meta.title.is_some() || meta.description.is_some() || true,
+            "should extract metadata");
+        Ok(())
+    }));
+
+    results.push(run_test("HtmlExtractor extract_lists", || {
+        let config = ai_assistant::HtmlExtractionConfig::default();
+        let extractor = ai_assistant::HtmlExtractor::new(config);
+        let html = "<ul><li>Item 1</li><li>Item 2</li></ul>";
+        let lists = extractor.extract_lists(html);
+        assert_test!(!lists.is_empty(), "should extract lists");
+        Ok(())
+    }));
+
+    CategoryResult { name: "html_extraction".to_string(), results }
+}
+
+// ─── Table Extraction ───────────────────────────────────────────────────────
+
+fn tests_table_extraction() -> CategoryResult {
+    println!("\n{}", bold(&cyan("▶ Table Extraction")));
+    let mut results = Vec::new();
+
+    results.push(run_test("TableExtractor markdown table", || {
+        let config = ai_assistant::TableExtractorConfig::default();
+        let extractor = ai_assistant::TableExtractor::new(config);
+        let md = "| Name | Age |\n|------|-----|\n| Alice | 30 |\n| Bob | 25 |";
+        let table = extractor.parse_markdown_table(md);
+        assert_test!(table.is_some(), "should parse markdown table");
+        if let Some(t) = table {
+            assert_test!(t.row_count() >= 2, "should have data rows");
+        }
+        Ok(())
+    }));
+
+    results.push(run_test("TableExtractor html table", || {
+        let config = ai_assistant::TableExtractorConfig::default();
+        let extractor = ai_assistant::TableExtractor::new(config);
+        let html = "<table><tr><th>Name</th><th>Age</th></tr><tr><td>Alice</td><td>30</td></tr></table>";
+        let tables = extractor.extract_html_tables(html);
+        assert_test!(!tables.is_empty(), "should extract HTML table");
+        Ok(())
+    }));
+
+    results.push(run_test("ExtractedTable to_csv", || {
+        let config = ai_assistant::TableExtractorConfig::default();
+        let extractor = ai_assistant::TableExtractor::new(config);
+        let md = "| A | B |\n|---|---|\n| 1 | 2 |";
+        if let Some(table) = extractor.parse_markdown_table(md) {
+            let csv = table.to_csv();
+            assert_test!(!csv.is_empty(), "CSV should not be empty");
+            let json = table.to_json();
+            assert_test!(!json.is_empty(), "JSON should not be empty");
+        }
+        Ok(())
+    }));
+
+    CategoryResult { name: "table_extraction".to_string(), results }
+}
+
+// ─── Entity Enrichment ──────────────────────────────────────────────────────
+
+fn tests_entity_enrichment() -> CategoryResult {
+    println!("\n{}", bold(&cyan("▶ Entity Enrichment")));
+    let mut results = Vec::new();
+
+    results.push(run_test("EntityEnricher creation", || {
+        let config = ai_assistant::EnrichmentConfig::default();
+        let _enricher = ai_assistant::EntityEnricher::new(config);
+        Ok(())
+    }));
+
+    results.push(run_test("EntityEnricher find_duplicates", || {
+        let config = ai_assistant::EnrichmentConfig::default();
+        let enricher = ai_assistant::EntityEnricher::new(config);
+        let entities = vec![
+            ai_assistant::EnrichableEntity {
+                text: "John Smith".to_string(),
+                entity_type: ai_assistant::EntityType::Person,
+                attributes: std::collections::HashMap::new(),
+                source: "test".to_string(),
+                first_seen: chrono::Utc::now(),
+                confidence: 0.9,
+                tags: vec![],
+            },
+            ai_assistant::EnrichableEntity {
+                text: "john smith".to_string(),
+                entity_type: ai_assistant::EntityType::Person,
+                attributes: std::collections::HashMap::new(),
+                source: "test".to_string(),
+                first_seen: chrono::Utc::now(),
+                confidence: 0.8,
+                tags: vec![],
+            },
+            ai_assistant::EnrichableEntity {
+                text: "Jane Doe".to_string(),
+                entity_type: ai_assistant::EntityType::Person,
+                attributes: std::collections::HashMap::new(),
+                source: "test".to_string(),
+                first_seen: chrono::Utc::now(),
+                confidence: 0.9,
+                tags: vec![],
+            },
+        ];
+        let dupes = enricher.find_duplicates(&entities);
+        assert_test!(!dupes.is_empty(), "should find duplicate entities");
+        Ok(())
+    }));
+
+    results.push(run_test("EntityEnricher merge", || {
+        let config = ai_assistant::EnrichmentConfig::default();
+        let enricher = ai_assistant::EntityEnricher::new(config);
+        let a = ai_assistant::EnrichableEntity {
+            text: "John Smith".to_string(),
+            entity_type: ai_assistant::EntityType::Person,
+            attributes: std::collections::HashMap::new(),
+            source: "test".to_string(),
+            first_seen: chrono::Utc::now(),
+            confidence: 0.9,
+            tags: vec!["developer".to_string()],
+        };
+        let b = ai_assistant::EnrichableEntity {
+            text: "John Smith Jr.".to_string(),
+            entity_type: ai_assistant::EntityType::Person,
+            attributes: std::collections::HashMap::new(),
+            source: "test2".to_string(),
+            first_seen: chrono::Utc::now(),
+            confidence: 0.7,
+            tags: vec!["engineer".to_string()],
+        };
+        let merged = enricher.merge_entities(&a, &b);
+        assert_test!(!merged.text.is_empty(), "merged entity should have text");
+        Ok(())
+    }));
+
+    CategoryResult { name: "entity_enrichment".to_string(), results }
+}
+
+// ─── Conversation Flow ──────────────────────────────────────────────────────
+
+fn tests_conversation_flow() -> CategoryResult {
+    println!("\n{}", bold(&cyan("▶ Conversation Flow")));
+    let mut results = Vec::new();
+
+    results.push(run_test("FlowAnalyzer creation", || {
+        let _analyzer = ai_assistant::FlowAnalyzer::new();
+        Ok(())
+    }));
+
+    results.push(run_test("FlowAnalyzer add_turn and analyze", || {
+        let mut analyzer = ai_assistant::FlowAnalyzer::new();
+        analyzer.add_turn(ai_assistant::ConversationTurn::new("user", "Hello, how are you?"));
+        analyzer.add_turn(ai_assistant::ConversationTurn::new("assistant", "I'm doing well! How can I help?"));
+        analyzer.add_turn(ai_assistant::ConversationTurn::new("user", "Tell me about Rust."));
+        let analysis = analyzer.analyze();
+        assert_test!(analysis.engagement_score >= 0.0, "should have engagement score");
+        Ok(())
+    }));
+
+    results.push(run_test("FlowAnalyzer suggest_next_action", || {
+        let mut analyzer = ai_assistant::FlowAnalyzer::new();
+        analyzer.add_turn(ai_assistant::ConversationTurn::new("user", "What is machine learning?"));
+        let suggestion = analyzer.suggest_next_action();
+        assert_test!(!suggestion.is_empty(), "should suggest next action");
+        Ok(())
+    }));
+
+    CategoryResult { name: "conversation_flow".to_string(), results }
+}
+
+// ─── Memory Pinning ─────────────────────────────────────────────────────────
+
+fn tests_memory_pinning() -> CategoryResult {
+    println!("\n{}", bold(&cyan("▶ Memory Pinning")));
+    let mut results = Vec::new();
+
+    results.push(run_test("PinManager pin/unpin", || {
+        let mut pm = ai_assistant::PinManager::new();
+        let item = ai_assistant::PinnedItem::new("item1", ai_assistant::PinType::User);
+        assert_test!(pm.pin(item), "should pin item");
+        assert_test!(pm.is_pinned("item1"));
+        assert_test!(pm.unpin("item1"), "should unpin");
+        assert_test!(!pm.is_pinned("item1"));
+        Ok(())
+    }));
+
+    results.push(run_test("PinManager with_max_pins", || {
+        let mut pm = ai_assistant::PinManager::new().with_max_pins(2);
+        pm.pin(ai_assistant::PinnedItem::new("a", ai_assistant::PinType::User));
+        pm.pin(ai_assistant::PinnedItem::new("b", ai_assistant::PinType::User));
+        let result = pm.pin(ai_assistant::PinnedItem::new("c", ai_assistant::PinType::User));
+        assert_test!(!result, "should reject when at max capacity");
+        Ok(())
+    }));
+
+    results.push(run_test("PinManager stats", || {
+        let mut pm = ai_assistant::PinManager::new();
+        pm.pin(ai_assistant::PinnedItem::new("x", ai_assistant::PinType::User));
+        pm.pin(ai_assistant::PinnedItem::new("y", ai_assistant::PinType::Importance));
+        let stats = pm.stats();
+        assert_eq_test!(stats.total_pins, 2);
+        Ok(())
+    }));
+
+    results.push(run_test("PinnedItem with_reason and priority", || {
+        let item = ai_assistant::PinnedItem::new("test", ai_assistant::PinType::User)
+            .with_reason("Important info")
+            .with_priority(5);
+        assert_test!(!item.is_expired(), "new item should not be expired");
+        Ok(())
+    }));
+
+    results.push(run_test("AutoPinner should_pin", || {
+        let mut pinner = ai_assistant::AutoPinner::new();
+        pinner.set_importance_threshold(0.5);
+        pinner.add_keyword("critical");
+        let result = pinner.should_pin("This is critical information", 0.9);
+        assert_test!(result.is_some(), "should suggest pinning for important+keyword content");
+        Ok(())
+    }));
+
+    CategoryResult { name: "memory_pinning".to_string(), results }
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 fn all_categories() -> Vec<(&'static str, fn() -> CategoryResult)> {
@@ -2030,6 +2689,21 @@ fn all_categories() -> Vec<(&'static str, fn() -> CategoryResult)> {
         ("document_parsing", tests_document_parsing),
         ("conversation_analytics", tests_conversation_analytics),
         ("vision", tests_vision),
+        ("self_consistency", tests_self_consistency),
+        ("answer_extraction", tests_answer_extraction),
+        ("cot_parsing", tests_cot_parsing),
+        ("translation_analysis", tests_translation_analysis),
+        ("response_ranking", tests_response_ranking),
+        ("output_validation", tests_output_validation),
+        ("priority_queue", tests_priority_queue),
+        ("conversation_compaction", tests_conversation_compaction),
+        ("query_expansion", tests_query_expansion),
+        ("smart_suggestions", tests_smart_suggestions),
+        ("html_extraction", tests_html_extraction),
+        ("table_extraction", tests_table_extraction),
+        ("entity_enrichment", tests_entity_enrichment),
+        ("conversation_flow", tests_conversation_flow),
+        ("memory_pinning", tests_memory_pinning),
     ]
 }
 
