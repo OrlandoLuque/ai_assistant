@@ -65,3 +65,42 @@ pub fn format_size(bytes: u64) -> String {
         format!("{:.0} MB", bytes as f64 / MB as f64)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_model_info_new() {
+        let model = ModelInfo::new("llama3:7b", AiProvider::Ollama);
+        assert_eq!(model.name, "llama3:7b");
+        assert_eq!(model.provider, AiProvider::Ollama);
+        assert!(model.size.is_none());
+        assert!(model.modified_at.is_none());
+    }
+
+    #[test]
+    fn test_model_info_with_size() {
+        let model = ModelInfo::new("mistral:7b", AiProvider::Ollama)
+            .with_size("4.1 GB");
+        assert_eq!(model.size, Some("4.1 GB".to_string()));
+    }
+
+    #[test]
+    fn test_model_info_display_name() {
+        let model = ModelInfo::new("llama3:7b", AiProvider::Ollama);
+        assert_eq!(model.display_name(), "llama3:7b");
+
+        let model_with_size = ModelInfo::new("llama3:7b", AiProvider::Ollama)
+            .with_size("3.8 GB");
+        assert_eq!(model_with_size.display_name(), "llama3:7b (3.8 GB)");
+    }
+
+    #[test]
+    fn test_format_size() {
+        assert_eq!(format_size(1024 * 1024 * 1024), "1.0 GB");
+        assert_eq!(format_size(5 * 1024 * 1024 * 1024), "5.0 GB");
+        assert_eq!(format_size(512 * 1024 * 1024), "512 MB");
+        assert_eq!(format_size(100 * 1024 * 1024), "100 MB");
+    }
+}

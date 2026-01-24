@@ -129,3 +129,60 @@ impl AiConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ai_provider_defaults() {
+        let provider = AiProvider::default();
+        assert_eq!(provider, AiProvider::Ollama);
+    }
+
+    #[test]
+    fn test_ai_provider_display_names() {
+        assert_eq!(AiProvider::Ollama.display_name(), "Ollama");
+        assert_eq!(AiProvider::LMStudio.display_name(), "LM Studio");
+        assert_eq!(AiProvider::TextGenWebUI.display_name(), "text-generation-webui");
+        assert_eq!(AiProvider::KoboldCpp.display_name(), "Kobold.cpp");
+        assert_eq!(AiProvider::LocalAI.display_name(), "LocalAI");
+        let custom = AiProvider::OpenAICompatible { base_url: "http://custom".to_string() };
+        assert_eq!(custom.display_name(), "OpenAI Compatible");
+    }
+
+    #[test]
+    fn test_ai_provider_openai_compatibility() {
+        assert!(!AiProvider::Ollama.is_openai_compatible());
+        assert!(AiProvider::LMStudio.is_openai_compatible());
+        assert!(AiProvider::TextGenWebUI.is_openai_compatible());
+        assert!(!AiProvider::KoboldCpp.is_openai_compatible());
+        assert!(AiProvider::LocalAI.is_openai_compatible());
+        let custom = AiProvider::OpenAICompatible { base_url: "http://x".to_string() };
+        assert!(custom.is_openai_compatible());
+    }
+
+    #[test]
+    fn test_ai_config_defaults() {
+        let config = AiConfig::default();
+        assert_eq!(config.provider, AiProvider::Ollama);
+        assert_eq!(config.ollama_url, "http://localhost:11434");
+        assert_eq!(config.lm_studio_url, "http://localhost:1234");
+        assert_eq!(config.max_history_messages, 20);
+        assert!((config.temperature - 0.7).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_ai_config_get_base_url() {
+        let config = AiConfig::default();
+        assert_eq!(config.get_base_url(), "http://localhost:11434");
+
+        let mut config2 = AiConfig::default();
+        config2.provider = AiProvider::LMStudio;
+        assert_eq!(config2.get_base_url(), "http://localhost:1234");
+
+        let mut config3 = AiConfig::default();
+        config3.provider = AiProvider::OpenAICompatible { base_url: "http://my-api:9000".to_string() };
+        assert_eq!(config3.get_base_url(), "http://my-api:9000");
+    }
+}

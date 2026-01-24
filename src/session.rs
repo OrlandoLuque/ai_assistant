@@ -161,3 +161,81 @@ impl ChatSessionStore {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_chat_session_new() {
+        let session = ChatSession::new("Test Session");
+        assert_eq!(session.name, "Test Session");
+        assert!(session.messages.is_empty());
+        assert!(session.id.starts_with("session_"));
+    }
+
+    #[test]
+    fn test_chat_session_auto_name() {
+        let mut session = ChatSession::new("Untitled");
+        session.messages.push(ChatMessage::user("What ships are in Star Citizen?"));
+        session.auto_name();
+        assert_eq!(session.name, "What ships are in Star Citizen?");
+    }
+
+    #[test]
+    fn test_chat_session_auto_name_truncates() {
+        let mut session = ChatSession::new("Untitled");
+        session.messages.push(ChatMessage::user(
+            "This is a very long message that should be truncated to forty characters plus ellipsis"
+        ));
+        session.auto_name();
+        assert!(session.name.ends_with("..."));
+        assert!(session.name.len() <= 43); // 40 + "..."
+    }
+
+    #[test]
+    fn test_session_store_save_and_find() {
+        let mut store = ChatSessionStore::new();
+        let session = ChatSession::new("My Session");
+        let id = session.id.clone();
+        store.save_session(session);
+
+        assert!(store.find_session(&id).is_some());
+        assert_eq!(store.find_session(&id).unwrap().name, "My Session");
+    }
+
+    #[test]
+    fn test_session_store_delete() {
+        let mut store = ChatSessionStore::new();
+        let session = ChatSession::new("To Delete");
+        let id = session.id.clone();
+        store.save_session(session);
+        store.current_session_id = Some(id.clone());
+
+        store.delete_session(&id);
+        assert!(store.find_session(&id).is_none());
+        assert!(store.current_session_id.is_none());
+    }
+
+    #[test]
+    fn test_user_preferences_default() {
+        let prefs = UserPreferences::default();
+        assert!(prefs.ships_owned.is_empty());
+        assert!(prefs.target_ship.is_none());
+        assert_eq!(prefs.response_style, ResponseStyle::Normal);
+    }
+
+    #[test]
+    fn test_session_store_update_existing() {
+        let mut store = ChatSessionStore::new();
+        let mut session = ChatSession::new("Original");
+        let id = session.id.clone();
+        store.save_session(session.clone());
+
+        session.name = "Updated".to_string();
+        store.save_session(session);
+
+        assert_eq!(store.sessions.len(), 1);
+        assert_eq!(store.find_session(&id).unwrap().name, "Updated");
+    }
+}
