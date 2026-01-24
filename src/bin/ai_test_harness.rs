@@ -3735,6 +3735,338 @@ fn tests_keepalive() -> CategoryResult {
     CategoryResult { name: "keepalive".to_string(), results }
 }
 
+// ─── Integration Tests ──────────────────────────────────────────────────────────
+
+fn tests_integration_entity_anonymize() -> CategoryResult {
+    println!("\n{}", bold(&cyan("▶ Integration: Entity → Anonymize")));
+    let mut results = Vec::new();
+
+    results.push(run_test("Extract entities then anonymize them", || {
+        let extractor = ai_assistant::EntityExtractor::new(ai_assistant::EntityExtractorConfig::default());
+        let text = "Contact john.doe@example.com or call +1-555-123-4567 for details.";
+        let entities = extractor.extract(text);
+        assert_test!(!entities.is_empty(), "should extract entities from text");
+
+        let mut anonymizer = ai_assistant::DataAnonymizer::new();
+        let result = anonymizer.anonymize(text);
+        assert_test!(result.anonymized != text, "anonymized text should differ from original");
+        assert_test!(!result.anonymized.contains("john.doe@example.com"), "email should be anonymized");
+        Ok(())
+    }));
+
+    results.push(run_test("Entity types match anonymization detections", || {
+        let extractor = ai_assistant::EntityExtractor::new(ai_assistant::EntityExtractorConfig::default());
+        let text = "Email me at test@company.org about the $5000 invoice.";
+        let entities = extractor.extract(text);
+        let has_email = entities.iter().any(|e| matches!(e.entity_type, ai_assistant::EntityType::Email));
+        assert_test!(has_email, "should detect email entity");
+
+        let mut anonymizer = ai_assistant::DataAnonymizer::new();
+        let result = anonymizer.anonymize(text);
+        assert_test!(!result.detections.is_empty(), "should have detections");
+        Ok(())
+    }));
+
+    CategoryResult { name: "integration_entity_anonymize".to_string(), results }
+}
+
+fn tests_integration_intent_template() -> CategoryResult {
+    println!("\n{}", bold(&cyan("▶ Integration: Intent → Template")));
+    let mut results = Vec::new();
+
+    results.push(run_test("Classify intent then pick matching template", || {
+        let classifier = ai_assistant::IntentClassifier::new();
+        let result = classifier.classify("Write a Python function to sort a list");
+        assert_test!(
+            matches!(result.primary, ai_assistant::Intent::CodeRequest | ai_assistant::Intent::Command | ai_assistant::Intent::Request),
+            &format!("should detect code-related intent, got {:?}", result.primary)
+        );
+
+        let template = ai_assistant::ConversationTemplate::new("code-help", "Code Helper", ai_assistant::TemplateCategory::Coding)
+            .with_system_prompt("You are a coding assistant.");
+        assert_test!(template.system_prompt.contains("coding"), "template should have coding prompt");
+        Ok(())
+    }));
+
+    results.push(run_test("Question intent maps to learning template", || {
+        let classifier = ai_assistant::IntentClassifier::new();
+        let result = classifier.classify("What is the difference between TCP and UDP?");
+        assert_test!(
+            matches!(result.primary, ai_assistant::Intent::Question | ai_assistant::Intent::Comparison | ai_assistant::Intent::Explanation),
+            &format!("should detect question/comparison intent, got {:?}", result.primary)
+        );
+
+        let template = ai_assistant::ConversationTemplate::new("explainer", "Explainer", ai_assistant::TemplateCategory::Learning)
+            .with_system_prompt("You explain concepts clearly.");
+        assert_test!(template.category == ai_assistant::TemplateCategory::Learning, "should be learning category");
+        Ok(())
+    }));
+
+    CategoryResult { name: "integration_intent_template".to_string(), results }
+}
+
+fn tests_integration_versioning_merge() -> CategoryResult {
+    println!("\n{}", bold(&cyan("▶ Integration: Versioning → Merge")));
+    let mut results = Vec::new();
+
+    results.push(run_test("Create versions then three-way merge", || {
+        let config = ai_assistant::VersioningConfig::default();
+        let mut store = ai_assistant::ContentVersionStore::new(config);
+
+        let base = "Line 1\nLine 2\nLine 3";
+        store.add_version("doc1", base);
+
+        let local = "Line 1\nLine 2 modified locally\nLine 3";
+        store.add_version("doc1", local);
+
+        let remote = "Line 1\nLine 2\nLine 3 modified remotely";
+
+        let merge_result = ai_assistant::ThreeWayMerge::merge(base, local, remote);
+        assert_test!(!merge_result.has_conflicts, "non-overlapping changes should merge cleanly");
+        assert_test!(merge_result.merged.contains("modified locally"), "should contain local change");
+        assert_test!(merge_result.merged.contains("modified remotely"), "should contain remote change");
+        Ok(())
+    }));
+
+    results.push(run_test("Conflicting edits detected in merge", || {
+        let base = "Line 1\nShared line\nLine 3";
+        let local = "Line 1\nLocal edit\nLine 3";
+        let remote = "Line 1\nRemote edit\nLine 3";
+
+        let merge_result = ai_assistant::ThreeWayMerge::merge(base, local, remote);
+        assert_test!(merge_result.has_conflicts, "overlapping changes should produce conflicts");
+        assert_test!(!merge_result.conflicts.is_empty(), "should have conflict entries");
+        Ok(())
+    }));
+
+    CategoryResult { name: "integration_versioning_merge".to_string(), results }
+}
+
+fn tests_integration_embedding_similarity() -> CategoryResult {
+    println!("\n{}", bold(&cyan("▶ Integration: Embedding → Similarity")));
+    let mut results = Vec::new();
+
+    results.push(run_test("Cache embeddings and compute similarity", || {
+        let mut cache = ai_assistant::EmbeddingCache::with_defaults();
+
+        let emb_a = vec![1.0_f32, 0.0, 0.0, 0.5];
+        let emb_b = vec![0.9_f32, 0.1, 0.0, 0.5];
+        let emb_c = vec![0.0_f32, 0.0, 1.0, 0.0];
+
+        cache.set("hello world", "test-model", emb_a.clone());
+        cache.set("hi there", "test-model", emb_b.clone());
+        cache.set("unrelated topic", "test-model", emb_c.clone());
+
+        let cached_a = cache.get("hello world", "test-model");
+        let cached_b = cache.get("hi there", "test-model");
+        let cached_c = cache.get("unrelated topic", "test-model");
+        assert_test!(cached_a.is_some() && cached_b.is_some() && cached_c.is_some(), "all should be cached");
+
+        let sim_ab = ai_assistant::cosine_similarity(&cached_a.unwrap(), &cached_b.unwrap());
+        let sim_ac = ai_assistant::cosine_similarity(&emb_a, &cached_c.unwrap());
+        assert_test!(sim_ab > sim_ac, &format!("similar embeddings ({:.3}) should score higher than dissimilar ({:.3})", sim_ab, sim_ac));
+        Ok(())
+    }));
+
+    CategoryResult { name: "integration_embedding_similarity".to_string(), results }
+}
+
+fn tests_integration_facts_context() -> CategoryResult {
+    println!("\n{}", bold(&cyan("▶ Integration: Facts → Context Window")));
+    let mut results = Vec::new();
+
+    results.push(run_test("Extract facts and add to context window", || {
+        let extractor = ai_assistant::FactExtractor::new(ai_assistant::FactExtractorConfig::default());
+        let text = "The project uses Rust for performance. It supports multiple platforms. The system depends on tokio for async.";
+        let facts = extractor.extract_facts(text, "knowledge-base");
+        assert_test!(!facts.is_empty(), &format!("should extract facts, got {}", facts.len()));
+
+        let config = ai_assistant::ContextWindowConfig { max_tokens: 4096, ..Default::default() };
+        let mut window = ai_assistant::ContextWindow::new(config);
+
+        for fact in &facts {
+            window.add_user(&fact.statement);
+        }
+
+        let messages = window.get_messages();
+        assert_test!(messages.len() == facts.len(), "context should contain one message per fact");
+        Ok(())
+    }));
+
+    CategoryResult { name: "integration_facts_context".to_string(), results }
+}
+
+fn tests_integration_cache_compression() -> CategoryResult {
+    println!("\n{}", bold(&cyan("▶ Integration: Cache → Compression")));
+    let mut results = Vec::new();
+
+    results.push(run_test("Cache response then compress/decompress", || {
+        let mut cache = ai_assistant::ResponseCache::new(ai_assistant::CacheConfig::default());
+        let query = "What is Rust?";
+        let model = "test-model";
+        let response = "Rust is a systems programming language focused on safety and performance. ".repeat(20);
+
+        cache.put(query, model, &response, 150, None);
+        let cached = cache.get(query, model);
+        assert_test!(cached.is_some(), "should find cached response");
+
+        let cached_text = &cached.unwrap().content;
+        let compressed = ai_assistant::compress_string(cached_text, ai_assistant::CompressionAlgorithm::Gzip);
+        assert_test!(compressed.data.len() < compressed.original_size,
+            &format!("compressed ({}) should be smaller than original ({})", compressed.data.len(), compressed.original_size));
+
+        let decompressed = ai_assistant::decompress_string(&compressed).expect("should decompress");
+        assert_eq_test!(decompressed, *cached_text);
+        Ok(())
+    }));
+
+    CategoryResult { name: "integration_cache_compression".to_string(), results }
+}
+
+fn tests_integration_expansion_ranking() -> CategoryResult {
+    println!("\n{}", bold(&cyan("▶ Integration: Query Expansion → Ranking")));
+    let mut results = Vec::new();
+
+    results.push(run_test("Expand query then rank candidate responses", || {
+        use std::collections::HashMap;
+        let config = ai_assistant::ExpansionConfig {
+            use_synonyms: true,
+            extract_keywords: true,
+            use_llm: false,
+            ..Default::default()
+        };
+        let expander = ai_assistant::QueryExpander::new(config);
+        let expansion = expander.expand("How to optimize database queries?");
+        assert_test!(!expansion.all_keywords.is_empty(), "should extract keywords");
+
+        let candidates = vec![
+            ai_assistant::ResponseCandidate {
+                id: "r1".to_string(),
+                content: "Use indexes on frequently queried columns to optimize database performance.".to_string(),
+                model: "model-a".to_string(),
+                generation_time_ms: 100,
+                token_count: 15,
+                metadata: HashMap::new(),
+            },
+            ai_assistant::ResponseCandidate {
+                id: "r2".to_string(),
+                content: "The weather today is sunny.".to_string(),
+                model: "model-b".to_string(),
+                generation_time_ms: 50,
+                token_count: 8,
+                metadata: HashMap::new(),
+            },
+        ];
+
+        let ranker = ai_assistant::ResponseRanker::new(ai_assistant::RankingCriteria::default());
+        let ranked = ranker.rank("How to optimize database queries?", candidates);
+        assert_test!(!ranked.is_empty(), "should return ranked results");
+        assert_eq_test!(ranked[0].candidate.id, "r1");
+        Ok(())
+    }));
+
+    CategoryResult { name: "integration_expansion_ranking".to_string(), results }
+}
+
+fn tests_integration_health_keepalive() -> CategoryResult {
+    println!("\n{}", bold(&cyan("▶ Integration: Health → Keepalive")));
+    let mut results = Vec::new();
+
+    results.push(run_test("Register providers in both health and keepalive", || {
+        let mut checker = ai_assistant::HealthChecker::new(ai_assistant::HealthCheckConfig::default());
+        checker.register("ollama", "http://localhost:11434");
+        checker.register("openai", "https://api.openai.com");
+
+        let keepalive = ai_assistant::KeepaliveManager::default();
+        keepalive.register("ollama", "http://localhost:11434");
+        keepalive.register("openai", "https://api.openai.com");
+
+        let summary = checker.summary();
+        let ka_stats = keepalive.stats();
+        assert_eq_test!(summary.total, 2);
+        assert_eq_test!(ka_stats.total_connections, 2);
+        Ok(())
+    }));
+
+    CategoryResult { name: "integration_health_keepalive".to_string(), results }
+}
+
+fn tests_integration_moderation_citations() -> CategoryResult {
+    println!("\n{}", bold(&cyan("▶ Integration: Moderation → Citations")));
+    let mut results = Vec::new();
+
+    results.push(run_test("Moderate text then create citations from safe content", || {
+        let moderator = ai_assistant::ContentModerator::new(ai_assistant::ModerationConfig::default());
+        let text = "Rust was created in 2010 at Mozilla Research. It emphasizes memory safety.";
+        let mod_result = moderator.moderate(text);
+        assert_test!(mod_result.passed, "clean text should pass moderation");
+
+        let mut generator = ai_assistant::CitationGenerator::new(ai_assistant::CitationConfig::default());
+        let source = ai_assistant::Source::new("src-1", "Mozilla Research Blog", &mod_result.processed);
+        generator.add_source(source);
+
+        let cited = generator.cite("Rust emphasizes memory safety");
+        assert_test!(!cited.cited_text.is_empty(), "cited text should not be empty");
+        Ok(())
+    }));
+
+    results.push(run_test("Flagged content is not cited", || {
+        let mut config = ai_assistant::ModerationConfig::default();
+        config.blocked_terms.push("forbidden_word".to_string());
+        let moderator = ai_assistant::ContentModerator::new(config);
+        let text = "This contains a forbidden_word that should be caught.";
+        let mod_result = moderator.moderate(text);
+        assert_test!(!mod_result.passed, "text with blocked term should fail moderation");
+        Ok(())
+    }));
+
+    CategoryResult { name: "integration_moderation_citations".to_string(), results }
+}
+
+fn tests_integration_latency_selection() -> CategoryResult {
+    println!("\n{}", bold(&cyan("▶ Integration: Latency → Model Selection")));
+    let mut results = Vec::new();
+
+    results.push(run_test("Record latencies then select best model", || {
+        use std::time::Duration;
+        use std::collections::HashMap;
+
+        let mut tracker = ai_assistant::LatencyTracker::new();
+        tracker.record("fast-model", Duration::from_millis(50), true);
+        tracker.record("fast-model", Duration::from_millis(60), true);
+        tracker.record("slow-model", Duration::from_millis(500), true);
+        tracker.record("slow-model", Duration::from_millis(550), true);
+
+        let fast_stats = tracker.stats("fast-model");
+        let slow_stats = tracker.stats("slow-model");
+        assert_test!(fast_stats.is_some(), "should have stats for fast-model");
+        assert_test!(slow_stats.is_some(), "should have stats for slow-model");
+        assert_test!(fast_stats.as_ref().unwrap().avg_latency < slow_stats.as_ref().unwrap().avg_latency,
+            "fast-model should have lower avg latency");
+
+        let mut selector = ai_assistant::AutoModelSelector::new(ai_assistant::AutoSelectConfig::default());
+        let fast_profile = ai_assistant::AutoModelProfile {
+            id: "fast-model".to_string(),
+            name: "Fast Model".to_string(),
+            provider: "local".to_string(),
+            capabilities: ai_assistant::AutoModelCapabilities::default(),
+            cost_input: 0.001,
+            cost_output: 0.002,
+            avg_latency: fast_stats.unwrap().avg_latency,
+            task_quality: HashMap::new(),
+            max_context: 4096,
+            available: true,
+        };
+        selector.add_model(fast_profile);
+
+        let result = selector.select("Write a hello world program", None);
+        assert_eq_test!(result.model_id, "fast-model");
+        Ok(())
+    }));
+
+    CategoryResult { name: "integration_latency_selection".to_string(), results }
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 fn all_categories() -> Vec<(&'static str, fn() -> CategoryResult)> {
@@ -3816,6 +4148,17 @@ fn all_categories() -> Vec<(&'static str, fn() -> CategoryResult)> {
         ("forecasting", tests_forecasting),
         ("health_check", tests_health_check),
         ("keepalive", tests_keepalive),
+        // Integration tests (cross-module)
+        ("integration_entity_anonymize", tests_integration_entity_anonymize),
+        ("integration_intent_template", tests_integration_intent_template),
+        ("integration_versioning_merge", tests_integration_versioning_merge),
+        ("integration_embedding_similarity", tests_integration_embedding_similarity),
+        ("integration_facts_context", tests_integration_facts_context),
+        ("integration_cache_compression", tests_integration_cache_compression),
+        ("integration_expansion_ranking", tests_integration_expansion_ranking),
+        ("integration_health_keepalive", tests_integration_health_keepalive),
+        ("integration_moderation_citations", tests_integration_moderation_citations),
+        ("integration_latency_selection", tests_integration_latency_selection),
     ]
 }
 
