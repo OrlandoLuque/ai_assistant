@@ -5769,6 +5769,299 @@ fn tests_stress_boundaries() -> CategoryResult {
     CategoryResult { name: "stress_boundaries".to_string(), results }
 }
 
+fn tests_stress_concurrency() -> CategoryResult {
+    println!("\n{}", bold(&cyan("▶ Stress: Concurrency & Thread Safety")));
+    let mut results = Vec::new();
+
+    results.push(run_test("Concurrent cost tracking", || {
+        use std::sync::{Arc, Mutex};
+        use std::thread;
+
+        let tracker = Arc::new(Mutex::new(ai_assistant::CostTracker::new()));
+        let mut handles = vec![];
+
+        // Spawn 10 threads each adding 100 costs
+        for t in 0..10 {
+            let tr = Arc::clone(&tracker);
+            handles.push(thread::spawn(move || {
+                for _i in 0..100 {
+                    let mut tracker = tr.lock().unwrap();
+                    tracker.add(ai_assistant::CostEstimate {
+                        input_tokens: 100,
+                        output_tokens: 50,
+                        images: 0,
+                        cost: 0.001,
+                        currency: "USD".to_string(),
+                        model: format!("model-{}", t),
+                        provider: "test".to_string(),
+                        pricing_tier: None,
+                    });
+                }
+            }));
+        }
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let tracker = tracker.lock().unwrap();
+        assert_eq_test!(tracker.request_count, 1000);
+        assert_test!((tracker.total_cost - 1.0).abs() < 0.01, "total cost should be ~1.0");
+        Ok(())
+    }));
+
+    results.push(run_test("Concurrent token budget checks", || {
+        use std::sync::{Arc, Mutex};
+        use std::thread;
+
+        let budget = Arc::new(Mutex::new(ai_assistant::TokenBudgetManager::new()));
+        {
+            let mut b = budget.lock().unwrap();
+            b.set_budget("shared-user", ai_assistant::Budget::new(100000, ai_assistant::BudgetPeriod::Daily));
+        }
+
+        let mut handles = vec![];
+
+        for _ in 0..10 {
+            let b = Arc::clone(&budget);
+            handles.push(thread::spawn(move || {
+                for _ in 0..100 {
+                    let mut budget = b.lock().unwrap();
+                    let check = budget.check("shared-user", 10);
+                    if check.allowed {
+                        budget.record_usage("shared-user", 10);
+                    }
+                }
+            }));
+        }
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let mut budget = budget.lock().unwrap();
+        let usage = budget.get_usage("shared-user");
+        assert_test!(usage.is_some(), "should have tracked usage");
+        Ok(())
+    }));
+
+    results.push(run_test("Concurrent embedding cache access", || {
+        use std::sync::{Arc, Mutex};
+        use std::thread;
+
+        let cache = Arc::new(Mutex::new(ai_assistant::EmbeddingCache::with_defaults()));
+        let mut handles: Vec<thread::JoinHandle<()>> = vec![];
+
+        // Writers
+        for t in 0..5 {
+            let c = Arc::clone(&cache);
+            handles.push(thread::spawn(move || {
+                for i in 0..100 {
+                    let mut cache = c.lock().unwrap();
+                    let embedding: Vec<f32> = vec![t as f32, i as f32, 0.0];
+                    cache.set(&format!("key-{}-{}", t, i), "model", embedding);
+                }
+            }));
+        }
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let cache = cache.lock().unwrap();
+        let stats = cache.stats();
+        assert_test!(stats.entries > 0, "cache should have entries");
+        Ok(())
+    }));
+
+    results.push(run_test("Parallel entity extraction", || {
+        use std::thread;
+
+        let texts = vec![
+            "Contact john@example.com for more info",
+            "Call 555-123-4567 today",
+            "Visit https://example.com for details",
+            "Email support@test.org or admin@test.org",
+        ];
+
+        let handles: Vec<_> = texts.into_iter().map(|text| {
+            thread::spawn(move || {
+                let extractor = ai_assistant::EntityExtractor::new(ai_assistant::EntityExtractorConfig::default());
+                extractor.extract(text)
+            })
+        }).collect();
+
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        let total_entities: usize = results.iter().map(|r| r.len()).sum();
+        assert_test!(total_entities > 0, "should extract entities in parallel");
+        Ok(())
+    }));
+
+    results.push(run_test("Parallel PII detection", || {
+        use std::thread;
+
+        let texts = vec![
+            "SSN: 123-45-6789",
+            "Credit card: 4111-1111-1111-1111",
+            "Email: user@company.com",
+            "Phone: (555) 123-4567",
+        ];
+
+        let handles: Vec<_> = texts.into_iter().map(|text| {
+            thread::spawn(move || {
+                let detector = ai_assistant::PiiDetector::new(ai_assistant::PiiConfig::default());
+                detector.detect(text)
+            })
+        }).collect();
+
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        let total_pii: usize = results.iter().filter(|r| r.has_pii).count();
+        assert_test!(total_pii >= 3, "should detect PII in parallel");
+        Ok(())
+    }));
+
+    results.push(run_test("Parallel intent classification", || {
+        use std::thread;
+
+        let queries = vec![
+            "What is the price of a Carrack?",
+            "How do I fly my ship?",
+            "Hello there!",
+            "Compare Aurora and Mustang",
+        ];
+
+        let handles: Vec<_> = queries.into_iter().map(|query| {
+            thread::spawn(move || {
+                let classifier = ai_assistant::IntentClassifier::new();
+                classifier.classify(query)
+            })
+        }).collect();
+
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        assert_eq_test!(results.len(), 4);
+        Ok(())
+    }));
+
+    CategoryResult { name: "stress_concurrency".to_string(), results }
+}
+
+fn tests_stress_memory() -> CategoryResult {
+    println!("\n{}", bold(&cyan("▶ Stress: Memory Pressure & Cache Eviction")));
+    let mut results = Vec::new();
+
+    results.push(run_test("Embedding cache with many entries", || {
+        let mut cache = ai_assistant::EmbeddingCache::with_defaults();
+
+        // Add many entries
+        for i in 0..500 {
+            let embedding: Vec<f32> = vec![i as f32; 64];
+            cache.set(&format!("key-{}", i), "model", embedding);
+        }
+
+        let stats = cache.stats();
+        assert_test!(stats.entries > 0, "cache should have entries");
+        Ok(())
+    }));
+
+    results.push(run_test("Bounded cache LRU eviction", || {
+        let mut cache: ai_assistant::BoundedCache<String, String> =
+            ai_assistant::BoundedCache::new(5, ai_assistant::EvictionPolicy::Lru);
+
+        // Fill cache
+        for i in 0..5 {
+            cache.insert(format!("key-{}", i), format!("value-{}", i));
+        }
+
+        // Access key-0 to make it recently used
+        let _ = cache.get(&"key-0".to_string());
+
+        // Add new entry - should evict LRU (key-1, not key-0)
+        cache.insert("key-5".to_string(), "value-5".to_string());
+
+        assert_test!(cache.get(&"key-0".to_string()).is_some(), "key-0 should remain (was accessed)");
+        assert_test!(cache.get(&"key-5".to_string()).is_some(), "key-5 should be present");
+        Ok(())
+    }));
+
+    results.push(run_test("Working memory topic tracking", || {
+        let mut memory = ai_assistant::WorkingMemory::new();
+
+        // Add topics and entities
+        memory.set_topic("Star Citizen ships");
+        memory.add_entity("Carrack");
+        memory.add_entity("Hammerhead");
+        memory.add_entity("Idris");
+
+        // Should track what we added
+        assert_test!(memory.current_topic.is_some(), "should have a topic");
+        Ok(())
+    }));
+
+    results.push(run_test("Large text chunking", || {
+        let large_text = "The quick brown fox jumps over the lazy dog. ".repeat(25000);
+
+        let chunker = ai_assistant::SmartChunker::new(ai_assistant::ChunkingConfig {
+            strategy: ai_assistant::ChunkingStrategy::Paragraph,
+            target_tokens: 200,
+            min_tokens: 100,
+            max_tokens: 500,
+            overlap_tokens: 20,
+            ..Default::default()
+        });
+
+        let chunks = chunker.chunk(&large_text);
+        assert_test!(chunks.len() > 50, "should produce many chunks from large text");
+
+        // Verify chunks have content
+        let total_chunk_len: usize = chunks.iter().map(|c| c.content.len()).sum();
+        assert_test!(total_chunk_len > 0, "chunks should have content");
+        Ok(())
+    }));
+
+    results.push(run_test("Session store with many sessions", || {
+        let mut store = ai_assistant::ChatSessionStore::new();
+
+        // Create many sessions with unique IDs
+        // Note: ChatSession::new() uses timestamp_millis() which can collide in rapid loops
+        for i in 0..100 {
+            let mut session = ai_assistant::ChatSession::new(&format!("Session {}", i));
+            session.id = format!("session_unique_{}", i); // Ensure unique ID
+            for j in 0..10 {
+                session.messages.push(ai_assistant::ChatMessage::user(&format!("Message {} in session {}", j, i)));
+            }
+            store.save_session(session);
+        }
+
+        assert_eq_test!(store.sessions.len(), 100);
+        let by_date = store.sessions_by_date();
+        assert_eq_test!(by_date.len(), 100);
+        Ok(())
+    }));
+
+    results.push(run_test("Cost tracker accumulation", || {
+        let mut tracker = ai_assistant::CostTracker::new();
+
+        for i in 0..1000 {
+            tracker.add(ai_assistant::CostEstimate {
+                input_tokens: 100,
+                output_tokens: 50,
+                images: 0,
+                cost: 0.001,
+                currency: "USD".to_string(),
+                model: format!("model-{}", i % 10),
+                provider: "test".to_string(),
+                pricing_tier: None,
+            });
+        }
+
+        assert_eq_test!(tracker.request_count, 1000);
+        assert_test!((tracker.total_cost - 1.0).abs() < 0.01, "total cost should be ~1.0");
+        Ok(())
+    }));
+
+    CategoryResult { name: "stress_memory".to_string(), results }
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 fn all_categories() -> Vec<(&'static str, fn() -> CategoryResult)> {
@@ -5887,6 +6180,8 @@ fn all_categories() -> Vec<(&'static str, fn() -> CategoryResult)> {
         ("stress_large_inputs", tests_stress_large_inputs),
         ("stress_error_paths", tests_stress_error_paths),
         ("stress_boundaries", tests_stress_boundaries),
+        ("stress_concurrency", tests_stress_concurrency),
+        ("stress_memory", tests_stress_memory),
     ]
 }
 
