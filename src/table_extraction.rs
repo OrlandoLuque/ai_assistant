@@ -761,6 +761,7 @@ impl TableExtractor {
     }
 
     /// Detect headers from the first row of data if not already set.
+    #[allow(dead_code)]
     fn detect_headers(&self, rows: &mut Vec<Vec<TableCell>>) -> Vec<String> {
         if self.config.first_row_is_header && !rows.is_empty() {
             let first_row = rows.remove(0);

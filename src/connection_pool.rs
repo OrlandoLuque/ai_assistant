@@ -132,7 +132,7 @@ impl ConnectionPool {
     }
 
     /// Get or create a connection for a host
-    pub fn get(&self, host: &str) -> PooledConnectionGuard {
+    pub fn get(&self, host: &str) -> PooledConnectionGuard<'_> {
         let normalized_host = Self::normalize_host(host);
 
         // Try to get an existing connection
@@ -281,6 +281,7 @@ impl Default for ConnectionPool {
 pub struct PooledConnectionGuard<'a> {
     connection: Option<PooledConnection>,
     pool: &'a ConnectionPool,
+    #[allow(dead_code)]
     host: String,
 }
 

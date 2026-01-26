@@ -1192,6 +1192,12 @@ pub mod html_extraction;
 // Content versioning and change tracking
 pub mod content_versioning;
 
+// Code and text editing capabilities
+pub mod edit_operations;
+pub mod patch_application;
+pub mod text_transform;
+pub mod code_editing;
+
 // Translation quality analysis
 pub mod translation_analysis;
 
@@ -1245,6 +1251,29 @@ pub use html_extraction::{
 pub use content_versioning::{
     ContentSnapshot, ContentChange, ChangeType as VersionChangeType,
     VersionDiff, VersioningConfig, VersionHistory, ContentVersionStore,
+};
+
+// Edit operations exports
+pub use edit_operations::{
+    Position, TextRange, EditKind, Edit, EditError,
+    EditBuilder, TextEditor, LineEditor,
+};
+
+// Patch application exports
+pub use patch_application::{
+    PatchLine, PatchHunk, Patch, PatchConfig, PatchResult,
+    PatchParseError, PatchApplyError, PatchApplicator,
+};
+
+// Text transform exports
+pub use text_transform::{
+    Transform, TransformResult, TextTransformer, TransformPipeline,
+};
+
+// Code editing exports
+pub use code_editing::{
+    LanguageConfig, CodeEditor, EditSuggestion, EditCategory,
+    CodeSearch, SearchScope,
 };
 
 // Translation analysis exports

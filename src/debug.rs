@@ -275,7 +275,7 @@ impl DebugLogger {
     }
 
     /// Start a timed operation
-    pub fn start_timer(&self, component: &str, operation: &str) -> TimerGuard {
+    pub fn start_timer(&self, component: &str, operation: &str) -> TimerGuard<'_> {
         if self.config.read().unwrap().enable_timing {
             self.trace(component, format!("Starting: {}", operation));
         }
@@ -426,7 +426,9 @@ pub struct DebugReport {
 /// Request/response inspector
 pub struct RequestInspector {
     logger: Arc<DebugLogger>,
+    #[allow(dead_code)]
     capture_requests: bool,
+    #[allow(dead_code)]
     capture_responses: bool,
     max_body_length: usize,
     requests: Mutex<Vec<CapturedRequest>>,
@@ -458,7 +460,7 @@ impl RequestInspector {
     }
 
     /// Capture a request
-    pub fn capture_request(&self, provider: &str, model: &str, prompt: &str) -> RequestHandle {
+    pub fn capture_request(&self, provider: &str, model: &str, prompt: &str) -> RequestHandle<'_> {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()

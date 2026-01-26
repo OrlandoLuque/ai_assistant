@@ -170,6 +170,7 @@ impl TaskDecomposer {
         }
 
         let lower = description.to_lowercase();
+        #[allow(unused_assignments)]
         let mut subtasks = Vec::new();
 
         match self.strategy {
@@ -190,7 +191,7 @@ impl TaskDecomposer {
         subtasks
     }
 
-    fn decompose_sequential(&self, description: &str, depth: usize) -> Vec<TaskNode> {
+    fn decompose_sequential(&self, description: &str, _depth: usize) -> Vec<TaskNode> {
         let mut subtasks = Vec::new();
         let actions = self.extract_actions(description);
 
@@ -250,7 +251,7 @@ impl TaskDecomposer {
         subtasks
     }
 
-    fn decompose_by_priority(&self, description: &str, _depth: usize) -> Vec<TaskNode> {
+    fn decompose_by_priority(&self, _description: &str, _depth: usize) -> Vec<TaskNode> {
         let mut subtasks = Vec::new();
 
         // Create priority buckets

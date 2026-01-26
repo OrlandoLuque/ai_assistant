@@ -1011,6 +1011,7 @@ pub struct CacheEntryInfo {
 }
 
 // Base64 helper functions
+#[allow(dead_code)]
 fn base64_encode(data: &[u8]) -> String {
     const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
@@ -1044,6 +1045,7 @@ fn base64_encode(data: &[u8]) -> String {
     result
 }
 
+#[allow(dead_code)]
 fn base64_decode(data: &str) -> Result<Vec<u8>> {
     let mut result = Vec::new();
     let data = data.trim_end_matches('=');

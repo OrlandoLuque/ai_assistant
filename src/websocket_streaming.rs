@@ -510,6 +510,7 @@ fn generate_ws_key() -> String {
 pub struct BidirectionalStream {
     handler: WsStreamHandler,
     outgoing: Vec<WsFrame>,
+    #[allow(dead_code)]
     incoming_buffer: String,
 }
 

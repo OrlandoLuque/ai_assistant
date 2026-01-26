@@ -11,7 +11,7 @@
 //! - **User insights**: Understand user behavior
 
 use std::collections::HashMap;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 
 /// Configuration for analytics
 #[derive(Debug, Clone)]

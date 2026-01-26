@@ -3,8 +3,7 @@
 //! Coordinate multiple AI agents working together.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 /// Agent status
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

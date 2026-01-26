@@ -237,6 +237,7 @@ pub struct SseClient {
     url: String,
     headers: HashMap<String, String>,
     last_event_id: Option<String>,
+    #[allow(dead_code)]
     retry_ms: u64,
 }
 

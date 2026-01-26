@@ -2,8 +2,6 @@
 //!
 //! Extract direct answers from long text responses.
 
-use std::collections::HashMap;
-
 /// Extraction configuration
 #[derive(Debug, Clone)]
 pub struct ExtractionConfig {

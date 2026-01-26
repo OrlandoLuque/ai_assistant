@@ -3,7 +3,6 @@
 //! Implements an autonomous agent loop that can use tools, search the web,
 //! and complete complex tasks iteratively.
 
-use std::collections::HashMap;
 use crate::tool_calling::{ToolRegistry, ToolCall, ToolResult, Tool, ToolParameter, ParameterType};
 use crate::web_search::{WebSearchManager, SearchConfig};
 

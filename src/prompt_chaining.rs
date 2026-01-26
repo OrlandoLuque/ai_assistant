@@ -359,7 +359,7 @@ impl ChainExecutor {
         &self,
         chain: &'a PromptChain,
         current: &str,
-        success: bool,
+        _success: bool,
         explicit_next: &Option<String>,
     ) -> Option<&'a str> {
         // Use explicit next if specified

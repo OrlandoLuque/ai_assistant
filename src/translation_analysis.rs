@@ -757,7 +757,7 @@ impl TranslationAnalyzer {
         let lower = text.to_lowercase();
 
         // Spanish indicators
-        let spanish_chars = ['n', 'a', 'e', 'i', 'o', 'u'];
+        let _spanish_chars = ['n', 'a', 'e', 'i', 'o', 'u'];
         let spanish_markers = ["que", "los", "las", "del", "por", "como", "una", "esta"];
         let spanish_score: usize = spanish_markers
             .iter()

@@ -373,7 +373,7 @@ impl QualityAnalyzer {
     }
 
     /// Find quality issues
-    fn find_issues(&self, query: &str, response: &str, context: Option<&str>) -> Vec<QualityIssue> {
+    fn find_issues(&self, query: &str, response: &str, _context: Option<&str>) -> Vec<QualityIssue> {
         let mut issues = Vec::new();
 
         // Check response length
@@ -562,7 +562,7 @@ impl QualityAnalyzer {
     }
 
     /// Find strengths in the response
-    fn find_strengths(&self, query: &str, response: &str) -> Vec<String> {
+    fn find_strengths(&self, _query: &str, response: &str) -> Vec<String> {
         let mut strengths = Vec::new();
 
         // Check for structured response

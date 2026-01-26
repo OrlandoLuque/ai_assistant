@@ -2,7 +2,6 @@
 //!
 //! Adapter for OpenAI-compatible APIs (OpenAI, Azure OpenAI, local proxies).
 
-use std::collections::HashMap;
 use std::time::Duration;
 
 /// OpenAI model

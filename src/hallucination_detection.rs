@@ -348,7 +348,7 @@ impl HallucinationDetector {
     }
 
     /// Find internal contradictions
-    fn find_contradictions(&self, text: &str, claims: &[Claim]) -> Vec<HallucinationDetection> {
+    fn find_contradictions(&self, _text: &str, claims: &[Claim]) -> Vec<HallucinationDetection> {
         let mut detections = Vec::new();
 
         // Simple contradiction detection: look for opposing statements

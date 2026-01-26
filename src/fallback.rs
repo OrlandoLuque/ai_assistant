@@ -394,7 +394,9 @@ impl Default for FallbackChain {
 /// Health checker for providers
 pub struct HealthChecker {
     chain: Arc<Mutex<FallbackChain>>,
+    #[allow(dead_code)]
     check_interval: Duration,
+    #[allow(dead_code)]
     running: Arc<std::sync::atomic::AtomicBool>,
 }
 

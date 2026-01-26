@@ -26,7 +26,7 @@
 //! assert_eq!(next.unwrap().priority, Priority::Critical);
 //! ```
 
-use std::collections::{BinaryHeap, HashMap, VecDeque};
+use std::collections::{BinaryHeap, HashMap};
 use std::cmp::Ordering;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};

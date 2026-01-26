@@ -10,7 +10,6 @@
 //! - **Risk scoring**: Calculate injection risk level
 //! - **Mitigation**: Suggest sanitization approaches
 
-use std::collections::HashMap;
 use regex::Regex;
 
 /// Configuration for injection detection
@@ -192,6 +191,7 @@ pub struct InjectionDetector {
 }
 
 struct CompiledPattern {
+    #[allow(dead_code)]
     name: String,
     regex: Regex,
     injection_type: InjectionType,

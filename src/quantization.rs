@@ -33,7 +33,11 @@
 use std::collections::HashMap;
 
 /// Quantization format types
+///
+/// Note: Variant names follow industry-standard conventions (llama.cpp, GGML)
+/// rather than Rust CamelCase to match how users refer to these formats.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[allow(non_camel_case_types)]
 pub enum QuantFormat {
     /// Full precision (FP32)
     FP32,

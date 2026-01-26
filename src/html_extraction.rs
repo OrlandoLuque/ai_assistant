@@ -640,6 +640,7 @@ impl HtmlExtractor {
     // ========================================================================
 
     /// Apply an extraction rule to get content matching the rule's selectors.
+    #[allow(dead_code)]
     fn apply_rule(&self, html: &str, rule: &ExtractionRule) -> Option<String> {
         let matches = self.match_elements(html, &rule.content_selector);
         if matches.is_empty() {

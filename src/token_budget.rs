@@ -28,7 +28,7 @@
 //! ```
 
 use std::collections::HashMap;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 /// Budget time period
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -470,7 +470,7 @@ impl TokenEstimator {
     }
 
     /// Estimate tokens for a chat message
-    pub fn estimate_message(role: &str, content: &str) -> usize {
+    pub fn estimate_message(_role: &str, content: &str) -> usize {
         // Role overhead + content
         4 + Self::estimate_text(content)
     }

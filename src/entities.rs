@@ -162,6 +162,7 @@ pub struct EntityExtractor {
     /// Common organization suffixes
     org_suffixes: Vec<&'static str>,
     /// Common location indicators
+    #[allow(dead_code)]
     location_indicators: Vec<&'static str>,
     /// Title prefixes that indicate a person
     person_titles: Vec<&'static str>,
@@ -398,7 +399,7 @@ impl EntityExtractor {
             }
 
             if i < chars.len() && chars[i].is_ascii_digit() {
-                let num_start = i;
+                let _num_start = i;
                 let mut has_dot = false;
                 let mut digit_count = 0;
 
@@ -771,7 +772,7 @@ impl FactExtractor {
     /// Extract facts from a message
     pub fn extract_facts(&self, text: &str, source: &str) -> Vec<Fact> {
         let mut facts = Vec::new();
-        let text_lower = text.to_lowercase();
+        let _text_lower = text.to_lowercase();
         let sentences = self.split_sentences(text);
 
         for sentence in sentences {

@@ -40,12 +40,15 @@ pub struct EngagementMetrics {
 #[derive(Debug, Clone)]
 struct EngagementRecord {
     event: EngagementEvent,
+    #[allow(dead_code)]
     timestamp: Instant,
+    #[allow(dead_code)]
     metadata: HashMap<String, String>,
 }
 
 /// User engagement tracker
 pub struct EngagementTracker {
+    #[allow(dead_code)]
     user_id: String,
     events: Vec<EngagementRecord>,
     session_start: Instant,

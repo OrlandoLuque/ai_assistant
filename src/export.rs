@@ -494,6 +494,7 @@ pub struct ImportResult {
 
 /// Conversation importer
 pub struct ConversationImporter {
+    #[allow(dead_code)]
     options: ImportOptions,
 }
 

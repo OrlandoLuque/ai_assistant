@@ -377,7 +377,7 @@ impl ResponseParser {
     /// Parse a single list item
     fn parse_list_item(&self, line: &str) -> Option<(bool, Option<usize>, Option<bool>, String)> {
         // Ordered list: 1. item, 1) item
-        if let Some(rest) = line.strip_prefix(|c: char| c.is_ascii_digit()) {
+        if let Some(_rest) = line.strip_prefix(|c: char| c.is_ascii_digit()) {
             let mut num_end = 0;
             for (i, c) in line.char_indices() {
                 if c.is_ascii_digit() {

@@ -443,6 +443,7 @@ impl Feedback {
 
 /// Feedback history entry
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct FeedbackEntry {
     variant_id: String,
     feedback: Feedback,

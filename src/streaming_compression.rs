@@ -391,7 +391,7 @@ impl StreamDecompressor {
     }
 
     /// Decompress all remaining data
-    pub fn finish(mut self) -> Result<Vec<u8>, CompressionError> {
+    pub fn finish(self) -> Result<Vec<u8>, CompressionError> {
         if self.buffer.is_empty() {
             return Ok(Vec::new());
         }

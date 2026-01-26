@@ -29,7 +29,7 @@
 //! ```
 
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 /// Example category for organization
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

@@ -250,6 +250,7 @@ pub struct PinStats {
 pub struct AutoPinner {
     keywords: Vec<String>,
     importance_threshold: f64,
+    #[allow(dead_code)]
     entity_types: Vec<String>,
 }
 

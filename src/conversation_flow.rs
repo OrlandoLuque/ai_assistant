@@ -68,6 +68,7 @@ pub struct FlowAnalysis {
 /// Conversation flow analyzer
 pub struct FlowAnalyzer {
     turns: Vec<ConversationTurn>,
+    #[allow(dead_code)]
     topic_keywords: HashMap<String, Vec<String>>,
 }
 

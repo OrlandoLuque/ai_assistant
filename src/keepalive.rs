@@ -31,7 +31,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock, Mutex};
 use std::time::{Duration, Instant};
-use std::thread;
 
 /// Connection state
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

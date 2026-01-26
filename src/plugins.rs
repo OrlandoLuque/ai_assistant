@@ -168,6 +168,7 @@ pub struct PluginInfo {
 pub struct PluginManager {
     plugins: Vec<(PluginInfo, Box<dyn Plugin>)>,
     context: PluginContext,
+    #[allow(dead_code)]
     event_handlers: HashMap<String, Vec<usize>>,
 }
 

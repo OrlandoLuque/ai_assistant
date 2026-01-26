@@ -364,6 +364,7 @@ impl ReactAgent {
 /// Simple planning agent
 pub struct PlanningAgent {
     /// Agent configuration
+    #[allow(dead_code)]
     config: AgentConfig,
     /// The plan steps
     plan: Vec<PlanStep>,

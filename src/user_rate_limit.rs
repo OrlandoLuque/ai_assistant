@@ -86,6 +86,7 @@ pub struct RateLimitCheckResult {
 
 /// Per-user rate limiter
 pub struct UserRateLimiter {
+    #[allow(dead_code)]
     config: UserRateLimitConfig,
     users: HashMap<String, UserUsage>,
     default_config: UserRateLimitConfig,
@@ -106,6 +107,7 @@ impl UserRateLimiter {
         self.custom_configs.insert(user_id.to_string(), config);
     }
 
+    #[allow(dead_code)]
     fn get_config(&self, user_id: &str) -> &UserRateLimitConfig {
         self.custom_configs.get(user_id).unwrap_or(&self.default_config)
     }

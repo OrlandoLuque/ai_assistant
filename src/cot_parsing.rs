@@ -10,8 +10,6 @@
 //! - **Answer extraction**: Extract final answers from CoT responses
 //! - **Thought summarization**: Summarize reasoning chains
 
-use std::collections::HashMap;
-
 /// Configuration for CoT parsing
 #[derive(Debug, Clone)]
 pub struct CotConfig {
@@ -174,6 +172,7 @@ impl CotParser {
     /// Parse a response for chain-of-thought reasoning
     pub fn parse(&self, response: &str) -> CotParseResult {
         let mut steps = Vec::new();
+        #[allow(unused_assignments)]
         let mut answer = None;
 
         // Try numbered extraction first

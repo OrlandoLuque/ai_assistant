@@ -240,6 +240,7 @@ impl PiiDetector {
 
     /// Detect and redact PII in text
     pub fn detect(&self, text: &str) -> PiiResult {
+        #[allow(unused_assignments)]
         let mut detections = Vec::new();
         let mut redacted = text.to_string();
         let mut counts: HashMap<PiiType, usize> = HashMap::new();

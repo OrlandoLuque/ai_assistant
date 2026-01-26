@@ -2,7 +2,6 @@
 //!
 //! Sign requests to verify authenticity.
 
-use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Signature algorithm

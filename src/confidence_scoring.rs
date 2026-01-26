@@ -333,7 +333,7 @@ impl ConfidenceScorer {
     /// Calculate overall confidence
     fn calculate_overall(&self, linguistic: f64, token: Option<f64>) -> f64 {
         match token {
-            Some(t) => (linguistic * 0.4 + t * 0.6), // Token probs weighted higher
+            Some(t) => linguistic * 0.4 + t * 0.6, // Token probs weighted higher
             None => linguistic,
         }
     }
@@ -433,7 +433,7 @@ impl ConfidenceScorer {
         });
 
         final_score.consistency_confidence = Some(consistency);
-        final_score.overall = (avg_score * 0.7 + consistency * 0.3);
+        final_score.overall = avg_score * 0.7 + consistency * 0.3;
         final_score.reliability = Reliability::from_score(final_score.overall);
 
         final_score
