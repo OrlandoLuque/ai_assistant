@@ -7020,7 +7020,7 @@ fn tests_stress_chaos() -> CategoryResult {
 
         // Burst of requests
         let mut allowed = 0;
-        let mut denied = 0;
+        let mut _denied = 0;
         for _ in 0..200 {
             let result = limiter.check_allowed();
             if result.is_allowed() {
@@ -7028,7 +7028,7 @@ fn tests_stress_chaos() -> CategoryResult {
                 limiter.record_request_start();
                 limiter.record_request_end(50);
             } else {
-                denied += 1;
+                _denied += 1;
             }
         }
 
