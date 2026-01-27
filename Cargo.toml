@@ -7,13 +7,74 @@ description = "Reusable AI assistant library for local LLM integration (Ollama, 
 license = "MIT OR Apache-2.0"
 
 [features]
-default = []
-# Enable egui widgets for chat UI
+# Default: full functionality (code has interdependencies)
+# Use specific features for minimal builds after refactoring dependencies
+default = ["full"]
+
+# === Core Features (minimal) ===
+# Basic assistant functionality with providers
+core = []
+
+# === Optional Feature Groups ===
+
+# Multi-agent system: orchestration, shared memory, task decomposition
+multi-agent = []
+
+# Security features: guardrails, PII detection, content moderation, access control
+security = []
+
+# Analytics: metrics, telemetry, engagement tracking, conversation analytics
+analytics = []
+
+# Vision/Multimodal support
+vision = []
+
+# Local embeddings and vector database
+embeddings = []
+
+# Advanced streaming: SSE, WebSocket, compression
+advanced-streaming = []
+
+# External API adapters: OpenAI, Anthropic, HuggingFace
+adapters = []
+
+# Tool calling: MCP protocol, agentic loops, function calling
+tools = []
+
+# Document parsing: EPUB, DOCX, HTML, feeds, tables
+documents = ["zip"]
+
+# Evaluation and benchmarking: fine-tuning, metrics, A/B testing
+eval = []
+
+# Distributed computing: DHT, CRDTs, MapReduce
+distributed = []
+
+# RAG with SQLite FTS5 and encrypted knowledge packages
+rag = ["rusqlite", "aes-gcm"]
+
+# egui widgets for chat UI
 egui-widgets = ["egui"]
-# Enable RAG (Retrieval-Augmented Generation) support with SQLite FTS5
-rag = ["rusqlite"]
-# Enable document format parsing (EPUB, DOCX, ODT) via zip
-document-formats = ["zip"]
+
+# Full feature set (includes everything except egui)
+full = [
+    "core",
+    "multi-agent",
+    "security",
+    "analytics",
+    "vision",
+    "embeddings",
+    "advanced-streaming",
+    "adapters",
+    "tools",
+    "documents",
+    "eval",
+    "rag",
+    "distributed",
+]
+
+# Binary integrity verification at startup (no runtime penalty after startup)
+integrity-check = []
 
 [dependencies]
 anyhow = "1"
@@ -33,10 +94,61 @@ zip = { version = "2", optional = true, default-features = false, features = ["d
 egui = { version = "0.27", optional = true }
 # Optional SQLite for RAG storage
 rusqlite = { version = "0.31", features = ["bundled"], optional = true }
+# Optional AES-GCM for encrypted knowledge packages
+aes-gcm = { version = "0.10", optional = true }
 
 [[bin]]
 name = "ai_test_harness"
 path = "src/bin/ai_test_harness.rs"
 
+[[bin]]
+name = "kpkg_tool"
+path = "src/bin/kpkg_tool.rs"
+required-features = ["rag"]
+
 [dev-dependencies]
 tempfile = "3"
+
+# === Release profile optimizations ===
+[profile.release]
+# Enable Link-Time Optimization for better dead code elimination
+lto = true
+# Single codegen unit for maximum optimization
+codegen-units = 1
+# Optimize for size with good performance
+opt-level = "z"
+# Strip symbols from binary
+strip = true
+# Abort on panic (smaller binary, no unwinding)
+panic = "abort"
+
+[profile.release-fast]
+inherits = "release"
+# Optimize for speed instead of size
+opt-level = 3
+# Keep panic unwinding for better debugging
+panic = "unwind"
+
+# === Protected release profile (anti-reverse engineering) ===
+[profile.release-protected]
+inherits = "release"
+# Fat LTO for maximum optimization and code merging (harder to analyze)
+lto = "fat"
+# Single codegen unit merges all code (harder to identify module boundaries)
+codegen-units = 1
+# Size optimization also obscures code patterns
+opt-level = "z"
+# Strip all symbols and debug info
+strip = "symbols"
+# No panic messages or unwinding (less string leakage)
+panic = "abort"
+# Overflow checks disabled in release (smaller, faster)
+overflow-checks = false
+
+# Metadata for downstream crates and build scripts
+[package.metadata.protected-build]
+# Post-build steps for maximum protection
+upx_enabled = true
+upx_flags = ["--best", "--lzma"]
+sign_binary = true
+verify_at_startup = true
