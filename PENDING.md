@@ -1,6 +1,6 @@
 # AI Assistant — Documentacion de modulos y funcionalidad pendiente
 
-**Ultima actualizacion**: 2026-01-23
+**Ultima actualizacion**: 2026-02-02
 
 ---
 
@@ -10,7 +10,7 @@
 
 | Modulo | Funcionalidad | Feature | Tests |
 |--------|---------------|---------|-------|
-| `document_parsing` | Parse EPUB/DOCX/ODT/HTML a texto plano con metadatos | `document-formats` | 21 |
+| `document_parsing` | Parse EPUB/DOCX/ODT/HTML a texto plano con metadatos | `documents` | 21 |
 | `table_extraction` | Detectar y parsear tablas (Markdown, ASCII, HTML, CSV/TSV) | - | 10 |
 | `data_source_client` | Cliente HTTP generico con auth, rate-limit, paginacion, cache | - | 21 |
 | `crawl_policy` | Parse robots.txt, sitemaps, rate limiting adaptativo por dominio | - | 11 |
@@ -25,6 +25,8 @@
 | `translation_analysis` | Analisis de calidad de traduccion, alineamiento, glosarios, prompts LLM | - | 7 |
 | `entity_enrichment` | Enriquecimiento de entidades, dedup fuzzy (Jaccard n-grams), auto-tagging, merge | - | 16 |
 | `auto_indexing` | Indexado RAG automatico de documentos importados, chunking adaptativo, incremental | `rag` | 13 |
+| `knowledge_graph` | Knowledge Graph para Graph RAG con SQLite, extraccion de entidades (LLM/patron), relaciones, traversal multi-hop | `rag` | 27 |
+| `encrypted_knowledge` | Paquetes KPKG encriptados con system_prompt, examples, rag_config, metadata | `rag` | 18 |
 
 ### Logica y planificacion
 
@@ -42,7 +44,7 @@
 Tipos: `DocumentFormat`, `DocumentSection`, `DocumentMetadata`, `ParsedDocument`, `DocumentParserConfig`, `DocumentParser`.
 
 - Formatos soportados: EPUB (ZIP+OPF+XHTML), DOCX (ZIP+word/document.xml), ODT (ZIP+content.xml), HTML (regex-based), PlainText
-- EPUB/DOCX/ODT requieren feature `document-formats` (dependencia `zip`)
+- EPUB/DOCX/ODT requieren feature `documents` (dependencia `zip` + `pdf-extract`)
 - HTML siempre disponible (sin dependencias extra)
 - Helpers publicos: `strip_xml_tags()`, `extract_xml_text()`, `extract_xml_metadata()`, `normalize_text()`
 - Autodeteccion de formato por extension de archivo
@@ -145,9 +147,45 @@ Tipos: `IndexChunkingStrategy`, `ChunkPosition`, `IndexedDocumentMeta`, `Indexab
 - Adaptive chunking: merge parrafos cortos, split largos, respeta limites min/max
 - Indexado incremental: solo re-indexa documentos con hash cambiado
 - Almacenamiento SQLite (tablas `indexed_chunks` e `indexed_documents`)
-- Integracion con `document_parsing` (feature `document-formats`)
+- Integracion con `document_parsing` (feature `documents`)
 - Export/import de estado
 - Limite de tamano de archivo configurable
+
+### `knowledge_graph`
+
+Tipos: `Entity`, `EntityType`, `Relation`, `EntityMention`, `GraphChunk`, `GraphStats`, `ExtractionResult`, `ExtractedEntity`, `ExtractedRelation`, `IndexingResult`, `GraphQueryResult`, `KnowledgeGraphConfig`, `KnowledgeGraphStore`, `KnowledgeGraph`, `KnowledgeGraphBuilder`, `KnowledgeGraphCallback`, `EntityExtractor`, `LlmEntityExtractor`, `PatternEntityExtractor`.
+
+- Almacenamiento SQLite con tablas: `entities`, `entity_aliases`, `relations`, `chunks`, `entity_mentions`
+- Full-text search via FTS5 sobre chunks
+- Thread-safe via `Mutex<Connection>` (Send + Sync)
+- Entity types: Organization, Product, Person, Location, Concept, Event, Other
+- Relation types: manufactures, located_in, part_of, variant_of, uses, related_to, custom
+- Extraccion de entidades: PatternEntityExtractor (sin LLM), LlmEntityExtractor (con LLM)
+- Alias resolution configurable
+- Traversal con profundidad configurable y threshold de confianza
+- Chunking automatico de documentos con overlap
+- Deduplicacion de chunks por hash
+- Builder pattern con entidades pre-configuradas de Star Citizen
+- Integracion con RagPipeline via trait `GraphCallback`
+
+### `encrypted_knowledge`
+
+Tipos: `ExamplePair`, `RagPackageConfig`, `KpkgMetadata`, `KpkgManifest`, `ExtractedDocument`, `KpkgIndexResult`, `KpkgIndexResultExt`, `KpkgError`, `KeyProvider`, `AppKeyProvider`, `CustomKeyProvider`, `KpkgReader`, `KpkgBuilder`, `RagDbKpkgExt`.
+
+- Paquetes de conocimiento encriptados (AES-256-GCM)
+- Estructura ZIP interna con manifest.json y documentos .md/.txt
+- System prompt y persona configurables por paquete
+- Ejemplos few-shot (ExamplePair) con categorias opcionales
+- Configuracion RAG por paquete (chunk_size, top_k, min_relevance, priority_boost)
+- Metadata del paquete: autor, fecha, idioma, licencia, tags, custom fields
+- Dos tipos de clave: AppKeyProvider (embebida) y CustomKeyProvider (passphrase)
+- KpkgBuilder con pattern builder fluido para todos los campos
+- KpkgReader con metodos read(), read_manifest_only(), read_with_manifest()
+- KpkgIndexResultExt con helpers para acceder al manifest despues de indexar
+- Trait RagDbKpkgExt para extension de RagDb con index_kpkg_ext()
+- CLI tool (`kpkg_tool`) con comandos create, list, inspect, extract
+- Compatibilidad hacia atras: manifests antiguos cargan sin error (serde(default))
+- 18 tests unitarios
 
 ### `decision_tree`
 
@@ -199,10 +237,17 @@ Tipos: `StepStatus`, `StepPriority`, `PlanStep`, `StepNote`, `TaskPlan`, `PlanSu
 - **Relevancia**: Baja
 
 ### 4. Knowledge Graphs
-- **Estado**: No implementado (RAG usa FTS5 + vectores)
-- **Descripcion**: Representacion relacional de entidades como grafo
-- **Alternativa actual**: `entity_enrichment` con relaciones simples + `entities` module
-- **Relevancia**: Media - mejoraria navegacion entre entidades
+- **Estado**: IMPLEMENTADO (ver `knowledge_graph` module)
+- **Descripcion**: Representacion relacional de entidades como grafo en SQLite
+- **Funcionalidad**:
+  - `KnowledgeGraph`: API de alto nivel con indexado de documentos y queries
+  - `KnowledgeGraphStore`: Almacenamiento SQLite con FTS5
+  - `PatternEntityExtractor`: Extractor de entidades basado en patrones (sin LLM)
+  - `LlmEntityExtractor`: Extractor de entidades usando LLM
+  - `KnowledgeGraphCallback`: Integracion con RagPipeline via `GraphCallback` trait
+  - `KnowledgeGraphBuilder`: Builder con entidades pre-configuradas de Star Citizen
+- **Tests**: 8 tests unitarios + 19 tests en ai_test_harness
+- **Feature**: `rag` (requiere `rusqlite`)
 
 ### 5. Aprendizaje continuo / Online Learning
 - **Estado**: No implementado
@@ -251,7 +296,7 @@ Tipos: `StepStatus`, `StepPriority`, `PlanStep`, `StepNote`, `TaskPlan`, `PlanSu
 
 - Todos los modulos usan nomenclatura **generica** (no especifica de dominio)
 - Modulos con dependencias opcionales usan feature flags:
-  - `document-formats`: habilita parsing de EPUB/DOCX/ODT (dependencia `zip`)
+  - `documents`: habilita parsing de EPUB/DOCX/ODT/PDF (dependencias `zip`, `pdf-extract`)
   - `rag`: habilita `auto_indexing` y `SqliteVersionStore` (dependencia `rusqlite`)
   - `egui-widgets`: widgets de chat para egui
 - Patron comun: `Config` struct con `Default`, structs de resultado con `Serialize/Deserialize`
@@ -265,8 +310,8 @@ Tipos: `StepStatus`, `StepPriority`, `PlanStep`, `StepNote`, `TaskPlan`, `PlanSu
 
 ```toml
 [features]
-document-formats = ["zip"]
-rag = ["rusqlite"]
+documents = ["zip", "pdf-extract"]
+rag = ["rusqlite", "aes-gcm"]
 egui-widgets = ["egui"]
 
 [dependencies]
@@ -279,7 +324,9 @@ uuid = { version = "1", features = ["v4"] }
 flate2 = "1"
 regex = "1"
 urlencoding = "2"
-zip = { version = "2", optional = true }           # document-formats
-egui = { version = "0.27", optional = true }        # egui-widgets
-rusqlite = { version = "0.31", optional = true }    # rag
+zip = { version = "2", optional = true }            # documents
+pdf-extract = { version = "0.7", optional = true }  # documents
+egui = { version = "0.27", optional = true }         # egui-widgets
+rusqlite = { version = "0.31", optional = true }     # rag
+aes-gcm = { version = "0.10", optional = true }     # rag (encrypted knowledge)
 ```

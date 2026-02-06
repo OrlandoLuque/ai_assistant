@@ -18,7 +18,7 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[cfg(feature = "document-formats")]
+#[cfg(feature = "documents")]
 use super::document_parsing::ParsedDocument;
 
 // ============================================================================
@@ -343,11 +343,11 @@ impl AutoIndexer {
         })
     }
 
-    /// Index a `ParsedDocument` (available when the `document-formats` feature is enabled).
-    #[cfg(feature = "document-formats")]
+    /// Index a `ParsedDocument` (available when the `documents` feature is enabled).
+    #[cfg(feature = "documents")]
     pub fn index_parsed_document(
         &mut self,
-        doc: &super::document_parsing::ParsedDocument,
+        doc: &ParsedDocument,
     ) -> Result<IndexingResult> {
         let source = doc
             .source_path
@@ -362,6 +362,7 @@ impl AutoIndexer {
             super::document_parsing::DocumentFormat::Odt => {
                 "application/vnd.oasis.opendocument.text"
             }
+            super::document_parsing::DocumentFormat::Pdf => "application/pdf",
             super::document_parsing::DocumentFormat::Html => "text/html",
             super::document_parsing::DocumentFormat::PlainText => "text/plain",
         };
@@ -369,7 +370,7 @@ impl AutoIndexer {
     }
 
     /// Index a single file from the filesystem.
-    #[cfg(feature = "document-formats")]
+    #[cfg(feature = "documents")]
     pub fn index_file(&mut self, path: &Path) -> Result<IndexingResult> {
         let path_str = path.to_string_lossy().to_string();
 
@@ -410,7 +411,7 @@ impl AutoIndexer {
     }
 
     /// Index all supported files in a directory, optionally recursively.
-    #[cfg(feature = "document-formats")]
+    #[cfg(feature = "documents")]
     pub fn index_directory(&mut self, dir: &Path, recursive: bool) -> Result<IndexingResult> {
         let start = Instant::now();
         let mut result = IndexingResult::empty();
