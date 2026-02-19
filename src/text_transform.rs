@@ -305,7 +305,7 @@ impl TextTransformer {
                 }
             }
             Transform::NormalizeWhitespace => {
-                let re = Regex::new(r"\s+").unwrap();
+                let re = Regex::new(r"\s+").expect("valid regex");
                 self.text = re.replace_all(&self.text, " ").to_string();
                 TransformResult {
                     text: self.text.clone(),
@@ -528,7 +528,7 @@ impl TextTransformer {
                 }
             }
             Transform::RemoveLineNumbers => {
-                let re = Regex::new(r"^\s*\d+[.:\-)\]\s]+").unwrap();
+                let re = Regex::new(r"^\s*\d+[.:\-)\]\s]+").expect("valid regex");
                 let lines: Vec<_> = self.text.lines()
                     .map(|l| re.replace(l, "").to_string())
                     .collect();
@@ -664,7 +664,7 @@ impl TextTransformer {
         } else {
             // Use (?i) flag for case-insensitive matching
             let pattern = format!("(?i){}", regex::escape(find));
-            let re = Regex::new(&pattern).unwrap();
+            let re = Regex::new(&pattern).expect("valid regex");
             re.replace_all(&self.text, replace).to_string()
         };
 

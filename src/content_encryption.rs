@@ -1,8 +1,15 @@
 //! Content encryption
 //!
 //! Encrypt and decrypt conversation content.
+//!
+//! When the `rag` feature is enabled, `Aes256Gcm` and `ChaCha20Poly1305` use
+//! real AES-256-GCM authenticated encryption via the `aes-gcm` crate.
+//! Without `rag`, they fall back to XOR with nonce mixing (NOT cryptographically secure).
 
 use std::collections::HashMap;
+
+#[cfg(feature = "aes-gcm")]
+use aes_gcm::{Aes256Gcm, aead::{Aead, KeyInit}};
 
 /// Encryption algorithm
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,7 +48,7 @@ impl EncryptionKey {
             algorithm,
             created_at: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs(),
             expires_at: None,
         }
@@ -58,7 +65,7 @@ impl EncryptionKey {
         if let Some(exp) = self.expires_at {
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs();
             now > exp
         } else {
@@ -109,7 +116,7 @@ impl ContentEncryptor {
         }
 
         let nonce = self.generate_nonce(key.algorithm);
-        let ciphertext = self.encrypt_with_key(plaintext, &key.key, &nonce, key.algorithm);
+        let ciphertext = self.encrypt_with_key(plaintext, &key.key, &nonce, key.algorithm)?;
 
         Ok(EncryptedContent {
             ciphertext,
@@ -145,8 +152,32 @@ impl ContentEncryptor {
             EncryptionAlgorithm::ChaCha20Poly1305 => 12,
             EncryptionAlgorithm::Xor => 0,
         };
+        if size == 0 {
+            return Vec::new();
+        }
 
-        (0..size).map(|i| ((i * 17 + 42) % 256) as u8).collect()
+        // Generate random nonce by mixing multiple entropy sources
+        use std::time::{SystemTime, UNIX_EPOCH};
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+
+        let mut nonce = Vec::with_capacity(size);
+        for i in 0..size {
+            let mut hasher = DefaultHasher::new();
+            timestamp.hash(&mut hasher);
+            (i as u64).hash(&mut hasher);
+            std::thread::current().id().hash(&mut hasher);
+            // Mix in address of stack variable for ASLR entropy
+            let stack_var = 0u8;
+            (&stack_var as *const u8 as u64).hash(&mut hasher);
+            nonce.push(hasher.finish() as u8);
+        }
+        nonce
     }
 
     fn encrypt_with_key(
@@ -155,26 +186,43 @@ impl ContentEncryptor {
         key: &[u8],
         nonce: &[u8],
         algorithm: EncryptionAlgorithm,
-    ) -> Vec<u8> {
+    ) -> Result<Vec<u8>, EncryptionError> {
         match algorithm {
             EncryptionAlgorithm::Xor => {
-                // Simple XOR for demo (NOT SECURE)
-                plaintext.iter()
+                if key.is_empty() {
+                    return Err(EncryptionError::EncryptionFailed);
+                }
+                Ok(plaintext.iter()
                     .enumerate()
                     .map(|(i, b)| b ^ key[i % key.len()])
-                    .collect()
+                    .collect())
             }
-            _ => {
-                // In production, use proper crypto library
-                // For now, use XOR with nonce mixing
-                plaintext.iter()
+            #[cfg(feature = "aes-gcm")]
+            EncryptionAlgorithm::Aes256Gcm | EncryptionAlgorithm::ChaCha20Poly1305 => {
+                // Pad or truncate key to exactly 32 bytes for AES-256
+                let mut key_bytes = [0u8; 32];
+                let len = key.len().min(32);
+                key_bytes[..len].copy_from_slice(&key[..len]);
+
+                let cipher = Aes256Gcm::new(aes_gcm::Key::<Aes256Gcm>::from_slice(&key_bytes));
+                let aes_nonce = aes_gcm::Nonce::from_slice(nonce);
+                cipher.encrypt(aes_nonce, plaintext)
+                    .map_err(|_| EncryptionError::EncryptionFailed)
+            }
+            #[cfg(not(feature = "aes-gcm"))]
+            EncryptionAlgorithm::Aes256Gcm | EncryptionAlgorithm::ChaCha20Poly1305 => {
+                // Fallback: XOR with nonce mixing (NOT cryptographically secure)
+                if key.is_empty() {
+                    return Err(EncryptionError::EncryptionFailed);
+                }
+                Ok(plaintext.iter()
                     .enumerate()
                     .map(|(i, b)| {
                         let k = key[i % key.len()];
                         let n = if nonce.is_empty() { 0 } else { nonce[i % nonce.len()] };
                         b ^ k ^ n
                     })
-                    .collect()
+                    .collect())
             }
         }
     }
@@ -186,8 +234,28 @@ impl ContentEncryptor {
         nonce: &[u8],
         algorithm: EncryptionAlgorithm,
     ) -> Result<Vec<u8>, EncryptionError> {
-        // XOR encryption is symmetric
-        Ok(self.encrypt_with_key(ciphertext, key, nonce, algorithm))
+        match algorithm {
+            EncryptionAlgorithm::Xor => {
+                // XOR is symmetric
+                self.encrypt_with_key(ciphertext, key, nonce, algorithm)
+            }
+            #[cfg(feature = "aes-gcm")]
+            EncryptionAlgorithm::Aes256Gcm | EncryptionAlgorithm::ChaCha20Poly1305 => {
+                let mut key_bytes = [0u8; 32];
+                let len = key.len().min(32);
+                key_bytes[..len].copy_from_slice(&key[..len]);
+
+                let cipher = Aes256Gcm::new(aes_gcm::Key::<Aes256Gcm>::from_slice(&key_bytes));
+                let aes_nonce = aes_gcm::Nonce::from_slice(nonce);
+                cipher.decrypt(aes_nonce, ciphertext)
+                    .map_err(|_| EncryptionError::DecryptionFailed)
+            }
+            #[cfg(not(feature = "aes-gcm"))]
+            EncryptionAlgorithm::Aes256Gcm | EncryptionAlgorithm::ChaCha20Poly1305 => {
+                // Fallback: XOR with nonce mixing is symmetric
+                self.encrypt_with_key(ciphertext, key, nonce, algorithm)
+            }
+        }
     }
 
     pub fn rotate_key(&mut self, new_key: EncryptionKey) {
@@ -273,7 +341,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_encrypt_decrypt() {
+    fn test_encrypt_decrypt_xor() {
         let mut encryptor = ContentEncryptor::new();
         encryptor.add_key(EncryptionKey::new(
             "key1",
@@ -329,5 +397,71 @@ mod tests {
         let retrieved = store.retrieve("msg1").unwrap();
 
         assert_eq!(retrieved, "Secret message");
+    }
+
+    #[cfg(feature = "aes-gcm")]
+    #[test]
+    fn test_aes256gcm_encrypt_decrypt() {
+        let mut encryptor = ContentEncryptor::new();
+        // AES-256 needs a 32-byte key
+        let key = b"this_is_a_32_byte_key_for_aes!!".to_vec();
+        encryptor.add_key(EncryptionKey::new("aes_key", key, EncryptionAlgorithm::Aes256Gcm));
+
+        let plaintext = "Top secret AES-encrypted message";
+        let encrypted = encryptor.encrypt_string(plaintext).unwrap();
+        assert_eq!(encrypted.algorithm, EncryptionAlgorithm::Aes256Gcm);
+        assert_eq!(encrypted.nonce.len(), 12);
+
+        // Ciphertext should differ from plaintext (authenticated encryption adds tag)
+        assert_ne!(encrypted.ciphertext, plaintext.as_bytes());
+        assert!(encrypted.ciphertext.len() > plaintext.len()); // GCM adds 16-byte auth tag
+
+        let decrypted = encryptor.decrypt_string(&encrypted).unwrap();
+        assert_eq!(decrypted, plaintext);
+    }
+
+    #[cfg(feature = "aes-gcm")]
+    #[test]
+    fn test_aes256gcm_tamper_detection() {
+        let mut encryptor = ContentEncryptor::new();
+        let key = b"another_32_byte_key_for_testing!".to_vec();
+        encryptor.add_key(EncryptionKey::new("aes_key", key, EncryptionAlgorithm::Aes256Gcm));
+
+        let encrypted = encryptor.encrypt_string("sensitive data").unwrap();
+
+        // Tamper with ciphertext
+        let mut tampered = encrypted.clone();
+        if let Some(byte) = tampered.ciphertext.first_mut() {
+            *byte ^= 0xFF;
+        }
+
+        // Decryption should fail due to authentication
+        assert_eq!(encryptor.decrypt(&tampered), Err(EncryptionError::DecryptionFailed));
+    }
+
+    #[cfg(feature = "aes-gcm")]
+    #[test]
+    fn test_chacha20_uses_aes_backend() {
+        let mut encryptor = ContentEncryptor::new();
+        let key = b"32_bytes_key_for_chacha_compat!!".to_vec();
+        encryptor.add_key(EncryptionKey::new("cc_key", key, EncryptionAlgorithm::ChaCha20Poly1305));
+
+        let plaintext = "ChaCha20 routed to AES-256-GCM backend";
+        let encrypted = encryptor.encrypt_string(plaintext).unwrap();
+        let decrypted = encryptor.decrypt_string(&encrypted).unwrap();
+        assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn test_nonce_is_random() {
+        let encryptor = ContentEncryptor::new();
+        let n1 = encryptor.generate_nonce(EncryptionAlgorithm::Aes256Gcm);
+        // Small sleep to change timestamp
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        let n2 = encryptor.generate_nonce(EncryptionAlgorithm::Aes256Gcm);
+        assert_eq!(n1.len(), 12);
+        assert_eq!(n2.len(), 12);
+        // Nonces should differ (extremely unlikely to collide)
+        assert_ne!(n1, n2);
     }
 }

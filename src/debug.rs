@@ -81,7 +81,7 @@ impl DebugEntry {
         Self {
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_millis() as u64,
             level,
             component: component.to_string(),
@@ -196,28 +196,28 @@ impl DebugLogger {
 
     /// Update configuration
     pub fn configure(&self, config: DebugConfig) {
-        *self.config.write().unwrap() = config;
+        *self.config.write().unwrap_or_else(|e| e.into_inner()) = config;
     }
 
     /// Set debug level
     pub fn set_level(&self, level: DebugLevel) {
-        self.config.write().unwrap().level = level;
+        self.config.write().unwrap_or_else(|e| e.into_inner()).level = level;
     }
 
     /// Get current level
     pub fn level(&self) -> DebugLevel {
-        self.config.read().unwrap().level
+        self.config.read().unwrap_or_else(|e| e.into_inner()).level
     }
 
     /// Check if level is enabled
     pub fn is_enabled(&self, level: DebugLevel) -> bool {
-        let config = self.config.read().unwrap();
+        let config = self.config.read().unwrap_or_else(|e| e.into_inner());
         config.level >= level
     }
 
     /// Log an entry
     pub fn log(&self, entry: DebugEntry) {
-        let config = self.config.read().unwrap();
+        let config = self.config.read().unwrap_or_else(|e| e.into_inner());
 
         // Check level
         if config.level < entry.level {
@@ -237,14 +237,14 @@ impl DebugLogger {
             } else {
                 entry.format()
             };
-            eprintln!("{}", formatted);
+            log::debug!("{}", formatted);
         }
 
         drop(config);
 
         // Store in memory
-        let config = self.config.read().unwrap();
-        let mut entries = self.entries.lock().unwrap();
+        let config = self.config.read().unwrap_or_else(|e| e.into_inner());
+        let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         entries.push_back(entry);
 
         // Trim if needed
@@ -276,7 +276,7 @@ impl DebugLogger {
 
     /// Start a timed operation
     pub fn start_timer(&self, component: &str, operation: &str) -> TimerGuard<'_> {
-        if self.config.read().unwrap().enable_timing {
+        if self.config.read().unwrap_or_else(|e| e.into_inner()).enable_timing {
             self.trace(component, format!("Starting: {}", operation));
         }
         TimerGuard {
@@ -289,18 +289,18 @@ impl DebugLogger {
 
     /// Get recent entries
     pub fn recent_entries(&self, count: usize) -> Vec<DebugEntry> {
-        let entries = self.entries.lock().unwrap();
+        let entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         entries.iter().rev().take(count).cloned().collect()
     }
 
     /// Get all entries
     pub fn all_entries(&self) -> Vec<DebugEntry> {
-        self.entries.lock().unwrap().iter().cloned().collect()
+        self.entries.lock().unwrap_or_else(|e| e.into_inner()).iter().cloned().collect()
     }
 
     /// Get entries by level
     pub fn entries_by_level(&self, level: DebugLevel) -> Vec<DebugEntry> {
-        self.entries.lock().unwrap()
+        self.entries.lock().unwrap_or_else(|e| e.into_inner())
             .iter()
             .filter(|e| e.level == level)
             .cloned()
@@ -309,7 +309,7 @@ impl DebugLogger {
 
     /// Get entries by component
     pub fn entries_by_component(&self, component: &str) -> Vec<DebugEntry> {
-        self.entries.lock().unwrap()
+        self.entries.lock().unwrap_or_else(|e| e.into_inner())
             .iter()
             .filter(|e| e.component.contains(component))
             .cloned()
@@ -318,17 +318,17 @@ impl DebugLogger {
 
     /// Clear all entries
     pub fn clear(&self) {
-        self.entries.lock().unwrap().clear();
+        self.entries.lock().unwrap_or_else(|e| e.into_inner()).clear();
     }
 
     /// Get entry count
     pub fn entry_count(&self) -> usize {
-        self.entries.lock().unwrap().len()
+        self.entries.lock().unwrap_or_else(|e| e.into_inner()).len()
     }
 
     /// Generate debug report
     pub fn generate_report(&self) -> DebugReport {
-        let entries = self.entries.lock().unwrap();
+        let entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
 
         let mut errors = 0;
         let mut warnings = 0;
@@ -463,7 +463,7 @@ impl RequestInspector {
     pub fn capture_request(&self, provider: &str, model: &str, prompt: &str) -> RequestHandle<'_> {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_millis() as u64;
 
         let prompt_preview = if prompt.len() > self.max_body_length {
@@ -495,16 +495,16 @@ impl RequestInspector {
 
     /// Get captured requests
     pub fn get_requests(&self) -> Vec<CapturedRequest> {
-        self.requests.lock().unwrap().clone()
+        self.requests.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     /// Clear captured requests
     pub fn clear_requests(&self) {
-        self.requests.lock().unwrap().clear();
+        self.requests.lock().unwrap_or_else(|e| e.into_inner()).clear();
     }
 
     fn store_request(&self, request: CapturedRequest) {
-        let mut requests = self.requests.lock().unwrap();
+        let mut requests = self.requests.lock().unwrap_or_else(|e| e.into_inner());
         requests.push(request);
 
         // Keep last 100 requests
@@ -537,7 +537,7 @@ impl<'a> RequestHandle<'a> {
         self.inspector.logger.debug("RequestInspector",
             format!("Response from {} ({:.2}ms): {} tokens",
                 self.request.provider,
-                self.request.duration.unwrap().as_secs_f64() * 1000.0,
+                self.request.duration.unwrap_or_default().as_secs_f64() * 1000.0,
                 self.request.response_tokens.unwrap_or(0)));
 
         self.inspector.store_request(self.request);

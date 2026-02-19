@@ -3,6 +3,7 @@
 //! Implements an autonomous agent loop that can use tools, search the web,
 //! and complete complex tasks iteratively.
 
+use std::sync::Arc;
 use crate::tool_calling::{ToolRegistry, ToolCall, ToolResult, Tool, ToolParameter, ParameterType};
 use crate::web_search::{WebSearchManager, SearchConfig};
 
@@ -94,6 +95,7 @@ pub struct AgenticLoop {
     search_manager: Option<WebSearchManager>,
     conversation: Vec<AgentMessage>,
     state: AgentState,
+    response_generator: Option<Arc<dyn Fn(&[AgentMessage]) -> String + Send + Sync>>,
 }
 
 impl AgenticLoop {
@@ -118,6 +120,7 @@ impl AgenticLoop {
                 tool_results: Vec::new(),
                 final_answer: None,
             },
+            response_generator: None,
         }
     }
 
@@ -236,7 +239,7 @@ impl AgenticLoop {
                         .into_iter().collect(),
                 };
 
-                result.action = Some(format!("Searching web: {}", call.arguments.get("query").unwrap()));
+                result.action = Some(format!("Searching web: {}", call.arguments.get("query").unwrap_or(&serde_json::Value::Null)));
                 let tool_result = self.execute_tool_call(&call);
                 result.observation = Some(tool_result.output.clone());
 
@@ -259,12 +262,11 @@ impl AgenticLoop {
             }
         }
 
-        // Generate context for model (this would normally call the LLM)
+        // Generate context for model
         let context = self.build_context();
         result.thought = Some(format!("Processing with {} messages in context", context.len()));
 
-        // In a real implementation, this would call the LLM
-        // For now, we simulate a finish state
+        // Generate response: use callback if configured, otherwise build from context
         self.state.status = AgentStatus::Finished;
         self.state.final_answer = Some(self.generate_response_with_context());
 
@@ -333,24 +335,40 @@ impl AgenticLoop {
         self.conversation.iter().collect()
     }
 
+    /// Set a custom response generator callback.
+    ///
+    /// When set, this function is called with the conversation history to produce
+    /// the agent's response. Without a callback, the agent synthesizes a response
+    /// from tool results and context.
+    pub fn set_response_generator<F>(&mut self, f: F)
+    where
+        F: Fn(&[AgentMessage]) -> String + Send + Sync + 'static,
+    {
+        self.response_generator = Some(Arc::new(f));
+    }
+
     /// Generate response using available context
     fn generate_response_with_context(&self) -> String {
-        // In real implementation, this calls the LLM
-        // For now, return summary of available info
-        let mut response = String::new();
+        // If a response generator callback is configured, delegate to it
+        if let Some(ref generator) = self.response_generator {
+            return generator(&self.conversation);
+        }
 
-        // Include tool results if available
+        // Build response from tool results and conversation context
+        let mut parts = Vec::new();
+
+        // Include successful tool results
         for result in &self.state.tool_results {
-            if result.success {
-                response.push_str(&format!("Based on search results:\n{}\n", result.output));
+            if result.success && !result.output.is_empty() {
+                parts.push(format!("[{}] {}", result.tool_name, result.output));
             }
         }
 
-        if response.is_empty() {
-            response = "Response generated based on available context.".to_string();
+        if parts.is_empty() {
+            "Response generated based on available context.".to_string()
+        } else {
+            format!("Based on tool results:\n{}", parts.join("\n---\n"))
         }
-
-        response
     }
 
     /// Get current conversation
@@ -413,6 +431,7 @@ pub struct AgentBuilder {
     config: AgentConfig,
     tools: Vec<Tool>,
     search_config: Option<SearchConfig>,
+    response_generator: Option<Arc<dyn Fn(&[AgentMessage]) -> String + Send + Sync>>,
 }
 
 impl AgentBuilder {
@@ -421,6 +440,7 @@ impl AgentBuilder {
             config: AgentConfig::default(),
             tools: Vec::new(),
             search_config: None,
+            response_generator: None,
         }
     }
 
@@ -454,6 +474,14 @@ impl AgentBuilder {
         self
     }
 
+    pub fn with_response_generator<F>(mut self, f: F) -> Self
+    where
+        F: Fn(&[AgentMessage]) -> String + Send + Sync + 'static,
+    {
+        self.response_generator = Some(Arc::new(f));
+        self
+    }
+
     pub fn build(self) -> AgenticLoop {
         let mut agent = AgenticLoop::new(self.config);
 
@@ -465,6 +493,7 @@ impl AgentBuilder {
             agent = agent.with_web_search(search_config);
         }
 
+        agent.response_generator = self.response_generator;
         agent
     }
 }
@@ -521,5 +550,441 @@ mod tests {
         let agent = AgenticLoop::new(AgentConfig::default());
         let query = agent.extract_search_query("What is the current weather in Madrid?");
         assert!(!query.contains("what is"));
+    }
+
+    // === Additional Unit Tests ===
+
+    #[test]
+    fn test_agent_config_default() {
+        let config = AgentConfig::default();
+        assert_eq!(config.max_iterations, 10);
+        assert!(config.auto_search);
+        assert!(config.search_triggers.contains(&"current".to_string()));
+        assert!(config.search_triggers.contains(&"latest".to_string()));
+        assert!(config.include_tool_history);
+        assert_eq!(config.max_context_tokens, 4096);
+    }
+
+    #[test]
+    fn test_agentic_loop_default() {
+        let agent = AgenticLoop::default();
+        assert!(agent.get_tools().len() >= 3);
+    }
+
+    #[test]
+    fn test_clear_history() {
+        let mut agent = AgenticLoop::new(AgentConfig {
+            auto_search: false,
+            ..Default::default()
+        });
+
+        agent.process("First message");
+        assert!(!agent.get_conversation().is_empty());
+
+        agent.clear_history();
+        assert!(agent.get_conversation().is_empty());
+    }
+
+    #[test]
+    fn test_with_system_prompt() {
+        let agent = AgenticLoop::new(AgentConfig::default())
+            .with_system_prompt("You are a test assistant.");
+
+        assert_eq!(agent.config.system_prompt, "You are a test assistant.");
+    }
+
+    #[test]
+    fn test_register_custom_tool() {
+        let mut agent = AgenticLoop::new(AgentConfig::default());
+        let initial_count = agent.get_tools().len();
+
+        let custom_tool = Tool::new("custom_tool", "A custom tool for testing")
+            .with_parameter(ToolParameter::new(
+                "input",
+                "The input parameter",
+                ParameterType::String,
+            ));
+
+        agent.register_tool(custom_tool);
+
+        assert_eq!(agent.get_tools().len(), initial_count + 1);
+        assert!(agent.get_tools().iter().any(|t| t.name == "custom_tool"));
+    }
+
+    #[test]
+    fn test_get_tools_schema() {
+        let agent = AgenticLoop::new(AgentConfig::default());
+        let schema = agent.get_tools_schema();
+
+        assert!(!schema.is_empty());
+        // Each tool should have a function with a name in the schema (OpenAI format)
+        for tool_schema in &schema {
+            assert_eq!(tool_schema.get("type").and_then(|v| v.as_str()), Some("function"));
+            assert!(tool_schema.get("function").is_some());
+            assert!(tool_schema["function"].get("name").is_some());
+        }
+    }
+
+    #[test]
+    fn test_search_trigger_detection_all_keywords() {
+        let agent = AgenticLoop::new(AgentConfig::default());
+
+        let triggers = vec![
+            "current price of Bitcoin",
+            "latest news",
+            "today's weather",
+            "what is happening now",
+            "recent developments",
+            "2024 predictions",
+            "2025 outlook",
+            "breaking news",
+            "Bitcoin price today",
+            "weather forecast",
+        ];
+
+        for query in triggers {
+            assert!(agent.needs_web_search(query), "Failed for: {}", query);
+        }
+    }
+
+    #[test]
+    fn test_no_search_trigger() {
+        let agent = AgenticLoop::new(AgentConfig::default());
+
+        let no_triggers = vec![
+            "What is 2 + 2?",
+            "Explain recursion",
+            "How does a computer work?",
+            "Define photosynthesis",
+        ];
+
+        for query in no_triggers {
+            assert!(!agent.needs_web_search(query), "False positive for: {}", query);
+        }
+    }
+
+    #[test]
+    fn test_custom_search_triggers() {
+        let agent = AgenticLoop::new(AgentConfig {
+            search_triggers: vec!["custom_trigger".to_string()],
+            ..Default::default()
+        });
+
+        assert!(agent.needs_web_search("This has custom_trigger"));
+        assert!(!agent.needs_web_search("This has current")); // Default trigger removed
+    }
+
+    #[test]
+    fn test_auto_search_disabled() {
+        let mut agent = AgenticLoop::new(AgentConfig {
+            auto_search: false,
+            ..Default::default()
+        });
+
+        let result = agent.process("What is the current weather?");
+
+        // Should still process but not trigger search behavior
+        assert!(matches!(result.status, AgentStatus::Finished | AgentStatus::MaxIterationsReached));
+    }
+
+    #[test]
+    fn test_extract_search_query_variants() {
+        let agent = AgenticLoop::new(AgentConfig::default());
+
+        // Test various query formats
+        let queries = vec![
+            ("what is the weather?", "the weather?"),
+            ("how to cook pasta?", "cook pasta?"),
+            ("where is Tokyo?", "tokyo?"),
+            ("tell me about Rust", "rust"),
+        ];
+
+        for (input, _expected_contains) in queries {
+            let extracted = agent.extract_search_query(input);
+            assert!(!extracted.to_lowercase().starts_with("what is"));
+            assert!(!extracted.to_lowercase().starts_with("how to"));
+            assert!(!extracted.to_lowercase().starts_with("where is"));
+            assert!(!extracted.to_lowercase().starts_with("tell me about"));
+        }
+    }
+
+    #[test]
+    fn test_extract_search_query_length_limit() {
+        let agent = AgenticLoop::new(AgentConfig::default());
+
+        let long_query = "A".repeat(200);
+        let extracted = agent.extract_search_query(&long_query);
+
+        assert!(extracted.len() <= 100);
+    }
+
+    #[test]
+    fn test_max_iterations_reached() {
+        let mut agent = AgenticLoop::new(AgentConfig {
+            max_iterations: 1,
+            auto_search: false,
+            ..Default::default()
+        });
+
+        // Force multiple iterations by using a config that doesn't auto-finish
+        let result = agent.process("Test query");
+
+        // Should complete within max iterations
+        assert!(result.total_iterations <= 1);
+    }
+
+    #[test]
+    fn test_conversation_history() {
+        let mut agent = AgenticLoop::new(AgentConfig {
+            auto_search: false,
+            system_prompt: "Test system prompt".to_string(),
+            ..Default::default()
+        });
+
+        agent.process("First message");
+
+        let conversation = agent.get_conversation();
+
+        // Should have system prompt and user message
+        assert!(conversation.len() >= 2);
+        assert!(conversation.iter().any(|m| m.role == AgentRole::System));
+        assert!(conversation.iter().any(|m| m.role == AgentRole::User));
+    }
+
+    #[test]
+    fn test_agent_state_initial() {
+        let agent = AgenticLoop::new(AgentConfig::default());
+
+        assert_eq!(agent.state.iteration, 0);
+        assert_eq!(agent.state.status, AgentStatus::Thinking);
+        assert!(agent.state.tool_calls.is_empty());
+        assert!(agent.state.tool_results.is_empty());
+    }
+
+    #[test]
+    fn test_iteration_result_structure() {
+        let mut agent = AgenticLoop::new(AgentConfig {
+            auto_search: false,
+            ..Default::default()
+        });
+
+        let result = agent.process("Simple query");
+
+        // Should have at least one iteration
+        assert!(!result.iterations.is_empty());
+
+        // First iteration should have an iteration number
+        assert_eq!(result.iterations[0].iteration, 1);
+    }
+
+    #[test]
+    fn test_agent_loop_result_structure() {
+        let mut agent = AgenticLoop::new(AgentConfig {
+            auto_search: false,
+            ..Default::default()
+        });
+
+        let result = agent.process("Test");
+
+        // Result should have all expected fields
+        assert!(result.total_iterations > 0);
+        assert!(result.final_answer.is_some() || result.status == AgentStatus::MaxIterationsReached);
+    }
+
+    #[test]
+    fn test_agent_builder_chaining() {
+        let agent = AgentBuilder::new()
+            .with_max_iterations(20)
+            .with_auto_search(false)
+            .with_search_triggers(vec!["custom".to_string()])
+            .with_system_prompt("Custom prompt")
+            .build();
+
+        assert_eq!(agent.config.max_iterations, 20);
+        assert!(!agent.config.auto_search);
+        assert_eq!(agent.config.search_triggers, vec!["custom".to_string()]);
+        assert_eq!(agent.config.system_prompt, "Custom prompt");
+    }
+
+    #[test]
+    fn test_agent_builder_with_custom_tool() {
+        let custom_tool = Tool::new("test_tool", "Test description")
+            .with_parameter(ToolParameter::new("param", "A parameter", ParameterType::String));
+
+        let agent = AgentBuilder::new()
+            .with_tool(custom_tool)
+            .build();
+
+        assert!(agent.get_tools().iter().any(|t| t.name == "test_tool"));
+    }
+
+    #[test]
+    fn test_agent_builder_default() {
+        let builder = AgentBuilder::default();
+        let agent = builder.build();
+
+        // Should have default config
+        assert_eq!(agent.config.max_iterations, 10);
+    }
+
+    #[test]
+    fn test_all_agent_statuses() {
+        let statuses = vec![
+            AgentStatus::Thinking,
+            AgentStatus::CallingTool,
+            AgentStatus::WaitingForToolResult,
+            AgentStatus::Finished,
+            AgentStatus::Error,
+            AgentStatus::MaxIterationsReached,
+        ];
+
+        for status in statuses {
+            // Just verify they can be created and compared
+            assert_eq!(status, status);
+        }
+    }
+
+    #[test]
+    fn test_all_agent_roles() {
+        let roles = vec![
+            AgentRole::System,
+            AgentRole::User,
+            AgentRole::Assistant,
+            AgentRole::Tool,
+        ];
+
+        for role in roles {
+            let msg = AgentMessage {
+                role,
+                content: "test".to_string(),
+                tool_calls: None,
+                tool_results: None,
+            };
+            assert_eq!(msg.role, role);
+        }
+    }
+
+    #[test]
+    fn test_builtin_tools_present() {
+        let agent = AgenticLoop::new(AgentConfig::default());
+        let tools = agent.get_tools();
+
+        let tool_names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+
+        assert!(tool_names.contains(&"calculator"));
+        assert!(tool_names.contains(&"datetime"));
+        assert!(tool_names.contains(&"text_length"));
+    }
+
+    #[test]
+    fn test_process_resets_state() {
+        let mut agent = AgenticLoop::new(AgentConfig {
+            auto_search: false,
+            ..Default::default()
+        });
+
+        // First process
+        agent.process("First query");
+
+        // State should be reset for second query
+        let result = agent.process("Second query");
+
+        // Iteration count should start fresh
+        assert!(result.total_iterations <= agent.config.max_iterations);
+    }
+
+    #[test]
+    fn test_build_context() {
+        let mut agent = AgenticLoop::new(AgentConfig {
+            auto_search: false,
+            system_prompt: "System".to_string(),
+            ..Default::default()
+        });
+
+        agent.process("User message");
+
+        let context = agent.build_context();
+
+        // Context should include system and user messages
+        assert!(context.len() >= 2);
+    }
+
+    #[test]
+    fn test_include_tool_history_setting() {
+        let agent_with_history = AgenticLoop::new(AgentConfig {
+            include_tool_history: true,
+            ..Default::default()
+        });
+        assert!(agent_with_history.config.include_tool_history);
+
+        let agent_without_history = AgenticLoop::new(AgentConfig {
+            include_tool_history: false,
+            ..Default::default()
+        });
+        assert!(!agent_without_history.config.include_tool_history);
+    }
+
+    #[test]
+    fn test_multiple_sequential_processes() {
+        let mut agent = AgenticLoop::new(AgentConfig {
+            auto_search: false,
+            ..Default::default()
+        });
+
+        // Process multiple queries without clearing history
+        let result1 = agent.process("Query 1");
+        let result2 = agent.process("Query 2");
+        let result3 = agent.process("Query 3");
+
+        // Each should complete successfully
+        assert!(matches!(result1.status, AgentStatus::Finished | AgentStatus::MaxIterationsReached));
+        assert!(matches!(result2.status, AgentStatus::Finished | AgentStatus::MaxIterationsReached));
+        assert!(matches!(result3.status, AgentStatus::Finished | AgentStatus::MaxIterationsReached));
+
+        // Conversation should grow (at least user messages are added)
+        let conversation = agent.get_conversation();
+        assert!(conversation.len() >= 3, "Expected at least 3 messages, got {}", conversation.len());
+    }
+
+    #[test]
+    fn test_response_generator_callback() {
+        let mut agent = AgenticLoop::new(AgentConfig {
+            auto_search: false,
+            ..Default::default()
+        });
+
+        agent.set_response_generator(|conversation| {
+            let user_msgs: Vec<_> = conversation.iter()
+                .filter(|m| m.role == AgentRole::User)
+                .collect();
+            format!("Custom response for {} user messages", user_msgs.len())
+        });
+
+        let result = agent.process("Hello");
+        assert_eq!(result.status, AgentStatus::Finished);
+        assert!(result.final_answer.as_ref().unwrap().contains("Custom response for 1 user messages"));
+    }
+
+    #[test]
+    fn test_builder_with_response_generator() {
+        let agent = AgentBuilder::new()
+            .with_max_iterations(5)
+            .with_response_generator(|_| "Builder callback response".to_string())
+            .build();
+
+        assert!(agent.response_generator.is_some());
+    }
+
+    #[test]
+    fn test_default_response_without_callback() {
+        let mut agent = AgenticLoop::new(AgentConfig {
+            auto_search: false,
+            ..Default::default()
+        });
+
+        let result = agent.process("test query");
+        // Without callback, should produce default context-based response
+        assert!(result.final_answer.is_some());
+        assert!(result.final_answer.unwrap().contains("based on available context"));
     }
 }

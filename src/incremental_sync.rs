@@ -29,7 +29,7 @@ impl SyncEntry {
     pub fn add(entity_type: &str, entity_id: &str, data: &str) -> Self {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
 
         Self {
@@ -46,7 +46,7 @@ impl SyncEntry {
     pub fn update(entity_type: &str, entity_id: &str, data: &str, version: u64) -> Self {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
 
         Self {
@@ -63,7 +63,7 @@ impl SyncEntry {
     pub fn delete(entity_type: &str, entity_id: &str) -> Self {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
 
         Self {
@@ -260,7 +260,7 @@ impl IncrementalSyncManager {
     pub fn acknowledge(&mut self, client_id: &str, version: u64) {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
 
         let state = self.client_states

@@ -133,7 +133,7 @@ impl Default for HealthCheckConfig {
 /// Health checker for multiple providers
 pub struct HealthChecker {
     config: HealthCheckConfig,
-    providers: HashMap<String, ProviderHealth>,
+    providers: HashMap<String, (String, ProviderHealth)>,
     check_fn: Option<Arc<dyn Fn(&str, &str) -> Result<Duration, String> + Send + Sync>>,
 }
 
@@ -156,11 +156,11 @@ impl HealthChecker {
         self
     }
 
-    /// Register a provider
+    /// Register a provider with its URL for health checking
     pub fn register(&mut self, name: impl Into<String>, url: impl Into<String>) {
         let name = name.into();
-        let _url = url.into();
-        self.providers.insert(name, ProviderHealth::default());
+        let url = url.into();
+        self.providers.insert(name, (url, ProviderHealth::default()));
     }
 
     /// Check a specific provider
@@ -192,7 +192,7 @@ impl HealthChecker {
         };
 
         // Update provider health
-        if let Some(health) = self.providers.get_mut(name) {
+        if let Some((_, health)) = self.providers.get_mut(name) {
             Self::update_health_impl(health, &check_result, &self.config);
         }
 
@@ -273,41 +273,35 @@ impl HealthChecker {
         }
     }
 
-    /// Check all registered providers
+    /// Check all registered providers by calling each one's stored URL
     pub fn check_all(&mut self) -> Vec<HealthCheckResult> {
-        let providers: Vec<_> = self.providers.keys().cloned().collect();
+        let provider_info: Vec<(String, String)> = self.providers.iter()
+            .map(|(name, (url, _))| (name.clone(), url.clone()))
+            .collect();
         let mut results = Vec::new();
 
-        for name in providers {
-            // We'd need to store URLs to do this properly
-            // For now, this is a placeholder
-            results.push(HealthCheckResult {
-                provider: name,
-                healthy: true,
-                response_time: Duration::ZERO,
-                error: None,
-                timestamp: Instant::now(),
-                check_type: self.config.check_type,
-            });
+        for (name, url) in provider_info {
+            let result = self.check(&name, &url);
+            results.push(result);
         }
 
         results
     }
 
-    /// Get health status of a provider
-    pub fn get_health(&self, name: &str) -> Option<&ProviderHealth> {
-        self.providers.get(name)
+    /// Get the registered URL for a provider
+    pub fn get_url(&self, name: &str) -> Option<&str> {
+        self.providers.get(name).map(|(url, _)| url.as_str())
     }
 
-    /// Get all provider health statuses
-    pub fn all_health(&self) -> &HashMap<String, ProviderHealth> {
-        &self.providers
+    /// Get health status of a provider
+    pub fn get_health(&self, name: &str) -> Option<&ProviderHealth> {
+        self.providers.get(name).map(|(_, h)| h)
     }
 
     /// Get healthy providers
     pub fn healthy_providers(&self) -> Vec<&str> {
         self.providers.iter()
-            .filter(|(_, h)| h.status.is_available())
+            .filter(|(_, (_, h))| h.status.is_available())
             .map(|(n, _)| n.as_str())
             .collect()
     }
@@ -315,21 +309,21 @@ impl HealthChecker {
     /// Get unhealthy providers
     pub fn unhealthy_providers(&self) -> Vec<&str> {
         self.providers.iter()
-            .filter(|(_, h)| !h.status.is_available())
+            .filter(|(_, (_, h))| !h.status.is_available())
             .map(|(n, _)| n.as_str())
             .collect()
     }
 
-    /// Reset health status for a provider
+    /// Reset health status for a provider (preserves URL)
     pub fn reset(&mut self, name: &str) {
-        if let Some(health) = self.providers.get_mut(name) {
+        if let Some((_, health)) = self.providers.get_mut(name) {
             *health = ProviderHealth::default();
         }
     }
 
-    /// Reset all providers
+    /// Reset all providers (preserves URLs)
     pub fn reset_all(&mut self) {
-        for health in self.providers.values_mut() {
+        for (_, health) in self.providers.values_mut() {
             *health = ProviderHealth::default();
         }
     }
@@ -370,7 +364,7 @@ impl HealthChecker {
             health_percent: 0.0,
         };
 
-        for health in self.providers.values() {
+        for (_, health) in self.providers.values() {
             match health.status {
                 HealthStatus::Healthy => summary.healthy += 1,
                 HealthStatus::Degraded => summary.degraded += 1,
@@ -455,23 +449,58 @@ mod tests {
     fn test_summary() {
         let mut checker = HealthChecker::default();
 
-        checker.providers.insert("p1".to_string(), ProviderHealth {
+        checker.providers.insert("p1".to_string(), ("http://p1".to_string(), ProviderHealth {
             status: HealthStatus::Healthy,
             ..Default::default()
-        });
-        checker.providers.insert("p2".to_string(), ProviderHealth {
+        }));
+        checker.providers.insert("p2".to_string(), ("http://p2".to_string(), ProviderHealth {
             status: HealthStatus::Degraded,
             ..Default::default()
-        });
-        checker.providers.insert("p3".to_string(), ProviderHealth {
+        }));
+        checker.providers.insert("p3".to_string(), ("http://p3".to_string(), ProviderHealth {
             status: HealthStatus::Unhealthy,
             ..Default::default()
-        });
+        }));
 
         let summary = checker.summary();
         assert_eq!(summary.total, 3);
         assert_eq!(summary.healthy, 1);
         assert_eq!(summary.degraded, 1);
         assert_eq!(summary.unhealthy, 1);
+    }
+
+    #[test]
+    fn test_register_stores_url() {
+        let mut checker = HealthChecker::default();
+        checker.register("ollama", "http://localhost:11434");
+        assert_eq!(checker.get_url("ollama"), Some("http://localhost:11434"));
+        assert!(checker.get_url("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_check_all_uses_stored_urls() {
+        let mut checker = HealthChecker::new(HealthCheckConfig::default())
+            .with_check_fn(|name, url| {
+                // Verify the check_fn receives correct name and URL
+                assert!(!name.is_empty());
+                assert!(!url.is_empty());
+                Ok(Duration::from_millis(50))
+            });
+
+        checker.register("provider_a", "http://localhost:1111");
+        checker.register("provider_b", "http://localhost:2222");
+
+        let results = checker.check_all();
+        assert_eq!(results.len(), 2);
+        for result in &results {
+            assert!(result.healthy);
+            assert!(result.response_time > Duration::ZERO);
+        }
+
+        // After check_all, providers should have updated health
+        let health_a = checker.get_health("provider_a").unwrap();
+        assert_eq!(health_a.consecutive_successes, 1);
+        let health_b = checker.get_health("provider_b").unwrap();
+        assert_eq!(health_b.consecutive_successes, 1);
     }
 }

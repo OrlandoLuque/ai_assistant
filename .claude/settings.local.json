@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nFix document-formats -> documents feature flag mismatch\n\nThe Cargo.toml feature was renamed to `documents` but source code still\nreferenced the old `document-formats` name, causing cfg warnings. Also\nadds missing Pdf variant to DocumentFormat match in auto_indexing and\nupdates PENDING.md dependency snippet to match actual Cargo.toml.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(findstr:*)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:qdrant.tech)",
+      "WebFetch(domain:docs.rs)",
+      "WebFetch(domain:medium.com)",
+      "WebFetch(domain:x.com)",
+      "Bash(git log:*)",
+      "Bash(powershell -Command \"Select-String -Path src\\\\distributed.rs,src\\\\p2p.rs -Pattern ''note:|Note:|TODO:|FIXME:|placeholder|would need|would require'' -CaseSensitive:$false | Select-Object -First 15\":*)",
+      "Bash(where:*)",
+      "Bash(choco:*)",
+      "Bash(winget:*)",
+      "Bash(export PATH=\"$PATH:/c/Users/Lander/AppData/Local/Microsoft/WinGet/Links\")",
+      "Bash(protoc:*)",
+      "Bash(export:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:crates.io)",
+      "WebFetch(domain:lib.rs)",
+      "WebFetch(domain:deepwiki.com)",
+      "Bash(set:*)",
+      "Bash(done)",
+      "Bash(python3:*)",
+      "Bash(powershell -Command:*)",
+      "Bash(ren:*)"
+    ]
+  }
+}

@@ -49,7 +49,7 @@ impl ConversationSnapshot {
     pub fn new(name: &str) -> Self {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
 
         Self {
@@ -82,7 +82,7 @@ impl ConversationSnapshot {
     pub fn add_message(&mut self, role: &str, content: &str) {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
 
         self.messages.push(SnapshotMessage {
@@ -130,6 +130,18 @@ impl ConversationSnapshot {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, serde_json::Error> {
         serde_json::from_slice(bytes)
     }
+
+    /// Serialize to internal binary format (bincode+gzip when feature enabled).
+    #[cfg(feature = "binary-storage")]
+    pub fn to_binary(&self) -> Result<Vec<u8>, anyhow::Error> {
+        crate::internal_storage::serialize_internal(self)
+    }
+
+    /// Deserialize from internal format (auto-detects binary or JSON).
+    #[cfg(feature = "binary-storage")]
+    pub fn from_binary(bytes: &[u8]) -> Result<Self, anyhow::Error> {
+        crate::internal_storage::deserialize_internal(bytes)
+    }
 }
 
 /// Snapshot manager
@@ -162,7 +174,7 @@ impl SnapshotManager {
         let snapshot = ConversationSnapshot::new(name);
         let id = snapshot.metadata.id.clone();
         self.snapshots.insert(id.clone(), snapshot);
-        self.snapshots.get_mut(&id).unwrap()
+        self.snapshots.get_mut(&id).expect("key just inserted")
     }
 
     pub fn save(&mut self, snapshot: ConversationSnapshot) -> String {
@@ -233,13 +245,13 @@ impl SnapshotManager {
 
     fn save_to_disk(&self, id: &str, base_path: &str) {
         if let Some(snapshot) = self.snapshots.get(id) {
-            let file_path = format!("{}/{}.json", base_path, id);
-            if let Ok(json) = snapshot.to_json() {
-                let _ = std::fs::write(file_path, json);
-            }
+            let path = std::path::Path::new(base_path).join(format!("{}.bin", id));
+            let _ = crate::internal_storage::save_internal(snapshot, &path);
         }
     }
 
+    /// Load snapshots from disk. Supports both legacy JSON (.json) and
+    /// binary (.bin) snapshot files via auto-detection.
     pub fn load_from_disk(&mut self, base_path: &str) -> std::io::Result<usize> {
         let mut count = 0;
 
@@ -247,12 +259,16 @@ impl SnapshotManager {
             let entry = entry?;
             let path = entry.path();
 
-            if path.extension().map(|e| e == "json").unwrap_or(false) {
-                if let Ok(contents) = std::fs::read_to_string(&path) {
-                    if let Ok(snapshot) = ConversationSnapshot::from_json(&contents) {
-                        self.snapshots.insert(snapshot.metadata.id.clone(), snapshot);
-                        count += 1;
-                    }
+            let is_snapshot_file = path
+                .extension()
+                .map(|e| e == "json" || e == "bin")
+                .unwrap_or(false);
+
+            if is_snapshot_file {
+                // Use internal_storage to auto-detect format
+                if let Ok(snapshot) = crate::internal_storage::load_internal::<ConversationSnapshot>(&path) {
+                    self.snapshots.insert(snapshot.metadata.id.clone(), snapshot);
+                    count += 1;
                 }
             }
         }

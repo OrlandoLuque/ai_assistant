@@ -9,14 +9,14 @@
 
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Instant;
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
+
 
 #[cfg(feature = "documents")]
 use super::document_parsing::ParsedDocument;
@@ -877,7 +877,6 @@ impl AutoIndexer {
     fn chunk_by_sentence(&self, content: &str) -> Vec<(String, usize)> {
         let mut chunks = Vec::new();
         let mut current_chunk = String::new();
-        let mut current_offset = 0usize;
         let mut chunk_start = 0usize;
         let target_chars = self.config.target_chunk_tokens * 4;
 

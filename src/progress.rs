@@ -323,7 +323,7 @@ impl MultiProgressTracker {
         let operation = operation.into();
         let progress = Progress::new(&operation, 0, total);
 
-        let mut ops = self.operations.lock().unwrap();
+        let mut ops = self.operations.lock().unwrap_or_else(|e| e.into_inner());
         let index = ops.len();
         ops.push(progress);
 
@@ -339,12 +339,12 @@ impl MultiProgressTracker {
 
     /// Get all current operation progresses
     pub fn get_all(&self) -> Vec<Progress> {
-        self.operations.lock().unwrap().clone()
+        self.operations.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     /// Get overall progress across all operations
     pub fn overall_progress(&self) -> Progress {
-        let ops = self.operations.lock().unwrap();
+        let ops = self.operations.lock().unwrap_or_else(|e| e.into_inner());
         if ops.is_empty() {
             return Progress::complete("All operations");
         }
@@ -380,7 +380,7 @@ impl OperationHandle {
             .with_elapsed(self.start_time.elapsed());
         progress.estimate_remaining();
 
-        let mut ops = self.tracker.lock().unwrap();
+        let mut ops = self.tracker.lock().unwrap_or_else(|e| e.into_inner());
         if self.index < ops.len() {
             ops[self.index] = progress.clone();
         }
@@ -396,7 +396,7 @@ impl OperationHandle {
             .with_message(message)
             .with_elapsed(self.start_time.elapsed());
 
-        let mut ops = self.tracker.lock().unwrap();
+        let mut ops = self.tracker.lock().unwrap_or_else(|e| e.into_inner());
         if self.index < ops.len() {
             ops[self.index] = progress.clone();
         }
@@ -411,7 +411,7 @@ impl OperationHandle {
         let progress = Progress::error(&self.operation, error)
             .with_elapsed(self.start_time.elapsed());
 
-        let mut ops = self.tracker.lock().unwrap();
+        let mut ops = self.tracker.lock().unwrap_or_else(|e| e.into_inner());
         if self.index < ops.len() {
             ops[self.index] = progress.clone();
         }
@@ -454,21 +454,21 @@ impl ProgressAggregator {
 
     /// Record a successful completion
     pub fn record_success(&self) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         inner.completed_items += 1;
         self.report_progress(&inner);
     }
 
     /// Record a failure
     pub fn record_failure(&self) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         inner.failed_items += 1;
         self.report_progress(&inner);
     }
 
     /// Get current progress
     pub fn get_progress(&self) -> Progress {
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         self.build_progress(&inner)
     }
 
@@ -570,7 +570,7 @@ impl ProgressCallbackBuilder {
 pub fn logging_callback(prefix: &'static str) -> ProgressCallback {
     Box::new(move |progress: Progress| {
         if progress.is_error {
-            eprintln!("[{}] ERROR {}: {:?}", prefix, progress.operation, progress.error_message);
+            log::error!("[{}] ERROR {}: {:?}", prefix, progress.operation, progress.error_message);
         } else if progress.is_complete {
             println!("[{}] {} completed in {}", prefix, progress.operation, progress.elapsed_human());
         } else {

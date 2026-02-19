@@ -302,10 +302,10 @@ impl TableExtractor {
     /// Extract tables specifically from HTML content.
     pub fn extract_html_tables(&self, html: &str) -> Vec<ExtractedTable> {
         let mut tables = Vec::new();
-        let table_re = Regex::new(r"(?is)<table[^>]*>(.*?)</table>").unwrap();
+        let table_re = Regex::new(r"(?is)<table[^>]*>(.*?)</table>").expect("valid regex");
 
         for cap in table_re.captures_iter(html) {
-            let full_match = cap.get(0).unwrap();
+            let full_match = cap.get(0).expect("capture group 0");
             let table_content = &cap[1];
             if let Some(table) = self.parse_html_table(table_content, full_match.start(), full_match.end()) {
                 if table.column_count >= self.config.min_columns
@@ -577,21 +577,21 @@ impl TableExtractor {
         let mut rows: Vec<Vec<TableCell>> = Vec::new();
 
         // Extract caption if present
-        let caption_re = Regex::new(r"(?is)<caption[^>]*>(.*?)</caption>").unwrap();
+        let caption_re = Regex::new(r"(?is)<caption[^>]*>(.*?)</caption>").expect("valid regex");
         let caption = caption_re
             .captures(table_html)
             .map(|c| strip_html_tags(&c[1]).trim().to_string());
 
         // Find all table rows
-        let tr_re = Regex::new(r"(?is)<tr[^>]*>(.*?)</tr>").unwrap();
-        let th_re = Regex::new(r"(?is)<th[^>]*>(.*?)</th>").unwrap();
-        let td_re = Regex::new(r"(?is)<td[^>]*>(.*?)</td>").unwrap();
-        let colspan_re = Regex::new(r#"(?i)colspan\s*=\s*["']?(\d+)["']?"#).unwrap();
-        let rowspan_re = Regex::new(r#"(?i)rowspan\s*=\s*["']?(\d+)["']?"#).unwrap();
+        let tr_re = Regex::new(r"(?is)<tr[^>]*>(.*?)</tr>").expect("valid regex");
+        let th_re = Regex::new(r"(?is)<th[^>]*>(.*?)</th>").expect("valid regex");
+        let td_re = Regex::new(r"(?is)<td[^>]*>(.*?)</td>").expect("valid regex");
+        let colspan_re = Regex::new(r#"(?i)colspan\s*=\s*["']?(\d+)["']?"#).expect("valid regex");
+        let rowspan_re = Regex::new(r#"(?i)rowspan\s*=\s*["']?(\d+)["']?"#).expect("valid regex");
 
         for tr_cap in tr_re.captures_iter(table_html) {
             let row_content = &tr_cap[1];
-            let _tr_tag = tr_cap.get(0).unwrap().as_str();
+            let _tr_tag = tr_cap.get(0).expect("capture group 0").as_str();
 
             // Check if this row contains <th> elements
             let has_th = th_re.is_match(row_content);
@@ -605,20 +605,20 @@ impl TableExtractor {
             } else {
                 // This is a data row - parse <td> and <th> cells
                 let mut cells = Vec::new();
-                let td_cell_re = Regex::new(r"(?is)<td([^>]*)>(.*?)</td>").unwrap();
-                let th_cell_re = Regex::new(r"(?is)<th([^>]*)>(.*?)</th>").unwrap();
+                let td_cell_re = Regex::new(r"(?is)<td([^>]*)>(.*?)</td>").expect("valid regex");
+                let th_cell_re = Regex::new(r"(?is)<th([^>]*)>(.*?)</th>").expect("valid regex");
 
                 // Collect all cell matches with their positions for ordering
                 let mut cell_matches: Vec<(usize, String, String, bool)> = Vec::new();
 
                 for cell_cap in td_cell_re.captures_iter(row_content) {
-                    let pos = cell_cap.get(0).unwrap().start();
+                    let pos = cell_cap.get(0).expect("capture group 0").start();
                     let attrs = cell_cap[1].to_string();
                     let content = strip_html_tags(&cell_cap[2]).trim().to_string();
                     cell_matches.push((pos, attrs, content, false));
                 }
                 for cell_cap in th_cell_re.captures_iter(row_content) {
-                    let pos = cell_cap.get(0).unwrap().start();
+                    let pos = cell_cap.get(0).expect("capture group 0").start();
                     let attrs = cell_cap[1].to_string();
                     let content = strip_html_tags(&cell_cap[2]).trim().to_string();
                     cell_matches.push((pos, attrs, content, true));
@@ -864,7 +864,7 @@ fn csv_quote(field: &str) -> String {
 
 /// Strip HTML tags from a string, leaving only text content.
 fn strip_html_tags(html: &str) -> String {
-    let tag_re = Regex::new(r"<[^>]+>").unwrap();
+    let tag_re = Regex::new(r"<[^>]+>").expect("valid regex");
     let result = tag_re.replace_all(html, "");
     // Also decode basic HTML entities
     result

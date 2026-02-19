@@ -344,6 +344,17 @@ impl MetricsTracker {
         serde_json::to_string_pretty(&export).unwrap_or_default()
     }
 
+    /// Export all metrics to internal binary format (bincode+gzip when feature enabled).
+    #[cfg(feature = "binary-storage")]
+    pub fn export_bytes(&self) -> Result<Vec<u8>, anyhow::Error> {
+        let export = MetricsExport {
+            session_metrics: self.get_session_metrics(),
+            rag_quality: self.get_rag_quality_metrics(),
+            message_metrics: self.message_metrics.clone(),
+        };
+        crate::internal_storage::serialize_internal(&export)
+    }
+
     /// Clear all metrics
     pub fn clear(&mut self) {
         self.message_metrics.clear();
@@ -647,6 +658,18 @@ impl TestSuite {
     /// Export test suite to JSON
     pub fn to_json(&self) -> String {
         serde_json::to_string_pretty(self).unwrap_or_default()
+    }
+
+    /// Serialize to internal binary format.
+    #[cfg(feature = "binary-storage")]
+    pub fn to_bytes(&self) -> Result<Vec<u8>, anyhow::Error> {
+        crate::internal_storage::serialize_internal(self)
+    }
+
+    /// Deserialize from internal format (auto-detects binary or JSON).
+    #[cfg(feature = "binary-storage")]
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, anyhow::Error> {
+        crate::internal_storage::deserialize_internal(bytes)
     }
 }
 

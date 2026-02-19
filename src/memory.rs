@@ -370,6 +370,24 @@ impl MemoryStore {
         Ok(count)
     }
 
+    /// Export memories to internal binary format (bincode+gzip when feature enabled).
+    #[cfg(feature = "binary-storage")]
+    pub fn export_bytes(&self) -> Result<Vec<u8>, anyhow::Error> {
+        let memories: Vec<_> = self.memories.values().collect();
+        crate::internal_storage::serialize_internal(&memories)
+    }
+
+    /// Import memories from internal binary format (auto-detects binary or JSON).
+    #[cfg(feature = "binary-storage")]
+    pub fn import_bytes(&mut self, bytes: &[u8]) -> Result<usize, anyhow::Error> {
+        let memories: Vec<MemoryEntry> = crate::internal_storage::deserialize_internal(bytes)?;
+        let count = memories.len();
+        for memory in memories {
+            self.memories.insert(memory.id.clone(), memory);
+        }
+        Ok(count)
+    }
+
     /// Build a context string from relevant memories
     pub fn build_context(&mut self, query: &str, max_tokens: usize) -> String {
         let relevant = self.search(query);

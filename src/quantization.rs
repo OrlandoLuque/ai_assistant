@@ -581,7 +581,7 @@ impl QuantizationDetector {
             QuantFormat::GGUF_Q3_K_S,
             QuantFormat::GGUF_Q2_K,
         ];
-        formats.sort_by(|a, b| b.quality_retention().partial_cmp(&a.quality_retention()).unwrap());
+        formats.sort_by(|a, b| b.quality_retention().partial_cmp(&a.quality_retention()).unwrap_or(std::cmp::Ordering::Equal));
         formats
     }
 

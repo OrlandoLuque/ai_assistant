@@ -212,7 +212,7 @@ impl CotParser {
     fn extract_numbered_steps(&self, response: &str) -> Vec<ReasoningStep> {
         let mut steps = Vec::new();
         // Use a simpler regex without lookahead (not supported by regex crate)
-        let re = regex::Regex::new(r"(?m)^\s*(\d+)[.\)]\s*(.+)$").unwrap();
+        let re = regex::Regex::new(r"(?m)^\s*(\d+)[.\)]\s*(.+)$").expect("valid regex");
 
         for (idx, cap) in re.captures_iter(response).enumerate() {
             if idx >= self.config.max_steps {
@@ -383,7 +383,7 @@ fn extract_entities(text: &str) -> Vec<String> {
     let mut entities = Vec::new();
 
     // Extract quoted strings
-    let quote_re = regex::Regex::new(r#""([^"]+)""#).unwrap();
+    let quote_re = regex::Regex::new(r#""([^"]+)""#).expect("valid regex");
     for cap in quote_re.captures_iter(text) {
         if let Some(m) = cap.get(1) {
             entities.push(m.as_str().to_string());
@@ -391,7 +391,7 @@ fn extract_entities(text: &str) -> Vec<String> {
     }
 
     // Extract capitalized phrases (simple NER)
-    let cap_re = regex::Regex::new(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b").unwrap();
+    let cap_re = regex::Regex::new(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b").expect("valid regex");
     for m in cap_re.find_iter(text) {
         let entity = m.as_str().to_string();
         if !entities.contains(&entity) {
@@ -407,7 +407,7 @@ fn extract_math_ops(text: &str) -> Vec<String> {
     let mut ops = Vec::new();
 
     // Match mathematical expressions
-    let math_re = regex::Regex::new(r"\d+\s*[+\-*/×÷=]\s*\d+(?:\s*[+\-*/×÷=]\s*\d+)*").unwrap();
+    let math_re = regex::Regex::new(r"\d+\s*[+\-*/×÷=]\s*\d+(?:\s*[+\-*/×÷=]\s*\d+)*").expect("valid regex");
     for m in math_re.find_iter(text) {
         ops.push(m.as_str().to_string());
     }

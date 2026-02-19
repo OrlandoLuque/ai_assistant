@@ -83,6 +83,13 @@ pub struct RagConfig {
     /// Append-only mode: when enabled, knowledge documents can only be added, not removed
     /// This protects against accidental deletion of important knowledge
     pub append_only_mode: bool,
+    /// Dynamic context mode: when enabled, automatically calculate max_knowledge_tokens
+    /// based on the model's context window and current conversation size
+    /// This allows filling the context as much as possible with relevant knowledge
+    pub dynamic_context_enabled: bool,
+    /// Auto-store mode: when enabled, automatically store messages in RAG as they are sent/received
+    /// This enables conversation search and retrieval without manual storage calls
+    pub auto_store_messages: bool,
 }
 
 impl Default for RagConfig {
@@ -95,6 +102,8 @@ impl Default for RagConfig {
             top_k_chunks: 5,
             min_relevance_score: 0.1,
             append_only_mode: false,
+            dynamic_context_enabled: false,
+            auto_store_messages: false,
         }
     }
 }
@@ -366,7 +375,7 @@ impl RagDb {
                 self.embedder = Some(crate::embeddings::LocalEmbedder::new(
                     crate::embeddings::EmbeddingConfig::default()
                 ));
-                self.embedder.as_mut().unwrap()
+                self.embedder.as_mut().expect("embedder must be initialized")
             }
         };
 
@@ -1675,16 +1684,16 @@ fn prepare_fts_query(query: &str) -> String {
         .split_whitespace()
         .filter(|w| w.len() >= 2)
         .map(|w| {
-            // Escape special FTS5 characters
-            let escaped = w
-                .replace('"', "")
-                .replace('*', "")
-                .replace('(', "")
-                .replace(')', "")
-                .replace(':', "")
-                .to_lowercase();
-            format!("{}*", escaped)
+            // Keep only alphanumeric characters and basic punctuation that's safe for FTS5
+            // Remove: " * ( ) : ? ! . , ; ' ` ~ @ # $ % ^ & [ ] { } < > / \ | + =
+            let escaped: String = w
+                .chars()
+                .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+                .collect();
+            escaped.to_lowercase()
         })
+        .filter(|w| w.len() >= 2) // Re-filter after removing punctuation
+        .map(|w| format!("{}*", w))
         .collect();
 
     if terms.is_empty() {
@@ -1744,6 +1753,7 @@ pub fn build_conversation_context(messages: &[StoredMessage]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn test_chunk_document() {
@@ -1770,5 +1780,677 @@ Here is how to use it.
         assert_eq!(prepare_fts_query("hello world"), "hello* OR world*");
         assert_eq!(prepare_fts_query("a"), "*"); // Too short
         assert_eq!(prepare_fts_query("test:query"), "testquery*");
+        // Test punctuation removal
+        assert_eq!(prepare_fts_query("What is a CCU?"), "what* OR is* OR ccu*");
+        assert_eq!(prepare_fts_query("Hello, world!"), "hello* OR world*");
+        assert_eq!(prepare_fts_query("test (example)"), "test* OR example*");
+    }
+
+    #[test]
+    fn test_prepare_fts_query_special_chars() {
+        // Test various punctuation marks that users might include
+        assert_eq!(prepare_fts_query("What's this?"), "whats* OR this*");
+        assert_eq!(prepare_fts_query("price: $100"), "price* OR 100*");
+        assert_eq!(prepare_fts_query("test@email.com"), "testemailcom*");
+        assert_eq!(prepare_fts_query("50% discount!"), "50* OR discount*");
+        assert_eq!(prepare_fts_query("item #123"), "item* OR 123*");
+        assert_eq!(prepare_fts_query("A & B"), "*"); // Both too short after filtering
+        assert_eq!(prepare_fts_query("foo && bar"), "foo* OR bar*");
+        assert_eq!(prepare_fts_query("[test]"), "test*");
+        assert_eq!(prepare_fts_query("{value}"), "value*");
+        assert_eq!(prepare_fts_query("path/to/file"), "pathtofile*"); // slashes removed
+    }
+
+    #[test]
+    fn test_prepare_fts_query_unicode() {
+        // Unicode letters should be preserved
+        assert_eq!(prepare_fts_query("café résumé"), "café* OR résumé*");
+        assert_eq!(prepare_fts_query("日本語 テスト"), "日本語* OR テスト*");
+    }
+
+    #[test]
+    fn test_prepare_fts_query_hyphen_underscore() {
+        // Hyphens and underscores should be preserved
+        assert_eq!(prepare_fts_query("cross-chassis upgrade"), "cross-chassis* OR upgrade*");
+        assert_eq!(prepare_fts_query("user_name test"), "user_name* OR test*");
+    }
+
+    fn create_temp_db() -> (RagDb, PathBuf) {
+        let temp_dir = std::env::temp_dir();
+        let db_path = temp_dir.join(format!("test_rag_{}.db", uuid::Uuid::new_v4()));
+        let db = RagDb::open(&db_path).expect("Failed to create test database");
+        (db, db_path)
+    }
+
+    fn cleanup_db(path: &PathBuf) {
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_rag_db_creation() {
+        let (db, path) = create_temp_db();
+
+        // Check stats are zero initially
+        let (chunks, tokens) = db.get_knowledge_stats().expect("Failed to get stats");
+        assert_eq!(chunks, 0);
+        assert_eq!(tokens, 0);
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn test_rag_db_index_document() {
+        let (db, path) = create_temp_db();
+
+        let content = r#"
+# CCU Guide
+
+## What is a CCU?
+A **CCU (Cross-Chassis Upgrade)** is an item that transforms one ship into another of higher value.
+
+## How CCUs Work
+1. Buy a CCU from ship A to ship B
+2. The CCU costs the price difference
+3. Apply the CCU to transform your ship
+"#;
+
+        // Index the document
+        let chunks_indexed = db.index_document("ccu-guide", content).expect("Failed to index");
+        assert!(chunks_indexed > 0, "Should have indexed at least one chunk");
+
+        // Verify stats
+        let (total_chunks, _) = db.get_knowledge_stats().expect("Failed to get stats");
+        assert_eq!(total_chunks, chunks_indexed);
+
+        // Verify source is listed
+        let sources = db.list_indexed_sources().expect("Failed to list sources");
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].0, "ccu-guide");
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn test_rag_db_search_basic() {
+        let (db, path) = create_temp_db();
+
+        let content = r#"
+# CCU Guide
+
+## What is a CCU?
+A **CCU (Cross-Chassis Upgrade)** is an item that transforms one ship into another of higher value.
+This is the most economical way to obtain ships in Star Citizen.
+
+## Pricing
+CCUs cost the difference between the two ship prices.
+"#;
+
+        db.index_document("ccu-guide", content).expect("Failed to index");
+
+        // Search for CCU
+        let results = db.search_knowledge("What is a CCU?", 2000, 5).expect("Search failed");
+        assert!(!results.is_empty(), "Search should return results");
+
+        // Verify content contains CCU information
+        let all_content: String = results.iter().map(|c| c.content.clone()).collect();
+        assert!(all_content.contains("Cross-Chassis Upgrade"), "Results should contain CCU definition");
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn test_rag_db_search_with_punctuation() {
+        let (db, path) = create_temp_db();
+
+        let content = r#"
+# Ship Guide
+
+## Aurora MR
+The Aurora MR is a starter ship manufactured by Roberts Space Industries.
+
+## Mustang Alpha
+The Mustang Alpha is another starter ship, made by Consolidated Outland.
+"#;
+
+        db.index_document("ships", content).expect("Failed to index");
+
+        // Search with question mark
+        let results = db.search_knowledge("What is the Aurora MR?", 2000, 5).expect("Search failed");
+        assert!(!results.is_empty(), "Search with '?' should return results");
+
+        // Search with exclamation
+        let results = db.search_knowledge("Tell me about Mustang!", 2000, 5).expect("Search failed");
+        assert!(!results.is_empty(), "Search with '!' should return results");
+
+        // Search with comma
+        let results = db.search_knowledge("Aurora, Mustang ships", 2000, 5).expect("Search failed");
+        assert!(!results.is_empty(), "Search with ',' should return results");
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn test_rag_db_search_no_results() {
+        let (db, path) = create_temp_db();
+
+        let content = r#"
+# Ship Guide
+The Aurora is a starter ship.
+"#;
+
+        db.index_document("ships", content).expect("Failed to index");
+
+        // Search for something not in the document
+        let results = db.search_knowledge("quantum drive specifications", 2000, 5).expect("Search failed");
+        // This might return results due to partial matching, but let's verify the search doesn't crash
+        // The important thing is that it doesn't error
+        assert!(results.len() <= 5, "Should respect top_k limit");
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn test_rag_db_reindex_same_content() {
+        let (db, path) = create_temp_db();
+
+        let content = "# Test\nSome content here.";
+
+        // First index
+        let chunks1 = db.index_document("test", content).expect("Failed to index");
+        assert!(chunks1 > 0);
+
+        // Second index with same content - should skip
+        let chunks2 = db.index_document("test", content).expect("Failed to reindex");
+        assert_eq!(chunks2, 0, "Should return 0 when content unchanged");
+
+        // Verify still only original chunks
+        let (total, _) = db.get_knowledge_stats().expect("Failed to get stats");
+        assert_eq!(total, chunks1);
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn test_rag_db_reindex_changed_content() {
+        let (db, path) = create_temp_db();
+
+        let content1 = "# Test\nOriginal content.";
+        let content2 = "# Test\nUpdated content with more information.";
+
+        // First index
+        let chunks1 = db.index_document("test", content1).expect("Failed to index");
+        assert!(chunks1 > 0);
+
+        // Second index with changed content - should reindex
+        let chunks2 = db.index_document("test", content2).expect("Failed to reindex");
+        assert!(chunks2 > 0, "Should reindex when content changed");
+
+        // Search should find new content
+        let results = db.search_knowledge("updated information", 2000, 5).expect("Search failed");
+        let all_content: String = results.iter().map(|c| c.content.clone()).collect();
+        assert!(all_content.contains("Updated") || all_content.contains("updated"),
+            "Should find updated content");
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn test_rag_db_multiple_documents() {
+        let (db, path) = create_temp_db();
+
+        let ccu_content = "# CCU Guide\nA CCU transforms one ship into another.";
+        let ships_content = "# Ships\nThe Aurora is a starter ship. The Carrack is an exploration ship.";
+        let trading_content = "# Trading\nBuy low, sell high. Check commodity prices.";
+
+        db.index_document("ccu", ccu_content).expect("Failed to index ccu");
+        db.index_document("ships", ships_content).expect("Failed to index ships");
+        db.index_document("trading", trading_content).expect("Failed to index trading");
+
+        // Verify all sources indexed
+        let sources = db.list_indexed_sources().expect("Failed to list sources");
+        assert_eq!(sources.len(), 3);
+
+        // Search should find relevant document
+        let results = db.search_knowledge("What is the Carrack?", 2000, 5).expect("Search failed");
+        assert!(!results.is_empty());
+        assert!(results.iter().any(|c| c.source == "ships"), "Should find ships document");
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn test_rag_db_delete_document() {
+        let (db, path) = create_temp_db();
+
+        let content = "# Test\nSome content.";
+        db.index_document("test", content).expect("Failed to index");
+
+        // Verify indexed
+        let (chunks_before, _) = db.get_knowledge_stats().expect("Failed to get stats");
+        assert!(chunks_before > 0);
+
+        // Delete
+        db.delete_document("test").expect("Failed to delete");
+
+        // Verify deleted
+        let (chunks_after, _) = db.get_knowledge_stats().expect("Failed to get stats");
+        assert_eq!(chunks_after, 0);
+
+        let sources = db.list_indexed_sources().expect("Failed to list sources");
+        assert!(sources.is_empty());
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn test_build_knowledge_context() {
+        let chunks = vec![
+            KnowledgeChunk {
+                id: 1,
+                source: "guide".to_string(),
+                section: "Introduction".to_string(),
+                content: "This is the intro.".to_string(),
+                token_count: 5,
+            },
+            KnowledgeChunk {
+                id: 2,
+                source: "guide".to_string(),
+                section: "Details".to_string(),
+                content: "Here are the details.".to_string(),
+                token_count: 5,
+            },
+        ];
+
+        let context = build_knowledge_context(&chunks);
+
+        assert!(context.contains("RELEVANT KNOWLEDGE"));
+        assert!(context.contains("guide"));
+        assert!(context.contains("Introduction"));
+        assert!(context.contains("This is the intro"));
+        assert!(context.contains("END KNOWLEDGE"));
+    }
+
+    #[test]
+    fn test_build_knowledge_context_empty() {
+        let chunks: Vec<KnowledgeChunk> = vec![];
+        let context = build_knowledge_context(&chunks);
+        assert!(context.is_empty());
+    }
+
+    #[test]
+    fn test_knowledge_usage_tracking() {
+        let chunks = vec![
+            KnowledgeChunk {
+                id: 1,
+                source: "ccu-guide".to_string(),
+                section: "Basics".to_string(),
+                content: "CCU info".to_string(),
+                token_count: 100,
+            },
+            KnowledgeChunk {
+                id: 2,
+                source: "ccu-guide".to_string(),
+                section: "Advanced".to_string(),
+                content: "More CCU info".to_string(),
+                token_count: 150,
+            },
+            KnowledgeChunk {
+                id: 3,
+                source: "ships".to_string(),
+                section: "Aurora".to_string(),
+                content: "Ship info".to_string(),
+                token_count: 50,
+            },
+        ];
+
+        let usage = KnowledgeUsage::from_chunks("What is a CCU?", &chunks);
+
+        assert!(usage.has_knowledge());
+        assert_eq!(usage.total_chunks, 3);
+        assert_eq!(usage.total_tokens, 300);
+        assert_eq!(usage.sources.len(), 2); // ccu-guide and ships
+
+        let sources = usage.get_sources();
+        assert!(sources.contains(&"ccu-guide"));
+        assert!(sources.contains(&"ships"));
+    }
+
+    #[test]
+    fn test_rag_db_token_limit() {
+        let (db, path) = create_temp_db();
+
+        // Create content with multiple sections that will create multiple chunks
+        let content = r#"
+# Section 1
+This is a long section with lots of content to ensure we get multiple chunks.
+Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+
+# Section 2
+Another section with different content about ships and upgrades.
+More text here to fill out the chunk.
+
+# Section 3
+Yet another section with even more content about trading and exploration.
+Additional text to make this chunk substantial.
+
+# Section 4
+Final section with concluding information about the game mechanics.
+This should create enough chunks to test the token limit.
+"#;
+
+        db.index_document("test", content).expect("Failed to index");
+
+        // Search with very low token limit
+        let results = db.search_knowledge("section content", 50, 10).expect("Search failed");
+
+        // Should respect token limit (though might get 0 if first chunk exceeds limit)
+        let total_tokens: usize = results.iter().map(|c| c.token_count).sum();
+        assert!(total_tokens <= 50 || results.is_empty(),
+            "Should respect token limit or return empty if first chunk too large");
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn test_rag_db_top_k_limit() {
+        let (db, path) = create_temp_db();
+
+        // Index multiple documents
+        for i in 0..10 {
+            let content = format!("# Document {}\nThis document talks about ships and CCUs.", i);
+            db.index_document(&format!("doc{}", i), &content).expect("Failed to index");
+        }
+
+        // Search with top_k = 3
+        let results = db.search_knowledge("ships CCU", 10000, 3).expect("Search failed");
+        assert!(results.len() <= 3, "Should respect top_k limit");
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn test_rag_real_world_ccu_query() {
+        // This test replicates the real-world scenario that was failing
+        let (db, path) = create_temp_db();
+
+        let ccu_content = r#"
+# CCU Game - Cross-Chassis Upgrades en Star Citizen
+
+## Que es un CCU?
+
+Un **CCU (Cross-Chassis Upgrade)** es un item que permite transformar una nave en otra de mayor valor. Es la forma mas economica de obtener naves en Star Citizen sin pagar el precio completo.
+
+### Funcionamiento Basico
+
+1. Compras un CCU que va desde una nave A hacia una nave B
+2. El CCU cuesta la diferencia de precio entre ambas naves
+3. Aplicas el CCU a tu nave A y se convierte en nave B
+
+## Tipos de CCU
+
+### CCU Standard
+- Precio normal (diferencia entre naves)
+- Disponible mientras ambas naves estan en venta
+
+### CCU Warbond
+- Precio con descuento
+- Requiere dinero nuevo (no store credit)
+- Mejor valor pero menos flexible
+"#;
+
+        db.index_document("ccu-game", ccu_content).expect("Failed to index CCU content");
+
+        // Verify indexing worked
+        let (chunks, _) = db.get_knowledge_stats().expect("Failed to get stats");
+        assert!(chunks > 0, "Should have indexed chunks");
+
+        // Test the exact query that was failing before the fix
+        let query = "What is a CCU in Star Citizen?";
+        let results = db.search_knowledge(query, 2000, 5).expect("Search failed");
+
+        assert!(!results.is_empty(), "Search for '{}' should return results", query);
+
+        // Verify the results contain the CCU definition
+        let all_content: String = results.iter()
+            .map(|c| c.content.to_lowercase())
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        assert!(
+            all_content.contains("cross-chassis") || all_content.contains("ccu"),
+            "Results should contain CCU information. Got: {}...",
+            &all_content[..all_content.len().min(200)]
+        );
+
+        // Build context and verify it's not empty
+        let context = build_knowledge_context(&results);
+        assert!(!context.is_empty(), "Built context should not be empty");
+        assert!(context.contains("RELEVANT KNOWLEDGE"), "Context should have header");
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn test_rag_spanish_content_search() {
+        let (db, path) = create_temp_db();
+
+        let content = r#"
+# Guía de Naves
+
+## Aurora MR
+La Aurora MR es una nave inicial fabricada por Roberts Space Industries.
+Es perfecta para nuevos ciudadanos que quieren explorar el universo.
+
+## Características
+- Tamaño: Pequeño
+- Tripulación: 1 piloto
+- Precio: 30 USD
+"#;
+
+        db.index_document("naves", content).expect("Failed to index");
+
+        // Search in Spanish
+        let results = db.search_knowledge("Qué es la Aurora?", 2000, 5).expect("Search failed");
+        assert!(!results.is_empty(), "Should find Spanish content");
+
+        let all_content: String = results.iter().map(|c| c.content.clone()).collect();
+        assert!(all_content.contains("Aurora") || all_content.contains("nave"),
+            "Should find Aurora information");
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn test_rag_ccu_chain_example_query() {
+        // This test verifies that asking for a CCU chain example returns the actual example
+        let (db, path) = create_temp_db();
+
+        // Use the real CCU knowledge content
+        let ccu_content = r#"
+# CCU Game - Cross-Chassis Upgrades en Star Citizen
+
+## Que es un CCU?
+
+Un **CCU (Cross-Chassis Upgrade)** es un item que permite transformar una nave en otra de mayor valor.
+
+## CCU Chains (Cadenas de CCU)
+
+Una **cadena de CCU** es la estrategia de aplicar multiples CCUs en secuencia para maximizar descuentos.
+
+### Ejemplo de Cadena
+
+```
+Aurora MR ($30)
+  -> [CCU Warbond $5] -> Mustang Alpha ($35)
+  -> [CCU Warbond $10] -> Avenger Titan ($55)
+  -> [CCU Warbond $40] -> Cutlass Black ($110)
+  -> [CCU Standard $90] -> Constellation Taurus ($200)
+
+Total gastado: $175 (vs $200 precio directo)
+Ahorro: $25 (12.5%)
+```
+
+### Estrategia de Cadenas
+
+1. **Comprar CCUs warbond durante eventos**
+2. **Stockpile de CCUs** - Comprar y guardar CCUs aunque no los necesites ahora
+3. **Naves ancla** - Usar naves con buen valor como puntos intermedios:
+   - Cutlass Black ($110)
+   - Constellation Taurus ($200)
+   - Mercury Star Runner ($260)
+"#;
+
+        db.index_document("ccu-game", ccu_content).expect("Failed to index CCU content");
+
+        // Verify indexing
+        let (chunks, _) = db.get_knowledge_stats().expect("Failed to get stats");
+        assert!(chunks > 0, "Should have indexed chunks");
+
+        // Test query about CCU chain example
+        let query = "dime una cadena de CCUs de ejemplo";
+        let results = db.search_knowledge(query, 4000, 10).expect("Search failed");
+
+        assert!(!results.is_empty(), "Search for CCU chain example should return results");
+
+        // Check that results contain the actual example
+        let all_content: String = results.iter()
+            .map(|c| c.content.clone())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        // The results MUST contain the actual chain example
+        let has_aurora = all_content.contains("Aurora MR");
+        let has_mustang = all_content.contains("Mustang Alpha");
+        let has_avenger = all_content.contains("Avenger Titan");
+        let has_cutlass = all_content.contains("Cutlass Black");
+        let has_chain_keyword = all_content.to_lowercase().contains("cadena");
+
+        println!("Query: {}", query);
+        println!("Results count: {}", results.len());
+        println!("Content preview: {}...", &all_content[..all_content.len().min(500)]);
+        println!("Has Aurora: {}, Mustang: {}, Avenger: {}, Cutlass: {}, Cadena: {}",
+            has_aurora, has_mustang, has_avenger, has_cutlass, has_chain_keyword);
+
+        assert!(has_chain_keyword || has_aurora,
+            "Results should contain CCU chain information. Got: {}...",
+            &all_content[..all_content.len().min(300)]);
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn test_rag_finds_code_block_content() {
+        // Ensure that content inside code blocks (```) is also searchable
+        let (db, path) = create_temp_db();
+
+        let content = r#"
+# Example
+
+Here is an example:
+
+```
+Aurora MR ($30)
+  -> Mustang Alpha ($35)
+  -> Avenger Titan ($55)
+```
+
+This shows a simple upgrade path.
+"#;
+
+        db.index_document("example", content).expect("Failed to index");
+
+        // Search for content that's inside the code block
+        let results = db.search_knowledge("Aurora Mustang Avenger", 2000, 5).expect("Search failed");
+
+        assert!(!results.is_empty(), "Should find content inside code blocks");
+
+        let all_content: String = results.iter().map(|c| c.content.clone()).collect();
+        assert!(all_content.contains("Aurora") || all_content.contains("Mustang"),
+            "Should find ships mentioned in code block");
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn test_chunk_preserves_code_blocks() {
+        // Verify that chunking doesn't break code blocks
+        let content = r#"
+# CCU Chains
+
+### Ejemplo de Cadena
+
+```
+Aurora MR ($30)
+  -> [CCU Warbond $5] -> Mustang Alpha ($35)
+  -> [CCU Warbond $10] -> Avenger Titan ($55)
+  -> [CCU Warbond $40] -> Cutlass Black ($110)
+```
+
+Total gastado: $175
+"#;
+
+        let chunks = chunk_document("test", content);
+
+        // Find the chunk that should contain the example
+        let example_chunk = chunks.iter()
+            .find(|c| c.content.contains("Aurora") || c.content.contains("Mustang"));
+
+        assert!(example_chunk.is_some(), "Should have a chunk with the example");
+
+        let chunk = example_chunk.unwrap();
+        // The chunk should contain most of the chain
+        let has_multiple_ships =
+            (chunk.content.contains("Aurora") as u8) +
+            (chunk.content.contains("Mustang") as u8) +
+            (chunk.content.contains("Avenger") as u8) +
+            (chunk.content.contains("Cutlass") as u8);
+
+        assert!(has_multiple_ships >= 2,
+            "Chunk should contain multiple ships from the chain. Got: {}",
+            chunk.content);
+    }
+
+    #[test]
+    fn test_rag_db_concurrent_access() {
+        // Test that multiple searches don't interfere with each other
+        let (db, path) = create_temp_db();
+
+        let content = "# Test\nThis is test content about ships and CCUs and upgrades.";
+        db.index_document("test", content).expect("Failed to index");
+
+        // Multiple searches should all work
+        for i in 0..5 {
+            let query = format!("test query {}", i);
+            let results = db.search_knowledge(&query, 1000, 3);
+            assert!(results.is_ok(), "Search {} should not fail", i);
+        }
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn test_rag_export_import() {
+        let (db1, path1) = create_temp_db();
+
+        // Index some documents
+        db1.index_document("doc1", "# Document 1\nContent about ships.").expect("Failed to index");
+        db1.index_document("doc2", "# Document 2\nContent about CCUs.").expect("Failed to index");
+
+        // Export
+        let export = db1.export_knowledge().expect("Export failed");
+        assert!(!export.chunks.is_empty());
+        assert_eq!(export.sources.len(), 2);
+
+        // Create new database and import
+        let (db2, path2) = create_temp_db();
+        let imported = db2.import_knowledge(&export, false).expect("Import failed");
+        assert!(imported > 0);
+
+        // Verify imported content is searchable
+        let results = db2.search_knowledge("ships CCUs", 2000, 5).expect("Search failed");
+        assert!(!results.is_empty(), "Should find imported content");
+
+        cleanup_db(&path1);
+        cleanup_db(&path2);
     }
 }

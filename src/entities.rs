@@ -241,8 +241,8 @@ impl EntityExtractor {
         let words: Vec<&str> = text.split_whitespace().collect();
         for word in words {
             if word.contains('@') && word.contains('.') {
-                let at_pos = word.find('@').unwrap();
-                let dot_pos = word.rfind('.').unwrap();
+                let at_pos = word.find('@').expect("char verified in format check");
+                let dot_pos = word.rfind('.').expect("char verified in format check");
 
                 if at_pos > 0 && dot_pos > at_pos + 1 && dot_pos < word.len() - 1 {
                     // Clean up the word
@@ -1045,6 +1045,12 @@ impl FactStore {
     /// Export facts to JSON
     pub fn export(&self) -> String {
         serde_json::to_string_pretty(&self.facts).unwrap_or_default()
+    }
+
+    /// Export facts to internal binary format (bincode+gzip when feature enabled).
+    #[cfg(feature = "binary-storage")]
+    pub fn export_bytes(&self) -> Result<Vec<u8>, anyhow::Error> {
+        crate::internal_storage::serialize_internal(&self.facts)
     }
 
     /// Build a summary of known facts for context

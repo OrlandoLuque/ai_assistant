@@ -304,14 +304,14 @@ pub fn diff(old: &str, new: &str) -> DiffResult {
 
         // Check if we should close the current hunk
         if current_hunk.is_some() {
-            let consecutive_equals = current_hunk.as_ref().unwrap().lines.iter()
+            let consecutive_equals = current_hunk.as_ref().expect("current_hunk verified above").lines.iter()
                 .rev()
                 .take_while(|l| l.change_type == ChangeType::Equal)
                 .count();
 
             if consecutive_equals > context_lines * 2 && old_idx < old_lines.len() {
                 // Close hunk and start fresh
-                let mut hunk = current_hunk.take().unwrap();
+                let mut hunk = current_hunk.take().expect("current_hunk verified above");
                 // Trim trailing context
                 while hunk.lines.len() > 1 &&
                     hunk.lines.last().map(|l| l.change_type == ChangeType::Equal).unwrap_or(false) &&

@@ -1,6 +1,7 @@
 //! Main AI Assistant implementation
 
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::path::Path;
 use anyhow::Result;
@@ -9,13 +10,43 @@ use crate::config::{AiConfig, AiProvider};
 use crate::messages::{AiResponse, ChatMessage};
 use crate::models::ModelInfo;
 use crate::session::{ChatSession, ChatSessionStore, UserPreferences, ResponseStyle};
-use crate::context::{ContextUsage, estimate_tokens, get_model_context_size};
+use crate::context::{ContextUsage, estimate_tokens, get_model_context_size_cached};
 use crate::providers::{
     fetch_ollama_models, fetch_openai_compatible_models, fetch_kobold_models,
     build_system_prompt, build_system_prompt_with_notes, generate_response_streaming, generate_response,
-    generate_response_streaming_cancellable,
+    generate_response_streaming_cancellable, fetch_model_context_size,
 };
 use crate::conversation_control::CancellationToken;
+use crate::adaptive_thinking::{
+    AdaptiveThinkingConfig, QueryClassifier, ThinkingStrategy,
+    ThinkingTagParser, ThinkingParseResult,
+};
+use crate::conversation_compaction::{
+    ConversationCompactor, CompactionConfig, CompactableMessage, CompactionResult,
+};
+use crate::api_key_rotation::{ApiKeyManager, ApiKey, RotationConfig};
+
+#[cfg(feature = "autonomous")]
+use crate::mode_manager::{OperationMode, ModeManager};
+#[cfg(feature = "autonomous")]
+use crate::agent_profiles::ProfileRegistry;
+#[cfg(feature = "autonomous")]
+use crate::user_interaction::{InteractionManager, UserInteractionHandler, AutoApproveHandler as AutoApproveInteraction};
+#[cfg(feature = "autonomous")]
+use crate::autonomous_loop::{AutonomousAgent, AutonomousAgentBuilder};
+#[cfg(feature = "autonomous")]
+use crate::os_tools::register_os_tools;
+#[cfg(feature = "autonomous")]
+use crate::agent_sandbox::SandboxValidator;
+#[cfg(feature = "autonomous")]
+use std::sync::RwLock;
+
+#[cfg(feature = "butler")]
+use crate::butler::Butler;
+#[cfg(feature = "scheduler")]
+use crate::scheduler::Scheduler;
+#[cfg(feature = "scheduler")]
+use crate::trigger_system::TriggerManager;
 
 #[cfg(feature = "rag")]
 use crate::rag::{RagDb, RagConfig, KnowledgeUsage, build_knowledge_context, build_conversation_context, DEFAULT_USER_ID};
@@ -131,6 +162,10 @@ pub struct AiAssistant {
     /// Base system prompt (customizable)
     system_prompt_base: String,
 
+    /// Internal knowledge context (managed by the assistant)
+    /// This is used automatically when sending messages if no external context is provided
+    knowledge_context: String,
+
     // Async channels
     rx_response: Option<Receiver<AiResponse>>,
     rx_models: Option<Receiver<AiResponse>>,
@@ -179,12 +214,141 @@ pub struct AiAssistant {
 
     /// Metrics tracker for conversation quality analysis
     pub metrics: crate::metrics::MetricsTracker,
+
+    /// Cached detected context size for the current model
+    /// None means not yet detected, Some(size) is the detected value
+    detected_context_size: Option<usize>,
+    /// Model name for which context size was detected (to invalidate cache on model change)
+    detected_context_model: Option<String>,
+
+    /// Adaptive thinking configuration
+    pub adaptive_thinking: AdaptiveThinkingConfig,
+    /// Active thinking tag parser for current streaming session
+    thinking_parser: Option<ThinkingTagParser>,
+    /// Last thinking parse result (available after response completes)
+    pub last_thinking_result: Option<ThinkingParseResult>,
+    /// Last thinking strategy used (available after classification)
+    pub last_thinking_strategy: Option<ThinkingStrategy>,
+
+    /// Fallback providers: list of (provider, model) pairs to try when primary fails.
+    fallback_providers: Vec<(AiProvider, String)>,
+    /// Whether automatic provider fallback is enabled.
+    fallback_enabled: bool,
+    /// Provider that served the last response (thread-safe, set by background thread).
+    fallback_last_provider: Arc<Mutex<Option<String>>>,
+
+    /// Whether automatic conversation compaction is enabled.
+    auto_compaction: bool,
+    /// Configuration for conversation compaction.
+    compaction_config: CompactionConfig,
+
+    /// Optional API key manager for providers that require authentication.
+    api_key_manager: Option<ApiKeyManager>,
+
+    /// Event bus for lifecycle hooks and monitoring.
+    pub event_bus: crate::events::EventBus,
+
+    // === Autonomous agent support (optional feature) ===
+
+    #[cfg(feature = "autonomous")]
+    /// Mode manager for operation mode escalation/de-escalation.
+    pub mode_manager: ModeManager,
+    #[cfg(feature = "autonomous")]
+    /// Profile registry with agent, conversation, and workflow profiles.
+    pub profile_registry: ProfileRegistry,
+    #[cfg(feature = "autonomous")]
+    /// Interaction manager for agent-user communication during autonomous execution.
+    interaction_manager: Option<Arc<InteractionManager>>,
+
+    #[cfg(feature = "butler")]
+    /// Butler for environment auto-detection and configuration suggestions.
+    butler: Option<Butler>,
+
+    #[cfg(feature = "scheduler")]
+    /// Scheduler for cron-like agent/tool execution.
+    scheduler: Option<Scheduler>,
+    #[cfg(feature = "scheduler")]
+    /// Trigger manager for event-driven actions.
+    trigger_manager: Option<TriggerManager>,
 }
 
 impl Default for AiAssistant {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Run streaming generation with optional provider fallback.
+///
+/// Tries the primary config first. On failure, iterates through fallback
+/// providers until one succeeds or all fail. Sends error via `tx` if all fail.
+/// Updates `last_provider` with the name of the provider that served the response.
+fn try_generate_with_fallback(
+    config: &AiConfig,
+    conversation: &[ChatMessage],
+    system_prompt: &str,
+    tx: &Sender<AiResponse>,
+    fallback_providers: &[(AiProvider, String)],
+    cancel_token: Option<&CancellationToken>,
+    last_provider: &Arc<Mutex<Option<String>>>,
+) {
+    let primary_result = match cancel_token {
+        Some(token) => generate_response_streaming_cancellable(
+            config, conversation, system_prompt, tx, token,
+        ),
+        None => generate_response_streaming(config, conversation, system_prompt, tx),
+    };
+
+    if primary_result.is_ok() {
+        *last_provider.lock().unwrap_or_else(|e| e.into_inner()) = Some(config.provider.display_name().to_string());
+        return;
+    }
+
+    let primary_err = primary_result.unwrap_err();
+
+    if fallback_providers.is_empty() {
+        let _ = tx.send(AiResponse::Error(primary_err.to_string()));
+        return;
+    }
+
+    // Primary failed, attempt fallback providers
+    crate::safe_log!(
+        "[fallback] Primary provider {} failed: {}",
+        config.provider.display_name(),
+        primary_err
+    );
+
+    for (fb_provider, fb_model) in fallback_providers {
+        if let Some(token) = cancel_token {
+            if token.is_cancelled() {
+                return;
+            }
+        }
+
+        let mut fb_config = config.clone();
+        fb_config.provider = fb_provider.clone();
+        fb_config.selected_model = fb_model.clone();
+
+        let fb_result = match cancel_token {
+            Some(token) => generate_response_streaming_cancellable(
+                &fb_config, conversation, system_prompt, tx, token,
+            ),
+            None => generate_response_streaming(&fb_config, conversation, system_prompt, tx),
+        };
+
+        if fb_result.is_ok() {
+            *last_provider.lock().unwrap_or_else(|e| e.into_inner()) =
+                Some(fb_provider.display_name().to_string());
+            return;
+        }
+    }
+
+    // All providers failed
+    *last_provider.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    let _ = tx.send(AiResponse::Error(format!(
+        "All providers failed. Primary error: {}",
+        primary_err
+    )));
 }
 
 impl AiAssistant {
@@ -210,6 +374,7 @@ impl AiAssistant {
             current_session: None,
             is_summarizing: false,
             system_prompt_base: system_prompt.to_string(),
+            knowledge_context: String::new(),
             rx_response: None,
             rx_models: None,
             rx_summary: None,
@@ -240,6 +405,34 @@ impl AiAssistant {
             #[cfg(feature = "rag")]
             last_knowledge_usage: None,
             metrics: crate::metrics::MetricsTracker::new("default"),
+            detected_context_size: None,
+            detected_context_model: None,
+            adaptive_thinking: AdaptiveThinkingConfig::default(),
+            thinking_parser: None,
+            last_thinking_result: None,
+            last_thinking_strategy: None,
+            fallback_providers: Vec::new(),
+            fallback_enabled: false,
+            fallback_last_provider: Arc::new(Mutex::new(None)),
+            auto_compaction: false,
+            compaction_config: CompactionConfig::default(),
+            api_key_manager: None,
+            event_bus: crate::events::EventBus::new(),
+
+            #[cfg(feature = "autonomous")]
+            mode_manager: ModeManager::new(),
+            #[cfg(feature = "autonomous")]
+            profile_registry: ProfileRegistry::with_defaults(),
+            #[cfg(feature = "autonomous")]
+            interaction_manager: None,
+
+            #[cfg(feature = "butler")]
+            butler: None,
+
+            #[cfg(feature = "scheduler")]
+            scheduler: None,
+            #[cfg(feature = "scheduler")]
+            trigger_manager: None,
         }
     }
 
@@ -251,6 +444,234 @@ impl AiAssistant {
     /// Get the base system prompt
     pub fn system_prompt(&self) -> &str {
         &self.system_prompt_base
+    }
+
+    // === Adaptive Thinking ===
+
+    /// Enable adaptive thinking with default configuration.
+    ///
+    /// When enabled, the assistant automatically adjusts temperature, max_tokens,
+    /// RAG tier, and system prompt based on query complexity classification.
+    pub fn enable_adaptive_thinking(&mut self) {
+        self.adaptive_thinking.enabled = true;
+    }
+
+    /// Disable adaptive thinking (default state).
+    pub fn disable_adaptive_thinking(&mut self) {
+        self.adaptive_thinking.enabled = false;
+    }
+
+    /// Set a custom adaptive thinking configuration.
+    pub fn set_adaptive_thinking(&mut self, config: AdaptiveThinkingConfig) {
+        self.adaptive_thinking = config;
+    }
+
+    /// Classify a query and return the thinking strategy (for inspection/debugging).
+    ///
+    /// This does not affect the assistant state — it only returns the strategy
+    /// that *would* be applied if adaptive thinking were enabled.
+    pub fn classify_query(&self, query: &str) -> ThinkingStrategy {
+        let classifier = QueryClassifier::new(self.adaptive_thinking.clone());
+        classifier.classify(query)
+    }
+
+    /// Apply adaptive thinking to modify system prompt and config before an LLM call.
+    ///
+    /// Returns `(modified_system_prompt, modified_config)`. When adaptive thinking
+    /// is disabled, returns the inputs unchanged.
+    ///
+    /// Logs a warning when adaptive RAG tier conflicts with explicit user tier.
+    fn apply_adaptive_thinking(
+        &mut self,
+        user_message: &str,
+        base_system_prompt: String,
+    ) -> (String, crate::config::AiConfig) {
+        if !self.adaptive_thinking.enabled {
+            self.last_thinking_strategy = None;
+            return (base_system_prompt, self.config.clone());
+        }
+
+        let classifier = QueryClassifier::new(self.adaptive_thinking.clone());
+        let strategy = classifier.classify(user_message);
+
+        let mut config = self.config.clone();
+        let mut prompt = base_system_prompt;
+
+        // Apply temperature override
+        if self.adaptive_thinking.adjust_temperature {
+            config.temperature = strategy.temperature;
+        }
+
+        // Inject CoT instructions into system prompt
+        if !strategy.system_prompt_addition.is_empty() {
+            prompt.push_str("\n\n--- REASONING INSTRUCTIONS ---\n");
+            prompt.push_str(&strategy.system_prompt_addition);
+            prompt.push_str("\n--- END REASONING INSTRUCTIONS ---\n");
+        }
+
+        // Initialize thinking tag parser if configured for transparent parsing
+        if self.adaptive_thinking.parse_thinking_tags && self.adaptive_thinking.transparent_thinking_parse {
+            self.thinking_parser = Some(ThinkingTagParser::new(
+                self.adaptive_thinking.strip_thinking_from_response,
+            ));
+        } else {
+            self.thinking_parser = None;
+        }
+
+        // Store the strategy for inspection
+        self.last_thinking_strategy = Some(strategy);
+
+        (prompt, config)
+    }
+
+    // === Dynamic Context Size Detection ===
+
+    /// Detect and cache the context size for the current model.
+    ///
+    /// Uses the global context size cache (`get_model_context_size_cached`).
+    /// On a cache miss the provider API is queried first; if that fails,
+    /// the static model-name table is used as fallback.
+    ///
+    /// The instance fields `detected_context_size` / `detected_context_model`
+    /// are kept in sync for fast per-instance access without locking.
+    pub fn detect_model_context_size(&mut self) -> usize {
+        let current_model = self.config.selected_model.clone();
+
+        // Fast path: instance cache hit
+        if let (Some(cached_size), Some(ref cached_model)) =
+            (self.detected_context_size, &self.detected_context_model)
+        {
+            if cached_model == &current_model {
+                return cached_size;
+            }
+        }
+
+        // Delegate to global cache (which calls fetcher on miss)
+        let config_ref = self.config.clone();
+        let size = get_model_context_size_cached(&current_model, |name| {
+            fetch_model_context_size(&config_ref, name)
+        });
+
+        // Sync instance cache
+        self.detected_context_size = Some(size);
+        self.detected_context_model = Some(current_model);
+
+        size
+    }
+
+    /// Get the cached context size without re-detecting.
+    ///
+    /// Returns the instance-cached size if the model hasn't changed,
+    /// otherwise delegates to `detect_model_context_size`.
+    pub fn get_model_context_size(&mut self) -> usize {
+        if let (Some(cached_size), Some(ref cached_model)) =
+            (self.detected_context_size, &self.detected_context_model)
+        {
+            if cached_model == &self.config.selected_model {
+                return cached_size;
+            }
+        }
+        self.detect_model_context_size()
+    }
+
+    /// Calculate available tokens for knowledge context
+    ///
+    /// This calculates how many tokens can be used for RAG knowledge based on:
+    /// - Model's total context window
+    /// - Reserved space for response (20%)
+    /// - System prompt size
+    /// - Current conversation size
+    /// - User message size estimate
+    ///
+    /// Returns the number of tokens available for knowledge.
+    pub fn calculate_available_knowledge_tokens(&mut self, user_message: &str) -> usize {
+        let total_context = self.get_model_context_size();
+
+        // Reserve 20% for response generation
+        let response_reserve = total_context / 5;
+
+        // Estimate system prompt tokens
+        let system_tokens = estimate_tokens(&self.system_prompt_base);
+
+        // Estimate conversation history tokens
+        let conversation_tokens: usize = self.conversation.iter()
+            .map(|msg| estimate_tokens(&msg.content))
+            .sum();
+
+        // Estimate user message tokens
+        let user_tokens = estimate_tokens(user_message);
+
+        // Calculate available
+        let used = system_tokens + conversation_tokens + user_tokens + response_reserve;
+        let available = total_context.saturating_sub(used);
+
+        // Leave a small buffer (5%) for safety
+        let safe_available = (available as f32 * 0.95) as usize;
+
+        println!(
+            "[AI Context] Total: {}, Used: {} (sys:{} conv:{} user:{} reserve:{}), Available for knowledge: {}",
+            total_context, used, system_tokens, conversation_tokens, user_tokens, response_reserve, safe_available
+        );
+
+        safe_available
+    }
+
+    /// Invalidate the cached context size (call when model changes)
+    pub fn invalidate_context_cache(&mut self) {
+        self.detected_context_size = None;
+        self.detected_context_model = None;
+    }
+
+    // === Knowledge Context Management ===
+
+    /// Set the knowledge context that will be used for all messages
+    ///
+    /// This context is automatically included in the system prompt when
+    /// sending messages using `send_message_auto()` or when calling
+    /// `send_message()` with an empty knowledge_context parameter.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use ai_assistant::AiAssistant;
+    ///
+    /// let mut assistant = AiAssistant::new();
+    /// assistant.set_knowledge_context("# Star Citizen Ships\n\nThe Aurora MR is...");
+    ///
+    /// // Messages will automatically use the knowledge context
+    /// assistant.send_message_auto("Tell me about the Aurora MR");
+    /// ```
+    pub fn set_knowledge_context(&mut self, context: &str) {
+        self.knowledge_context = context.to_string();
+    }
+
+    /// Append content to the existing knowledge context
+    ///
+    /// Useful for incrementally building knowledge from multiple sources.
+    pub fn append_knowledge_context(&mut self, content: &str) {
+        if !self.knowledge_context.is_empty() {
+            self.knowledge_context.push_str("\n\n");
+        }
+        self.knowledge_context.push_str(content);
+    }
+
+    /// Clear the knowledge context
+    pub fn clear_knowledge_context(&mut self) {
+        self.knowledge_context.clear();
+    }
+
+    /// Get the current knowledge context
+    pub fn get_knowledge_context(&self) -> &str {
+        &self.knowledge_context
+    }
+
+    /// Check if there is any knowledge context set
+    pub fn has_knowledge_context(&self) -> bool {
+        !self.knowledge_context.is_empty()
+    }
+
+    /// Get the size of the knowledge context in bytes
+    pub fn knowledge_context_size(&self) -> usize {
+        self.knowledge_context.len()
     }
 
     /// Load configuration
@@ -336,6 +757,163 @@ impl AiAssistant {
         false
     }
 
+    // === Provider Fallback ===
+
+    /// Configure fallback providers for automatic failover.
+    ///
+    /// When the primary provider fails, the assistant tries each fallback in order.
+    /// Each entry is a `(AiProvider, model_name)` pair.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use ai_assistant::{AiAssistant, config::AiProvider};
+    ///
+    /// let mut ai = AiAssistant::new();
+    /// ai.configure_fallback(vec![
+    ///     (AiProvider::LMStudio, "local-model".into()),
+    ///     (AiProvider::Ollama, "llama3.2:latest".into()),
+    /// ]);
+    /// ai.enable_fallback();
+    /// ```
+    pub fn configure_fallback(&mut self, providers: Vec<(AiProvider, String)>) {
+        self.fallback_providers = providers;
+    }
+
+    /// Enable automatic provider fallback.
+    pub fn enable_fallback(&mut self) {
+        self.fallback_enabled = true;
+    }
+
+    /// Disable automatic provider fallback.
+    pub fn disable_fallback(&mut self) {
+        self.fallback_enabled = false;
+    }
+
+    /// Returns `true` if fallback is enabled and at least one provider is configured.
+    pub fn fallback_active(&self) -> bool {
+        self.fallback_enabled && !self.fallback_providers.is_empty()
+    }
+
+    /// Get the name of the provider that served the last response.
+    ///
+    /// Updated asynchronously by background generation threads.
+    /// Returns `None` before the first response completes.
+    pub fn last_provider_used(&self) -> Option<String> {
+        self.fallback_last_provider.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    // === Conversation Compaction ===
+
+    /// Enable automatic conversation compaction.
+    ///
+    /// When enabled, conversations exceeding `CompactionConfig::max_messages` are
+    /// automatically compacted before each message send. This is a lightweight,
+    /// heuristic-based compaction (no LLM call) that preserves important, first, and
+    /// recent messages while summarizing removed ones.
+    pub fn enable_auto_compaction(&mut self) {
+        self.auto_compaction = true;
+    }
+
+    /// Disable automatic conversation compaction.
+    pub fn disable_auto_compaction(&mut self) {
+        self.auto_compaction = false;
+    }
+
+    /// Set the compaction configuration.
+    pub fn set_compaction_config(&mut self, config: CompactionConfig) {
+        self.compaction_config = config;
+    }
+
+    /// Manually compact the current conversation.
+    ///
+    /// Converts conversation messages to compactable form, runs the compactor,
+    /// and replaces the conversation with the compacted result. A summary of
+    /// removed messages is inserted as a system message after the first message.
+    ///
+    /// Returns the `CompactionResult` with details about what was removed.
+    pub fn compact_conversation(&mut self) -> CompactionResult {
+        let compactor = ConversationCompactor::new(self.compaction_config.clone());
+
+        let compactable: Vec<CompactableMessage> = self.conversation.iter().map(|m| {
+            CompactableMessage::new(&m.role, &m.content)
+        }).collect();
+
+        let result = compactor.compact(compactable);
+
+        // Replace conversation with compacted messages
+        self.conversation = result.messages.iter().map(|m| {
+            match m.role.as_str() {
+                "user" => ChatMessage::user(&m.content),
+                "assistant" => ChatMessage::assistant(&m.content),
+                _ => ChatMessage::system(&m.content),
+            }
+        }).collect();
+
+        // Insert summary after the first message if available
+        if let Some(ref summary) = result.summary {
+            if !summary.is_empty() && !self.conversation.is_empty() {
+                self.conversation.insert(
+                    1.min(self.conversation.len()),
+                    ChatMessage::system(summary),
+                );
+            }
+        }
+
+        result
+    }
+
+    /// Run compaction if auto_compaction is enabled and the conversation exceeds
+    /// the configured threshold. Called internally before each send.
+    fn maybe_compact_conversation(&mut self) {
+        if !self.auto_compaction {
+            return;
+        }
+        let compactor = ConversationCompactor::new(self.compaction_config.clone());
+        if compactor.needs_compaction(self.conversation.len()) {
+            let _ = self.compact_conversation();
+        }
+    }
+
+    // === API Key Management ===
+
+    /// Initialize the API key manager with custom rotation config.
+    ///
+    /// Required before adding keys. If not called, `add_api_key` will
+    /// initialize a manager with default settings.
+    pub fn set_api_key_config(&mut self, config: RotationConfig) {
+        self.api_key_manager = Some(ApiKeyManager::new(config));
+    }
+
+    /// Add an API key for a provider.
+    ///
+    /// Creates the key manager with default config if not yet initialized.
+    pub fn add_api_key(&mut self, provider: &str, key_id: &str, key_value: &str) {
+        if self.api_key_manager.is_none() {
+            self.api_key_manager = Some(ApiKeyManager::default());
+        }
+        let api_key = ApiKey::new(key_id, key_value, provider);
+        self.api_key_manager.as_mut().expect("api_key_manager must be initialized").add_key(api_key);
+    }
+
+    /// Get the current API key for a provider (round-robin, skips rate-limited keys).
+    ///
+    /// Returns `None` if no usable key is available.
+    pub fn get_current_api_key(&mut self, provider: &str) -> Option<String> {
+        self.api_key_manager
+            .as_mut()
+            .and_then(|m| m.get_key(provider))
+            .map(|k| k.key.clone())
+    }
+
+    /// Mark the current key for a provider as rate-limited, triggering rotation
+    /// to the next available key.
+    pub fn mark_key_rate_limited(&mut self, provider: &str, key_id: &str) {
+        if let Some(ref mut manager) = self.api_key_manager {
+            manager.mark_rate_limited(provider, key_id);
+        }
+    }
+
     // === Message Handling ===
 
     /// Send a message and start generating a response
@@ -345,6 +923,7 @@ impl AiAssistant {
     /// * `knowledge_context` - Optional knowledge/context to include in system prompt
     pub fn send_message(&mut self, user_message: String, knowledge_context: &str) {
         self.conversation.push(ChatMessage::user(&user_message));
+        self.maybe_compact_conversation();
         self.is_generating = true;
         self.current_response.clear();
 
@@ -359,17 +938,76 @@ impl AiAssistant {
             knowledge_context,
         );
 
+        let fallback_providers = if self.fallback_enabled {
+            self.fallback_providers.clone()
+        } else {
+            Vec::new()
+        };
+        let last_provider = self.fallback_last_provider.clone();
+
         thread::spawn(move || {
-            let result = generate_response_streaming(&config, &conversation, &system_prompt, &tx);
-            if let Err(e) = result {
-                let _ = tx.send(AiResponse::Error(e.to_string()));
-            }
+            try_generate_with_fallback(
+                &config, &conversation, &system_prompt, &tx,
+                &fallback_providers, None, &last_provider,
+            );
         });
     }
 
     /// Send a message without knowledge context
     pub fn send_message_simple(&mut self, user_message: String) {
         self.send_message(user_message, "");
+    }
+
+    /// Send a message using the internal knowledge context
+    ///
+    /// This method automatically uses the knowledge context that was set via
+    /// `set_knowledge_context()` or `append_knowledge_context()`.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use ai_assistant::AiAssistant;
+    ///
+    /// let mut assistant = AiAssistant::new();
+    /// assistant.set_knowledge_context("# Guide\nImportant info...");
+    /// assistant.send_message_auto("What does the guide say?".to_string());
+    /// ```
+    pub fn send_message_auto(&mut self, user_message: String) {
+        let context = self.knowledge_context.clone();
+        self.send_message(user_message, &context);
+    }
+
+    /// Send a message using internal knowledge context with additional session notes
+    ///
+    /// Combines the internal knowledge context with session-specific notes.
+    pub fn send_message_auto_with_notes(
+        &mut self,
+        user_message: String,
+        session_notes: &str,
+        knowledge_notes: &str,
+    ) {
+        let context = self.knowledge_context.clone();
+        // Debug: Log context size to verify knowledge is being used
+        println!("[AI DEBUG] send_message_auto_with_notes: knowledge_context size = {} bytes", context.len());
+        if context.is_empty() {
+            println!("[AI DEBUG] WARNING: knowledge_context is EMPTY!");
+        } else {
+            // Show first 300 chars of context
+            let preview: String = context.chars().take(300).collect();
+            println!("[AI DEBUG] Context preview: {}...", preview);
+
+            // Check for CCU-related content specifically
+            let context_lower = context.to_lowercase();
+            if context_lower.contains("cross-chassis") || context_lower.contains("ccu") {
+                println!("[AI DEBUG] CCU knowledge FOUND in context");
+            } else {
+                println!("[AI DEBUG] WARNING: No CCU-related content found in context!");
+            }
+
+            // Count how many knowledge sections
+            let section_count = context.matches("# ").count();
+            println!("[AI DEBUG] Knowledge sections: {}", section_count);
+        }
+        self.send_message_with_notes(user_message, &context, session_notes, knowledge_notes);
     }
 
     /// Send a message with full context including user notes
@@ -387,14 +1025,13 @@ impl AiAssistant {
         knowledge_notes: &str,
     ) {
         self.conversation.push(ChatMessage::user(&user_message));
+        self.maybe_compact_conversation();
         self.is_generating = true;
         self.current_response.clear();
 
         let (tx, rx) = mpsc::channel();
         self.rx_response = Some(rx);
 
-        let config = self.config.clone();
-        let conversation = self.conversation.clone();
         let system_prompt = build_system_prompt_with_notes(
             &self.system_prompt_base,
             &self.preferences,
@@ -403,15 +1040,27 @@ impl AiAssistant {
             knowledge_notes,
         );
 
+        let (system_prompt, config) = self.apply_adaptive_thinking(&user_message, system_prompt);
+        let conversation = self.conversation.clone();
+        let fallback_providers = if self.fallback_enabled {
+            self.fallback_providers.clone()
+        } else {
+            Vec::new()
+        };
+        let last_provider = self.fallback_last_provider.clone();
+
         thread::spawn(move || {
-            let result = generate_response_streaming(&config, &conversation, &system_prompt, &tx);
-            if let Err(e) = result {
-                let _ = tx.send(AiResponse::Error(e.to_string()));
-            }
+            try_generate_with_fallback(
+                &config, &conversation, &system_prompt, &tx,
+                &fallback_providers, None, &last_provider,
+            );
         });
     }
 
-    /// Generate a response synchronously (blocking)
+    /// Generate a response synchronously (blocking).
+    ///
+    /// Supports provider fallback: if the primary provider fails and fallback
+    /// is enabled, tries each fallback provider in order.
     pub fn generate_sync(&mut self, user_message: String, knowledge_context: &str) -> Result<String> {
         self.conversation.push(ChatMessage::user(&user_message));
 
@@ -421,7 +1070,37 @@ impl AiAssistant {
             knowledge_context,
         );
 
-        let response = generate_response(&self.config, &self.conversation, &system_prompt)?;
+        // Try primary provider
+        let response = match generate_response(&self.config, &self.conversation, &system_prompt) {
+            Ok(r) => {
+                *self.fallback_last_provider.lock().unwrap_or_else(|e| e.into_inner()) =
+                    Some(self.config.provider.display_name().to_string());
+                r
+            }
+            Err(primary_err) => {
+                if !self.fallback_enabled || self.fallback_providers.is_empty() {
+                    return Err(primary_err);
+                }
+                // Try fallback providers
+                let mut last_err = primary_err;
+                let mut found = None;
+                for (provider, model) in &self.fallback_providers {
+                    let mut fb_config = self.config.clone();
+                    fb_config.provider = provider.clone();
+                    fb_config.selected_model = model.clone();
+                    match generate_response(&fb_config, &self.conversation, &system_prompt) {
+                        Ok(r) => {
+                            *self.fallback_last_provider.lock().unwrap_or_else(|e| e.into_inner()) =
+                                Some(provider.display_name().to_string());
+                            found = Some(r);
+                            break;
+                        }
+                        Err(e) => last_err = e,
+                    }
+                }
+                found.ok_or(last_err)?
+            }
+        };
 
         self.conversation.push(ChatMessage::assistant(&response));
         self.extract_preferences_from_response(&response);
@@ -436,6 +1115,7 @@ impl AiAssistant {
     /// Returns a CancellationToken that can be used to cancel the generation
     pub fn send_message_cancellable(&mut self, user_message: String, knowledge_context: &str) -> CancellationToken {
         self.conversation.push(ChatMessage::user(&user_message));
+        self.maybe_compact_conversation();
         self.is_generating = true;
         self.current_response.clear();
 
@@ -453,12 +1133,19 @@ impl AiAssistant {
             knowledge_context,
         );
 
+        let fallback_providers = if self.fallback_enabled {
+            self.fallback_providers.clone()
+        } else {
+            Vec::new()
+        };
+        let last_provider = self.fallback_last_provider.clone();
         let token = cancel_token.clone();
+
         thread::spawn(move || {
-            let result = generate_response_streaming_cancellable(&config, &conversation, &system_prompt, &tx, &token);
-            if let Err(e) = result {
-                let _ = tx.send(AiResponse::Error(e.to_string()));
-            }
+            try_generate_with_fallback(
+                &config, &conversation, &system_prompt, &tx,
+                &fallback_providers, Some(&token), &last_provider,
+            );
         });
 
         cancel_token
@@ -469,6 +1156,25 @@ impl AiAssistant {
         self.send_message_cancellable(user_message, "")
     }
 
+    /// Send a message with cancellation support using internal knowledge context
+    ///
+    /// Uses the knowledge context set via `set_knowledge_context()`.
+    pub fn send_message_cancellable_auto(&mut self, user_message: String) -> CancellationToken {
+        let context = self.knowledge_context.clone();
+        self.send_message_cancellable(user_message, &context)
+    }
+
+    /// Send a message with cancellation support using internal context and notes
+    pub fn send_message_cancellable_auto_with_notes(
+        &mut self,
+        user_message: String,
+        session_notes: &str,
+        knowledge_notes: &str,
+    ) -> CancellationToken {
+        let context = self.knowledge_context.clone();
+        self.send_message_cancellable_with_notes(user_message, &context, session_notes, knowledge_notes)
+    }
+
     /// Send a message with full context and cancellation support
     pub fn send_message_cancellable_with_notes(
         &mut self,
@@ -477,7 +1183,22 @@ impl AiAssistant {
         session_notes: &str,
         knowledge_notes: &str,
     ) -> CancellationToken {
-        self.conversation.push(ChatMessage::user(&user_message));
+        // Emit message sent event
+        self.event_bus.emit(crate::events::AiEvent::MessageSent {
+            content_length: user_message.len(),
+            has_knowledge: !knowledge_context.is_empty(),
+        });
+
+        let msg = ChatMessage::user(&user_message);
+        self.conversation.push(msg.clone());
+        self.maybe_compact_conversation();
+
+        // Auto-store user message in RAG if enabled
+        #[cfg(feature = "rag")]
+        if self.rag_config.auto_store_messages {
+            let _ = self.store_message_in_rag(&msg, true);
+        }
+
         self.is_generating = true;
         self.current_response.clear();
 
@@ -487,8 +1208,6 @@ impl AiAssistant {
         let cancel_token = CancellationToken::new();
         self.cancel_token = Some(cancel_token.clone());
 
-        let config = self.config.clone();
-        let conversation = self.conversation.clone();
         let system_prompt = build_system_prompt_with_notes(
             &self.system_prompt_base,
             &self.preferences,
@@ -497,12 +1216,28 @@ impl AiAssistant {
             knowledge_notes,
         );
 
+        let (system_prompt, config) = self.apply_adaptive_thinking(&user_message, system_prompt);
+
+        // Emit provider attempt event
+        self.event_bus.emit(crate::events::AiEvent::ProviderAttempt {
+            provider: config.provider.display_name().to_string(),
+            model: config.selected_model.clone(),
+        });
+
+        let conversation = self.conversation.clone();
+        let fallback_providers = if self.fallback_enabled {
+            self.fallback_providers.clone()
+        } else {
+            Vec::new()
+        };
+        let last_provider = self.fallback_last_provider.clone();
+
         let token = cancel_token.clone();
         thread::spawn(move || {
-            let result = generate_response_streaming_cancellable(&config, &conversation, &system_prompt, &tx, &token);
-            if let Err(e) = result {
-                let _ = tx.send(AiResponse::Error(e.to_string()));
-            }
+            try_generate_with_fallback(
+                &config, &conversation, &system_prompt, &tx,
+                &fallback_providers, Some(&token), &last_provider,
+            );
         });
 
         cancel_token
@@ -530,44 +1265,94 @@ impl AiAssistant {
         self.cancel_token.clone()
     }
 
-    /// Poll for response chunks/completion
+    /// Poll for response chunks/completion.
+    ///
+    /// When adaptive thinking is enabled with `transparent_thinking_parse`, thinking
+    /// tags (`<think>...</think>`) are automatically stripped from chunks. The extracted
+    /// thinking content is available via `last_thinking_result` after the response completes.
     pub fn poll_response(&mut self) -> Option<AiResponse> {
         if let Some(ref rx) = self.rx_response {
             match rx.try_recv() {
                 Ok(response) => {
-                    match &response {
+                    match response {
                         AiResponse::Complete(text) => {
-                            self.current_response = text.clone();
-                            self.conversation.push(ChatMessage::assistant(text));
+                            // Finalize thinking parser if active
+                            if let Some(ref mut parser) = self.thinking_parser {
+                                parser.process_chunk(&text);
+                                parser.finalize();
+                                let parse_result = parser.result();
+                                self.current_response = parse_result.visible_response.clone();
+                                self.last_thinking_result = Some(parse_result);
+                            } else {
+                                self.current_response = text;
+                            }
+
+                            let msg = ChatMessage::assistant(&self.current_response);
+                            self.conversation.push(msg.clone());
                             self.is_generating = false;
                             self.rx_response = None;
                             self.cancel_token = None;
-                            self.extract_preferences_from_response(text);
+                            self.thinking_parser = None;
+                            self.extract_preferences_from_response(&self.current_response.clone());
+
+                            // Auto-store assistant message in RAG if enabled
+                            #[cfg(feature = "rag")]
+                            if self.rag_config.auto_store_messages {
+                                let _ = self.store_message_in_rag(&msg, true);
+                            }
+
+                            self.event_bus.emit(crate::events::AiEvent::ResponseComplete {
+                                response_length: self.current_response.len(),
+                            });
+                            return Some(AiResponse::Complete(self.current_response.clone()));
                         }
                         AiResponse::Cancelled(partial) => {
-                            // Store partial response but don't add to conversation
                             self.current_response = partial.clone();
                             self.is_generating = false;
                             self.rx_response = None;
                             self.cancel_token = None;
+                            self.thinking_parser = None;
+                            self.event_bus.emit(crate::events::AiEvent::ResponseCancelled {
+                                partial_length: partial.len(),
+                            });
+                            return Some(AiResponse::Cancelled(partial));
                         }
                         AiResponse::Chunk(chunk) => {
-                            self.current_response.push_str(chunk);
+                            // Route through thinking tag parser if active
+                            if let Some(ref mut parser) = self.thinking_parser {
+                                let visible = parser.process_chunk(&chunk);
+                                if !visible.is_empty() {
+                                    self.current_response.push_str(&visible);
+                                    return Some(AiResponse::Chunk(visible));
+                                }
+                                // Chunk was entirely thinking content — don't emit anything
+                                return None;
+                            } else {
+                                self.current_response.push_str(&chunk);
+                                return Some(AiResponse::Chunk(chunk));
+                            }
                         }
-                        AiResponse::Error(_) => {
+                        AiResponse::Error(e) => {
                             self.is_generating = false;
                             self.rx_response = None;
                             self.cancel_token = None;
+                            self.thinking_parser = None;
+                            self.event_bus.emit(crate::events::AiEvent::ResponseError {
+                                error: e.clone(),
+                            });
+                            return Some(AiResponse::Error(e));
                         }
-                        _ => {}
+                        other => {
+                            return Some(other);
+                        }
                     }
-                    return Some(response);
                 }
                 Err(mpsc::TryRecvError::Empty) => {}
                 Err(mpsc::TryRecvError::Disconnected) => {
                     self.is_generating = false;
                     self.rx_response = None;
                     self.cancel_token = None;
+                    self.thinking_parser = None;
                 }
             }
         }
@@ -628,9 +1413,11 @@ impl AiAssistant {
         }
 
         let session = ChatSession::new("New Chat");
+        let session_id = session.id.clone();
         self.current_session = Some(session);
         self.conversation.clear();
         self.current_response.clear();
+        self.event_bus.emit(crate::events::AiEvent::SessionCreated { session_id });
     }
 
     /// Save the current conversation to session
@@ -669,6 +1456,9 @@ impl AiAssistant {
             self.preferences = session.preferences.clone();
             self.session_store.current_session_id = Some(session.id.clone());
             self.current_session = Some(session);
+            self.event_bus.emit(crate::events::AiEvent::SessionLoaded {
+                session_id: session_id.to_string(),
+            });
         }
     }
 
@@ -680,6 +1470,9 @@ impl AiAssistant {
             self.current_session = None;
             self.conversation.clear();
         }
+        self.event_bus.emit(crate::events::AiEvent::SessionDeleted {
+            session_id: session_id.to_string(),
+        });
     }
 
     /// Get all sessions
@@ -759,7 +1552,9 @@ impl AiAssistant {
             .map(|msg| estimate_tokens(&msg.content) + 4) // +4 for role tokens
             .sum();
 
-        let max_tokens = get_model_context_size(&self.config.selected_model);
+        let max_tokens = get_model_context_size_cached(&self.config.selected_model, |name| {
+            fetch_model_context_size(&self.config, name)
+        });
 
         ContextUsage::calculate(system_tokens, knowledge_tokens, conversation_tokens, max_tokens)
     }
@@ -767,7 +1562,9 @@ impl AiAssistant {
     /// Get dynamic max history based on knowledge size
     pub fn get_effective_max_history(&self, knowledge: &str) -> usize {
         let knowledge_tokens = estimate_tokens(knowledge);
-        let max_tokens = get_model_context_size(&self.config.selected_model);
+        let max_tokens = get_model_context_size_cached(&self.config.selected_model, |name| {
+            fetch_model_context_size(&self.config, name)
+        });
 
         // Reserve tokens for system prompt, response, buffer
         let reserved = 1700;
@@ -809,6 +1606,17 @@ impl AiAssistant {
         if to_summarize >= 2 {
             self.pending_summary_count = to_summarize;
         }
+    }
+
+    /// Mark messages for summarization using the internal knowledge context
+    pub fn summarize_old_messages_auto(&mut self) {
+        let context = self.knowledge_context.clone();
+        self.summarize_old_messages(&context);
+    }
+
+    /// Check if summarization should be triggered using internal knowledge context
+    pub fn should_summarize_auto(&self) -> bool {
+        self.should_summarize(&self.knowledge_context)
     }
 
     /// Start background AI-powered summarization
@@ -958,7 +1766,7 @@ impl AiAssistant {
                     true
                 }
                 Err(e) => {
-                    eprintln!("[AI RAG] Failed to initialize database: {}", e);
+                    log::error!("[AI RAG] Failed to initialize database: {}", e);
                     false
                 }
             }
@@ -1098,7 +1906,7 @@ impl AiAssistant {
                         results.push((source, chunks));
                     }
                     Err(e) => {
-                        eprintln!("[AI RAG] Failed to index '{}': {}", source, e);
+                        log::error!("[AI RAG] Failed to index '{}': {}", source, e);
                     }
                 }
             }
@@ -1433,6 +2241,12 @@ impl AiAssistant {
     ///
     /// Returns (knowledge_context, conversation_context) if RAG is enabled
     pub fn build_rag_context(&mut self, query: &str) -> (String, String) {
+        // Ensure RAG is initialized (lazy initialization if path was set)
+        if !self.ensure_rag_initialized() {
+            // RAG not available, return empty contexts
+            return (String::new(), String::new());
+        }
+
         // Process pending documents first
         if self.has_pending_documents() {
             let results = self.process_pending_documents();
@@ -1449,11 +2263,19 @@ impl AiAssistant {
         let mut conversation_context = String::new();
         self.last_knowledge_usage = None;
 
+        // Calculate effective max tokens for knowledge
+        // If dynamic context is enabled, use the available space; otherwise use configured max
+        let effective_max_knowledge_tokens = if self.rag_config.dynamic_context_enabled {
+            self.calculate_available_knowledge_tokens(query)
+        } else {
+            self.rag_config.max_knowledge_tokens
+        };
+
         if let Some(ref db) = self.rag_db {
             // Knowledge RAG with caching
             if self.rag_config.knowledge_rag_enabled {
-                // Check cache first
-                let cache_key = format!("{}_{}", query, self.rag_config.max_knowledge_tokens);
+                // Check cache first (include effective tokens in cache key)
+                let cache_key = format!("{}_{}", query, effective_max_knowledge_tokens);
                 let cached = self.rag_cache.as_mut().and_then(|c| c.get(&cache_key));
 
                 let chunks = if let Some(cached_chunks) = cached {
@@ -1463,7 +2285,7 @@ impl AiAssistant {
                     self.metrics.record_cache_miss();
                     if let Ok(search_chunks) = db.search_knowledge(
                         query,
-                        self.rag_config.max_knowledge_tokens,
+                        effective_max_knowledge_tokens,
                         self.rag_config.top_k_chunks,
                     ) {
                         // Cache the result
@@ -1601,6 +2423,11 @@ impl AiAssistant {
         query: &str,
         sources: &[String],
     ) -> (String, String, Option<KnowledgeUsage>) {
+        // Ensure RAG is initialized (lazy initialization if path was set)
+        if !self.ensure_rag_initialized() {
+            return (String::new(), String::new(), None);
+        }
+
         // Process pending documents first
         if self.has_pending_documents() {
             let results = self.process_pending_documents();
@@ -1617,6 +2444,13 @@ impl AiAssistant {
         let mut conversation_context = String::new();
         self.last_knowledge_usage = None;
 
+        // Calculate effective max tokens for knowledge (dynamic or fixed)
+        let effective_max_knowledge_tokens = if self.rag_config.dynamic_context_enabled {
+            self.calculate_available_knowledge_tokens(query)
+        } else {
+            self.rag_config.max_knowledge_tokens
+        };
+
         if let Some(ref db) = self.rag_db {
             // Knowledge RAG with source filtering
             if self.rag_config.knowledge_rag_enabled && !sources.is_empty() {
@@ -1626,7 +2460,7 @@ impl AiAssistant {
                 if let Ok(chunks) = db.search_knowledge_filtered(
                     query,
                     sources,
-                    self.rag_config.max_knowledge_tokens,
+                    effective_max_knowledge_tokens,
                     self.rag_config.top_k_chunks,
                 ) {
                     // Record source access for metrics
@@ -1793,6 +2627,24 @@ impl AiAssistant {
         } else {
             false
         }
+    }
+
+    #[cfg(feature = "rag")]
+    /// Enable or disable auto-storage of messages in RAG
+    /// When enabled, messages are automatically indexed as they are sent/received
+    pub fn set_auto_store_messages(&mut self, enabled: bool) -> bool {
+        if self.ensure_rag_initialized() {
+            self.rag_config.auto_store_messages = enabled;
+            true
+        } else {
+            false
+        }
+    }
+
+    #[cfg(feature = "rag")]
+    /// Check if auto-store messages is enabled
+    pub fn is_auto_store_messages_enabled(&self) -> bool {
+        self.rag_config.auto_store_messages
     }
 
     #[cfg(feature = "rag")]
@@ -2107,6 +2959,203 @@ impl AiAssistant {
         }
         0
     }
+
+    // =========================================================================
+    // AUTONOMOUS AGENT INTEGRATION
+    // =========================================================================
+
+    /// Get the current operation mode.
+    #[cfg(feature = "autonomous")]
+    pub fn operation_mode(&self) -> OperationMode {
+        self.mode_manager.current()
+    }
+
+    /// Set the operation mode (respects allowed_max ceiling).
+    #[cfg(feature = "autonomous")]
+    pub fn set_operation_mode(&mut self, mode: OperationMode) -> Result<()> {
+        self.mode_manager.set_mode(mode).map_err(|e| anyhow::anyhow!(e))
+    }
+
+    /// Escalate to next operation mode.
+    #[cfg(feature = "autonomous")]
+    pub fn escalate_mode(&mut self) -> Result<OperationMode> {
+        self.mode_manager.escalate().map_err(|e| anyhow::anyhow!(e))
+    }
+
+    /// De-escalate to lower operation mode.
+    #[cfg(feature = "autonomous")]
+    pub fn de_escalate_mode(&mut self) -> OperationMode {
+        self.mode_manager.de_escalate()
+    }
+
+    /// Get the profile registry.
+    #[cfg(feature = "autonomous")]
+    pub fn profiles(&self) -> &ProfileRegistry {
+        &self.profile_registry
+    }
+
+    /// Get the profile registry mutably.
+    #[cfg(feature = "autonomous")]
+    pub fn profiles_mut(&mut self) -> &mut ProfileRegistry {
+        &mut self.profile_registry
+    }
+
+    /// Set the interaction handler for agent-user communication.
+    #[cfg(feature = "autonomous")]
+    pub fn set_interaction_handler(&mut self, handler: Arc<dyn UserInteractionHandler>) {
+        self.interaction_manager = Some(Arc::new(InteractionManager::new(handler, 300)));
+    }
+
+    /// Get the interaction manager (if configured).
+    #[cfg(feature = "autonomous")]
+    pub fn interaction_manager(&self) -> Option<&Arc<InteractionManager>> {
+        self.interaction_manager.as_ref()
+    }
+
+    /// Create an autonomous agent from a registered profile name.
+    ///
+    /// The agent uses the assistant's config to derive a response generator
+    /// callback, and applies the profile's policy and tools.
+    #[cfg(feature = "autonomous")]
+    pub fn create_agent(
+        &self,
+        profile_name: &str,
+        response_generator: Arc<dyn Fn(&[crate::agentic_loop::AgentMessage]) -> String + Send + Sync>,
+    ) -> Result<AutonomousAgent> {
+        let profile = self.profile_registry.get_agent_profile(profile_name)
+            .ok_or_else(|| anyhow::anyhow!("Agent profile '{}' not found", profile_name))?;
+
+        let mut builder = AutonomousAgentBuilder::new(
+            &profile.name,
+            response_generator,
+        )
+        .policy(profile.policy.clone())
+        .mode(profile.mode);
+
+        if let Some(ref prompt) = profile.system_prompt {
+            builder = builder.system_prompt(prompt.clone());
+        }
+
+        if let Some(ref max_iter) = Some(profile.policy.max_iterations) {
+            builder = builder.max_iterations(*max_iter);
+        }
+
+        // Register OS tools into the agent's tool registry
+        let policy = profile.policy.clone();
+        let sandbox = Arc::new(RwLock::new(SandboxValidator::new(policy)));
+        let mut registry = crate::unified_tools::ToolRegistry::new();
+        register_os_tools(&mut registry, sandbox.clone());
+        builder = builder.tool_registry(registry).sandbox(sandbox);
+
+        if let Some(ref im) = self.interaction_manager {
+            builder = builder.interaction(im.clone());
+        }
+
+        Ok(builder.build())
+    }
+
+    /// Create an autonomous agent with auto-approve interaction (for headless/test usage).
+    #[cfg(feature = "autonomous")]
+    pub fn create_agent_headless(
+        &self,
+        profile_name: &str,
+        response_generator: Arc<dyn Fn(&[crate::agentic_loop::AgentMessage]) -> String + Send + Sync>,
+    ) -> Result<AutonomousAgent> {
+        let handler: Arc<dyn UserInteractionHandler> = Arc::new(AutoApproveInteraction::new());
+        let im = Arc::new(InteractionManager::new(handler, 300));
+
+        let profile = self.profile_registry.get_agent_profile(profile_name)
+            .ok_or_else(|| anyhow::anyhow!("Agent profile '{}' not found", profile_name))?;
+
+        let policy = profile.policy.clone();
+        let sandbox = Arc::new(RwLock::new(SandboxValidator::new(policy)));
+        let mut registry = crate::unified_tools::ToolRegistry::new();
+        register_os_tools(&mut registry, sandbox.clone());
+
+        let mut builder = AutonomousAgentBuilder::new(&profile.name, response_generator)
+            .policy(profile.policy.clone())
+            .mode(profile.mode)
+            .tool_registry(registry)
+            .sandbox(sandbox)
+            .interaction(im);
+
+        if let Some(ref prompt) = profile.system_prompt {
+            builder = builder.system_prompt(prompt.clone());
+        }
+
+        builder = builder.max_iterations(profile.policy.max_iterations);
+
+        Ok(builder.build())
+    }
+
+    // === Butler ===
+
+    /// Initialize the Butler for environment auto-detection.
+    #[cfg(feature = "butler")]
+    pub fn init_butler(&mut self) {
+        self.butler = Some(Butler::new());
+    }
+
+    /// Run Butler environment scan and return the report.
+    #[cfg(feature = "butler")]
+    pub fn butler_scan(&mut self) -> Option<crate::butler::EnvironmentReport> {
+        if self.butler.is_none() {
+            self.butler = Some(Butler::new());
+        }
+        self.butler.as_mut().map(|b| b.scan())
+    }
+
+    /// Auto-configure the assistant using Butler's environment scan.
+    /// Updates the AiConfig based on detected providers.
+    #[cfg(feature = "butler")]
+    pub fn auto_configure(&mut self) -> Result<()> {
+        if self.butler.is_none() {
+            self.butler = Some(Butler::new());
+        }
+        let butler = self.butler.as_mut().expect("butler must be initialized");
+        let report = butler.scan();
+        let suggested_config = butler.suggest_config(&report);
+        self.config = suggested_config;
+        Ok(())
+    }
+
+    // === Scheduler ===
+
+    /// Initialize the scheduler.
+    #[cfg(feature = "scheduler")]
+    pub fn init_scheduler(&mut self) {
+        self.scheduler = Some(Scheduler::new());
+    }
+
+    /// Get the scheduler (if initialized).
+    #[cfg(feature = "scheduler")]
+    pub fn scheduler(&self) -> Option<&Scheduler> {
+        self.scheduler.as_ref()
+    }
+
+    /// Get the scheduler mutably (if initialized).
+    #[cfg(feature = "scheduler")]
+    pub fn scheduler_mut(&mut self) -> Option<&mut Scheduler> {
+        self.scheduler.as_mut()
+    }
+
+    /// Initialize the trigger manager.
+    #[cfg(feature = "scheduler")]
+    pub fn init_trigger_manager(&mut self) {
+        self.trigger_manager = Some(TriggerManager::new());
+    }
+
+    /// Get the trigger manager (if initialized).
+    #[cfg(feature = "scheduler")]
+    pub fn trigger_manager(&self) -> Option<&TriggerManager> {
+        self.trigger_manager.as_ref()
+    }
+
+    /// Get the trigger manager mutably (if initialized).
+    #[cfg(feature = "scheduler")]
+    pub fn trigger_manager_mut(&mut self) -> Option<&mut TriggerManager> {
+        self.trigger_manager.as_mut()
+    }
 }
 
 /// Generate a conversation summary using the AI model
@@ -2230,5 +3279,134 @@ fn create_simple_summary(messages: &[ChatMessage], previous_summary: Option<&str
         (Some(prev), true) => prev.to_string(),
         (None, false) => new_topics,
         (None, true) => "Previous conversation.".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fallback_configure() {
+        let mut ai = AiAssistant::new();
+        assert!(!ai.fallback_active());
+
+        ai.configure_fallback(vec![
+            (AiProvider::LMStudio, "model-a".into()),
+            (AiProvider::Ollama, "model-b".into()),
+        ]);
+        assert!(!ai.fallback_active()); // not enabled yet
+
+        ai.enable_fallback();
+        assert!(ai.fallback_active());
+
+        ai.disable_fallback();
+        assert!(!ai.fallback_active());
+    }
+
+    #[test]
+    fn test_fallback_empty_not_active() {
+        let mut ai = AiAssistant::new();
+        ai.enable_fallback();
+        // Enabled but no providers configured
+        assert!(!ai.fallback_active());
+    }
+
+    #[test]
+    fn test_last_provider_initially_none() {
+        let ai = AiAssistant::new();
+        assert!(ai.last_provider_used().is_none());
+    }
+
+    #[test]
+    fn test_fallback_last_provider_thread_safe() {
+        let ai = AiAssistant::new();
+        let provider_ref = ai.fallback_last_provider.clone();
+        *provider_ref.lock().unwrap() = Some("TestProvider".to_string());
+        assert_eq!(ai.last_provider_used(), Some("TestProvider".to_string()));
+    }
+
+    // === Compaction Tests ===
+
+    #[test]
+    fn test_compaction_disabled_by_default() {
+        let ai = AiAssistant::new();
+        assert!(!ai.auto_compaction);
+    }
+
+    #[test]
+    fn test_compaction_toggle() {
+        let mut ai = AiAssistant::new();
+        ai.enable_auto_compaction();
+        assert!(ai.auto_compaction);
+        ai.disable_auto_compaction();
+        assert!(!ai.auto_compaction);
+    }
+
+    #[test]
+    fn test_compact_conversation_reduces_messages() {
+        let mut ai = AiAssistant::new();
+        ai.set_compaction_config(CompactionConfig {
+            max_messages: 10,
+            target_messages: 5,
+            preserve_recent: 2,
+            preserve_first: 1,
+            min_importance: 0.9,
+        });
+
+        // Add 20 messages
+        for i in 0..20 {
+            ai.conversation.push(ChatMessage::user(&format!("Message {}", i)));
+        }
+        assert_eq!(ai.conversation.len(), 20);
+
+        let result = ai.compact_conversation();
+        assert!(result.removed_count > 0);
+        // Compacted + summary message should be <= target + 1
+        assert!(ai.conversation.len() <= 7); // target + summary
+    }
+
+    #[test]
+    fn test_compact_small_conversation_unchanged() {
+        let mut ai = AiAssistant::new();
+        ai.conversation.push(ChatMessage::user("Hello"));
+        ai.conversation.push(ChatMessage::assistant("Hi!"));
+
+        let result = ai.compact_conversation();
+        assert_eq!(result.removed_count, 0);
+        assert_eq!(ai.conversation.len(), 2);
+    }
+
+    // === API Key Management Tests ===
+
+    #[test]
+    fn test_add_and_get_api_key() {
+        let mut ai = AiAssistant::new();
+        ai.add_api_key("openai", "key1", "sk-abc123");
+
+        let key = ai.get_current_api_key("openai");
+        assert_eq!(key, Some("sk-abc123".to_string()));
+    }
+
+    #[test]
+    fn test_api_key_rotation_on_rate_limit() {
+        let mut ai = AiAssistant::new();
+        ai.add_api_key("openai", "key1", "sk-first");
+        ai.add_api_key("openai", "key2", "sk-second");
+
+        // First key should be returned
+        assert_eq!(ai.get_current_api_key("openai"), Some("sk-first".to_string()));
+
+        // Mark first key as rate-limited
+        ai.mark_key_rate_limited("openai", "key1");
+
+        // Should rotate to second key
+        assert_eq!(ai.get_current_api_key("openai"), Some("sk-second".to_string()));
+    }
+
+    #[test]
+    fn test_api_key_no_manager_returns_none() {
+        let mut ai = AiAssistant::new();
+        assert!(ai.get_current_api_key("openai").is_none());
     }
 }

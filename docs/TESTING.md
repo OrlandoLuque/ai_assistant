@@ -6,11 +6,14 @@ The project has two testing layers:
 
 | Layer | Tests | Run Command |
 |-------|-------|-------------|
-| Unit tests (`#[test]`) | 867 | `cargo test -p ai_assistant --lib` |
-| Integration tests | 21 | `cargo test -p ai_assistant --test integration_tests` |
+| Unit tests (`#[test]`) | 1418 | `cargo test --lib --features full` |
+| Integration tests | 38 | `cargo test --test integration_tests --features full` |
 | Test harness (CLI) | 420 | `cargo run --bin ai_test_harness -- --all` |
+| Distributed networking tests | 113 | `cargo test --features "full,distributed-network"` (1531 total) |
+| P2P tests | 19 | `cargo test --features "full,p2p" --lib -- p2p::` |
+| Autonomous agent tests | 255 | `cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents"` (1786 total) |
 
-**Total: 1,308 tests**
+**Total: 1,786+ tests** (1418 base + 113 distributed networking + 255 autonomous agent system)
 
 ## Quick Start
 
@@ -71,6 +74,40 @@ Unit tests live inside each source file in `crates/ai_assistant/src/` using `#[c
 - `distributed_rate_limit.rs` - Distributed rate limiting
 - `export.rs` - Conversation export (JSON, Markdown)
 
+**Distributed Networking** (feature `distributed-network`):
+- `consistent_hash.rs` - ConsistentHashRing, vnodes, key distribution, add/remove nodes (12 tests)
+- `failure_detector.rs` - PhiAccrualDetector, HeartbeatManager, phi calculation, node status (14 tests)
+- `merkle_sync.rs` - MerkleTree, SHA-256 hashing, diff, proofs, AntiEntropySync (13 tests)
+- `node_security.rs` - CertificateManager, JoinToken, ChallengeResponse, secure RNG, constant-time eq (27 tests)
+- `distributed_network.rs` - NetworkNode, QUIC transport, replication, LAN discovery, peer exchange, anti-entropy, join validation, reputation (47 tests)
+
+**Stub-free implementations** (all stubs replaced with real code):
+- `health_check.rs` - Provider URL storage, real check_all iteration (2 new tests)
+- `access_control.rs` - MFA verification, CIDR IP range checks, usage tracking (7 new tests, 11 total)
+- `evaluation.rs` - Welch's t-test with Student's t-distribution CDF via Lanczos gamma + incomplete beta (5 new tests, 11 total)
+- `prompt_optimizer.rs` - Public FeedbackEntry, feedback history/count/variant queries (1 new test, 7 total)
+- `content_encryption.rs` - Real AES-256-GCM with `rag` feature, random nonces (4 new tests, 7 total)
+- `websocket_streaming.rs` - SHA-1 (RFC 3174), base64 (RFC 4648), RFC 6455 WebSocket handshake (4 new tests, 10 total)
+- `agentic_loop.rs` - Response generator callback, cleaned simulate comments (3 new tests, 35 total)
+- `p2p.rs` - STUN/UPnP/NAT-PMP NAT traversal, ICE connectivity, TCP bootstrap, knowledge broadcast/query, consensus (14 new tests, 19 total)
+- `wasm.rs` - Three-variant cfg for WASM: real web-sys/js-sys/getrandom when `wasm` feature active (4 new tests, 9 total)
+
+**Autonomous Agent System** (features `autonomous`, `scheduler`, `butler`, `browser`, `distributed-agents`):
+- `autonomous_loop.rs` - Agent execution loop, CostConfig, multi-format tool call parser, tool tracking (23 tests)
+- `mode_manager.rs` - OperationMode 5-level hierarchy, auto-escalate, history tracking (17 tests)
+- `agent_sandbox.rs` - SandboxValidator, ActionDescriptor, audit trail (8 tests)
+- `user_interaction.rs` - InteractionHandler trait, AutoApproveHandler, BufferedHandler with storage (21 tests)
+- `interactive_commands.rs` - Bilingual command parser (EN/ES), UserIntent, CommandProcessor, undo command (16 tests)
+- `task_board.rs` - TaskBoard, BoardCommand, Kanban columns, Markdown export, undo support (16 tests)
+- `agent_profiles.rs` - ProfileRegistry, AgentProfile, WorkflowProfile, conversation profiles (15 tests)
+- `agent_policy.rs` - AgentPolicy builder, internet modes, risk levels, command validation (12 tests)
+- `scheduler.rs` - CronSchedule parser, ScheduledJob, Scheduler, job lifecycle (16 tests)
+- `trigger_system.rs` - TriggerManager, conditions (Manual/Cron/FileChange/FeedUpdate), cooldowns, max-fires (20 tests)
+- `butler.rs` - Real detectors: Ollama/LM Studio (HTTP), GPU (nvidia-smi), Docker, Browser, Network (18 tests)
+- `os_tools.rs` - OS operations with sandbox validation (11 tests)
+- `browser_tools.rs` - Real CDP via WebSocket, Chrome process management, base64 encoder (19 tests)
+- `distributed_agents.rs` - Task distribution, node management, heartbeats, MapReduce (17 tests)
+
 **Formatting & Templates**:
 - `formatting.rs` - Response parsing, code block extraction
 - `templates.rs` - PromptTemplate, variable rendering
@@ -103,6 +140,8 @@ The test harness is a standalone binary that tests the `ai_assistant` crate's pu
 **Chain (3-4 modules)**: chain_entity_anon_cache_compress, chain_intent_template_context_budget, chain_chunker_entities_embed_similarity, chain_facts_memory_context_compact, chain_moderation_version_merge_export, chain_latency_health_select_cost, chain_analytics_topics_compact_export, chain_access_priority_ratelimit, chain_expansion_chunk_embed_rank, chain_intent_entity_citation_validate
 
 **Pipeline (5-6 modules)**: pipeline_rag, pipeline_content_safety, pipeline_session_lifecycle, pipeline_request_processing, pipeline_knowledge_ingestion, pipeline_query_to_response, pipeline_multi_format_export, pipeline_guardrails
+
+**RAG (feature=rag)**: rag_tiers, knowledge_graph
 
 **Stress & Edge-case**: stress_empty_inputs, stress_unicode, stress_large_inputs, stress_error_paths, stress_boundaries, stress_concurrency, stress_memory, stress_regression, stress_performance, stress_fuzzing, stress_api_contracts, stress_serialization, stress_chaos
 

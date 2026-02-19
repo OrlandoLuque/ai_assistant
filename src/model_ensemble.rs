@@ -292,7 +292,7 @@ impl Ensemble {
 
         // Find highest weighted
         let winner = response_weights.into_iter()
-            .max_by(|(_, (w1, _)), (_, (w2, _))| w1.partial_cmp(w2).unwrap());
+            .max_by(|(_, (w1, _)), (_, (w2, _))| w1.partial_cmp(w2).unwrap_or(std::cmp::Ordering::Equal));
 
         match winner {
             Some((_, (_, model_id))) => {
@@ -310,7 +310,7 @@ impl Ensemble {
     fn best_of_n(&self, responses: &[ModelResponse]) -> (String, Option<String>) {
         let best = responses.iter()
             .filter(|r| r.success)
-            .max_by(|a, b| a.confidence.partial_cmp(&b.confidence).unwrap());
+            .max_by(|a, b| a.confidence.partial_cmp(&b.confidence).unwrap_or(std::cmp::Ordering::Equal));
 
         match best {
             Some(r) => (r.response.clone(), Some(r.model_id.clone())),

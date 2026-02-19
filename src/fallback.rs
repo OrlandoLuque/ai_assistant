@@ -192,7 +192,7 @@ impl FallbackChain {
         self.providers.push(provider);
         self.providers.sort_by(|a, b| b.priority.cmp(&a.priority));
 
-        self.states.write().unwrap().insert(name, ProviderState::default());
+        self.states.write().unwrap_or_else(|e| e.into_inner()).insert(name, ProviderState::default());
 
         self
     }
@@ -223,7 +223,7 @@ impl FallbackChain {
 
             // Check circuit breaker
             {
-                let states = self.states.read().unwrap();
+                let states = self.states.read().unwrap_or_else(|e| e.into_inner());
                 if let Some(state) = states.get(&provider.name) {
                     if state.status == ProviderStatus::CircuitOpen {
                         if let Some(opened) = state.circuit_opened_at {
@@ -239,7 +239,7 @@ impl FallbackChain {
 
             // Update request count
             {
-                let mut states = self.states.write().unwrap();
+                let mut states = self.states.write().unwrap_or_else(|e| e.into_inner());
                 if let Some(state) = states.get_mut(&provider.name) {
                     state.total_requests += 1;
                 }
@@ -249,7 +249,7 @@ impl FallbackChain {
                 Ok(value) => {
                     // Record success
                     {
-                        let mut states = self.states.write().unwrap();
+                        let mut states = self.states.write().unwrap_or_else(|e| e.into_inner());
                         if let Some(state) = states.get_mut(&provider.name) {
                             state.failure_count = 0;
                             state.last_success = Some(Instant::now());
@@ -273,7 +273,7 @@ impl FallbackChain {
 
                     // Record failure
                     let should_open_circuit = {
-                        let mut states = self.states.write().unwrap();
+                        let mut states = self.states.write().unwrap_or_else(|e| e.into_inner());
                         if let Some(state) = states.get_mut(&provider.name) {
                             state.failure_count += 1;
                             state.last_failure = Some(Instant::now());
@@ -314,24 +314,24 @@ impl FallbackChain {
 
     /// Get provider state
     pub fn get_state(&self, name: &str) -> Option<ProviderState> {
-        self.states.read().unwrap().get(name).cloned()
+        self.states.read().unwrap_or_else(|e| e.into_inner()).get(name).cloned()
     }
 
     /// Get all provider states
     pub fn all_states(&self) -> HashMap<String, ProviderState> {
-        self.states.read().unwrap().clone()
+        self.states.read().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     /// Reset provider state
     pub fn reset_provider(&self, name: &str) {
-        if let Some(state) = self.states.write().unwrap().get_mut(name) {
+        if let Some(state) = self.states.write().unwrap_or_else(|e| e.into_inner()).get_mut(name) {
             *state = ProviderState::default();
         }
     }
 
     /// Reset all providers
     pub fn reset_all(&self) {
-        let mut states = self.states.write().unwrap();
+        let mut states = self.states.write().unwrap_or_else(|e| e.into_inner());
         for state in states.values_mut() {
             *state = ProviderState::default();
         }
@@ -339,7 +339,7 @@ impl FallbackChain {
 
     /// Get available providers
     pub fn available_providers(&self) -> Vec<&FallbackProvider> {
-        let states = self.states.read().unwrap();
+        let states = self.states.read().unwrap_or_else(|e| e.into_inner());
         self.providers.iter()
             .filter(|p| {
                 p.enabled && states.get(&p.name)
@@ -420,7 +420,7 @@ impl HealthChecker {
     where
         F: Fn(&FallbackProvider) -> bool,
     {
-        let chain = self.chain.lock().unwrap();
+        let chain = self.chain.lock().unwrap_or_else(|e| e.into_inner());
         for provider in &chain.providers {
             if !provider.enabled {
                 continue;
@@ -428,7 +428,7 @@ impl HealthChecker {
 
             let healthy = checker(provider);
 
-            if let Some(state) = chain.states.write().unwrap().get_mut(&provider.name) {
+            if let Some(state) = chain.states.write().unwrap_or_else(|e| e.into_inner()).get_mut(&provider.name) {
                 if healthy {
                     state.status = ProviderStatus::Available;
                     state.failure_count = 0;

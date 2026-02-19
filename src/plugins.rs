@@ -480,14 +480,14 @@ impl Plugin for LoggingPlugin {
 
     fn on_before_send(&self, message: &str) -> Option<String> {
         if self.enabled && self.log_messages {
-            eprintln!("[LOG] Sending message ({} chars)", message.len());
+            log::debug!("[LOG] Sending message ({} chars)", message.len());
         }
         None
     }
 
     fn on_after_receive(&self, response: &str) -> Option<String> {
         if self.enabled && self.log_responses {
-            eprintln!("[LOG] Received response ({} chars)", response.len());
+            log::debug!("[LOG] Received response ({} chars)", response.len());
         }
         None
     }

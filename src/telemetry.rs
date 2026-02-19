@@ -46,7 +46,7 @@ impl TelemetryEvent {
         Self {
             name: name.into(),
             timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
+                .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
             duration_ms: None,
             properties: HashMap::new(),
             metrics: HashMap::new(),
@@ -112,7 +112,7 @@ impl TelemetryCollector {
 
         // Update aggregated metrics
         {
-            let mut agg = self.aggregated.lock().unwrap();
+            let mut agg = self.aggregated.lock().unwrap_or_else(|e| e.into_inner());
             agg.total_requests += 1;
 
             if let Some(tokens) = event.metrics.get("tokens") {
@@ -130,7 +130,7 @@ impl TelemetryCollector {
             }
         }
 
-        self.events.lock().unwrap().push(event);
+        self.events.lock().unwrap_or_else(|e| e.into_inner()).push(event);
     }
 
     pub fn record_request(&self, provider: &str, model: &str, duration: Duration, tokens: usize) {
@@ -148,11 +148,11 @@ impl TelemetryCollector {
     }
 
     pub fn get_aggregated(&self) -> AggregatedMetrics {
-        self.aggregated.lock().unwrap().clone()
+        self.aggregated.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     pub fn flush(&self) -> Vec<TelemetryEvent> {
-        let mut events = self.events.lock().unwrap();
+        let mut events = self.events.lock().unwrap_or_else(|e| e.into_inner());
         std::mem::take(&mut *events)
     }
 }
@@ -189,7 +189,7 @@ impl TimedOperation {
 mod rand {
     pub fn random<T>() -> f64 {
         use std::time::{SystemTime, UNIX_EPOCH};
-        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().subsec_nanos();
+        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().subsec_nanos();
         (nanos as f64) / 1_000_000_000.0
     }
 }

@@ -3864,3 +3864,517 @@ pub fn knowledge_selection_external(
     let selection = control.to_selection_mode(all_available);
     knowledge_selection_display(ui, &selection, all_available);
 }
+
+// ============================================================================
+// RAG Tier Selection Widgets
+// ============================================================================
+
+use crate::rag_tiers::{RagTier, RagConfig, RagFeatures};
+
+/// Colors for RAG tier UI elements
+#[derive(Clone)]
+pub struct RagTierColors {
+    /// Background color for disabled tier
+    pub disabled: Color32,
+    /// Background color for fast/basic tiers
+    pub fast: Color32,
+    /// Background color for semantic tiers
+    pub semantic: Color32,
+    /// Background color for enhanced tiers
+    pub enhanced: Color32,
+    /// Background color for thorough tiers
+    pub thorough: Color32,
+    /// Background color for agentic/advanced tiers
+    pub agentic: Color32,
+    /// Text color for selected tier
+    pub selected_text: Color32,
+    /// Text color for unselected tier
+    pub unselected_text: Color32,
+}
+
+impl Default for RagTierColors {
+    fn default() -> Self {
+        Self {
+            disabled: Color32::from_rgb(60, 60, 60),
+            fast: Color32::from_rgb(50, 80, 50),
+            semantic: Color32::from_rgb(50, 70, 90),
+            enhanced: Color32::from_rgb(70, 60, 90),
+            thorough: Color32::from_rgb(90, 60, 70),
+            agentic: Color32::from_rgb(90, 70, 50),
+            selected_text: Color32::WHITE,
+            unselected_text: Color32::GRAY,
+        }
+    }
+}
+
+impl RagTierColors {
+    /// Get color for a specific tier
+    pub fn for_tier(&self, tier: RagTier) -> Color32 {
+        match tier {
+            RagTier::Disabled => self.disabled,
+            RagTier::Fast => self.fast,
+            RagTier::Semantic => self.semantic,
+            RagTier::Enhanced => self.enhanced,
+            RagTier::Thorough => self.thorough,
+            RagTier::Agentic | RagTier::Graph | RagTier::Full => self.agentic,
+            RagTier::Custom => self.enhanced,
+        }
+    }
+}
+
+/// Response from RAG tier selection widgets
+#[derive(Debug, Clone, Default)]
+pub struct RagTierResponse {
+    /// The newly selected tier, if changed
+    pub selected: Option<RagTier>,
+    /// Whether the user clicked "Configure" for custom settings
+    pub configure_clicked: bool,
+    /// Whether the user hovered over a tier (for tooltips)
+    pub hovered_tier: Option<RagTier>,
+}
+
+impl RagTierResponse {
+    /// Check if any change occurred
+    pub fn changed(&self) -> bool {
+        self.selected.is_some()
+    }
+}
+
+/// Render a compact RAG tier selector as a dropdown
+///
+/// Shows the current tier with an emoji indicator and allows selection from all tiers.
+pub fn rag_tier_dropdown(
+    ui: &mut Ui,
+    current_tier: &mut RagTier,
+    label: &str,
+) -> RagTierResponse {
+    let mut response = RagTierResponse::default();
+
+    ui.horizontal(|ui| {
+        if !label.is_empty() {
+            ui.label(label);
+        }
+
+        let display_text = format!("{} {}", current_tier.emoji(), current_tier.display_name());
+
+        egui::ComboBox::from_id_source("rag_tier_selector")
+            .selected_text(&display_text)
+            .show_ui(ui, |ui| {
+                for tier in RagTier::standard_tiers() {
+                    let tier_text = format!("{} {}", tier.emoji(), tier.display_name());
+                    let is_selected = *current_tier == *tier;
+
+                    let resp = ui.selectable_label(is_selected, &tier_text);
+
+                    if resp.hovered() {
+                        response.hovered_tier = Some(*tier);
+                    }
+
+                    // Show tooltip on hover
+                    resp.clone().on_hover_text(tier.description());
+
+                    if resp.clicked() && !is_selected {
+                        *current_tier = *tier;
+                        response.selected = Some(*tier);
+                    }
+                }
+            });
+    });
+
+    response
+}
+
+/// Render a horizontal button bar for RAG tier selection
+///
+/// Shows all standard tiers as clickable buttons with visual indicators.
+pub fn rag_tier_button_bar(
+    ui: &mut Ui,
+    current_tier: &mut RagTier,
+    colors: &RagTierColors,
+    compact: bool,
+) -> RagTierResponse {
+    let mut response = RagTierResponse::default();
+
+    ui.horizontal(|ui| {
+        for tier in RagTier::standard_tiers() {
+            let is_selected = *current_tier == *tier;
+            let bg_color = if is_selected {
+                colors.for_tier(*tier)
+            } else {
+                Color32::from_rgb(40, 40, 40)
+            };
+            let text_color = if is_selected {
+                colors.selected_text
+            } else {
+                colors.unselected_text
+            };
+
+            let label_text = if compact {
+                format!("{}", tier.emoji())
+            } else {
+                format!("{} {}", tier.emoji(), tier.short_label())
+            };
+
+            let button = egui::Button::new(
+                RichText::new(&label_text)
+                    .color(text_color)
+                    .size(if compact { 14.0 } else { 11.0 })
+            )
+            .fill(bg_color)
+            .rounding(4.0);
+
+            let resp = ui.add(button);
+            let clicked = resp.clicked();
+            let hovered = resp.hovered();
+
+            if hovered {
+                response.hovered_tier = Some(*tier);
+            }
+
+            // Show tooltip (consumes resp)
+            resp.on_hover_ui(|ui| {
+                ui.label(RichText::new(tier.display_name()).strong());
+                ui.label(tier.description());
+                let (min, max) = tier.estimated_extra_calls();
+                let max_str = max.map(|m| m.to_string()).unwrap_or("∞".to_string());
+                ui.label(format!("LLM calls: {}-{}", min, max_str));
+                if tier.requires_embeddings() {
+                    ui.label(RichText::new("Requires embeddings").color(Color32::YELLOW).size(10.0));
+                }
+            });
+
+            if clicked && !is_selected {
+                *current_tier = *tier;
+                response.selected = Some(*tier);
+            }
+        }
+    });
+
+    response
+}
+
+/// Render a vertical tier selector with descriptions
+///
+/// Shows each tier as a radio-button-like selection with full descriptions.
+pub fn rag_tier_radio_list(
+    ui: &mut Ui,
+    current_tier: &mut RagTier,
+    colors: &RagTierColors,
+) -> RagTierResponse {
+    let mut response = RagTierResponse::default();
+
+    for tier in RagTier::standard_tiers() {
+        let is_selected = *current_tier == *tier;
+
+        ui.horizontal(|ui| {
+            // Radio indicator
+            let indicator = if is_selected { "◉" } else { "○" };
+            let indicator_color = if is_selected {
+                colors.for_tier(*tier)
+            } else {
+                Color32::GRAY
+            };
+
+            ui.label(RichText::new(indicator).color(indicator_color).size(14.0));
+
+            // Tier button/label
+            let frame = egui::Frame::none()
+                .fill(if is_selected { colors.for_tier(*tier).linear_multiply(0.3) } else { Color32::TRANSPARENT })
+                .rounding(4.0)
+                .inner_margin(4.0);
+
+            let resp = frame.show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(tier.emoji()).size(14.0));
+                    ui.vertical(|ui| {
+                        ui.label(RichText::new(tier.display_name()).strong().size(12.0));
+                        ui.label(RichText::new(tier.description()).size(10.0).color(Color32::LIGHT_GRAY));
+
+                        // Show call estimate
+                        let (min, max) = tier.estimated_extra_calls();
+                        let calls_text = if max == Some(0) {
+                            "No extra LLM calls".to_string()
+                        } else if let Some(m) = max {
+                            format!("{}-{} LLM calls", min, m)
+                        } else {
+                            format!("{}+ LLM calls (unbounded)", min)
+                        };
+                        ui.label(RichText::new(calls_text).size(9.0).color(Color32::GRAY));
+                    });
+                });
+            }).response;
+
+            if resp.hovered() {
+                response.hovered_tier = Some(*tier);
+            }
+
+            if resp.interact(egui::Sense::click()).clicked() && !is_selected {
+                *current_tier = *tier;
+                response.selected = Some(*tier);
+            }
+        });
+
+        ui.add_space(2.0);
+    }
+
+    response
+}
+
+/// Render a slider-based tier selector
+///
+/// Shows tiers on a horizontal slider, useful for quick adjustment.
+pub fn rag_tier_slider(
+    ui: &mut Ui,
+    current_tier: &mut RagTier,
+    label: &str,
+) -> RagTierResponse {
+    let mut response = RagTierResponse::default();
+
+    // Skip Custom tier for slider (use standard tiers only)
+    let mut level = current_tier.complexity_level().min(7);
+
+    ui.horizontal(|ui| {
+        if !label.is_empty() {
+            ui.label(label);
+        }
+
+        // Emoji indicator
+        ui.label(RichText::new(current_tier.emoji()).size(16.0));
+
+        // Slider
+        let slider_resp = ui.add(
+            egui::Slider::new(&mut level, 0..=7)
+                .show_value(false)
+                .text(current_tier.display_name())
+        );
+
+        if slider_resp.changed() {
+            let new_tier = RagTier::from_level(level);
+            if new_tier != *current_tier {
+                *current_tier = new_tier;
+                response.selected = Some(new_tier);
+            }
+        }
+
+        if slider_resp.hovered() {
+            response.hovered_tier = Some(*current_tier);
+            slider_resp.on_hover_text(current_tier.description());
+        }
+    });
+
+    response
+}
+
+/// Render a tier info panel showing current configuration details
+///
+/// Displays the features enabled for the current tier and requirements.
+pub fn rag_tier_info_panel(
+    ui: &mut Ui,
+    tier: RagTier,
+    config: Option<&RagConfig>,
+) {
+    let features = config.map(|c| c.effective_features()).unwrap_or_else(|| tier.to_features());
+
+    egui::Frame::none()
+        .fill(Color32::from_rgb(30, 30, 35))
+        .rounding(6.0)
+        .inner_margin(8.0)
+        .show(ui, |ui| {
+            // Header
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(tier.emoji()).size(18.0));
+                ui.label(RichText::new(tier.display_name()).strong().size(14.0));
+            });
+
+            ui.label(RichText::new(tier.description()).size(11.0).color(Color32::LIGHT_GRAY));
+            ui.add_space(4.0);
+
+            // Call estimate
+            let (min, max) = tier.estimated_extra_calls();
+            let calls_text = match max {
+                Some(0) => "No additional LLM calls".to_string(),
+                Some(m) if m == min => format!("{} LLM calls", min),
+                Some(m) => format!("{}-{} LLM calls", min, m),
+                None => format!("{}+ LLM calls (iterative)", min),
+            };
+            ui.label(RichText::new(calls_text).size(10.0));
+
+            ui.add_space(4.0);
+            ui.separator();
+            ui.add_space(2.0);
+
+            // Enabled features (in a grid)
+            let enabled = features.enabled_features();
+            if !enabled.is_empty() {
+                ui.label(RichText::new("Enabled Features:").size(10.0).color(Color32::GRAY));
+                ui.horizontal_wrapped(|ui| {
+                    for feature in enabled {
+                        let nice_name = feature.replace('_', " ");
+                        ui.label(RichText::new(format!("• {}", nice_name)).size(9.0).color(Color32::LIGHT_GREEN));
+                    }
+                });
+            }
+
+            // Requirements
+            if let Some(cfg) = config {
+                let reqs = cfg.check_requirements();
+                if !reqs.is_empty() {
+                    ui.add_space(4.0);
+                    ui.label(RichText::new("Requirements:").size(10.0).color(Color32::GRAY));
+                    for req in reqs {
+                        ui.label(RichText::new(format!("⚠ {}", req.display_name())).size(9.0).color(Color32::YELLOW));
+                    }
+                }
+            }
+        });
+}
+
+/// Render a compact tier badge for display in headers/status bars
+pub fn rag_tier_badge(
+    ui: &mut Ui,
+    tier: RagTier,
+    colors: &RagTierColors,
+) {
+    let bg_color = colors.for_tier(tier);
+
+    egui::Frame::none()
+        .fill(bg_color)
+        .rounding(3.0)
+        .inner_margin(Vec2::new(4.0, 2.0))
+        .show(ui, |ui| {
+            ui.label(
+                RichText::new(format!("{} {}", tier.emoji(), tier.short_label()))
+                    .size(10.0)
+                    .color(colors.selected_text)
+            );
+        });
+}
+
+/// Combined RAG tier selector widget with info panel
+///
+/// Provides a full tier selection interface with dropdown, description,
+/// and optional feature details.
+pub fn rag_tier_selector_full(
+    ui: &mut Ui,
+    current_tier: &mut RagTier,
+    mut config: Option<&mut RagConfig>,
+    show_details: bool,
+) -> RagTierResponse {
+    let mut response = RagTierResponse::default();
+
+    ui.vertical(|ui| {
+        // Selector row
+        ui.horizontal(|ui| {
+            ui.label("RAG Tier:");
+            let dropdown_resp = rag_tier_dropdown(ui, current_tier, "");
+            if dropdown_resp.changed() {
+                response = dropdown_resp;
+                // Update config if provided
+                if let Some(ref mut cfg) = config {
+                    cfg.tier = *current_tier;
+                    cfg.features = current_tier.to_features();
+                    cfg.use_custom_features = false;
+                }
+            }
+        });
+
+        // Details panel
+        if show_details {
+            ui.add_space(4.0);
+            rag_tier_info_panel(ui, *current_tier, config.as_deref());
+        }
+    });
+
+    response
+}
+
+/// Render feature toggles for custom RAG configuration
+///
+/// Allows enabling/disabling individual RAG features when using Custom tier.
+pub fn rag_features_editor(
+    ui: &mut Ui,
+    features: &mut RagFeatures,
+) -> bool {
+    let mut changed = false;
+
+    egui::Grid::new("rag_features_grid")
+        .num_columns(2)
+        .spacing([20.0, 4.0])
+        .show(ui, |ui| {
+            // Retrieval Methods
+            ui.label(RichText::new("Retrieval").strong().size(11.0));
+            ui.end_row();
+
+            changed |= ui.checkbox(&mut features.fts_search, "Full-text search").changed();
+            changed |= ui.checkbox(&mut features.semantic_search, "Semantic search").changed();
+            ui.end_row();
+
+            changed |= ui.checkbox(&mut features.hybrid_search, "Hybrid search").changed();
+            changed |= ui.checkbox(&mut features.fusion_rrf, "RRF fusion").changed();
+            ui.end_row();
+
+            ui.add_space(4.0);
+            ui.end_row();
+
+            // Query Enhancement
+            ui.label(RichText::new("Query Enhancement").strong().size(11.0));
+            ui.end_row();
+
+            changed |= ui.checkbox(&mut features.synonym_expansion, "Synonym expansion").changed();
+            changed |= ui.checkbox(&mut features.query_expansion, "Query expansion (LLM)").changed();
+            ui.end_row();
+
+            changed |= ui.checkbox(&mut features.multi_query, "Multi-query").changed();
+            changed |= ui.checkbox(&mut features.hyde, "HyDE").changed();
+            ui.end_row();
+
+            ui.add_space(4.0);
+            ui.end_row();
+
+            // Result Processing
+            ui.label(RichText::new("Result Processing").strong().size(11.0));
+            ui.end_row();
+
+            changed |= ui.checkbox(&mut features.reranking, "Reranking (LLM)").changed();
+            changed |= ui.checkbox(&mut features.cross_encoder_rerank, "Cross-encoder").changed();
+            ui.end_row();
+
+            changed |= ui.checkbox(&mut features.contextual_compression, "Compression").changed();
+            changed |= ui.checkbox(&mut features.sentence_window, "Sentence window").changed();
+            ui.end_row();
+
+            changed |= ui.checkbox(&mut features.parent_document, "Parent document").changed();
+            ui.end_row();
+
+            ui.add_space(4.0);
+            ui.end_row();
+
+            // Self-Improvement
+            ui.label(RichText::new("Self-Improvement").strong().size(11.0));
+            ui.end_row();
+
+            changed |= ui.checkbox(&mut features.self_reflection, "Self-reflection").changed();
+            changed |= ui.checkbox(&mut features.corrective_rag, "Corrective RAG").changed();
+            ui.end_row();
+
+            changed |= ui.checkbox(&mut features.adaptive_strategy, "Adaptive strategy").changed();
+            ui.end_row();
+
+            ui.add_space(4.0);
+            ui.end_row();
+
+            // Advanced
+            ui.label(RichText::new("Advanced").strong().size(11.0));
+            ui.end_row();
+
+            changed |= ui.checkbox(&mut features.agentic_mode, "Agentic mode").changed();
+            changed |= ui.checkbox(&mut features.graph_rag, "Graph RAG").changed();
+            ui.end_row();
+
+            changed |= ui.checkbox(&mut features.raptor, "RAPTOR").changed();
+            changed |= ui.checkbox(&mut features.multimodal, "Multimodal").changed();
+            ui.end_row();
+        });
+
+    changed
+}

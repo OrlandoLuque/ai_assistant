@@ -589,10 +589,10 @@ impl DocumentParser {
         // Build a map of id -> href from manifest items
         let mut id_to_href: HashMap<String, String> = HashMap::new();
         let item_re =
-            Regex::new(r#"<item\s[^>]*id="([^"]+)"[^>]*href="([^"]+)"[^>]*/?\s*>"#).unwrap();
+            Regex::new(r#"<item\s[^>]*id="([^"]+)"[^>]*href="([^"]+)"[^>]*/?\s*>"#).expect("valid regex");
         // Also handle the case where href comes before id
         let item_re2 =
-            Regex::new(r#"<item\s[^>]*href="([^"]+)"[^>]*id="([^"]+)"[^>]*/?\s*>"#).unwrap();
+            Regex::new(r#"<item\s[^>]*href="([^"]+)"[^>]*id="([^"]+)"[^>]*/?\s*>"#).expect("valid regex");
 
         for caps in item_re.captures_iter(opf) {
             let id = caps[1].to_string();
@@ -606,7 +606,7 @@ impl DocumentParser {
         }
 
         // Extract spine itemrefs in order
-        let spine_re = Regex::new(r#"<itemref\s[^>]*idref="([^"]+)"[^>]*/?\s*>"#).unwrap();
+        let spine_re = Regex::new(r#"<itemref\s[^>]*idref="([^"]+)"[^>]*/?\s*>"#).expect("valid regex");
         let mut paths = Vec::new();
 
         for caps in spine_re.captures_iter(opf) {
@@ -727,8 +727,8 @@ impl DocumentParser {
         let mut paragraphs = Vec::new();
 
         // Match each <w:p ...>...</w:p> block
-        let para_re = Regex::new(r"(?s)<w:p[\s>].*?</w:p>").unwrap();
-        let text_re = Regex::new(r"(?s)<w:t[^>]*>(.*?)</w:t>").unwrap();
+        let para_re = Regex::new(r"(?s)<w:p[\s>].*?</w:p>").expect("valid regex");
+        let text_re = Regex::new(r"(?s)<w:t[^>]*>(.*?)</w:t>").expect("valid regex");
 
         for para_match in para_re.find_iter(xml) {
             let para_xml = para_match.as_str();
@@ -793,8 +793,8 @@ impl DocumentParser {
         // Match headings: <text:h ...>...</text:h>
         // Match paragraphs: <text:p ...>...</text:p>
         let element_re =
-            Regex::new(r"(?s)<text:(h|p)([^>]*)>(.*?)</text:(h|p)>").unwrap();
-        let outline_re = Regex::new(r#"text:outline-level="(\d+)""#).unwrap();
+            Regex::new(r"(?s)<text:(h|p)([^>]*)>(.*?)</text:(h|p)>").expect("valid regex");
+        let outline_re = Regex::new(r#"text:outline-level="(\d+)""#).expect("valid regex");
 
         let mut current_section_title: Option<String> = None;
         let mut current_section_content = String::new();
@@ -1267,7 +1267,7 @@ impl DocumentParser {
     #[cfg(feature = "pdf-extract")]
     fn split_into_columns(&self, line: &str) -> Vec<String> {
         // Split on 2+ spaces or tabs
-        let re = Regex::new(r"\s{2,}|\t+").unwrap();
+        let re = Regex::new(r"\s{2,}|\t+").expect("valid regex");
         re.split(line.trim())
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
@@ -1654,10 +1654,10 @@ impl DocumentParser {
         // Meta tags: <meta name="..." content="...">
         let meta_re =
             Regex::new(r#"(?i)<meta\s[^>]*name="([^"]+)"[^>]*content="([^"]+)"[^>]*/?\s*>"#)
-                .unwrap();
+                .expect("valid regex");
         let meta_re2 =
             Regex::new(r#"(?i)<meta\s[^>]*content="([^"]+)"[^>]*name="([^"]+)"[^>]*/?\s*>"#)
-                .unwrap();
+                .expect("valid regex");
 
         let mut meta_map: HashMap<String, String> = HashMap::new();
         for caps in meta_re.captures_iter(html) {
@@ -1685,7 +1685,7 @@ impl DocumentParser {
 
         // Also check html lang attribute
         if meta.language.is_none() {
-            let lang_re = Regex::new(r#"(?i)<html[^>]*\slang="([^"]+)"[^>]*>"#).unwrap();
+            let lang_re = Regex::new(r#"(?i)<html[^>]*\slang="([^"]+)"[^>]*>"#).expect("valid regex");
             if let Some(caps) = lang_re.captures(html) {
                 meta.language = Some(caps[1].to_string());
             }
@@ -1701,7 +1701,7 @@ impl DocumentParser {
 
     /// Extract the body content from HTML, or the whole string if no body tag.
     fn extract_html_body(&self, html: &str) -> String {
-        let body_re = Regex::new(r"(?is)<body[^>]*>(.*)</body>").unwrap();
+        let body_re = Regex::new(r"(?is)<body[^>]*>(.*)</body>").expect("valid regex");
         if let Some(caps) = body_re.captures(html) {
             caps[1].to_string()
         } else {
@@ -1715,7 +1715,7 @@ impl DocumentParser {
         let body = self.extract_html_body(html);
 
         // Split on heading tags
-        let heading_re = Regex::new(r"(?is)<h([1-6])[^>]*>(.*?)</h[1-6]>").unwrap();
+        let heading_re = Regex::new(r"(?is)<h([1-6])[^>]*>(.*?)</h[1-6]>").expect("valid regex");
 
         let mut last_end = 0;
         let mut section_index = 0;
@@ -1738,7 +1738,7 @@ impl DocumentParser {
         }
 
         for caps in &matches {
-            let full_match = caps.get(0).unwrap();
+            let full_match = caps.get(0).expect("capture group 0");
             let level: u8 = caps[1].parse().unwrap_or(1);
             let title_html = &caps[2];
             let title = strip_xml_tags(title_html).trim().to_string();
@@ -1804,21 +1804,21 @@ impl DocumentParser {
 /// Also decodes common HTML entities.
 pub fn strip_xml_tags(xml: &str) -> String {
     // Remove script and style blocks entirely
-    let script_re = Regex::new(r"(?is)<script[^>]*>.*?</script>").unwrap();
+    let script_re = Regex::new(r"(?is)<script[^>]*>.*?</script>").expect("valid regex");
     let cleaned = script_re.replace_all(xml, "");
-    let style_re = Regex::new(r"(?is)<style[^>]*>.*?</style>").unwrap();
+    let style_re = Regex::new(r"(?is)<style[^>]*>.*?</style>").expect("valid regex");
     let cleaned = style_re.replace_all(&cleaned, "");
 
     // Replace <br>, <br/>, <br /> with newlines
-    let br_re = Regex::new(r"(?i)<br\s*/?\s*>").unwrap();
+    let br_re = Regex::new(r"(?i)<br\s*/?\s*>").expect("valid regex");
     let cleaned = br_re.replace_all(&cleaned, "\n");
 
     // Replace block-level closing tags with newlines for paragraph separation
-    let block_re = Regex::new(r"(?i)</?(p|div|li|tr|blockquote|article|section|header|footer|nav|aside|main|figure|figcaption|details|summary|dd|dt)\s*[^>]*>").unwrap();
+    let block_re = Regex::new(r"(?i)</?(p|div|li|tr|blockquote|article|section|header|footer|nav|aside|main|figure|figcaption|details|summary|dd|dt)\s*[^>]*>").expect("valid regex");
     let cleaned = block_re.replace_all(&cleaned, "\n");
 
     // Remove all remaining tags
-    let tag_re = Regex::new(r"<[^>]+>").unwrap();
+    let tag_re = Regex::new(r"<[^>]+>").expect("valid regex");
     let cleaned = tag_re.replace_all(&cleaned, "");
 
     // Decode common HTML entities
@@ -1838,7 +1838,7 @@ pub fn strip_xml_tags(xml: &str) -> String {
         .replace("&reg;", "\u{00AE}");
 
     // Decode numeric character references: &#NNN; and &#xHHH;
-    let num_entity_re = Regex::new(r"&#(\d+);").unwrap();
+    let num_entity_re = Regex::new(r"&#(\d+);").expect("valid regex");
     let result = num_entity_re.replace_all(&result, |caps: &regex::Captures| {
         if let Ok(code) = caps[1].parse::<u32>() {
             if let Some(ch) = char::from_u32(code) {
@@ -1848,7 +1848,7 @@ pub fn strip_xml_tags(xml: &str) -> String {
         caps[0].to_string()
     });
 
-    let hex_entity_re = Regex::new(r"(?i)&#x([0-9a-f]+);").unwrap();
+    let hex_entity_re = Regex::new(r"(?i)&#x([0-9a-f]+);").expect("valid regex");
     let result = hex_entity_re.replace_all(&result, |caps: &regex::Captures| {
         if let Ok(code) = u32::from_str_radix(&caps[1], 16) {
             if let Some(ch) = char::from_u32(code) {
@@ -1866,7 +1866,7 @@ pub fn strip_xml_tags(xml: &str) -> String {
 pub fn extract_xml_text(xml: &str, tag: &str) -> Vec<String> {
     let escaped_tag = regex::escape(tag);
     let pattern = format!(r"(?s)<{}[^>]*>(.*?)</{}>", escaped_tag, escaped_tag);
-    let re = Regex::new(&pattern).unwrap();
+    let re = Regex::new(&pattern).expect("valid regex");
 
     re.captures_iter(xml)
         .map(|caps| {
@@ -1942,11 +1942,11 @@ pub fn normalize_text(text: &str) -> String {
     let text = text.replace("\r\n", "\n");
 
     // Collapse multiple spaces/tabs within lines (but preserve newlines)
-    let space_re = Regex::new(r"[^\S\n]+").unwrap();
+    let space_re = Regex::new(r"[^\S\n]+").expect("valid regex");
     let text = space_re.replace_all(&text, " ");
 
     // Collapse 3+ newlines into 2
-    let newline_re = Regex::new(r"\n{3,}").unwrap();
+    let newline_re = Regex::new(r"\n{3,}").expect("valid regex");
     let text = newline_re.replace_all(&text, "\n\n");
 
     // Trim each line
@@ -1960,7 +1960,7 @@ pub fn normalize_text(text: &str) -> String {
 /// Extract the first heading (h1-h6) text from an HTML/XHTML document.
 #[allow(dead_code)]
 fn extract_first_heading(html: &str) -> Option<String> {
-    let heading_re = Regex::new(r"(?is)<h[1-6][^>]*>(.*?)</h[1-6]>").unwrap();
+    let heading_re = Regex::new(r"(?is)<h[1-6][^>]*>(.*?)</h[1-6]>").expect("valid regex");
     if let Some(caps) = heading_re.captures(html) {
         let text = strip_xml_tags(&caps[1]);
         let text = text.trim().to_string();

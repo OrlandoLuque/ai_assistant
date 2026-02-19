@@ -137,7 +137,7 @@ impl ConnectionPool {
 
         // Try to get an existing connection
         if let Some(conn) = self.try_get_existing(&normalized_host) {
-            let mut metrics = self.metrics.lock().unwrap();
+            let mut metrics = self.metrics.lock().unwrap_or_else(|e| e.into_inner());
             metrics.hits += 1;
             return PooledConnectionGuard {
                 connection: Some(conn),
@@ -148,7 +148,7 @@ impl ConnectionPool {
 
         // Create a new connection
         let conn = PooledConnection::new(normalized_host.clone(), &self.config);
-        let mut metrics = self.metrics.lock().unwrap();
+        let mut metrics = self.metrics.lock().unwrap_or_else(|e| e.into_inner());
         metrics.misses += 1;
         metrics.connections_created += 1;
 
@@ -160,9 +160,9 @@ impl ConnectionPool {
     }
 
     fn try_get_existing(&self, host: &str) -> Option<PooledConnection> {
-        let pools = self.pools.read().unwrap();
+        let pools = self.pools.read().unwrap_or_else(|e| e.into_inner());
         if let Some(pool) = pools.get(host) {
-            let mut pool = pool.lock().unwrap();
+            let mut pool = pool.lock().unwrap_or_else(|e| e.into_inner());
 
             // Find a valid connection
             while let Some(mut conn) = pool.pop() {
@@ -171,7 +171,7 @@ impl ConnectionPool {
                     return Some(conn);
                 }
                 // Connection expired, discard
-                let mut metrics = self.metrics.lock().unwrap();
+                let mut metrics = self.metrics.lock().unwrap_or_else(|e| e.into_inner());
                 metrics.connections_expired += 1;
             }
         }
@@ -183,25 +183,25 @@ impl ConnectionPool {
 
         // Get or create pool for this host
         let pool = {
-            let pools = self.pools.read().unwrap();
+            let pools = self.pools.read().unwrap_or_else(|e| e.into_inner());
             pools.get(&host).cloned()
         };
 
         let pool = pool.unwrap_or_else(|| {
-            let mut pools = self.pools.write().unwrap();
+            let mut pools = self.pools.write().unwrap_or_else(|e| e.into_inner());
             pools.entry(host.clone())
                 .or_insert_with(|| Arc::new(Mutex::new(Vec::new())))
                 .clone()
         });
 
-        let mut pool = pool.lock().unwrap();
+        let mut pool = pool.lock().unwrap_or_else(|e| e.into_inner());
 
         // Only keep if under limit and connection is valid
         if pool.len() < self.config.max_connections_per_host
             && conn.is_valid(self.config.idle_timeout)
         {
             pool.push(conn);
-            let mut metrics = self.metrics.lock().unwrap();
+            let mut metrics = self.metrics.lock().unwrap_or_else(|e| e.into_inner());
             metrics.connections_reused += 1;
         }
     }
@@ -219,14 +219,14 @@ impl ConnectionPool {
 
     /// Get pool statistics
     pub fn stats(&self) -> PoolStats {
-        let pools = self.pools.read().unwrap();
-        let metrics = self.metrics.lock().unwrap();
+        let pools = self.pools.read().unwrap_or_else(|e| e.into_inner());
+        let metrics = self.metrics.lock().unwrap_or_else(|e| e.into_inner());
 
         let mut total_connections = 0;
         let mut connections_by_host = HashMap::new();
 
         for (host, pool) in pools.iter() {
-            let count = pool.lock().unwrap().len();
+            let count = pool.lock().unwrap_or_else(|e| e.into_inner()).len();
             total_connections += count;
             connections_by_host.insert(host.clone(), count);
         }
@@ -249,16 +249,16 @@ impl ConnectionPool {
 
     /// Clean up expired connections
     pub fn cleanup(&self) {
-        let pools = self.pools.read().unwrap();
+        let pools = self.pools.read().unwrap_or_else(|e| e.into_inner());
         let idle_timeout = self.config.idle_timeout;
 
         for pool in pools.values() {
-            let mut pool = pool.lock().unwrap();
+            let mut pool = pool.lock().unwrap_or_else(|e| e.into_inner());
             let before = pool.len();
             pool.retain(|conn| conn.is_valid(idle_timeout));
             let expired = before - pool.len();
             if expired > 0 {
-                let mut metrics = self.metrics.lock().unwrap();
+                let mut metrics = self.metrics.lock().unwrap_or_else(|e| e.into_inner());
                 metrics.connections_expired += expired;
             }
         }
@@ -266,7 +266,7 @@ impl ConnectionPool {
 
     /// Clear all connections
     pub fn clear(&self) {
-        let mut pools = self.pools.write().unwrap();
+        let mut pools = self.pools.write().unwrap_or_else(|e| e.into_inner());
         pools.clear();
     }
 }
@@ -288,7 +288,7 @@ pub struct PooledConnectionGuard<'a> {
 impl<'a> PooledConnectionGuard<'a> {
     /// Get the agent for making requests
     pub fn agent(&self) -> &ureq::Agent {
-        self.connection.as_ref().unwrap().agent()
+        self.connection.as_ref().expect("connection must be set").agent()
     }
 
     /// Make a GET request

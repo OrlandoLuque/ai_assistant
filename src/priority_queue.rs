@@ -301,7 +301,7 @@ impl PriorityQueue {
     pub fn enqueue(&self, request: PriorityRequest) -> Result<String, QueueError> {
         // Check capacity
         {
-            let heap = self.heap.lock().unwrap();
+            let heap = self.heap.lock().unwrap_or_else(|e| e.into_inner());
             if heap.len() >= self.config.max_size {
                 return Err(QueueError::QueueFull);
             }
@@ -310,7 +310,7 @@ impl PriorityQueue {
         // Check per-user limit
         if let Some(user_id) = &request.user_id {
             if let Some(max) = self.config.max_per_user {
-                let mut user_counts = self.user_counts.lock().unwrap();
+                let mut user_counts = self.user_counts.lock().unwrap_or_else(|e| e.into_inner());
                 let count = user_counts.entry(user_id.clone()).or_insert(0);
                 if *count >= max {
                     return Err(QueueError::UserLimitExceeded);
@@ -326,20 +326,20 @@ impl PriorityQueue {
 
         // Get sequence number
         let sequence = {
-            let mut seq = self.sequence.lock().unwrap();
+            let mut seq = self.sequence.lock().unwrap_or_else(|e| e.into_inner());
             *seq += 1;
             *seq
         };
 
         // Add to pending map
         {
-            let mut pending = self.pending.write().unwrap();
+            let mut pending = self.pending.write().unwrap_or_else(|e| e.into_inner());
             pending.insert(request_id.clone(), request.clone());
         }
 
         // Add to heap
         {
-            let mut heap = self.heap.lock().unwrap();
+            let mut heap = self.heap.lock().unwrap_or_else(|e| e.into_inner());
             heap.push(QueueEntry {
                 request,
                 effective_priority,
@@ -349,7 +349,7 @@ impl PriorityQueue {
 
         // Update stats
         {
-            let mut stats = self.stats.lock().unwrap();
+            let mut stats = self.stats.lock().unwrap_or_else(|e| e.into_inner());
             stats.total_enqueued += 1;
         }
 
@@ -359,7 +359,7 @@ impl PriorityQueue {
     /// Dequeue the highest priority request
     pub fn dequeue(&self) -> Option<PriorityRequest> {
         let entry = {
-            let mut heap = self.heap.lock().unwrap();
+            let mut heap = self.heap.lock().unwrap_or_else(|e| e.into_inner());
             heap.pop()
         }?;
 
@@ -367,13 +367,13 @@ impl PriorityQueue {
 
         // Remove from pending
         {
-            let mut pending = self.pending.write().unwrap();
+            let mut pending = self.pending.write().unwrap_or_else(|e| e.into_inner());
             pending.remove(&request.id);
         }
 
         // Update user count
         if let Some(user_id) = &request.user_id {
-            let mut user_counts = self.user_counts.lock().unwrap();
+            let mut user_counts = self.user_counts.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(count) = user_counts.get_mut(user_id) {
                 *count = count.saturating_sub(1);
             }
@@ -381,7 +381,7 @@ impl PriorityQueue {
 
         // Update stats
         {
-            let mut stats = self.stats.lock().unwrap();
+            let mut stats = self.stats.lock().unwrap_or_else(|e| e.into_inner());
             stats.total_dequeued += 1;
             stats.total_wait_time += request.age();
         }
@@ -403,7 +403,7 @@ impl PriorityQueue {
 
     /// Peek at the highest priority request without removing
     pub fn peek(&self) -> Option<PriorityRequest> {
-        let heap = self.heap.lock().unwrap();
+        let heap = self.heap.lock().unwrap_or_else(|e| e.into_inner());
         heap.peek().map(|e| e.request.clone())
     }
 
@@ -411,7 +411,7 @@ impl PriorityQueue {
     pub fn cancel(&self, request_id: &str) -> Result<PriorityRequest, QueueError> {
         // Remove from pending
         let request = {
-            let mut pending = self.pending.write().unwrap();
+            let mut pending = self.pending.write().unwrap_or_else(|e| e.into_inner());
             pending.remove(request_id)
         };
 
@@ -419,14 +419,14 @@ impl PriorityQueue {
 
         if !request.cancellable {
             // Put it back
-            let mut pending = self.pending.write().unwrap();
+            let mut pending = self.pending.write().unwrap_or_else(|e| e.into_inner());
             pending.insert(request_id.to_string(), request);
             return Err(QueueError::NotCancellable);
         }
 
         // Rebuild heap without this request
         {
-            let mut heap = self.heap.lock().unwrap();
+            let mut heap = self.heap.lock().unwrap_or_else(|e| e.into_inner());
             let entries: Vec<_> = std::mem::take(&mut *heap)
                 .into_iter()
                 .filter(|e| e.request.id != request_id)
@@ -436,7 +436,7 @@ impl PriorityQueue {
 
         // Update user count
         if let Some(user_id) = &request.user_id {
-            let mut user_counts = self.user_counts.lock().unwrap();
+            let mut user_counts = self.user_counts.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(count) = user_counts.get_mut(user_id) {
                 *count = count.saturating_sub(1);
             }
@@ -444,7 +444,7 @@ impl PriorityQueue {
 
         // Update stats
         {
-            let mut stats = self.stats.lock().unwrap();
+            let mut stats = self.stats.lock().unwrap_or_else(|e| e.into_inner());
             stats.total_cancelled += 1;
         }
 
@@ -453,7 +453,7 @@ impl PriorityQueue {
 
     /// Get queue length
     pub fn len(&self) -> usize {
-        self.heap.lock().unwrap().len()
+        self.heap.lock().unwrap_or_else(|e| e.into_inner()).len()
     }
 
     /// Check if queue is empty
@@ -463,13 +463,13 @@ impl PriorityQueue {
 
     /// Get length by priority
     pub fn len_by_priority(&self, priority: Priority) -> usize {
-        let pending = self.pending.read().unwrap();
+        let pending = self.pending.read().unwrap_or_else(|e| e.into_inner());
         pending.values().filter(|r| r.priority == priority).count()
     }
 
     /// Get all pending requests for a user
     pub fn get_user_requests(&self, user_id: &str) -> Vec<PriorityRequest> {
-        let pending = self.pending.read().unwrap();
+        let pending = self.pending.read().unwrap_or_else(|e| e.into_inner());
         pending.values()
             .filter(|r| r.user_id.as_deref() == Some(user_id))
             .cloned()
@@ -478,9 +478,9 @@ impl PriorityQueue {
 
     /// Clear all requests
     pub fn clear(&self) {
-        let mut heap = self.heap.lock().unwrap();
-        let mut pending = self.pending.write().unwrap();
-        let mut user_counts = self.user_counts.lock().unwrap();
+        let mut heap = self.heap.lock().unwrap_or_else(|e| e.into_inner());
+        let mut pending = self.pending.write().unwrap_or_else(|e| e.into_inner());
+        let mut user_counts = self.user_counts.lock().unwrap_or_else(|e| e.into_inner());
 
         heap.clear();
         pending.clear();
@@ -492,7 +492,7 @@ impl PriorityQueue {
         let mut expired = Vec::new();
 
         {
-            let pending = self.pending.read().unwrap();
+            let pending = self.pending.read().unwrap_or_else(|e| e.into_inner());
             for request in pending.values() {
                 if request.is_expired() {
                     expired.push(request.clone());
@@ -506,7 +506,7 @@ impl PriorityQueue {
 
         // Update stats
         {
-            let mut stats = self.stats.lock().unwrap();
+            let mut stats = self.stats.lock().unwrap_or_else(|e| e.into_inner());
             stats.total_expired += expired.len() as u64;
         }
 
@@ -515,7 +515,7 @@ impl PriorityQueue {
 
     /// Rebalance priorities (recalculate effective priorities)
     pub fn rebalance(&self) {
-        let mut heap = self.heap.lock().unwrap();
+        let mut heap = self.heap.lock().unwrap_or_else(|e| e.into_inner());
 
         let entries: Vec<_> = std::mem::take(&mut *heap)
             .into_iter()
@@ -530,8 +530,8 @@ impl PriorityQueue {
 
     /// Get queue statistics
     pub fn stats(&self) -> QueueStats {
-        let stats = self.stats.lock().unwrap();
-        let heap = self.heap.lock().unwrap();
+        let stats = self.stats.lock().unwrap_or_else(|e| e.into_inner());
+        let heap = self.heap.lock().unwrap_or_else(|e| e.into_inner());
 
         QueueStats {
             current_size: heap.len(),

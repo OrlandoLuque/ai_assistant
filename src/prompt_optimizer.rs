@@ -210,7 +210,7 @@ impl PromptOptimizer {
         self.variants.values()
             .filter(|v| v.active)
             .filter(|v| v.use_count >= self.config.min_uses_for_selection)
-            .max_by(|a, b| a.effectiveness().partial_cmp(&b.effectiveness()).unwrap())
+            .max_by(|a, b| a.effectiveness().partial_cmp(&b.effectiveness()).unwrap_or(std::cmp::Ordering::Equal))
             .or_else(|| self.select_random())
     }
 
@@ -227,7 +227,7 @@ impl PromptOptimizer {
             .filter_map(|id| self.variants.get(id))
             .filter(|v| v.active)
             .filter(|v| v.use_count >= self.config.min_uses_for_selection)
-            .max_by(|a, b| a.effectiveness().partial_cmp(&b.effectiveness()).unwrap())
+            .max_by(|a, b| a.effectiveness().partial_cmp(&b.effectiveness()).unwrap_or(std::cmp::Ordering::Equal))
             .or_else(|| self.select_random_from_group(group))
     }
 
@@ -319,7 +319,7 @@ impl PromptOptimizer {
 
         let best = variants.iter()
             .filter(|v| v.active && v.use_count >= self.config.min_uses_for_selection)
-            .max_by(|a, b| a.effectiveness().partial_cmp(&b.effectiveness()).unwrap());
+            .max_by(|a, b| a.effectiveness().partial_cmp(&b.effectiveness()).unwrap_or(std::cmp::Ordering::Equal));
 
         OptimizationStats {
             total_variants: variants.len(),
@@ -345,6 +345,21 @@ impl PromptOptimizer {
                 active: v.active,
             })
             .collect()
+    }
+
+    /// Get all feedback history entries
+    pub fn feedback_history(&self) -> &[FeedbackEntry] {
+        &self.feedback_history
+    }
+
+    /// Get the total number of feedback entries recorded
+    pub fn feedback_count(&self) -> usize {
+        self.feedback_history.len()
+    }
+
+    /// Get feedback entries for a specific variant
+    pub fn feedback_for_variant(&self, variant_id: &str) -> Vec<&FeedbackEntry> {
+        self.feedback_history.iter().filter(|e| e.variant_id == variant_id).collect()
     }
 
     /// Clear feedback history (keep stats)
@@ -443,11 +458,13 @@ impl Feedback {
 
 /// Feedback history entry
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
-struct FeedbackEntry {
-    variant_id: String,
-    feedback: Feedback,
-    timestamp: Instant,
+pub struct FeedbackEntry {
+    /// The variant that received this feedback
+    pub variant_id: String,
+    /// The feedback itself
+    pub feedback: Feedback,
+    /// When the feedback was recorded
+    pub timestamp: Instant,
 }
 
 /// Optimization statistics
@@ -493,7 +510,7 @@ fn rand_float() -> f64 {
     use std::time::SystemTime;
     let seed = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_default()
         .subsec_nanos();
     (seed as f64 / u32::MAX as f64).fract()
 }
@@ -651,5 +668,36 @@ mod tests {
         assert_eq!(stats.total_uses, 2);
         assert_eq!(stats.total_successes, 1);
         assert!((stats.overall_success_rate - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_feedback_history_access() {
+        let mut optimizer = PromptOptimizer::default();
+        let id1 = optimizer.add_variant("v1", "Template 1");
+        let id2 = optimizer.add_variant("v2", "Template 2");
+
+        optimizer.record_feedback(&id1, Feedback::positive().with_quality(0.9));
+        optimizer.record_feedback(&id1, Feedback::negative().with_quality(0.3));
+        optimizer.record_feedback(&id2, Feedback::positive().with_quality(0.8));
+
+        // Total feedback count
+        assert_eq!(optimizer.feedback_count(), 3);
+
+        // Feedback history slice
+        let history = optimizer.feedback_history();
+        assert_eq!(history.len(), 3);
+        assert_eq!(history[0].variant_id, id1);
+        assert!(history[0].feedback.success);
+
+        // Filter by variant
+        let v1_feedback = optimizer.feedback_for_variant(&id1);
+        assert_eq!(v1_feedback.len(), 2);
+        let v2_feedback = optimizer.feedback_for_variant(&id2);
+        assert_eq!(v2_feedback.len(), 1);
+
+        // Clear history
+        optimizer.clear_history();
+        assert_eq!(optimizer.feedback_count(), 0);
+        assert!(optimizer.feedback_history().is_empty());
     }
 }

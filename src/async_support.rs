@@ -92,7 +92,10 @@ impl<T> Future for BlockingHandle<T> {
     type Output = T;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = match self.state.lock() {
+            Ok(s) => s,
+            Err(poisoned) => poisoned.into_inner(),
+        };
 
         if state.completed {
             Poll::Ready(state.result.take().expect("Result already taken"))
@@ -122,7 +125,7 @@ where
 
     thread::spawn(move || {
         let result = f();
-        let mut state = state_clone.lock().unwrap();
+        let mut state = state_clone.lock().unwrap_or_else(|e| e.into_inner());
         state.result = Some(result);
         state.completed = true;
         if let Some(waker) = state.waker.take() {

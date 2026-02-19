@@ -41,14 +41,23 @@ adapters = []
 # Tool calling: MCP protocol, agentic loops, function calling
 tools = []
 
-# Document parsing: EPUB, DOCX, HTML, feeds, tables
-documents = ["zip"]
+# Document parsing: EPUB, DOCX, HTML, PDF, feeds, tables
+documents = ["zip", "pdf-extract"]
 
 # Evaluation and benchmarking: fine-tuning, metrics, A/B testing
 eval = []
 
-# Distributed computing: DHT, CRDTs, MapReduce
-distributed = []
+# Distributed computing: DHT, CRDTs, MapReduce (with parallel execution via rayon)
+distributed = ["rayon"]
+
+# Peer-to-peer networking: DHT discovery, NAT traversal, knowledge sharing
+# Requires distributed for DHT support
+p2p = ["distributed"]
+
+# Real distributed networking: QUIC transport, consistent hashing, failure detection,
+# Merkle sync, node security (mutual TLS), replication, LAN discovery.
+# Not in 'full' by default due to heavy deps (quinn/rustls). Opt-in: --features distributed-network
+distributed-network = ["distributed", "dep:quinn", "dep:rustls", "dep:rcgen", "dep:sha2", "dep:tokio", "dep:bincode"]
 
 # RAG with SQLite FTS5 and encrypted knowledge packages
 rag = ["rusqlite", "aes-gcm"]
@@ -71,13 +80,46 @@ full = [
     "eval",
     "rag",
     "distributed",
+    "binary-storage",
+    "async-runtime",
 ]
+
+# Binary storage: bincode + gzip for internal data (faster, smaller than JSON)
+binary-storage = ["dep:bincode"]
+
+# Async runtime: tokio + reqwest for async HTTP operations
+async-runtime = ["dep:tokio", "dep:reqwest"]
+
+# LanceDB embedded vector database (Tier 2 — recommended upgrade from in-memory)
+# Not in 'full' by default due to heavy deps. Opt-in: --features vector-lancedb
+vector-lancedb = ["dep:lancedb", "dep:arrow-array", "dep:arrow-schema", "dep:tokio", "dep:futures"]
 
 # Binary integrity verification at startup (no runtime penalty after startup)
 integrity-check = []
 
+# WASM support: real web-sys/js-sys implementations for WASM targets.
+# Only meaningful when compiling to wasm32. On native targets, this feature is a no-op.
+wasm = ["dep:web-sys", "dep:js-sys", "dep:wasm-bindgen", "dep:getrandom"]
+
+# Autonomous agent: policy, sandbox, OS tools, autonomous loop, profiles, user interaction,
+# task board, interactive commands, mode manager
+autonomous = []
+
+# Scheduler: cron-like task scheduling + event-driven triggers
+scheduler = ["autonomous"]
+
+# Butler: environment auto-detection and configuration
+butler = ["autonomous"]
+
+# Browser automation: Chrome DevTools Protocol
+browser = ["autonomous"]
+
+# Distributed agents: run agents across distributed nodes (DHT, CRDTs, MapReduce)
+distributed-agents = ["autonomous", "distributed-network"]
+
 [dependencies]
 anyhow = "1"
+log = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", features = ["serde", "clock"] }
@@ -90,12 +132,43 @@ urlencoding = "2"
 # Optional ZIP support for document parsing (EPUB, DOCX, ODT)
 zip = { version = "2", optional = true, default-features = false, features = ["deflate"] }
 
+# Optional PDF support for document parsing
+pdf-extract = { version = "0.7", optional = true }
+
 # Optional egui support for widgets
 egui = { version = "0.27", optional = true }
 # Optional SQLite for RAG storage
 rusqlite = { version = "0.31", features = ["bundled"], optional = true }
 # Optional AES-GCM for encrypted knowledge packages
 aes-gcm = { version = "0.10", optional = true }
+# Optional bincode for binary internal storage (faster than JSON)
+bincode = { version = "1", optional = true }
+# Optional async runtime for async HTTP operations
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"], optional = true }
+# Optional reqwest for async HTTP client (also supports blocking)
+reqwest = { version = "0.12", features = ["json", "blocking", "stream"], optional = true }
+# Optional rayon for parallel MapReduce execution
+rayon = { version = "1", optional = true }
+# Optional QUIC transport for distributed networking
+quinn = { version = "0.11", optional = true }
+# Optional TLS for distributed networking (required by quinn)
+rustls = { version = "0.23", optional = true, default-features = false, features = ["ring", "std"] }
+# Optional certificate generation for node identity
+rcgen = { version = "0.13", optional = true }
+# Optional SHA-256 for Merkle tree hashing
+sha2 = { version = "0.10", optional = true }
+# Optional LanceDB for embedded vector database (Tier 2)
+lancedb = { version = "0.26", optional = true, default-features = false }
+# Optional Arrow for LanceDB data interchange (version must match lancedb's arrow dep)
+arrow-array = { version = "57", optional = true }
+arrow-schema = { version = "57", optional = true }
+# Optional futures for async stream collection (LanceDB queries)
+futures = { version = "0.3", optional = true }
+# Optional WASM support via web-sys/js-sys (only useful on wasm32 targets)
+web-sys = { version = "0.3", features = ["console", "Window"], optional = true }
+js-sys = { version = "0.3", optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
+getrandom = { version = "0.2", features = ["js"], optional = true }
 
 [[bin]]
 name = "ai_test_harness"

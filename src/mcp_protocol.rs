@@ -539,9 +539,9 @@ impl McpClient {
             self.server_capabilities = Some(capabilities.clone());
             self.initialized = true;
 
-            // Send initialized notification
-            let _notif = McpRequest::new("notifications/initialized");
-            // In real impl, send this notification
+            // Send initialized notification (fire-and-forget per MCP spec)
+            let notif = McpRequest::new("notifications/initialized");
+            let _ = self.send_notification(notif);
 
             Ok(capabilities)
         } else {
@@ -654,6 +654,19 @@ impl McpClient {
         } else {
             Err(response.error.unwrap_or(McpError::internal_error("No result")))
         }
+    }
+
+    /// Send a notification to the server (fire-and-forget, no response expected)
+    fn send_notification(&self, request: McpRequest) -> Result<(), McpError> {
+        let body = serde_json::to_string(&request)
+            .map_err(|e| McpError::internal_error(&e.to_string()))?;
+
+        ureq::post(&self.server_url)
+            .set("Content-Type", "application/json")
+            .send_string(&body)
+            .map_err(|e| McpError::internal_error(&e.to_string()))?;
+
+        Ok(())
     }
 
     /// Send a request to the server (HTTP implementation)

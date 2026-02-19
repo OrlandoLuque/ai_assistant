@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::retry::RetryConfig;
+
 /// Available AI provider types
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum AiProvider {
@@ -17,6 +19,10 @@ pub enum AiProvider {
     LocalAI,
     /// Custom OpenAI-compatible endpoint
     OpenAICompatible { base_url: String },
+    /// OpenAI cloud API (requires API key)
+    OpenAI,
+    /// Anthropic cloud API (requires API key)
+    Anthropic,
 }
 
 impl Default for AiProvider {
@@ -35,6 +41,8 @@ impl AiProvider {
             AiProvider::KoboldCpp => "Kobold.cpp",
             AiProvider::LocalAI => "LocalAI",
             AiProvider::OpenAICompatible { .. } => "OpenAI Compatible",
+            AiProvider::OpenAI => "OpenAI",
+            AiProvider::Anthropic => "Anthropic",
         }
     }
 
@@ -47,6 +55,8 @@ impl AiProvider {
             AiProvider::KoboldCpp => "🐉",
             AiProvider::LocalAI => "🤖",
             AiProvider::OpenAICompatible { .. } => "🔌",
+            AiProvider::OpenAI => "🧠",
+            AiProvider::Anthropic => "🏛️",
         }
     }
 
@@ -58,7 +68,13 @@ impl AiProvider {
                 | AiProvider::TextGenWebUI
                 | AiProvider::LocalAI
                 | AiProvider::OpenAICompatible { .. }
+                | AiProvider::OpenAI
         )
+    }
+
+    /// Check if this is a cloud provider requiring an API key.
+    pub fn is_cloud(&self) -> bool {
+        matches!(self, AiProvider::OpenAI | AiProvider::Anthropic)
     }
 }
 
@@ -81,10 +97,18 @@ pub struct AiConfig {
     pub local_ai_url: String,
     /// Custom OpenAI-compatible URL
     pub custom_url: String,
+    /// API key for cloud providers (OpenAI, Anthropic).
+    /// Falls back to env vars OPENAI_API_KEY / ANTHROPIC_API_KEY if empty.
+    #[serde(default)]
+    pub api_key: String,
     /// Maximum number of history messages to include in context
     pub max_history_messages: usize,
     /// Temperature for generation (0.0 - 2.0)
     pub temperature: f32,
+    /// Retry configuration for network operations.
+    /// Skipped during serialization; defaults to `RetryConfig::default()` on deserialization.
+    #[serde(skip)]
+    pub retry_config: RetryConfig,
 }
 
 impl Default for AiConfig {
@@ -98,8 +122,10 @@ impl Default for AiConfig {
             kobold_url: "http://localhost:5001".to_string(),
             local_ai_url: "http://localhost:8080".to_string(),
             custom_url: String::new(),
+            api_key: String::new(),
             max_history_messages: 20,
             temperature: 0.7,
+            retry_config: RetryConfig::default(),
         }
     }
 }
@@ -107,14 +133,7 @@ impl Default for AiConfig {
 impl AiConfig {
     /// Get the base URL for the current provider
     pub fn get_base_url(&self) -> String {
-        match &self.provider {
-            AiProvider::Ollama => self.ollama_url.clone(),
-            AiProvider::LMStudio => self.lm_studio_url.clone(),
-            AiProvider::TextGenWebUI => self.text_gen_webui_url.clone(),
-            AiProvider::KoboldCpp => self.kobold_url.clone(),
-            AiProvider::LocalAI => self.local_ai_url.clone(),
-            AiProvider::OpenAICompatible { base_url } => base_url.clone(),
-        }
+        self.get_provider_url(&self.provider)
     }
 
     /// Get URL for a specific provider
@@ -126,6 +145,27 @@ impl AiConfig {
             AiProvider::KoboldCpp => self.kobold_url.clone(),
             AiProvider::LocalAI => self.local_ai_url.clone(),
             AiProvider::OpenAICompatible { base_url } => base_url.clone(),
+            AiProvider::OpenAI => "https://api.openai.com".to_string(),
+            AiProvider::Anthropic => "https://api.anthropic.com".to_string(),
+        }
+    }
+
+    /// Get the API key for the current cloud provider.
+    ///
+    /// Returns the configured `api_key` if non-empty, otherwise falls back
+    /// to the appropriate environment variable:
+    /// - `OPENAI_API_KEY` for OpenAI
+    /// - `ANTHROPIC_API_KEY` for Anthropic
+    ///
+    /// Returns `None` for local providers or if no key is found.
+    pub fn get_api_key(&self) -> Option<String> {
+        if !self.api_key.is_empty() {
+            return Some(self.api_key.clone());
+        }
+        match &self.provider {
+            AiProvider::OpenAI => std::env::var("OPENAI_API_KEY").ok(),
+            AiProvider::Anthropic => std::env::var("ANTHROPIC_API_KEY").ok(),
+            _ => None,
         }
     }
 }
@@ -170,6 +210,14 @@ mod tests {
         assert_eq!(config.lm_studio_url, "http://localhost:1234");
         assert_eq!(config.max_history_messages, 20);
         assert!((config.temperature - 0.7).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_ai_config_retry_config_default() {
+        let config = AiConfig::default();
+        // Default retry: 3 max retries, exponential backoff
+        assert_eq!(config.retry_config.max_retries, 3);
+        assert!(config.retry_config.add_jitter);
     }
 
     #[test]

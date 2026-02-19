@@ -270,7 +270,7 @@ pub struct ComparisonResponse {
 
 /// Extract all number-like tokens (integers, decimals, percentages) from text.
 fn extract_numbers(text: &str) -> Vec<String> {
-    let re = Regex::new(r"\d+(?:\.\d+)?%?").unwrap();
+    let re = Regex::new(r"\d+(?:\.\d+)?%?").expect("valid regex");
     re.find_iter(text)
         .map(|m| m.as_str().to_string())
         .collect()

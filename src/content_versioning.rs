@@ -427,6 +427,22 @@ impl ContentVersionStore {
         Ok(())
     }
 
+    /// Export to internal binary format (bincode+gzip when feature enabled).
+    #[cfg(feature = "binary-storage")]
+    pub fn export_bytes(&self) -> Result<Vec<u8>> {
+        crate::internal_storage::serialize_internal(self)
+    }
+
+    /// Import from internal binary format (auto-detects binary or JSON).
+    #[cfg(feature = "binary-storage")]
+    pub fn import_bytes(&mut self, bytes: &[u8]) -> Result<()> {
+        let imported: ContentVersionStore = crate::internal_storage::deserialize_internal(bytes)?;
+        for (content_id, history) in imported.histories {
+            self.histories.insert(content_id, history);
+        }
+        Ok(())
+    }
+
     /// Trims the history for a content ID to the configured max_versions.
     fn trim_history(&mut self, content_id: &str) {
         if let Some(history) = self.histories.get_mut(content_id) {

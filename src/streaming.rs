@@ -121,7 +121,7 @@ impl StreamBuffer {
     /// Push with timeout
     pub fn push_timeout(&self, chunk: String, timeout: Duration) -> Result<(), StreamError> {
         let chunk_size = chunk.len();
-        let mut data = self.inner.data.lock().unwrap();
+        let mut data = self.inner.data.lock().unwrap_or_else(|e| e.into_inner());
 
         // Wait if buffer is full
         let deadline = Instant::now() + timeout;
@@ -131,7 +131,7 @@ impl StreamBuffer {
                 return Err(StreamError::Timeout);
             }
 
-            let result = self.inner.not_full.wait_timeout(data, remaining).unwrap();
+            let result = self.inner.not_full.wait_timeout(data, remaining).unwrap_or_else(|e| e.into_inner());
             data = result.0;
 
             if result.1.timed_out() {
@@ -158,7 +158,7 @@ impl StreamBuffer {
     /// Try to push without blocking
     pub fn try_push(&self, chunk: String) -> Result<(), StreamError> {
         let chunk_size = chunk.len();
-        let mut data = self.inner.data.lock().unwrap();
+        let mut data = self.inner.data.lock().unwrap_or_else(|e| e.into_inner());
 
         if data.closed {
             return Err(StreamError::Closed);
@@ -184,7 +184,7 @@ impl StreamBuffer {
 
     /// Pop with timeout
     pub fn pop_timeout(&self, timeout: Duration) -> Option<String> {
-        let mut data = self.inner.data.lock().unwrap();
+        let mut data = self.inner.data.lock().unwrap_or_else(|e| e.into_inner());
 
         let deadline = Instant::now() + timeout;
         while data.chunks.is_empty() && !data.closed {
@@ -193,7 +193,7 @@ impl StreamBuffer {
                 return None;
             }
 
-            let result = self.inner.not_empty.wait_timeout(data, remaining).unwrap();
+            let result = self.inner.not_empty.wait_timeout(data, remaining).unwrap_or_else(|e| e.into_inner());
             data = result.0;
 
             if result.1.timed_out() {
@@ -206,7 +206,7 @@ impl StreamBuffer {
 
     /// Try to pop without blocking
     pub fn try_pop(&self) -> Option<String> {
-        let mut data = self.inner.data.lock().unwrap();
+        let mut data = self.inner.data.lock().unwrap_or_else(|e| e.into_inner());
         self.pop_internal(&mut data)
     }
 
@@ -230,7 +230,7 @@ impl StreamBuffer {
 
     /// Close the buffer (no more pushes allowed)
     pub fn close(&self) {
-        let mut data = self.inner.data.lock().unwrap();
+        let mut data = self.inner.data.lock().unwrap_or_else(|e| e.into_inner());
         data.closed = true;
         self.inner.not_empty.notify_all();
         self.inner.not_full.notify_all();
@@ -238,12 +238,12 @@ impl StreamBuffer {
 
     /// Check if buffer is closed
     pub fn is_closed(&self) -> bool {
-        self.inner.data.lock().unwrap().closed
+        self.inner.data.lock().unwrap_or_else(|e| e.into_inner()).closed
     }
 
     /// Get current buffer size
     pub fn len(&self) -> usize {
-        self.inner.data.lock().unwrap().current_size
+        self.inner.data.lock().unwrap_or_else(|e| e.into_inner()).current_size
     }
 
     /// Check if buffer is empty
@@ -253,18 +253,18 @@ impl StreamBuffer {
 
     /// Check if backpressure is active
     pub fn is_backpressure_active(&self) -> bool {
-        let data = self.inner.data.lock().unwrap();
+        let data = self.inner.data.lock().unwrap_or_else(|e| e.into_inner());
         data.current_size >= data.high_water
     }
 
     /// Get streaming metrics
     pub fn metrics(&self) -> StreamMetrics {
-        self.inner.data.lock().unwrap().metrics.clone()
+        self.inner.data.lock().unwrap_or_else(|e| e.into_inner()).metrics.clone()
     }
 
     /// Get fill percentage
     pub fn fill_percentage(&self) -> f32 {
-        let data = self.inner.data.lock().unwrap();
+        let data = self.inner.data.lock().unwrap_or_else(|e| e.into_inner());
         (data.current_size as f32 / data.max_size as f32) * 100.0
     }
 }
@@ -554,7 +554,7 @@ impl RateLimitedStream {
         let tokens = chunk.split_whitespace().count();
         let delay_secs = tokens as f64 / self.tokens_per_second;
 
-        let mut last = self.last_emit.lock().unwrap();
+        let mut last = self.last_emit.lock().unwrap_or_else(|e| e.into_inner());
         let elapsed = last.elapsed().as_secs_f64();
 
         if elapsed < delay_secs {

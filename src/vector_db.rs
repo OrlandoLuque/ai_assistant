@@ -28,9 +28,69 @@
 //! ```
 
 use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AiError, AiResult};
+
+/// Information about a vector database backend
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackendInfo {
+    /// Human-readable name
+    pub name: &'static str,
+    /// Tier level (0=in-memory, 1=sqlite-vec, 2=embedded, 3=dedicated, 4=cloud)
+    pub tier: u8,
+    /// Whether data survives process restart
+    pub supports_persistence: bool,
+    /// Whether metadata filtering is supported during search
+    pub supports_filtering: bool,
+    /// Whether export_all is implemented
+    pub supports_export: bool,
+    /// Suggested maximum vectors before considering next tier
+    pub max_recommended_vectors: Option<usize>,
+}
+
+impl Default for BackendInfo {
+    fn default() -> Self {
+        Self {
+            name: "Unknown",
+            tier: 0,
+            supports_persistence: false,
+            supports_filtering: false,
+            supports_export: false,
+            max_recommended_vectors: None,
+        }
+    }
+}
+
+/// Result of a migration between backends
+#[derive(Debug, Clone)]
+pub struct VectorMigrationResult {
+    /// Number of vectors exported from source
+    pub exported: usize,
+    /// Number of vectors successfully imported into target
+    pub imported: usize,
+}
+
+/// Migrate all vectors from one backend to another.
+/// The source must support export_all and the target must support insert.
+pub fn migrate_vectors(
+    source: &dyn VectorDb,
+    target: &mut dyn VectorDb,
+) -> AiResult<VectorMigrationResult> {
+    let vectors = source.export_all()?;
+    let count = vectors.len();
+    let imported = target.import_bulk(vectors)?;
+    Ok(VectorMigrationResult { exported: count, imported })
+}
+
+/// Convert a string ID to a deterministic u64 (for backends that need numeric IDs)
+pub fn string_id_to_u64(id: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    id.hash(&mut hasher);
+    hasher.finish()
+}
 
 /// Configuration for vector database
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -233,6 +293,27 @@ pub trait VectorDb: Send + Sync {
 
     /// Check if the database is healthy/connected
     fn health_check(&self) -> AiResult<bool>;
+
+    /// Get information about this backend (tier, capabilities, etc.)
+    fn backend_info(&self) -> BackendInfo {
+        BackendInfo::default()
+    }
+
+    /// Export all stored vectors (for migration between backends).
+    /// Not all backends support this — check `backend_info().supports_export`.
+    fn export_all(&self) -> AiResult<Vec<StoredVector>> {
+        Err(AiError::Other("export_all not supported by this backend".into()))
+    }
+
+    /// Import vectors in bulk (for migration). Default impl calls insert() in a loop.
+    fn import_bulk(&mut self, vectors: Vec<StoredVector>) -> AiResult<usize> {
+        let mut count = 0;
+        for v in vectors {
+            self.insert(&v.id, v.vector, v.metadata)?;
+            count += 1;
+        }
+        Ok(count)
+    }
 }
 
 /// In-memory vector database implementation
@@ -384,6 +465,21 @@ impl VectorDb for InMemoryVectorDb {
     fn health_check(&self) -> AiResult<bool> {
         Ok(true)
     }
+
+    fn backend_info(&self) -> BackendInfo {
+        BackendInfo {
+            name: "InMemory",
+            tier: 0,
+            supports_persistence: false,
+            supports_filtering: true,
+            supports_export: true,
+            max_recommended_vectors: Some(10_000),
+        }
+    }
+
+    fn export_all(&self) -> AiResult<Vec<StoredVector>> {
+        Ok(self.vectors.values().cloned().collect())
+    }
 }
 
 /// Qdrant vector database client (HTTP-based)
@@ -480,11 +576,16 @@ impl QdrantClient {
 
 impl VectorDb for QdrantClient {
     fn insert(&mut self, id: &str, vector: Vec<f32>, metadata: serde_json::Value) -> AiResult<()> {
+        // Store original ID in payload so we can recover it on export
+        let mut payload = metadata;
+        payload["_original_id"] = serde_json::json!(id);
+        let numeric_id = string_id_to_u64(id);
+
         let body = serde_json::json!({
             "points": [{
-                "id": id,
+                "id": numeric_id,
                 "vector": vector,
-                "payload": metadata
+                "payload": payload
             }]
         });
 
@@ -501,10 +602,12 @@ impl VectorDb for QdrantClient {
         let points: Vec<_> = vectors
             .iter()
             .map(|(id, vector, metadata)| {
+                let mut payload = metadata.clone();
+                payload["_original_id"] = serde_json::json!(id);
                 serde_json::json!({
-                    "id": id,
+                    "id": string_id_to_u64(id),
                     "vector": vector,
-                    "payload": metadata
+                    "payload": payload
                 })
             })
             .collect();
@@ -578,9 +681,10 @@ impl VectorDb for QdrantClient {
     }
 
     fn get(&self, id: &str) -> AiResult<Option<StoredVector>> {
+        let numeric_id = string_id_to_u64(id);
         let endpoint = format!(
             "/collections/{}/points/{}",
-            self.config.collection_name, id
+            self.config.collection_name, numeric_id
         );
 
         match self.request("GET", &endpoint, None) {
@@ -612,7 +716,7 @@ impl VectorDb for QdrantClient {
 
     fn delete(&mut self, id: &str) -> AiResult<bool> {
         let body = serde_json::json!({
-            "points": [id]
+            "points": [string_id_to_u64(id)]
         });
 
         let endpoint = format!("/collections/{}/points/delete", self.config.collection_name);
@@ -646,30 +750,117 @@ impl VectorDb for QdrantClient {
             Err(_) => Ok(false),
         }
     }
+
+    fn backend_info(&self) -> BackendInfo {
+        BackendInfo {
+            name: "Qdrant",
+            tier: 3,
+            supports_persistence: true,
+            supports_filtering: true,
+            supports_export: true,
+            max_recommended_vectors: None, // scales to billions with clustering
+        }
+    }
+
+    fn export_all(&self) -> AiResult<Vec<StoredVector>> {
+        let mut all_vectors = Vec::new();
+        let mut offset: Option<String> = None;
+        let batch_size = 100;
+
+        loop {
+            let mut body = serde_json::json!({
+                "limit": batch_size,
+                "with_payload": true,
+                "with_vector": true
+            });
+            if let Some(ref off) = offset {
+                body["offset"] = serde_json::json!(off);
+            }
+
+            let endpoint = format!("/collections/{}/points/scroll", self.config.collection_name);
+            let response = self.request("POST", &endpoint, Some(&body.to_string()))?;
+
+            let parsed: serde_json::Value = serde_json::from_str(&response)
+                .map_err(|e| AiError::Serialization(crate::error::SerializationError::json_deserialize(e.to_string())))?;
+
+            let points = match parsed["result"]["points"].as_array() {
+                Some(pts) => pts,
+                None => break,
+            };
+
+            if points.is_empty() {
+                break;
+            }
+
+            for point in points {
+                let id = point["id"].as_str()
+                    .or_else(|| point["id"].as_u64().map(|_| ""))
+                    .unwrap_or_default();
+                let id_str = if id.is_empty() {
+                    point["id"].to_string().trim_matches('"').to_string()
+                } else {
+                    id.to_string()
+                };
+
+                let vector: Vec<f32> = point["vector"]
+                    .as_array()
+                    .unwrap_or(&vec![])
+                    .iter()
+                    .filter_map(|v| v.as_f64().map(|f| f as f32))
+                    .collect();
+
+                all_vectors.push(StoredVector {
+                    id: id_str,
+                    vector,
+                    metadata: point["payload"].clone(),
+                    timestamp: 0,
+                });
+            }
+
+            // Get next page offset
+            match parsed["result"]["next_page_offset"].as_str() {
+                Some(next) => offset = Some(next.to_string()),
+                None => match parsed["result"]["next_page_offset"].as_u64() {
+                    Some(next) => offset = Some(next.to_string()),
+                    None => break,
+                },
+            }
+        }
+
+        Ok(all_vectors)
+    }
 }
 
 /// Builder for creating vector databases
 pub struct VectorDbBuilder {
     config: VectorDbConfig,
     backend: VectorDbBackend,
+    /// Path for LanceDB storage (only used with Lance backend)
+    #[cfg(feature = "vector-lancedb")]
+    lance_path: Option<String>,
 }
 
 /// Available backends
 #[derive(Debug, Clone, Default)]
 pub enum VectorDbBackend {
-    /// In-memory storage
+    /// In-memory storage (Tier 0)
     #[default]
     InMemory,
-    /// Qdrant server
+    /// Qdrant server (Tier 3)
     Qdrant,
+    /// LanceDB embedded (Tier 2) — requires `vector-lancedb` feature
+    #[cfg(feature = "vector-lancedb")]
+    Lance,
 }
 
 impl VectorDbBuilder {
-    /// Create a new builder
+    /// Create a new builder with in-memory backend as default
     pub fn new() -> Self {
         Self {
             config: VectorDbConfig::default(),
             backend: VectorDbBackend::InMemory,
+            #[cfg(feature = "vector-lancedb")]
+            lance_path: None,
         }
     }
 
@@ -716,6 +907,17 @@ impl VectorDbBuilder {
         self
     }
 
+    /// Use LanceDB embedded backend (Tier 2).
+    ///
+    /// # Arguments
+    /// * `path` - Local directory path for Lance data storage
+    #[cfg(feature = "vector-lancedb")]
+    pub fn lance(mut self, path: impl Into<String>) -> Self {
+        self.lance_path = Some(path.into());
+        self.backend = VectorDbBackend::Lance;
+        self
+    }
+
     /// Build the vector database
     pub fn build(self) -> AiResult<Box<dyn VectorDb>> {
         match self.backend {
@@ -724,6 +926,17 @@ impl VectorDbBuilder {
                 let client = QdrantClient::new(self.config)?;
                 client.create_collection_if_not_exists()?;
                 Ok(Box::new(client))
+            }
+            #[cfg(feature = "vector-lancedb")]
+            VectorDbBackend::Lance => {
+                let path = self.lance_path.ok_or_else(|| {
+                    AiError::Config(crate::error::ConfigError::MissingValue {
+                        field: "lance_path".to_string(),
+                        description: "LanceDB path is required. Use .lance(path) on the builder.".to_string(),
+                    })
+                })?;
+                let db = crate::vector_db_lance::LanceVectorDb::new(&path, self.config)?;
+                Ok(Box::new(db))
             }
         }
     }
@@ -817,6 +1030,189 @@ impl<V: VectorDb> HybridVectorSearch<V> {
     /// Get mutable access to the underlying vector database
     pub fn vector_db_mut(&mut self) -> &mut V {
         &mut self.vector_db
+    }
+}
+
+// =============================================================================
+// Distributed Vector Database
+// =============================================================================
+
+/// A distributed vector database wrapper that replicates and searches across cluster nodes.
+///
+/// Wraps any `VectorDb` implementation, adding distributed search and replication
+/// via the `NetworkNode`. Local operations delegate to the wrapped backend, while
+/// `distributed_search` fans out queries to all connected peers.
+#[cfg(feature = "distributed-network")]
+pub struct DistributedVectorDb<V: VectorDb> {
+    local: V,
+    network: std::sync::Arc<crate::distributed_network::NetworkNode>,
+}
+
+#[cfg(feature = "distributed-network")]
+impl<V: VectorDb> DistributedVectorDb<V> {
+    /// Create a new distributed vector database.
+    ///
+    /// # Arguments
+    /// * `local` - The local vector database backend.
+    /// * `network` - A reference to the network node for distributed operations.
+    pub fn new(local: V, network: std::sync::Arc<crate::distributed_network::NetworkNode>) -> Self {
+        Self { local, network }
+    }
+
+    /// Search across all cluster nodes, merging results by score.
+    ///
+    /// Sends `VectorSearch` messages to all connected peers, collects their
+    /// responses, and merges them with local results. Returns the top `limit`
+    /// results sorted by descending score.
+    pub fn distributed_search(
+        &self,
+        query: &[f32],
+        limit: usize,
+    ) -> AiResult<Vec<VectorSearchResult>> {
+        // Local search first
+        let mut all_results = self.local.search(query, limit, None)?;
+
+        // Query peers
+        let peers = self.network.peers();
+        let request_id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_micros() as u64;
+
+        for (peer_id, _, _) in &peers {
+            let msg = crate::distributed::NodeMessage::VectorSearch {
+                query: query.to_vec(),
+                limit,
+                request_id,
+            };
+
+            match self.network.request(peer_id, msg) {
+                Ok(crate::distributed::NodeMessage::VectorSearchResponse { results, .. }) => {
+                    for (id, score, metadata) in results {
+                        let meta: serde_json::Value = metadata
+                            .into_iter()
+                            .map(|(k, v)| (k, serde_json::Value::String(v)))
+                            .collect::<serde_json::Map<String, serde_json::Value>>()
+                            .into();
+
+                        all_results.push(VectorSearchResult {
+                            id,
+                            score,
+                            metadata: meta,
+                            vector: None,
+                        });
+                    }
+                }
+                _ => {} // Skip failed peers
+            }
+        }
+
+        // Sort by score (descending) and take top limit
+        all_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        all_results.truncate(limit);
+
+        Ok(all_results)
+    }
+
+    /// Replicate a specific vector to the nodes responsible for its key.
+    ///
+    /// Returns the number of nodes the vector was sent to.
+    pub fn replicate_vector(&self, id: &str) -> AiResult<usize> {
+        let stored = self.local.get(id)?
+            .ok_or_else(|| AiError::Other(format!("Vector {} not found locally", id)))?;
+
+        let data = serde_json::to_vec(&stored)
+            .map_err(|e| AiError::Other(format!("Failed to serialize vector: {}", e)))?;
+
+        let target_nodes = self.network.nodes_for_key(id);
+        let mut count = 0;
+
+        for node_id in target_nodes {
+            if node_id == self.network.node_id() {
+                continue;
+            }
+            match self.network.send(
+                &node_id,
+                crate::distributed::NodeMessage::Replicate {
+                    key: format!("vector:{}", id),
+                    value: data.clone(),
+                    version: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_micros() as u64,
+                },
+            ) {
+                Ok(_) => count += 1,
+                Err(_) => {} // Skip failed nodes
+            }
+        }
+
+        Ok(count)
+    }
+
+    /// Get a reference to the local vector database.
+    pub fn local(&self) -> &V {
+        &self.local
+    }
+
+    /// Get a mutable reference to the local vector database.
+    pub fn local_mut(&mut self) -> &mut V {
+        &mut self.local
+    }
+}
+
+/// Implement VectorDb for DistributedVectorDb by delegating to the local backend.
+#[cfg(feature = "distributed-network")]
+impl<V: VectorDb> VectorDb for DistributedVectorDb<V> {
+    fn insert(&mut self, id: &str, vector: Vec<f32>, metadata: serde_json::Value) -> AiResult<()> {
+        self.local.insert(id, vector, metadata)
+    }
+
+    fn insert_batch(&mut self, vectors: Vec<(String, Vec<f32>, serde_json::Value)>) -> AiResult<usize> {
+        self.local.insert_batch(vectors)
+    }
+
+    fn search(
+        &self,
+        query: &[f32],
+        limit: usize,
+        filter: Option<&[MetadataFilter]>,
+    ) -> AiResult<Vec<VectorSearchResult>> {
+        self.local.search(query, limit, filter)
+    }
+
+    fn get(&self, id: &str) -> AiResult<Option<StoredVector>> {
+        self.local.get(id)
+    }
+
+    fn delete(&mut self, id: &str) -> AiResult<bool> {
+        self.local.delete(id)
+    }
+
+    fn count(&self) -> usize {
+        self.local.count()
+    }
+
+    fn clear(&mut self) -> AiResult<()> {
+        self.local.clear()
+    }
+
+    fn health_check(&self) -> AiResult<bool> {
+        self.local.health_check()
+    }
+
+    fn backend_info(&self) -> BackendInfo {
+        let mut info = self.local.backend_info();
+        info.name = "Distributed";
+        info
+    }
+
+    fn export_all(&self) -> AiResult<Vec<StoredVector>> {
+        self.local.export_all()
+    }
+
+    fn import_bulk(&mut self, vectors: Vec<StoredVector>) -> AiResult<usize> {
+        self.local.import_bulk(vectors)
     }
 }
 

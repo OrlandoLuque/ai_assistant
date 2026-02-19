@@ -59,7 +59,7 @@ impl MemoryQueue {
     }
 
     pub fn push(&self, message: QueueMessage) -> Result<(), QueueError> {
-        let mut queue = self.messages.lock().unwrap();
+        let mut queue = self.messages.lock().unwrap_or_else(|e| e.into_inner());
         if queue.len() >= self.max_size {
             return Err(QueueError::Full);
         }
@@ -69,12 +69,12 @@ impl MemoryQueue {
     }
 
     pub fn pop(&self) -> Option<QueueMessage> {
-        let mut queue = self.messages.lock().unwrap();
+        let mut queue = self.messages.lock().unwrap_or_else(|e| e.into_inner());
         queue.pop_front()
     }
 
     pub fn pop_blocking(&self, timeout: Duration) -> Option<QueueMessage> {
-        let mut queue = self.messages.lock().unwrap();
+        let mut queue = self.messages.lock().unwrap_or_else(|e| e.into_inner());
 
         let deadline = Instant::now() + timeout;
         while queue.is_empty() {
@@ -82,7 +82,7 @@ impl MemoryQueue {
             if remaining.is_zero() {
                 return None;
             }
-            let result = self.signal.wait_timeout(queue, remaining).unwrap();
+            let result = self.signal.wait_timeout(queue, remaining).unwrap_or_else(|e| e.into_inner());
             queue = result.0;
             if result.1.timed_out() {
                 return None;
@@ -93,7 +93,7 @@ impl MemoryQueue {
     }
 
     pub fn len(&self) -> usize {
-        self.messages.lock().unwrap().len()
+        self.messages.lock().unwrap_or_else(|e| e.into_inner()).len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -101,7 +101,7 @@ impl MemoryQueue {
     }
 
     pub fn clear(&self) {
-        self.messages.lock().unwrap().clear();
+        self.messages.lock().unwrap_or_else(|e| e.into_inner()).clear();
     }
 }
 
@@ -156,15 +156,15 @@ where
     }
 
     pub fn start(&self) {
-        *self.running.lock().unwrap() = true;
+        *self.running.lock().unwrap_or_else(|e| e.into_inner()) = true;
     }
 
     pub fn stop(&self) {
-        *self.running.lock().unwrap() = false;
+        *self.running.lock().unwrap_or_else(|e| e.into_inner()) = false;
     }
 
     pub fn is_running(&self) -> bool {
-        *self.running.lock().unwrap()
+        *self.running.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     pub fn process_one(&self) -> Option<Result<String, String>> {
@@ -188,7 +188,7 @@ impl DeadLetterQueue {
     }
 
     pub fn add(&self, message: QueueMessage, reason: String) {
-        let mut messages = self.messages.lock().unwrap();
+        let mut messages = self.messages.lock().unwrap_or_else(|e| e.into_inner());
         if messages.len() >= self.max_size {
             messages.remove(0);
         }
@@ -196,11 +196,11 @@ impl DeadLetterQueue {
     }
 
     pub fn pop(&self) -> Option<(QueueMessage, String)> {
-        self.messages.lock().unwrap().pop()
+        self.messages.lock().unwrap_or_else(|e| e.into_inner()).pop()
     }
 
     pub fn len(&self) -> usize {
-        self.messages.lock().unwrap().len()
+        self.messages.lock().unwrap_or_else(|e| e.into_inner()).len()
     }
 
     pub fn is_empty(&self) -> bool {

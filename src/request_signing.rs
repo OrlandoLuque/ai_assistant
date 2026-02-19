@@ -38,7 +38,7 @@ impl RequestSigner {
     pub fn sign(&self, payload: &str) -> SignedRequest {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
 
         let nonce = uuid::Uuid::new_v4().to_string();
@@ -59,7 +59,7 @@ impl RequestSigner {
         // Check timestamp
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
 
         if now.saturating_sub(request.timestamp) > max_age_secs {

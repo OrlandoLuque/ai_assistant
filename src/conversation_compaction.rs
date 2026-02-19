@@ -51,7 +51,7 @@ impl CompactableMessage {
             content: content.to_string(),
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs(),
             importance: 0.5,
             topics: Vec::new(),
@@ -160,7 +160,7 @@ impl ConversationCompactor {
             let min_idx = preserved[mid_start..mid_end]
                 .iter()
                 .enumerate()
-                .min_by(|(_, a), (_, b)| a.importance.partial_cmp(&b.importance).unwrap())
+                .min_by(|(_, a), (_, b)| a.importance.partial_cmp(&b.importance).unwrap_or(std::cmp::Ordering::Equal))
                 .map(|(i, _)| i + mid_start);
 
             if let Some(idx) = min_idx {

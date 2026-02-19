@@ -194,37 +194,37 @@ impl PiiDetector {
         // Email pattern
         self.patterns.insert(
             PiiType::Email,
-            Regex::new(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}").unwrap(),
+            Regex::new(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}").expect("valid regex"),
         );
 
         // Phone patterns (various formats)
         self.patterns.insert(
             PiiType::Phone,
-            Regex::new(r"(?:\+?1[-.\s]?)?\(?[0-9]{3}\)?[-.\s]?[0-9]{3}[-.\s]?[0-9]{4}").unwrap(),
+            Regex::new(r"(?:\+?1[-.\s]?)?\(?[0-9]{3}\)?[-.\s]?[0-9]{3}[-.\s]?[0-9]{4}").expect("valid regex"),
         );
 
         // SSN pattern
         self.patterns.insert(
             PiiType::Ssn,
-            Regex::new(r"\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b").unwrap(),
+            Regex::new(r"\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b").expect("valid regex"),
         );
 
         // Credit card pattern (simplified)
         self.patterns.insert(
             PiiType::CreditCard,
-            Regex::new(r"\b(?:\d{4}[-\s]?){3}\d{4}\b").unwrap(),
+            Regex::new(r"\b(?:\d{4}[-\s]?){3}\d{4}\b").expect("valid regex"),
         );
 
         // IP address pattern (IPv4)
         self.patterns.insert(
             PiiType::IpAddress,
-            Regex::new(r"\b(?:\d{1,3}\.){3}\d{1,3}\b").unwrap(),
+            Regex::new(r"\b(?:\d{1,3}\.){3}\d{1,3}\b").expect("valid regex"),
         );
 
         // Date of birth patterns
         self.patterns.insert(
             PiiType::DateOfBirth,
-            Regex::new(r"\b(?:0[1-9]|1[0-2])[/-](?:0[1-9]|[12]\d|3[01])[/-](?:19|20)\d{2}\b").unwrap(),
+            Regex::new(r"\b(?:0[1-9]|1[0-2])[/-](?:0[1-9]|[12]\d|3[01])[/-](?:19|20)\d{2}\b").expect("valid regex"),
         );
     }
 
@@ -317,10 +317,10 @@ impl PiiDetector {
         let mut detections = Vec::new();
 
         // Look for "Mr.", "Mrs.", "Ms.", "Dr." patterns
-        let title_pattern = Regex::new(r"\b(?:Mr|Mrs|Ms|Dr|Miss)\.?\s+([A-Z][a-z]+)(?:\s+([A-Z][a-z]+))?").unwrap();
+        let title_pattern = Regex::new(r"\b(?:Mr|Mrs|Ms|Dr|Miss)\.?\s+([A-Z][a-z]+)(?:\s+([A-Z][a-z]+))?").expect("valid regex");
 
         for cap in title_pattern.captures_iter(text) {
-            let full_match = cap.get(0).unwrap();
+            let full_match = cap.get(0).expect("capture group 0");
             let name = full_match.as_str();
 
             detections.push(DetectedPii {

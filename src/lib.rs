@@ -69,17 +69,33 @@ pub mod debug;
 pub mod data_source_client;
 pub mod crawl_policy;
 pub mod persistence;
+pub mod adaptive_thinking;
+pub mod events;
+pub mod internal_storage;
+pub mod log_redaction;
+pub mod http_client;
+pub mod request_queue;
+pub mod cloud_providers;
+pub mod server;
 
 // Core re-exports
 pub use config::{AiConfig, AiProvider};
 pub use messages::{ChatMessage, AiResponse};
 pub use models::ModelInfo;
-pub use session::{ChatSession, ChatSessionStore, UserPreferences, ResponseStyle};
-pub use context::{ContextUsage, estimate_tokens, get_model_context_size};
+pub use session::{
+    ChatSession, ChatSessionStore, UserPreferences, ResponseStyle,
+    JournalSession, JournalEntry, JournalEntryType,
+};
+pub use context::{
+    ContextUsage, estimate_tokens, get_model_context_size,
+    get_model_context_size_cached, clear_context_size_cache, context_size_cache_len,
+};
 pub use assistant::{AiAssistant, SummaryResult};
 pub use providers::{
     generate_response, generate_response_streaming,
     generate_response_streaming_cancellable,
+    build_system_prompt, build_system_prompt_with_notes,
+    fetch_model_context_size,
 };
 
 pub use error::{
@@ -92,6 +108,11 @@ pub use progress::{
     Progress, ProgressCallback, ProgressReporter,
     MultiProgressTracker, OperationHandle, ProgressAggregator,
     ProgressCallbackBuilder, logging_callback, silent_callback,
+};
+
+pub use events::{
+    AiEvent, EventHandler, EventBus, TimestampedEvent,
+    FilteredHandler, LoggingHandler, LogLevel, CollectingHandler, EventTimer,
 };
 
 pub use config_file::{
@@ -126,6 +147,13 @@ pub use retry::{
 };
 
 pub use profiles::{ModelProfile, ProfileBuilder, ProfileManager, ProfileApplicator};
+
+pub use adaptive_thinking::{
+    AdaptiveThinkingConfig, ThinkingDepth, RagTierPriority,
+    ClassificationSignals, ThinkingStrategy, QueryClassifier,
+    ThinkingTagParser, ThinkingParseResult, parse_thinking_tags,
+    is_trivial_query,
+};
 
 pub use templates::{
     PromptTemplate, TemplateVariable, VariableType, TemplateBuilder,
@@ -175,6 +203,34 @@ pub use cache_compression::{
     CompressionAlgorithm, CompressionLevel, CompressedData, CompressionError,
     compress, decompress, CompressedCache, CacheCompressionStats,
     compress_string, decompress_string, StreamingCompressor,
+};
+
+pub use internal_storage::{
+    StorageFormat, InternalFileInfo,
+    save_internal, load_internal, serialize_internal, deserialize_internal,
+    detect_format, dump_as_json, convert_to_json, convert_json_to_binary, file_info,
+};
+
+pub use log_redaction::{
+    redact, redact_with_config, contains_sensitive, RedactionConfig,
+};
+
+pub use http_client::{
+    HttpClient, UreqClient,
+    parse_ollama_models, parse_openai_models, parse_kobold_models,
+    fetch_ollama_models_with, fetch_openai_models_with, fetch_kobold_models_with,
+};
+
+pub use server::{ServerConfig, AiServer, ServerHandle};
+
+pub use cloud_providers::{
+    resolve_api_key, generate_cloud_response, fetch_cloud_models,
+    generate_openai_cloud, generate_anthropic_cloud,
+    fetch_openai_cloud_models, fetch_anthropic_cloud_models,
+};
+
+pub use request_queue::{
+    RequestPriority, QueuedRequest, RequestQueue, QueueStats as RequestQueueStats,
 };
 
 pub use plugins::{
@@ -250,6 +306,22 @@ pub use agent::{
 };
 
 // =============================================================================
+// ASYNC RUNTIME FEATURE
+// =============================================================================
+
+#[cfg(feature = "async-runtime")]
+pub mod async_providers;
+
+#[cfg(feature = "async-runtime")]
+pub use async_providers::{
+    AsyncHttpClient, ReqwestClient,
+    fetch_models_async, fetch_ollama_models_async,
+    fetch_openai_models_async, fetch_kobold_models_async,
+    generate_response_async, generate_response_streaming_async,
+    block_on_async, create_runtime,
+};
+
+// =============================================================================
 // DISTRIBUTED FEATURE
 // =============================================================================
 
@@ -266,6 +338,144 @@ pub use distributed::{
     DataChunk, MapOutput, ReduceOutput, MapReduceJob, MapReduceBuilder,
     // Coordinator
     DistributedCoordinator,
+};
+
+#[cfg(feature = "distributed-network")]
+pub use distributed::NodeMessage;
+
+// =============================================================================
+// DISTRIBUTED NETWORKING (optional — QUIC transport, replication, failure detection)
+// =============================================================================
+
+#[cfg(feature = "distributed-network")]
+pub mod consistent_hash;
+#[cfg(feature = "distributed-network")]
+pub mod failure_detector;
+#[cfg(feature = "distributed-network")]
+pub mod merkle_sync;
+#[cfg(feature = "distributed-network")]
+pub mod node_security;
+#[cfg(feature = "distributed-network")]
+pub mod distributed_network;
+
+#[cfg(feature = "distributed-network")]
+pub use consistent_hash::ConsistentHashRing;
+#[cfg(feature = "distributed-network")]
+pub use failure_detector::{PhiAccrualDetector, HeartbeatManager, HeartbeatConfig, NodeStatus};
+#[cfg(feature = "distributed-network")]
+pub use merkle_sync::{MerkleTree, MerkleProof, AntiEntropySync, SyncDelta as MerkleSyncDelta};
+#[cfg(feature = "distributed-network")]
+pub use node_security::{NodeIdentity, CertificateManager, JoinToken, ChallengeResponse};
+#[cfg(feature = "distributed-network")]
+pub use distributed_network::{
+    NetworkNode, NetworkConfig, ReplicationConfig, WriteMode,
+    DiscoveryConfig as NetworkDiscoveryConfig, NetworkEvent, NetworkStats,
+    PeerState as NetworkPeerState, RingInfo,
+};
+
+// =============================================================================
+// P2P NETWORKING (optional)
+// =============================================================================
+
+#[cfg(feature = "p2p")]
+pub mod p2p;
+
+#[cfg(feature = "p2p")]
+pub use p2p::{
+    P2PConfig, PeerDataTrust, TurnConfig,
+    NatType, NatDiscoveryResult, NatTraversal,
+    IceCandidateType, IceCandidate, IceState, IceAgent,
+    PeerReputation, ReputationSystem,
+    PeerMessage, PeerInfo, KnowledgeShare, ContradictionReport,
+    PeerConnection, P2PManager, P2PStats,
+};
+
+// =============================================================================
+// AUTONOMOUS AGENT FEATURE
+// =============================================================================
+
+#[cfg(feature = "autonomous")]
+pub mod agent_policy;
+#[cfg(feature = "autonomous")]
+pub mod agent_sandbox;
+#[cfg(feature = "autonomous")]
+pub mod os_tools;
+#[cfg(feature = "autonomous")]
+pub mod user_interaction;
+#[cfg(feature = "autonomous")]
+pub mod task_board;
+#[cfg(feature = "autonomous")]
+pub mod interactive_commands;
+#[cfg(feature = "autonomous")]
+pub mod mode_manager;
+#[cfg(feature = "autonomous")]
+pub mod agent_profiles;
+#[cfg(feature = "autonomous")]
+pub mod autonomous_loop;
+#[cfg(feature = "distributed-agents")]
+pub mod distributed_agents;
+#[cfg(feature = "butler")]
+pub mod butler;
+#[cfg(feature = "browser")]
+pub mod browser_tools;
+#[cfg(feature = "scheduler")]
+pub mod scheduler;
+#[cfg(feature = "scheduler")]
+pub mod trigger_system;
+
+#[cfg(feature = "autonomous")]
+pub use agent_policy::{
+    AutonomyLevel, InternetMode, RiskLevel as AgentRiskLevel, ActionType, ActionDescriptor,
+    AgentPolicy, AgentPolicyBuilder, ApprovalHandler, AutoApproveAll, AutoDenyAll,
+    ClosureApprovalHandler,
+};
+
+#[cfg(feature = "autonomous")]
+pub use agent_sandbox::{
+    AuditDecision, AuditEntry, SandboxError, SandboxValidator,
+};
+
+#[cfg(feature = "autonomous")]
+pub use agent_profiles::{
+    AgentProfile, ConversationProfile, WorkflowProfile, WorkflowPhase, ProfileRegistry,
+};
+
+#[cfg(feature = "autonomous")]
+pub use user_interaction::{
+    UserQuery, UserResponse, NotifyLevel, UserInteractionHandler,
+    AutoApproveHandler as AutoApproveInteraction, CallbackInteractionHandler,
+    BufferedInteractionHandler, PendingQuery, InteractionManager,
+};
+
+#[cfg(feature = "autonomous")]
+pub use autonomous_loop::{
+    AgentState as AutonomousAgentState, AutonomousAgent, AutonomousAgentBuilder,
+    AgentResult as AutonomousAgentResult, IterationOutcome, AutonomousAgentConfig,
+};
+
+#[cfg(feature = "autonomous")]
+pub use mode_manager::{OperationMode, ModeManager};
+
+#[cfg(feature = "autonomous")]
+pub use task_board::{TaskBoard, BoardCommand, TaskBoardListener, TaskExecutionState, TaskBoardSummary};
+
+#[cfg(feature = "autonomous")]
+pub use interactive_commands::{UserIntent, CommandResult, CommandProcessor};
+
+#[cfg(feature = "autonomous")]
+pub use multi_agent::{MultiAgentSession, SessionSummary as MultiAgentSessionSummary};
+
+// =============================================================================
+// MULTI-LAYER GRAPH (always available)
+// =============================================================================
+
+pub mod multi_layer_graph;
+pub use multi_layer_graph::{
+    GraphLayer, ConfidenceLevel, BeliefType, UserBelief,
+    ContradictionSource, ContradictionResolution, Contradiction, ContradictionLog,
+    LayeredEntity, BeliefExtractor, SessionGraph, UserGraph,
+    InternetGraphEntry, InternetGraph, MultiLayerQueryResult,
+    MultiLayerGraph, MultiLayerGraphStats,
 };
 
 // =============================================================================
@@ -479,7 +689,17 @@ pub use vector_db::{
     VectorDbConfig, DistanceMetric, StoredVector, VectorSearchResult,
     MetadataFilter, FilterOperation, VectorDb, InMemoryVectorDb,
     QdrantClient, VectorDbBuilder, VectorDbBackend, HybridVectorSearch,
+    BackendInfo, VectorMigrationResult, migrate_vectors, string_id_to_u64,
 };
+
+// LanceDB vector database backend (Tier 2 — embedded, persistent)
+#[cfg(feature = "vector-lancedb")]
+pub mod vector_db_lance;
+#[cfg(feature = "vector-lancedb")]
+pub use vector_db_lance::LanceVectorDb;
+
+#[cfg(feature = "distributed-network")]
+pub use vector_db::DistributedVectorDb;
 
 #[cfg(feature = "embeddings")]
 pub use neural_embeddings::{
@@ -563,6 +783,8 @@ pub use provider_plugins::{
 // =============================================================================
 
 #[cfg(feature = "tools")]
+pub mod unified_tools;
+#[cfg(feature = "tools")]
 pub mod tools;
 #[cfg(feature = "tools")]
 pub mod tool_use;
@@ -578,6 +800,21 @@ pub mod agentic_loop;
 pub mod model_integration;
 #[cfg(feature = "tools")]
 pub mod prompt_chaining;
+
+#[cfg(feature = "tools")]
+pub use unified_tools::{
+    ParamType as UnifiedParamType, ParamSchema,
+    ToolDef as UnifiedToolDef, ToolBuilder,
+    ToolCall as UnifiedToolCall, ToolOutput as UnifiedToolOutput, ToolError as UnifiedToolError,
+    ToolHandler as UnifiedToolHandler, ToolChoice as UnifiedToolChoice,
+    ToolRegistry as UnifiedToolRegistry,
+    ProviderCapabilities as UnifiedProviderCapabilities,
+    ProviderPlugin as UnifiedProviderPlugin,
+    ProviderRegistry as UnifiedProviderRegistry,
+    parse_tool_calls as unified_parse_tool_calls,
+    builtin_tools as unified_builtin_tools,
+    evaluate_math,
+};
 
 #[cfg(feature = "tools")]
 pub use tools::{
@@ -652,7 +889,7 @@ pub mod html_extraction;
 #[cfg(feature = "documents")]
 pub use document_parsing::{
     DocumentFormat, DocumentSection, DocumentMetadata, ParsedDocument,
-    DocumentParserConfig, DocumentParser,
+    DocumentParserConfig, DocumentParser, PdfTable, PageContent,
 };
 
 #[cfg(feature = "documents")]
@@ -779,7 +1016,17 @@ pub mod rag;
 #[cfg(feature = "rag")]
 pub mod rag_advanced;
 #[cfg(feature = "rag")]
+pub mod rag_tiers;
+#[cfg(feature = "rag")]
+pub mod rag_debug;
+#[cfg(feature = "rag")]
+pub mod rag_pipeline;
+#[cfg(feature = "rag")]
+pub mod rag_methods;
+#[cfg(feature = "rag")]
 pub mod query_expansion;
+#[cfg(feature = "rag")]
+pub mod knowledge_graph;
 #[cfg(feature = "rag")]
 pub mod citations;
 #[cfg(feature = "rag")]
@@ -808,6 +1055,61 @@ pub use rag_advanced::{
 };
 
 #[cfg(feature = "rag")]
+pub use rag_tiers::{
+    RagTier, RagFeatures, RagConfig as RagTierConfig, RagRequirement,
+    HybridWeights, RagStats, TierSelectionHints, UserPreference, QueryComplexity,
+    auto_select_tier,
+};
+
+// Knowledge graph exports - use module path to avoid naming conflicts
+// with similar types in other modules (e.g., multi_agent, entity_manager)
+#[cfg(feature = "rag")]
+pub use knowledge_graph::{
+    KnowledgeGraph, KnowledgeGraphConfig, KnowledgeGraphStore, KnowledgeGraphBuilder,
+    Entity as KGEntity, EntityType as KGEntityType, Relation as KGRelation,
+    EntityMention as KGEntityMention, GraphChunk, GraphStats as KGStats,
+    EntityExtractor as KGEntityExtractor, LlmEntityExtractor, PatternEntityExtractor,
+    ExtractionResult as KGExtractionResult, ExtractedEntity, ExtractedRelation,
+    IndexingResult as KGIndexingResult, GraphQueryResult, KnowledgeGraphCallback,
+};
+
+#[cfg(feature = "rag")]
+pub use rag_debug::{
+    RagDebugLevel, RagDebugConfig, RagDebugLogger, RagDebugStep, RagDebugSession,
+    RagSessionStats, RagQuerySession, AggregateRagStats, ScoreChange, AllSessionsExport,
+    global_rag_debug, configure_global_rag_debug, enable_rag_debug, disable_rag_debug,
+};
+
+#[cfg(feature = "rag")]
+pub use rag_pipeline::{
+    RagPipeline, RagPipelineConfig, RagPipelineResult, RagPipelineStats, RagPipelineError,
+    RetrievedChunk, ChunkPosition as PipelineChunkPosition,
+    LlmCallback, EmbeddingCallback, RetrievalCallback, GraphCallback, GraphRelation,
+};
+
+#[cfg(feature = "rag")]
+pub use rag_methods::{
+    // Types
+    ScoredItem, MethodResult, LlmGenerate, EmbeddingGenerate,
+    // Query Enhancement
+    QueryExpander as AdvancedQueryExpander, QueryExpanderConfig,
+    MultiQueryDecomposer, MultiQueryConfig,
+    HydeGenerator, HydeConfig,
+    // Result Processing
+    LlmReranker, LlmRerankerConfig,
+    CrossEncoderReranker, CrossEncoderScore,
+    RrfFusion, RrfConfig,
+    ContextualCompressor, CompressionConfig,
+    // Self-Improvement
+    SelfRagEvaluator, SelfRagConfig, SelfReflectionResult, SelfReflectionAction,
+    CragEvaluator, CragConfig, CragResult, CragAction,
+    AdaptiveStrategySelector, AdaptiveStrategyConfig, RetrievalStrategy,
+    // Advanced
+    GraphRagRetriever, GraphRagConfig, Entity as GraphEntity, EntityMention, Relationship, GraphDatabase,
+    RaptorRetriever, RaptorConfig, RaptorNode,
+};
+
+#[cfg(feature = "rag")]
 pub use query_expansion::{
     ExpansionConfig, QueryExpander, ExpandedQuery, ExpansionSource,
     MultiQueryRetriever, ExpansionResult, ExpansionStats, ScoredResult,
@@ -832,9 +1134,13 @@ pub mod encrypted_knowledge;
 
 #[cfg(feature = "rag")]
 pub use encrypted_knowledge::{
+    // Core types
     KpkgReader, KpkgBuilder, KpkgError, KpkgManifest,
-    ExtractedDocument, KpkgIndexResult, RagDbKpkgExt,
+    ExtractedDocument, KpkgIndexResult, KpkgIndexResultExt, RagDbKpkgExt,
+    // Key providers
     AppKeyProvider, CustomKeyProvider, KeyProvider, KEY_SIZE, NONCE_SIZE,
+    // Professional KPKG types
+    ExamplePair, RagPackageConfig, KpkgMetadata,
 };
 
 // =============================================================================

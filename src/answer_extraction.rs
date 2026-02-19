@@ -139,7 +139,7 @@ impl AnswerExtractor {
         }
 
         // Sort by confidence
-        answers.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap());
+        answers.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
 
         answers
     }

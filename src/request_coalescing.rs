@@ -198,7 +198,7 @@ impl RequestCoalescer {
         let (tx, rx) = std::sync::mpsc::channel();
 
         {
-            let mut pending = self.pending.write().unwrap();
+            let mut pending = self.pending.write().unwrap_or_else(|e| e.into_inner());
             let group = pending.entry(key.clone()).or_insert_with(|| {
                 PendingGroup {
                     requests: Vec::new(),
@@ -228,7 +228,7 @@ impl RequestCoalescer {
 
         // Find groups that are ready to process
         {
-            let mut pending = self.pending.write().unwrap();
+            let mut pending = self.pending.write().unwrap_or_else(|e| e.into_inner());
             let keys_to_remove: Vec<_> = pending
                 .iter()
                 .filter(|(_, group)| {

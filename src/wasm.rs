@@ -115,11 +115,15 @@ pub mod time {
     use std::time::Duration;
 
     /// Get current timestamp in milliseconds (works on WASM)
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
     pub fn now_millis() -> u64 {
-        // In a real WASM build, use js_sys::Date::now()
-        // For now, return 0 as fallback
-        0
+        js_sys::Date::now() as u64
+    }
+
+    /// Get current timestamp in milliseconds (WASM without wasm feature)
+    #[cfg(all(target_arch = "wasm32", not(feature = "wasm")))]
+    pub fn now_millis() -> u64 {
+        0 // Fallback: enable the `wasm` feature for real js_sys::Date time support
     }
 
     /// Get current timestamp in milliseconds (native)
@@ -131,10 +135,10 @@ pub mod time {
             .as_millis() as u64
     }
 
-    /// Sleep for a duration (no-op on WASM without threads)
+    /// Sleep for a duration (no-op on WASM — blocking sleep is not possible)
     #[cfg(target_arch = "wasm32")]
     pub fn sleep(_duration: Duration) {
-        // No-op on WASM - use async/await with web_sys instead
+        // No-op: WASM cannot do blocking sleep. Use async setTimeout via web_sys instead.
     }
 
     /// Sleep for a duration (native)
@@ -216,11 +220,11 @@ pub mod http {
         }
     }
 
-    /// Simple HTTP request (WASM stub)
+    /// Simple HTTP request (WASM — sync HTTP is not possible, use async fetch instead)
     #[cfg(target_arch = "wasm32")]
     pub fn request(_method: Method, _url: &str, _body: Option<&str>) -> Result<Response, String> {
-        // In a real WASM build, use web_sys fetch API
-        Err("HTTP requests in WASM require async implementation with web_sys".to_string())
+        // WASM cannot perform synchronous HTTP. Use the async web_sys fetch API instead.
+        Err("Synchronous HTTP is not available in WASM. Use web_sys::window().fetch() for async requests.".to_string())
     }
 }
 
@@ -268,54 +272,79 @@ pub mod storage {
 
 /// Console logging that works on both platforms
 pub mod console {
-    /// Log a message (debug level)
-    #[cfg(target_arch = "wasm32")]
-    pub fn log(_message: &str) {
-        // In real WASM, use web_sys::console::log_1()
+    /// Log a message (debug level) — real implementation via `web_sys::console`
+    #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
+    pub fn log(message: &str) {
+        web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(message));
     }
 
-    /// Log a message (debug level)
+    /// Log a message (debug level) — no-op without `wasm` feature
+    #[cfg(all(target_arch = "wasm32", not(feature = "wasm")))]
+    pub fn log(_message: &str) {
+        // Enable the `wasm` feature for real console.log support
+    }
+
+    /// Log a message (debug level) — native
     #[cfg(not(target_arch = "wasm32"))]
     pub fn log(message: &str) {
         println!("{}", message);
     }
 
-    /// Log an error message
-    #[cfg(target_arch = "wasm32")]
-    pub fn error(_message: &str) {
-        // In real WASM, use web_sys::console::error_1()
+    /// Log an error message — real implementation via `web_sys::console`
+    #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
+    pub fn error(message: &str) {
+        web_sys::console::error_1(&wasm_bindgen::JsValue::from_str(message));
     }
 
-    /// Log an error message
+    /// Log an error message — no-op without `wasm` feature
+    #[cfg(all(target_arch = "wasm32", not(feature = "wasm")))]
+    pub fn error(_message: &str) {
+        // Enable the `wasm` feature for real console.error support
+    }
+
+    /// Log an error message — native
     #[cfg(not(target_arch = "wasm32"))]
     pub fn error(message: &str) {
-        eprintln!("{}", message);
+        log::error!("{}", message);
     }
 
-    /// Log a warning message
-    #[cfg(target_arch = "wasm32")]
+    /// Log a warning message — real implementation via `web_sys::console`
+    #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
+    pub fn warn(message: &str) {
+        web_sys::console::warn_1(&wasm_bindgen::JsValue::from_str(message));
+    }
+
+    /// Log a warning message — no-op without `wasm` feature
+    #[cfg(all(target_arch = "wasm32", not(feature = "wasm")))]
     pub fn warn(_message: &str) {
-        // In real WASM, use web_sys::console::warn_1()
+        // Enable the `wasm` feature for real console.warn support
     }
 
-    /// Log a warning message
+    /// Log a warning message — native
     #[cfg(not(target_arch = "wasm32"))]
     pub fn warn(message: &str) {
-        eprintln!("WARN: {}", message);
+        log::warn!("{}", message);
     }
 }
 
 /// Random number generation for WASM
 pub mod random {
-    /// Generate a random u64
-    #[cfg(target_arch = "wasm32")]
+    /// Generate a random u64 using `getrandom` (cryptographically secure on WASM)
+    #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
     pub fn random_u64() -> u64 {
-        // In real WASM, use js_sys::Math::random() or crypto.getRandomValues
-        // Simple fallback using time
+        let mut buf = [0u8; 8];
+        getrandom::getrandom(&mut buf).expect("getrandom failed");
+        u64::from_le_bytes(buf)
+    }
+
+    /// Generate a random u64 — fallback without `wasm` feature (weak, time-based)
+    #[cfg(all(target_arch = "wasm32", not(feature = "wasm")))]
+    pub fn random_u64() -> u64 {
+        // Enable the `wasm` feature for cryptographically secure randomness via getrandom
         super::time::now_millis().wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407)
     }
 
-    /// Generate a random u64
+    /// Generate a random u64 — native (time-seeded LCG)
     #[cfg(not(target_arch = "wasm32"))]
     pub fn random_u64() -> u64 {
         use std::time::SystemTime;
@@ -323,7 +352,6 @@ pub mod random {
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos() as u64;
-        // Simple LCG
         seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407)
     }
 
@@ -428,5 +456,36 @@ mod tests {
         // Small delay
         for _ in 0..1000 { let _ = 1 + 1; }
         let _elapsed = start.elapsed();
+    }
+
+    #[test]
+    fn test_console_functions_native() {
+        // On native, these should not panic
+        console::log("test log message");
+        console::error("test error message");
+        console::warn("test warn message");
+    }
+
+    #[test]
+    fn test_feature_detection_native() {
+        // On native, all features should be available
+        assert!(features::rag_available());
+        assert!(features::persistence_available());
+        assert!(!features::requires_async_http());
+        assert!(features::threading_available());
+    }
+
+    #[test]
+    fn test_has_all_capabilities() {
+        let caps = PlatformCapabilities::current();
+        assert!(caps.has_all(&[Capability::Filesystem, Capability::Network]));
+        assert!(caps.has_all(&[])); // Empty list always true
+    }
+
+    #[test]
+    fn test_now_millis_reasonable() {
+        let ts = time::now_millis();
+        // Should be a recent Unix timestamp in milliseconds (after 2020-01-01)
+        assert!(ts > 1_577_836_800_000);
     }
 }

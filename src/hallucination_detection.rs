@@ -435,7 +435,7 @@ impl HallucinationDetector {
         let mut detections = Vec::new();
 
         // Look for quotes with attribution
-        let quote_pattern = Regex::new(r#""([^"]+)"\s*(?:-|,|said|stated|wrote)\s*(\w+(?:\s+\w+)?)"#).unwrap();
+        let quote_pattern = Regex::new(r#""([^"]+)"\s*(?:-|,|said|stated|wrote)\s*(\w+(?:\s+\w+)?)"#).expect("valid regex");
 
         for cap in quote_pattern.captures_iter(text) {
             let quote = cap.get(1).map(|m| m.as_str()).unwrap_or("");
@@ -461,7 +461,7 @@ impl HallucinationDetector {
         let mut detections = Vec::new();
 
         // Look for percentages over 100 or other suspicious numbers
-        let percent_pattern = Regex::new(r"(\d+(?:\.\d+)?)\s*(?:%|percent)").unwrap();
+        let percent_pattern = Regex::new(r"(\d+(?:\.\d+)?)\s*(?:%|percent)").expect("valid regex");
 
         for cap in percent_pattern.captures_iter(text) {
             if let Some(num_str) = cap.get(1) {

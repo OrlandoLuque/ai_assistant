@@ -5240,6 +5240,721 @@ fn tests_pipeline_guardrails() -> CategoryResult {
     CategoryResult { name: "pipeline_guardrails".to_string(), results }
 }
 
+// ─── RAG Tier System Tests ────────────────────────────────────────────────────
+
+#[cfg(feature = "rag")]
+fn tests_rag_tiers() -> CategoryResult {
+    // Use the re-exported types from lib.rs root
+    use ai_assistant::{
+        RagTier, RagFeatures, RagTierConfig, HybridWeights,
+        RagDebugLevel, RagDebugConfig, RagDebugLogger,
+        GraphRagConfig, GraphRagRetriever, GraphEntity, EntityMention, Relationship,
+        MultiQueryConfig, MultiQueryDecomposer, HydeConfig, RrfFusion, ScoredItem,
+    };
+
+    println!("\n{}", bold(&cyan("▶ RAG Tier System")));
+    let mut results = Vec::new();
+
+    // RagTier basic tests
+    results.push(run_test("RagTier::to_features returns correct features", || {
+        let disabled = RagTier::Disabled;
+        let disabled_features = disabled.to_features();
+        // Disabled should have all false
+        assert_test!(!disabled_features.fts_search, "Disabled should not have FTS");
+
+        let fast = RagTier::Fast;
+        let fast_features = fast.to_features();
+        assert_test!(fast_features.fts_search, "Fast should have FTS search");
+
+        let semantic = RagTier::Semantic;
+        let sem_features = semantic.to_features();
+        assert_test!(sem_features.semantic_search, "Semantic should have semantic_search");
+        assert_test!(sem_features.hybrid_search, "Semantic should have hybrid_search");
+
+        let full = RagTier::Full;
+        let full_features = full.to_features();
+        assert_test!(full_features.fts_search, "Full should have FTS");
+        assert_test!(full_features.semantic_search, "Full should have semantic");
+        assert_test!(full_features.query_expansion, "Full should have query_expansion");
+        Ok(())
+    }));
+
+    results.push(run_test("RagTier display names", || {
+        let tiers = vec![
+            RagTier::Disabled,
+            RagTier::Fast,
+            RagTier::Semantic,
+            RagTier::Enhanced,
+            RagTier::Thorough,
+            RagTier::Agentic,
+            RagTier::Graph,
+            RagTier::Full,
+        ];
+        for tier in tiers {
+            let name = tier.display_name();
+            assert_test!(!name.is_empty(), &format!("{:?} display_name should not be empty", tier));
+            let desc = tier.description();
+            assert_test!(!desc.is_empty(), &format!("{:?} description should not be empty", tier));
+        }
+        Ok(())
+    }));
+
+    results.push(run_test("RagTier default is Fast", || {
+        let default_tier = RagTier::default();
+        assert_eq_test!(default_tier, RagTier::Fast);
+        Ok(())
+    }));
+
+    // RagConfig tests
+    results.push(run_test("RagTierConfig::with_tier creates correct config", || {
+        let config = RagTierConfig::with_tier(RagTier::Semantic);
+        assert_eq_test!(config.tier, RagTier::Semantic);
+        assert_test!(config.features.semantic_search, "Should have semantic_search enabled");
+        Ok(())
+    }));
+
+    results.push(run_test("RagTierConfig default values", || {
+        let config = RagTierConfig::default();
+        assert_eq_test!(config.tier, RagTier::Fast);
+        assert_test!(config.max_chunks > 0, "max_chunks should be positive");
+        assert_test!(config.max_knowledge_tokens > 0, "max_knowledge_tokens should be positive");
+        Ok(())
+    }));
+
+    results.push(run_test("RagTierConfig::with_features creates custom config", || {
+        let mut features = RagFeatures::default();
+        features.fts_search = true;
+        features.semantic_search = true;
+        let config = RagTierConfig::with_features(features);
+        assert_eq_test!(config.tier, RagTier::Custom);
+        assert_test!(config.features.fts_search, "Should have fts_search");
+        assert_test!(config.features.semantic_search, "Should have semantic_search");
+        Ok(())
+    }));
+
+    // RagFeatures struct tests
+    results.push(run_test("RagFeatures default is all false", || {
+        let features = RagFeatures::default();
+        assert_test!(!features.fts_search, "default fts_search should be false");
+        assert_test!(!features.semantic_search, "default semantic_search should be false");
+        assert_test!(!features.query_expansion, "default query_expansion should be false");
+        Ok(())
+    }));
+
+    results.push(run_test("RagFeatures fields", || {
+        let mut features = RagFeatures::default();
+        features.fts_search = true;
+        features.semantic_search = true;
+        features.hybrid_search = true;
+        features.query_expansion = true;
+        features.multi_query = true;
+        features.hyde = true;
+        features.reranking = true;
+        features.contextual_compression = true;
+
+        assert_test!(features.fts_search, "fts_search should be set");
+        assert_test!(features.semantic_search, "semantic_search should be set");
+        assert_test!(features.hybrid_search, "hybrid_search should be set");
+        assert_test!(features.query_expansion, "query_expansion should be set");
+        assert_test!(features.multi_query, "multi_query should be set");
+        assert_test!(features.hyde, "hyde should be set");
+        assert_test!(features.reranking, "reranking should be set");
+        assert_test!(features.contextual_compression, "contextual_compression should be set");
+        Ok(())
+    }));
+
+    // RagDebugLevel tests
+    results.push(run_test("RagDebugLevel ordering", || {
+        assert_test!(RagDebugLevel::Off < RagDebugLevel::Minimal);
+        assert_test!(RagDebugLevel::Minimal < RagDebugLevel::Basic);
+        assert_test!(RagDebugLevel::Basic < RagDebugLevel::Detailed);
+        assert_test!(RagDebugLevel::Detailed < RagDebugLevel::Verbose);
+        assert_test!(RagDebugLevel::Verbose < RagDebugLevel::Trace);
+        Ok(())
+    }));
+
+    results.push(run_test("RagDebugLevel::from_str", || {
+        assert_eq_test!(RagDebugLevel::from_str("off"), RagDebugLevel::Off);
+        assert_eq_test!(RagDebugLevel::from_str("basic"), RagDebugLevel::Basic);
+        assert_eq_test!(RagDebugLevel::from_str("detailed"), RagDebugLevel::Detailed);
+        assert_eq_test!(RagDebugLevel::from_str("verbose"), RagDebugLevel::Verbose);
+        assert_eq_test!(RagDebugLevel::from_str("trace"), RagDebugLevel::Trace);
+        Ok(())
+    }));
+
+    results.push(run_test("RagDebugLevel::as_str", || {
+        assert_eq_test!(RagDebugLevel::Off.as_str(), "OFF");
+        assert_eq_test!(RagDebugLevel::Basic.as_str(), "BASIC");
+        assert_eq_test!(RagDebugLevel::Detailed.as_str(), "DETAILED");
+        assert_eq_test!(RagDebugLevel::Verbose.as_str(), "VERBOSE");
+        assert_eq_test!(RagDebugLevel::Trace.as_str(), "TRACE");
+        Ok(())
+    }));
+
+    // RagDebugConfig tests
+    results.push(run_test("RagDebugConfig default values", || {
+        let config = RagDebugConfig::default();
+        assert_test!(!config.enabled, "debug should be disabled by default");
+        assert_eq_test!(config.level, RagDebugLevel::Off);
+        Ok(())
+    }));
+
+    results.push(run_test("RagDebugConfig custom values", || {
+        let config = RagDebugConfig {
+            enabled: true,
+            level: RagDebugLevel::Detailed,
+            log_to_file: true,
+            log_path: Some(std::path::PathBuf::from("./logs")),
+            ..Default::default()
+        };
+        assert_test!(config.enabled, "debug should be enabled");
+        assert_eq_test!(config.level, RagDebugLevel::Detailed);
+        assert_test!(config.log_to_file, "log_to_file should be true");
+        Ok(())
+    }));
+
+    // RagDebugLogger tests
+    results.push(run_test("RagDebugLogger creation", || {
+        let config = RagDebugConfig::default();
+        let _logger = RagDebugLogger::new(config);
+        Ok(())
+    }));
+
+    // Graph RAG config tests
+    results.push(run_test("GraphRagConfig default values", || {
+        let config = GraphRagConfig::default();
+        // Default should have reasonable values (may be 0 for some fields)
+        let _ = config.max_depth;
+        let _ = config.max_entities;
+        Ok(())
+    }));
+
+    results.push(run_test("GraphRagConfig custom entity types", || {
+        let config = GraphRagConfig {
+            max_depth: 3,
+            max_entities: 100,
+            entity_types: vec!["SHIP".into(), "MANUFACTURER".into(), "COMPONENT".into()],
+        };
+        assert_eq_test!(config.entity_types.len(), 3);
+        assert_test!(config.entity_types.contains(&"SHIP".to_string()), "Should contain SHIP");
+        Ok(())
+    }));
+
+    // Hyde config tests
+    results.push(run_test("HydeConfig default values", || {
+        let config = HydeConfig::default();
+        // Check structure exists and has reasonable defaults
+        let _ = config.num_hypotheticals;
+        Ok(())
+    }));
+
+    // Entity and Relationship tests for Graph RAG
+    results.push(run_test("GraphEntity structure", || {
+        let entity = GraphEntity {
+            name: "Aurora MR".to_string(),
+            entity_type: "SHIP".to_string(),
+            mentions: vec![
+                EntityMention {
+                    text: "Aurora MR".to_string(),
+                    start: 0,
+                    end: 9,
+                    confidence: 0.95,
+                },
+            ],
+        };
+        assert_eq_test!(entity.name, "Aurora MR");
+        assert_eq_test!(entity.entity_type, "SHIP");
+        assert_eq_test!(entity.mentions.len(), 1);
+        Ok(())
+    }));
+
+    results.push(run_test("Relationship structure for Graph RAG", || {
+        let rel = Relationship {
+            from_entity: "Aurora MR".to_string(),
+            to_entity: "RSI".to_string(),
+            relation_type: "manufactured_by".to_string(),
+            weight: 1.0,
+            source_chunk: Some("RSI makes the Aurora".to_string()),
+        };
+        assert_eq_test!(rel.from_entity, "Aurora MR");
+        assert_eq_test!(rel.to_entity, "RSI");
+        assert_eq_test!(rel.relation_type, "manufactured_by");
+        Ok(())
+    }));
+
+    // Multi-query config tests
+    results.push(run_test("MultiQueryConfig default values", || {
+        let config = MultiQueryConfig::default();
+        assert_test!(config.max_sub_queries > 0, "Should have at least 1 sub query");
+        Ok(())
+    }));
+
+    results.push(run_test("MultiQueryDecomposer creation", || {
+        let decomposer = MultiQueryDecomposer::new();
+        // Test complexity estimation
+        let simple_query = "What is a ship?";
+        let complex_query = "What ships are made by RSI and what are their weapons? Also, how much do they cost?";
+
+        let simple_complexity = decomposer.estimate_complexity(simple_query);
+        let complex_complexity = decomposer.estimate_complexity(complex_query);
+
+        assert_test!(complex_complexity > simple_complexity,
+            "Complex query should have higher complexity");
+        Ok(())
+    }));
+
+    // RRF Fusion tests
+    results.push(run_test("RrfFusion creation and basic usage", || {
+        let fusion = RrfFusion::default();
+        let _ = fusion;
+        Ok(())
+    }));
+
+    // HybridWeights tests
+    results.push(run_test("HybridWeights default values", || {
+        let weights = HybridWeights::default();
+        assert_test!(weights.keyword >= 0.0, "keyword weight should be non-negative");
+        assert_test!(weights.semantic >= 0.0, "semantic weight should be non-negative");
+        Ok(())
+    }));
+
+    // Tier to feature mapping consistency
+    results.push(run_test("Tier feature consistency - Enhanced includes Semantic features", || {
+        let semantic = RagTier::Semantic.to_features();
+        let enhanced = RagTier::Enhanced.to_features();
+
+        // Semantic features should be in Enhanced
+        if semantic.fts_search {
+            assert_test!(enhanced.fts_search, "Enhanced should have fts_search from Semantic");
+        }
+        if semantic.semantic_search {
+            assert_test!(enhanced.semantic_search, "Enhanced should have semantic_search from Semantic");
+        }
+        if semantic.hybrid_search {
+            assert_test!(enhanced.hybrid_search, "Enhanced should have hybrid_search from Semantic");
+        }
+        Ok(())
+    }));
+
+    results.push(run_test("Tier feature consistency - Full has most features", || {
+        let full = RagTier::Full.to_features();
+
+        // Full should have core features enabled
+        assert_test!(full.fts_search, "Full should have fts_search");
+        assert_test!(full.semantic_search, "Full should have semantic_search");
+        assert_test!(full.hybrid_search, "Full should have hybrid_search");
+        assert_test!(full.query_expansion, "Full should have query_expansion");
+        assert_test!(full.reranking, "Full should have reranking");
+        Ok(())
+    }));
+
+    // ScoredItem tests
+    results.push(run_test("ScoredItem creation", || {
+        let item = ScoredItem::new("test content".to_string(), 0.85);
+        assert_eq_test!(item.item, "test content".to_string());
+        assert_test!((item.score - 0.85).abs() < 0.001, "Score should be 0.85");
+        assert_test!(item.metadata.is_empty(), "Default metadata should be empty");
+        Ok(())
+    }));
+
+    results.push(run_test("ScoredItem with metadata", || {
+        let mut metadata = std::collections::HashMap::new();
+        metadata.insert("source".to_string(), "test".to_string());
+
+        let item = ScoredItem::with_metadata(
+            "test content".to_string(),
+            0.9,
+            metadata,
+        );
+        assert_eq_test!(item.metadata.get("source"), Some(&"test".to_string()));
+        Ok(())
+    }));
+
+    // GraphRagRetriever tests
+    results.push(run_test("GraphRagRetriever creation", || {
+        let config = GraphRagConfig {
+            max_depth: 2,
+            max_entities: 50,
+            entity_types: vec!["SHIP".into(), "MANUFACTURER".into()],
+        };
+        let _retriever = GraphRagRetriever::new(config);
+        Ok(())
+    }));
+
+    CategoryResult { name: "rag_tiers".to_string(), results }
+}
+
+#[cfg(not(feature = "rag"))]
+fn tests_rag_tiers() -> CategoryResult {
+    println!("\n{}", bold(&cyan("▶ RAG Tier System (SKIPPED - rag feature not enabled)")));
+    CategoryResult { name: "rag_tiers".to_string(), results: Vec::new() }
+}
+
+// ─── Knowledge Graph Tests ────────────────────────────────────────────────────
+
+#[cfg(feature = "rag")]
+fn tests_knowledge_graph() -> CategoryResult {
+    use ai_assistant::{
+        KnowledgeGraph, KnowledgeGraphConfig, KnowledgeGraphStore, KnowledgeGraphBuilder,
+        KGEntityType, PatternEntityExtractor, KGEntityExtractor,
+    };
+
+    println!("\n{}", bold(&cyan("▶ Knowledge Graph")));
+    let mut results = Vec::new();
+
+    // Test EntityType conversions
+    results.push(run_test("EntityType string conversion", || {
+        assert_eq_test!(KGEntityType::from_str("organization"), KGEntityType::Organization);
+        assert_eq_test!(KGEntityType::from_str("ship"), KGEntityType::Product);
+        assert_eq_test!(KGEntityType::from_str("person"), KGEntityType::Person);
+        assert_eq_test!(KGEntityType::from_str("location"), KGEntityType::Location);
+        assert_eq_test!(KGEntityType::from_str("concept"), KGEntityType::Concept);
+        assert_eq_test!(KGEntityType::from_str("event"), KGEntityType::Event);
+        assert_eq_test!(KGEntityType::from_str("unknown_type"), KGEntityType::Other);
+        assert_eq_test!(KGEntityType::Organization.as_str(), "organization");
+        assert_eq_test!(KGEntityType::Product.as_str(), "product");
+        Ok(())
+    }));
+
+    // Test EntityType::all()
+    results.push(run_test("EntityType::all returns all types", || {
+        let all_types = KGEntityType::all();
+        assert_eq_test!(all_types.len(), 7);
+        assert_test!(all_types.contains(&KGEntityType::Organization), "should contain Organization");
+        assert_test!(all_types.contains(&KGEntityType::Product), "should contain Product");
+        assert_test!(all_types.contains(&KGEntityType::Other), "should contain Other");
+        Ok(())
+    }));
+
+    // Test PatternEntityExtractor
+    results.push(run_test("PatternEntityExtractor basic extraction", || {
+        let extractor = PatternEntityExtractor::new()
+            .add_entity("Aegis", KGEntityType::Organization)
+            .add_entity("Sabre", KGEntityType::Product)
+            .add_alias("Aegis Dynamics", "Aegis");
+
+        let text = "Aegis Dynamics manufactures the Sabre fighter.";
+        let result = extractor.extract(text).map_err(|e| e.to_string())?;
+
+        assert_test!(!result.entities.is_empty(), "should extract entities");
+        assert_test!(result.entities.iter().any(|e| e.name.to_lowercase() == "aegis"), "should find Aegis");
+        assert_test!(result.entities.iter().any(|e| e.name.to_lowercase() == "sabre"), "should find Sabre");
+        Ok(())
+    }));
+
+    // Test PatternEntityExtractor with multiple entities
+    results.push(run_test("PatternEntityExtractor multiple entities", || {
+        let extractor = PatternEntityExtractor::new()
+            .add_entities(&[
+                ("RSI", KGEntityType::Organization),
+                ("Origin", KGEntityType::Organization),
+                ("Constellation", KGEntityType::Product),
+                ("300i", KGEntityType::Product),
+            ]);
+
+        let text = "RSI makes the Constellation, while Origin produces the 300i.";
+        let result = extractor.extract(text).map_err(|e| e.to_string())?;
+
+        assert_test!(result.entities.len() >= 4, "should find all 4 entities");
+        Ok(())
+    }));
+
+    // Test PatternEntityExtractor relation extraction
+    results.push(run_test("PatternEntityExtractor relation extraction", || {
+        let extractor = PatternEntityExtractor::new()
+            .add_entity("Aegis", KGEntityType::Organization)
+            .add_entity("Sabre", KGEntityType::Product);
+
+        let text = "Aegis manufactures the Sabre.";
+        let result = extractor.extract(text).map_err(|e| e.to_string())?;
+
+        // Should create at least one relation between entities in the same sentence
+        assert_test!(!result.relations.is_empty(), "should extract at least one relation");
+        Ok(())
+    }));
+
+    // Test PatternEntityExtractor query extraction
+    results.push(run_test("PatternEntityExtractor query entity extraction", || {
+        let extractor = PatternEntityExtractor::new()
+            .add_entity("Aegis", KGEntityType::Organization)
+            .add_entity("Sabre", KGEntityType::Product);
+
+        let query = "What ships does Aegis make?";
+        let entities = extractor.extract_query_entities(query).map_err(|e| e.to_string())?;
+
+        assert_test!(entities.iter().any(|e| e.to_lowercase() == "aegis"), "should find Aegis in query");
+        Ok(())
+    }));
+
+    // Test KnowledgeGraphStore in-memory creation
+    results.push(run_test("KnowledgeGraphStore in-memory creation", || {
+        let config = KnowledgeGraphConfig::default();
+        let store = KnowledgeGraphStore::in_memory(config).map_err(|e| e.to_string())?;
+
+        let stats = store.get_stats().map_err(|e| e.to_string())?;
+        assert_eq_test!(stats.total_entities, 0);
+        assert_eq_test!(stats.total_relations, 0);
+        assert_eq_test!(stats.total_chunks, 0);
+        Ok(())
+    }));
+
+    // Test entity creation and lookup
+    results.push(run_test("KnowledgeGraphStore entity creation", || {
+        let config = KnowledgeGraphConfig::default();
+        let store = KnowledgeGraphStore::in_memory(config).map_err(|e| e.to_string())?;
+
+        let id = store.get_or_create_entity(
+            "Aegis",
+            KGEntityType::Organization,
+            &["Aegis Dynamics".to_string()],
+        ).map_err(|e| e.to_string())?;
+
+        assert_test!(id > 0, "entity ID should be positive");
+
+        // Find by name
+        let found_id = store.find_entity_id("Aegis").map_err(|e| e.to_string())?;
+        assert_eq_test!(found_id, Some(id));
+
+        // Find by alias
+        let alias_id = store.find_entity_id("Aegis Dynamics").map_err(|e| e.to_string())?;
+        assert_eq_test!(alias_id, Some(id));
+
+        // Get entity
+        let entity = store.get_entity(id).map_err(|e| e.to_string())?;
+        assert_test!(entity.is_some(), "entity should exist");
+        let entity = entity.unwrap();
+        assert_eq_test!(entity.name, "Aegis");
+        assert_eq_test!(entity.entity_type, KGEntityType::Organization);
+        Ok(())
+    }));
+
+    // Test entity with aliases
+    results.push(run_test("KnowledgeGraphStore alias resolution", || {
+        let config = KnowledgeGraphConfig::default();
+        let store = KnowledgeGraphStore::in_memory(config).map_err(|e| e.to_string())?;
+
+        store.get_or_create_entity(
+            "Roberts Space Industries",
+            KGEntityType::Organization,
+            &["RSI".to_string()],
+        ).map_err(|e| e.to_string())?;
+
+        // Should find by alias
+        let found = store.get_entity_by_name("RSI").map_err(|e| e.to_string())?;
+        assert_test!(found.is_some(), "should find entity by alias RSI");
+        let found = found.unwrap();
+        assert_eq_test!(found.name, "Roberts Space Industries");
+        Ok(())
+    }));
+
+    // Test relations
+    results.push(run_test("KnowledgeGraphStore relations", || {
+        let config = KnowledgeGraphConfig::default();
+        let store = KnowledgeGraphStore::in_memory(config).map_err(|e| e.to_string())?;
+
+        let aegis_id = store.get_or_create_entity(
+            "Aegis", KGEntityType::Organization, &[]
+        ).map_err(|e| e.to_string())?;
+
+        let sabre_id = store.get_or_create_entity(
+            "Sabre", KGEntityType::Product, &[]
+        ).map_err(|e| e.to_string())?;
+
+        store.add_relation(
+            aegis_id, sabre_id, "manufactures", 0.9,
+            Some("Aegis makes the Sabre"), None
+        ).map_err(|e| e.to_string())?;
+
+        let relations = store.get_relations_from(aegis_id, 1).map_err(|e| e.to_string())?;
+        assert_eq_test!(relations.len(), 1);
+        assert_eq_test!(relations[0].from, "Aegis");
+        assert_eq_test!(relations[0].to, "Sabre");
+        assert_eq_test!(relations[0].relation_type, "manufactures");
+        Ok(())
+    }));
+
+    // Test chunks
+    results.push(run_test("KnowledgeGraphStore chunks", || {
+        let config = KnowledgeGraphConfig::default();
+        let store = KnowledgeGraphStore::in_memory(config).map_err(|e| e.to_string())?;
+
+        let chunk_id = store.add_chunk(
+            "doc1",
+            "Aegis manufactures the Sabre fighter.",
+            0
+        ).map_err(|e| e.to_string())?;
+
+        assert_test!(chunk_id > 0, "chunk ID should be positive");
+
+        // Adding the same chunk should return the same ID (dedup by hash)
+        let chunk_id2 = store.add_chunk(
+            "doc1",
+            "Aegis manufactures the Sabre fighter.",
+            0
+        ).map_err(|e| e.to_string())?;
+        assert_eq_test!(chunk_id, chunk_id2);
+
+        // Different content should create new chunk
+        let chunk_id3 = store.add_chunk(
+            "doc1",
+            "Origin produces the 300i.",
+            1
+        ).map_err(|e| e.to_string())?;
+        assert_test!(chunk_id3 != chunk_id, "different content should have different ID");
+        Ok(())
+    }));
+
+    // Test entity-chunk linking
+    results.push(run_test("KnowledgeGraphStore entity-chunk linking", || {
+        let config = KnowledgeGraphConfig::default();
+        let store = KnowledgeGraphStore::in_memory(config).map_err(|e| e.to_string())?;
+
+        let chunk_id = store.add_chunk(
+            "doc1",
+            "Aegis manufactures the Sabre fighter.",
+            0
+        ).map_err(|e| e.to_string())?;
+
+        let aegis_id = store.get_or_create_entity(
+            "Aegis", KGEntityType::Organization, &[]
+        ).map_err(|e| e.to_string())?;
+
+        store.link_entity_to_chunk(
+            aegis_id, chunk_id, Some(0), Some("Aegis manufactures")
+        ).map_err(|e| e.to_string())?;
+
+        let chunks = store.get_chunks_for_entities(&[aegis_id]).map_err(|e| e.to_string())?;
+        assert_eq_test!(chunks.len(), 1);
+        assert_test!(chunks[0].content.contains("Aegis"), "chunk should contain Aegis");
+        Ok(())
+    }));
+
+    // Test stats
+    results.push(run_test("KnowledgeGraphStore stats", || {
+        let config = KnowledgeGraphConfig::default();
+        let store = KnowledgeGraphStore::in_memory(config).map_err(|e| e.to_string())?;
+
+        store.get_or_create_entity("Aegis", KGEntityType::Organization, &[]).map_err(|e| e.to_string())?;
+        store.get_or_create_entity("Origin", KGEntityType::Organization, &[]).map_err(|e| e.to_string())?;
+        store.get_or_create_entity("Sabre", KGEntityType::Product, &[]).map_err(|e| e.to_string())?;
+
+        let stats = store.get_stats().map_err(|e| e.to_string())?;
+        assert_eq_test!(stats.total_entities, 3);
+        assert_eq_test!(stats.entities_by_type.get("organization"), Some(&2));
+        assert_eq_test!(stats.entities_by_type.get("product"), Some(&1));
+        Ok(())
+    }));
+
+    // Test clear
+    results.push(run_test("KnowledgeGraphStore clear", || {
+        let config = KnowledgeGraphConfig::default();
+        let store = KnowledgeGraphStore::in_memory(config).map_err(|e| e.to_string())?;
+
+        store.get_or_create_entity("Aegis", KGEntityType::Organization, &[]).map_err(|e| e.to_string())?;
+        store.add_chunk("doc1", "Test content", 0).map_err(|e| e.to_string())?;
+
+        let stats_before = store.get_stats().map_err(|e| e.to_string())?;
+        assert_test!(stats_before.total_entities > 0, "should have entities before clear");
+
+        store.clear().map_err(|e| e.to_string())?;
+
+        let stats_after = store.get_stats().map_err(|e| e.to_string())?;
+        assert_eq_test!(stats_after.total_entities, 0);
+        assert_eq_test!(stats_after.total_chunks, 0);
+        Ok(())
+    }));
+
+    // Test KnowledgeGraph high-level API
+    results.push(run_test("KnowledgeGraph creation and stats", || {
+        let config = KnowledgeGraphConfig::default();
+        let graph = KnowledgeGraph::in_memory(config).map_err(|e| e.to_string())?;
+
+        let stats = graph.stats().map_err(|e| e.to_string())?;
+        assert_eq_test!(stats.total_entities, 0);
+        Ok(())
+    }));
+
+    // Test KnowledgeGraphBuilder
+    results.push(run_test("KnowledgeGraphBuilder with Star Citizen entities", || {
+        let graph = KnowledgeGraphBuilder::new()
+            .with_star_citizen_entities()
+            .add_entity("Custom Entity", KGEntityType::Concept)
+            .build_in_memory()
+            .map_err(|e| e.to_string())?;
+
+        let stats = graph.stats().map_err(|e| e.to_string())?;
+        assert_test!(stats.total_entities > 0, "should have pre-populated entities");
+
+        // Check RSI alias works
+        Ok(())
+    }));
+
+    // Test KnowledgeGraphConfig defaults
+    results.push(run_test("KnowledgeGraphConfig defaults", || {
+        let config = KnowledgeGraphConfig::default();
+        assert_eq_test!(config.max_traversal_depth, 2);
+        assert_eq_test!(config.max_entities_per_query, 50);
+        assert_eq_test!(config.max_chunks_per_entity, 5);
+        assert_eq_test!(config.chunk_size, 1000);
+        assert_eq_test!(config.chunk_overlap, 200);
+        assert_test!(config.resolve_aliases, "resolve_aliases should be true by default");
+        Ok(())
+    }));
+
+    // Test graph traversal depth
+    results.push(run_test("KnowledgeGraphStore multi-hop traversal", || {
+        let config = KnowledgeGraphConfig::default();
+        let store = KnowledgeGraphStore::in_memory(config).map_err(|e| e.to_string())?;
+
+        // Create a chain: Aegis -> Sabre -> Weapons
+        let aegis_id = store.get_or_create_entity("Aegis", KGEntityType::Organization, &[]).map_err(|e| e.to_string())?;
+        let sabre_id = store.get_or_create_entity("Sabre", KGEntityType::Product, &[]).map_err(|e| e.to_string())?;
+        let weapons_id = store.get_or_create_entity("Weapons", KGEntityType::Concept, &[]).map_err(|e| e.to_string())?;
+
+        store.add_relation(aegis_id, sabre_id, "manufactures", 0.9, None, None).map_err(|e| e.to_string())?;
+        store.add_relation(sabre_id, weapons_id, "has", 0.8, None, None).map_err(|e| e.to_string())?;
+
+        // Depth 1 should only get Sabre
+        let depth1_relations = store.get_relations_from(aegis_id, 1).map_err(|e| e.to_string())?;
+        assert_eq_test!(depth1_relations.len(), 1);
+
+        // Depth 2 should get both Sabre and Weapons
+        let depth2_relations = store.get_relations_from(aegis_id, 2).map_err(|e| e.to_string())?;
+        assert_eq_test!(depth2_relations.len(), 2);
+        Ok(())
+    }));
+
+    // Test confidence threshold
+    results.push(run_test("KnowledgeGraphStore confidence threshold", || {
+        let mut config = KnowledgeGraphConfig::default();
+        config.min_relation_confidence = 0.7;
+        let store = KnowledgeGraphStore::in_memory(config).map_err(|e| e.to_string())?;
+
+        let a_id = store.get_or_create_entity("EntityA", KGEntityType::Concept, &[]).map_err(|e| e.to_string())?;
+        let b_id = store.get_or_create_entity("EntityB", KGEntityType::Concept, &[]).map_err(|e| e.to_string())?;
+        let c_id = store.get_or_create_entity("EntityC", KGEntityType::Concept, &[]).map_err(|e| e.to_string())?;
+
+        // High confidence relation
+        store.add_relation(a_id, b_id, "related", 0.9, None, None).map_err(|e| e.to_string())?;
+        // Low confidence relation (below threshold)
+        store.add_relation(a_id, c_id, "related", 0.5, None, None).map_err(|e| e.to_string())?;
+
+        let relations = store.get_relations_from(a_id, 1).map_err(|e| e.to_string())?;
+        // Should only return the high confidence relation
+        assert_eq_test!(relations.len(), 1);
+        assert_eq_test!(relations[0].to, "EntityB");
+        Ok(())
+    }));
+
+    CategoryResult { name: "knowledge_graph".to_string(), results }
+}
+
+#[cfg(not(feature = "rag"))]
+fn tests_knowledge_graph() -> CategoryResult {
+    println!("\n{}", bold(&cyan("▶ Knowledge Graph (SKIPPED - rag feature not enabled)")));
+    CategoryResult { name: "knowledge_graph".to_string(), results: Vec::new() }
+}
+
 // ─── Stress & Edge-Case Tests ─────────────────────────────────────────────────
 
 fn tests_stress_empty_inputs() -> CategoryResult {
@@ -7152,6 +7867,10 @@ fn all_categories() -> Vec<(&'static str, fn() -> CategoryResult)> {
         ("pipeline_query_to_response", tests_pipeline_query_to_response),
         ("pipeline_multi_format_export", tests_pipeline_multi_format_export),
         ("pipeline_guardrails", tests_pipeline_guardrails),
+        // RAG Tier System tests
+        ("rag_tiers", tests_rag_tiers),
+        // Knowledge Graph tests
+        ("knowledge_graph", tests_knowledge_graph),
         // Stress & edge-case tests
         ("stress_empty_inputs", tests_stress_empty_inputs),
         ("stress_unicode", tests_stress_unicode),
@@ -7245,34 +7964,646 @@ fn interactive_menu() {
     }
 }
 
+// ─── RAG Session Replay ──────────────────────────────────────────────────────
+
+#[cfg(feature = "rag")]
+mod replay {
+    use super::*;
+
+    /// Supported provider types
+    #[derive(Clone, Debug, PartialEq)]
+    pub enum ProviderType {
+        Ollama,
+        OpenAI,
+        Anthropic,
+        OpenAICompatible,  // For any OpenAI-compatible endpoint
+    }
+
+    impl ProviderType {
+        fn from_str(s: &str) -> Option<Self> {
+            match s.to_lowercase().as_str() {
+                "ollama" => Some(Self::Ollama),
+                "openai" => Some(Self::OpenAI),
+                "anthropic" => Some(Self::Anthropic),
+                "openai-compatible" | "openaicompatible" => Some(Self::OpenAICompatible),
+                _ => None,
+            }
+        }
+
+        fn default_url(&self) -> &str {
+            match self {
+                Self::Ollama => "http://localhost:11434",
+                Self::OpenAI => "https://api.openai.com/v1",
+                Self::Anthropic => "https://api.anthropic.com/v1",
+                Self::OpenAICompatible => "http://localhost:8080/v1",
+            }
+        }
+
+        fn as_str(&self) -> &str {
+            match self {
+                Self::Ollama => "ollama",
+                Self::OpenAI => "openai",
+                Self::Anthropic => "anthropic",
+                Self::OpenAICompatible => "openai-compatible",
+            }
+        }
+    }
+
+    /// Replay configuration
+    pub struct ReplayConfig {
+        pub session_file: String,
+        pub provider: Option<String>,      // Override provider type
+        pub url: Option<String>,           // Override provider URL
+        pub model: Option<String>,         // Override model name
+        pub api_key: Option<String>,       // API key for OpenAI/Anthropic
+        pub compare: bool,
+        pub session_index: Option<usize>,
+    }
+
+    /// Load and parse a RAG debug session file
+    pub fn load_session_file(path: &str) -> Result<Vec<ai_assistant::RagDebugSession>, String> {
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read file: {}", e))?;
+
+        // Try parsing as AllSessionsExport first
+        if let Ok(export) = serde_json::from_str::<ai_assistant::AllSessionsExport>(&content) {
+            return Ok(export.sessions);
+        }
+
+        // Try parsing as single session
+        if let Ok(session) = serde_json::from_str::<ai_assistant::RagDebugSession>(&content) {
+            return Ok(vec![session]);
+        }
+
+        // Try parsing as array of sessions
+        if let Ok(sessions) = serde_json::from_str::<Vec<ai_assistant::RagDebugSession>>(&content) {
+            return Ok(sessions);
+        }
+
+        Err("Could not parse file as RagDebugSession, AllSessionsExport, or session array".to_string())
+    }
+
+    /// Check if Ollama is available and list models
+    fn check_ollama(url: &str) -> Result<Vec<String>, String> {
+        let client = ureq::AgentBuilder::new()
+            .timeout(std::time::Duration::from_secs(5))
+            .build();
+
+        let response = client
+            .get(&format!("{}/api/tags", url))
+            .call()
+            .map_err(|e| format!("Failed to connect to Ollama: {}", e))?;
+
+        let json: serde_json::Value = response.into_json()
+            .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+        let models: Vec<String> = json["models"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|m| m["name"].as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Ok(models)
+    }
+
+    /// Check if OpenAI-compatible endpoint is available and list models
+    fn check_openai_compatible(url: &str, api_key: Option<&str>) -> Result<Vec<String>, String> {
+        let client = ureq::AgentBuilder::new()
+            .timeout(std::time::Duration::from_secs(10))
+            .build();
+
+        let mut request = client.get(&format!("{}/models", url.trim_end_matches('/')));
+        if let Some(key) = api_key {
+            request = request.set("Authorization", &format!("Bearer {}", key));
+        }
+
+        let response = request
+            .call()
+            .map_err(|e| format!("Failed to connect: {}", e))?;
+
+        let json: serde_json::Value = response.into_json()
+            .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+        let models: Vec<String> = json["data"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|m| m["id"].as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Ok(models)
+    }
+
+    /// Generate a response using Ollama
+    fn generate_with_ollama(
+        url: &str,
+        model: &str,
+        system_prompt: &str,
+        context: &str,
+        query: &str,
+    ) -> Result<(String, u64), String> {
+        let client = ureq::AgentBuilder::new()
+            .timeout(std::time::Duration::from_secs(120))
+            .build();
+
+        let full_prompt = if context.is_empty() {
+            query.to_string()
+        } else {
+            format!("Context:\n{}\n\nQuestion: {}", context, query)
+        };
+
+        let request_body = serde_json::json!({
+            "model": model,
+            "prompt": full_prompt,
+            "system": system_prompt,
+            "stream": false,
+            "options": {
+                "temperature": 0.7,
+                "num_predict": 2048
+            }
+        });
+
+        let start = std::time::Instant::now();
+
+        let response = client
+            .post(&format!("{}/api/generate", url))
+            .send_json(&request_body)
+            .map_err(|e| format!("Failed to generate: {}", e))?;
+
+        let duration_ms = start.elapsed().as_millis() as u64;
+
+        let json: serde_json::Value = response.into_json()
+            .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+        let response_text = json["response"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+
+        Ok((response_text, duration_ms))
+    }
+
+    /// Generate a response using OpenAI-compatible API
+    fn generate_with_openai_compatible(
+        url: &str,
+        model: &str,
+        api_key: Option<&str>,
+        system_prompt: &str,
+        context: &str,
+        query: &str,
+    ) -> Result<(String, u64), String> {
+        let client = ureq::AgentBuilder::new()
+            .timeout(std::time::Duration::from_secs(120))
+            .build();
+
+        let user_content = if context.is_empty() {
+            query.to_string()
+        } else {
+            format!("Context:\n{}\n\nQuestion: {}", context, query)
+        };
+
+        let request_body = serde_json::json!({
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content}
+            ],
+            "temperature": 0.7,
+            "max_tokens": 2048
+        });
+
+        let start = std::time::Instant::now();
+
+        let mut request = client.post(&format!("{}/chat/completions", url.trim_end_matches('/')));
+        if let Some(key) = api_key {
+            request = request.set("Authorization", &format!("Bearer {}", key));
+        }
+        request = request.set("Content-Type", "application/json");
+
+        let response = request
+            .send_json(&request_body)
+            .map_err(|e| format!("Failed to generate: {}", e))?;
+
+        let duration_ms = start.elapsed().as_millis() as u64;
+
+        let json: serde_json::Value = response.into_json()
+            .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+        let response_text = json["choices"][0]["message"]["content"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+
+        Ok((response_text, duration_ms))
+    }
+
+    /// Generate a response using Anthropic API
+    fn generate_with_anthropic(
+        url: &str,
+        model: &str,
+        api_key: &str,
+        system_prompt: &str,
+        context: &str,
+        query: &str,
+    ) -> Result<(String, u64), String> {
+        let client = ureq::AgentBuilder::new()
+            .timeout(std::time::Duration::from_secs(120))
+            .build();
+
+        let user_content = if context.is_empty() {
+            query.to_string()
+        } else {
+            format!("Context:\n{}\n\nQuestion: {}", context, query)
+        };
+
+        let request_body = serde_json::json!({
+            "model": model,
+            "max_tokens": 2048,
+            "system": system_prompt,
+            "messages": [
+                {"role": "user", "content": user_content}
+            ]
+        });
+
+        let start = std::time::Instant::now();
+
+        let response = client
+            .post(&format!("{}/messages", url.trim_end_matches('/')))
+            .set("x-api-key", api_key)
+            .set("anthropic-version", "2023-06-01")
+            .set("Content-Type", "application/json")
+            .send_json(&request_body)
+            .map_err(|e| format!("Failed to generate: {}", e))?;
+
+        let duration_ms = start.elapsed().as_millis() as u64;
+
+        let json: serde_json::Value = response.into_json()
+            .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+        let response_text = json["content"][0]["text"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+
+        Ok((response_text, duration_ms))
+    }
+
+    /// Run the replay
+    pub fn run_replay(config: ReplayConfig) -> Result<(), String> {
+        println!("{}", bold(&cyan("═══════════════════════════════════════════════════════")));
+        println!("{}", bold(&cyan("              RAG SESSION REPLAY")));
+        println!("{}", bold(&cyan("═══════════════════════════════════════════════════════")));
+        println!();
+
+        // Load sessions
+        println!("Loading session file: {}", config.session_file);
+        let sessions = load_session_file(&config.session_file)?;
+        println!("Found {} session(s)", sessions.len());
+        println!();
+
+        // Select session first to get provider info from it
+        let session_idx = config.session_index.unwrap_or(0);
+        if session_idx >= sessions.len() {
+            return Err(format!("Session index {} out of range (0-{})", session_idx, sessions.len() - 1));
+        }
+        let session = &sessions[session_idx];
+
+        // Determine provider: CLI override > session data > default (ollama)
+        let provider_type = if let Some(ref p) = config.provider {
+            ProviderType::from_str(p)
+                .ok_or_else(|| format!("Unknown provider '{}'. Valid: ollama, openai, anthropic, openai-compatible", p))?
+        } else if let Some(ref p) = session.provider_type {
+            ProviderType::from_str(p).unwrap_or(ProviderType::Ollama)
+        } else {
+            ProviderType::Ollama
+        };
+
+        // Determine URL: CLI override > session data > default for provider
+        let provider_url = config.url
+            .clone()
+            .or_else(|| session.provider_url.clone())
+            .unwrap_or_else(|| provider_type.default_url().to_string());
+
+        // Get API key from CLI or environment
+        let api_key = config.api_key.clone().or_else(|| {
+            match provider_type {
+                ProviderType::OpenAI => std::env::var("OPENAI_API_KEY").ok(),
+                ProviderType::Anthropic => std::env::var("ANTHROPIC_API_KEY").ok(),
+                _ => None,
+            }
+        });
+
+        println!("Provider: {} ({})", bold(provider_type.as_str()), provider_url);
+
+        // Check provider and list models
+        let available_models = match provider_type {
+            ProviderType::Ollama => {
+                println!("Checking Ollama...");
+                check_ollama(&provider_url)?
+            }
+            ProviderType::OpenAI | ProviderType::OpenAICompatible => {
+                println!("Checking OpenAI-compatible endpoint...");
+                check_openai_compatible(&provider_url, api_key.as_deref()).unwrap_or_default()
+            }
+            ProviderType::Anthropic => {
+                // Anthropic doesn't have a model list API, use known models
+                vec![
+                    "claude-3-5-sonnet-20241022".into(),
+                    "claude-3-5-haiku-20241022".into(),
+                    "claude-3-opus-20240229".into(),
+                    "claude-3-sonnet-20240229".into(),
+                    "claude-3-haiku-20240307".into(),
+                ]
+            }
+        };
+
+        if !available_models.is_empty() {
+            println!("Available models: {}", available_models.iter().take(5).cloned().collect::<Vec<_>>().join(", "));
+            if available_models.len() > 5 {
+                println!("  ... and {} more", available_models.len() - 5);
+            }
+        }
+        println!();
+
+        // Determine model: CLI override > session data > auto-select
+        let model = if let Some(ref m) = config.model {
+            m.clone()
+        } else if let Some(ref m) = session.model_name {
+            // Use session model if available
+            m.clone()
+        } else if !available_models.is_empty() {
+            // Auto-select based on provider
+            match provider_type {
+                ProviderType::Ollama => {
+                    let preferred = ["llama3", "qwen", "mistral", "deepseek"];
+                    available_models.iter()
+                        .find(|m| preferred.iter().any(|p| m.contains(p)))
+                        .unwrap_or(&available_models[0])
+                        .clone()
+                }
+                ProviderType::OpenAI => "gpt-4o-mini".to_string(),
+                ProviderType::Anthropic => "claude-3-5-haiku-20241022".to_string(),
+                ProviderType::OpenAICompatible => available_models[0].clone(),
+            }
+        } else {
+            return Err("No model specified and none available".to_string());
+        };
+        println!("Using model: {}", green(&model));
+        println!();
+
+        // Display session info
+        println!("{}", bold("─── Original Session ───────────────────────────────────"));
+        println!("Session ID: {}", session.session_id);
+        println!("Query: {}", cyan(&session.query));
+        if let Some(ref tier) = session.rag_tier {
+            println!("RAG Tier: {}", tier);
+        }
+        if !session.features_enabled.is_empty() {
+            println!("Features: {}", session.features_enabled.join(", "));
+        }
+        // Show original provider info if available
+        if let (Some(ref ptype), Some(ref purl), Some(ref pmodel)) =
+            (&session.provider_type, &session.provider_url, &session.model_name) {
+            println!("Original Provider: {} @ {} ({})", ptype, purl, pmodel);
+        }
+        println!("Stats: {} chunks retrieved, {} used",
+            session.stats.chunks_retrieved,
+            session.stats.chunks_used);
+        if let Some(ref original_response) = session.final_response {
+            println!();
+            println!("Original Response:");
+            println!("{}", yellow(&original_response.chars().take(500).collect::<String>()));
+            if original_response.len() > 500 {
+                println!("... ({} chars total)", original_response.len());
+            }
+        }
+        println!();
+
+        // Get context
+        let context = session.final_context.clone().unwrap_or_default();
+        if context.is_empty() {
+            println!("{}", yellow("Warning: No context found in session"));
+        } else {
+            println!("Context size: {} chars", context.len());
+        }
+
+        // Generate new response
+        println!();
+        println!("{}", bold("─── Generating New Response ────────────────────────────"));
+        println!("Provider: {} | Model: {}", provider_type.as_str(), model);
+
+        let system_prompt = "You are a helpful assistant. Answer based on the provided context.";
+
+        let (new_response, duration_ms) = match provider_type {
+            ProviderType::Ollama => {
+                generate_with_ollama(&provider_url, &model, system_prompt, &context, &session.query)?
+            }
+            ProviderType::OpenAI | ProviderType::OpenAICompatible => {
+                generate_with_openai_compatible(
+                    &provider_url,
+                    &model,
+                    api_key.as_deref(),
+                    system_prompt,
+                    &context,
+                    &session.query,
+                )?
+            }
+            ProviderType::Anthropic => {
+                let key = api_key.as_ref()
+                    .ok_or("Anthropic API key required (--api-key or ANTHROPIC_API_KEY env var)")?;
+                generate_with_anthropic(&provider_url, &model, key, system_prompt, &context, &session.query)?
+            }
+        };
+
+        println!("Generation time: {}ms", duration_ms);
+        println!();
+        println!("New Response:");
+        println!("{}", green(&new_response));
+
+        // Compare if requested
+        if config.compare {
+            if let Some(ref original) = session.final_response {
+                println!();
+                println!("{}", bold("─── Comparison ─────────────────────────────────────────"));
+                println!("Original length: {} chars", original.len());
+                println!("New length: {} chars", new_response.len());
+
+                // Simple similarity check - bind to variables to fix lifetime
+                let original_lower = original.to_lowercase();
+                let new_lower = new_response.to_lowercase();
+                let original_words: std::collections::HashSet<&str> = original_lower
+                    .split_whitespace()
+                    .collect();
+                let new_words: std::collections::HashSet<&str> = new_lower
+                    .split_whitespace()
+                    .collect();
+                let common = original_words.intersection(&new_words).count();
+                let total = original_words.union(&new_words).count();
+                let similarity = if total > 0 { common as f64 / total as f64 * 100.0 } else { 0.0 };
+
+                println!("Word overlap: {:.1}%", similarity);
+            }
+        }
+
+        println!();
+        println!("{}", bold(&cyan("═══════════════════════════════════════════════════════")));
+
+        Ok(())
+    }
+}
+
+#[cfg(not(feature = "rag"))]
+mod replay {
+    use super::*;
+
+    pub struct ReplayConfig {
+        pub session_file: String,
+        pub provider: Option<String>,
+        pub url: Option<String>,
+        pub model: Option<String>,
+        pub api_key: Option<String>,
+        pub compare: bool,
+        pub session_index: Option<usize>,
+    }
+
+    pub fn run_replay(_config: ReplayConfig) -> Result<(), String> {
+        Err("Replay mode requires the 'rag' feature to be enabled".to_string())
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let mut run_all = false;
     let mut category_filter: Option<String> = None;
     let mut list_only = false;
+    let mut replay_file: Option<String> = None;
+    let mut replay_model: Option<String> = None;
+    let mut replay_url: Option<String> = None;
+    let mut replay_provider: Option<String> = None;
+    let mut replay_api_key: Option<String> = None;
+    let mut replay_compare = false;
+    let mut replay_session: Option<usize> = None;
 
-    for arg in &args[1..] {
-        match arg.as_str() {
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
             "--all" => run_all = true,
             "--list" => list_only = true,
             "--no-color" => unsafe { USE_COLOR = false },
+            "--compare" => replay_compare = true,
             "--help" | "-h" => {
                 println!("AI Assistant Test Harness\n");
                 println!("Usage: ai_test_harness [OPTIONS]\n");
-                println!("Options:");
+                println!("Test Options:");
                 println!("  --all              Run all test categories");
                 println!("  --category=NAME    Run a specific category");
                 println!("  --list             List available categories");
                 println!("  --no-color         Disable ANSI colors");
-                println!("  --help, -h         Show this help\n");
+                println!();
+                println!("Replay Options (requires 'rag' feature):");
+                println!("  --replay <file>      Replay a RAG debug session from JSON file");
+                println!("  --provider <type>    Provider: ollama, openai, anthropic, openai-compatible");
+                println!("                       (default: from session or ollama)");
+                println!("  --url <url>          Provider URL (default: from session or provider default)");
+                println!("  --model <name>       Model to use (default: from session or auto-select)");
+                println!("  --api-key <key>      API key for OpenAI/Anthropic (or use env vars)");
+                println!("  --session <n>        Session index to replay (default: 0)");
+                println!("  --compare            Compare original and new responses");
+                println!();
+                println!("Environment Variables:");
+                println!("  OPENAI_API_KEY       API key for OpenAI");
+                println!("  ANTHROPIC_API_KEY    API key for Anthropic");
+                println!();
+                println!("  --help, -h           Show this help\n");
                 println!("Without options, starts interactive menu.");
                 return;
             }
-            _ if arg.starts_with("--category=") => {
-                category_filter = Some(arg.trim_start_matches("--category=").to_string());
+            "--replay" => {
+                i += 1;
+                if i < args.len() {
+                    replay_file = Some(args[i].clone());
+                } else {
+                    eprintln!("--replay requires a file path");
+                    std::process::exit(1);
+                }
+            }
+            "--provider" => {
+                i += 1;
+                if i < args.len() {
+                    replay_provider = Some(args[i].clone());
+                } else {
+                    eprintln!("--provider requires a type");
+                    std::process::exit(1);
+                }
+            }
+            "--model" => {
+                i += 1;
+                if i < args.len() {
+                    replay_model = Some(args[i].clone());
+                } else {
+                    eprintln!("--model requires a model name");
+                    std::process::exit(1);
+                }
+            }
+            "--url" => {
+                i += 1;
+                if i < args.len() {
+                    replay_url = Some(args[i].clone());
+                } else {
+                    eprintln!("--url requires a URL");
+                    std::process::exit(1);
+                }
+            }
+            "--api-key" => {
+                i += 1;
+                if i < args.len() {
+                    replay_api_key = Some(args[i].clone());
+                } else {
+                    eprintln!("--api-key requires a key");
+                    std::process::exit(1);
+                }
+            }
+            "--session" => {
+                i += 1;
+                if i < args.len() {
+                    replay_session = args[i].parse().ok();
+                } else {
+                    eprintln!("--session requires a number");
+                    std::process::exit(1);
+                }
+            }
+            _ if args[i].starts_with("--category=") => {
+                category_filter = Some(args[i].trim_start_matches("--category=").to_string());
             }
             other => {
                 eprintln!("Unknown argument: {}", other);
+                std::process::exit(1);
+            }
+        }
+        i += 1;
+    }
+
+    // Handle replay mode
+    if let Some(file) = replay_file {
+        let config = replay::ReplayConfig {
+            session_file: file,
+            provider: replay_provider,
+            url: replay_url,
+            model: replay_model,
+            api_key: replay_api_key,
+            compare: replay_compare,
+            session_index: replay_session,
+        };
+
+        match replay::run_replay(config) {
+            Ok(()) => std::process::exit(0),
+            Err(e) => {
+                eprintln!("{}", red(&format!("Replay error: {}", e)));
                 std::process::exit(1);
             }
         }

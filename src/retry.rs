@@ -533,7 +533,7 @@ impl ResilientExecutor {
 
         if result.success {
             self.circuit_breaker.record_success();
-            Ok(result.value.unwrap())
+            Ok(result.value.expect("value must be present on success"))
         } else {
             self.circuit_breaker.record_failure();
             let last_error = result.error_history
@@ -573,7 +573,7 @@ where
     let executor = RetryExecutor::new(RetryConfig::default());
     let result = executor.execute(operation);
     if result.success {
-        Ok(result.value.unwrap())
+        Ok(result.value.expect("value must be present on success"))
     } else {
         let last_error = result.error_history
             .last()
@@ -591,7 +591,7 @@ where
     let executor = RetryExecutor::new(config);
     let result = executor.execute(operation);
     if result.success {
-        Ok(result.value.unwrap())
+        Ok(result.value.expect("value must be present on success"))
     } else {
         let last_error = result.error_history
             .last()

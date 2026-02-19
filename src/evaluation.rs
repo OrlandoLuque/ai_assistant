@@ -637,36 +637,150 @@ impl AbTestManager {
         })
     }
 
+    /// Welch's two-sample t-test with proper Student's t-distribution CDF.
     fn calculate_p_value(&self, a: &[f64], b: &[f64]) -> f64 {
         if a.len() < 2 || b.len() < 2 {
             return 1.0;
         }
 
-        let mean_a = a.iter().sum::<f64>() / a.len() as f64;
-        let mean_b = b.iter().sum::<f64>() / b.len() as f64;
+        let n_a = a.len() as f64;
+        let n_b = b.len() as f64;
 
-        let var_a = a.iter().map(|x| (x - mean_a).powi(2)).sum::<f64>() / (a.len() - 1) as f64;
-        let var_b = b.iter().map(|x| (x - mean_b).powi(2)).sum::<f64>() / (b.len() - 1) as f64;
+        let mean_a = a.iter().sum::<f64>() / n_a;
+        let mean_b = b.iter().sum::<f64>() / n_b;
 
-        let se = ((var_a / a.len() as f64) + (var_b / b.len() as f64)).sqrt();
+        let var_a = a.iter().map(|x| (x - mean_a).powi(2)).sum::<f64>() / (n_a - 1.0);
+        let var_b = b.iter().map(|x| (x - mean_b).powi(2)).sum::<f64>() / (n_b - 1.0);
 
-        if se == 0.0 {
+        let se_sq = var_a / n_a + var_b / n_b;
+        if se_sq == 0.0 {
             return 1.0;
         }
-
+        let se = se_sq.sqrt();
         let t = (mean_a - mean_b).abs() / se;
 
-        // Simplified: convert t-score to approximate p-value
-        // In real implementation, use proper t-distribution
-        let p = (-0.5 * t * t).exp();
+        // Welch–Satterthwaite degrees of freedom
+        let num = se_sq * se_sq;
+        let denom = (var_a / n_a).powi(2) / (n_a - 1.0) + (var_b / n_b).powi(2) / (n_b - 1.0);
+        if denom == 0.0 {
+            return 1.0;
+        }
+        let df = num / denom;
 
-        p.min(1.0)
+        // Two-tailed p-value from Student's t-distribution
+        let p = 2.0 * (1.0 - student_t_cdf(t, df));
+        p.clamp(0.0, 1.0)
     }
 }
 
 impl Default for AbTestManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Log-gamma function via Lanczos approximation (g=7, n=9 coefficients).
+fn ln_gamma(x: f64) -> f64 {
+    const COEFFS: [f64; 9] = [
+        0.99999999999980993,
+        676.5203681218851,
+        -1259.1392167224028,
+        771.32342877765313,
+        -176.61502916214059,
+        12.507343278686905,
+        -0.13857109526572012,
+        9.9843695780195716e-6,
+        1.5056327351493116e-7,
+    ];
+    const G: f64 = 7.0;
+
+    if x < 0.5 {
+        // Reflection formula: Gamma(x) * Gamma(1-x) = pi / sin(pi*x)
+        let ln_pi = std::f64::consts::PI.ln();
+        return ln_pi - (std::f64::consts::PI * x).sin().abs().ln() - ln_gamma(1.0 - x);
+    }
+
+    let x = x - 1.0;
+    let mut sum = COEFFS[0];
+    for (i, &c) in COEFFS.iter().enumerate().skip(1) {
+        sum += c / (x + i as f64);
+    }
+
+    let t = x + G + 0.5;
+    0.5 * (2.0 * std::f64::consts::PI).ln() + (t.ln() * (x + 0.5)) - t + sum.ln()
+}
+
+/// Regularized incomplete beta function I_x(a, b) via Lentz's continued fraction.
+fn regularized_incomplete_beta(a: f64, b: f64, x: f64) -> f64 {
+    if x <= 0.0 {
+        return 0.0;
+    }
+    if x >= 1.0 {
+        return 1.0;
+    }
+
+    // Use the symmetry relation when x > (a+1)/(a+b+2) for faster convergence
+    if x > (a + 1.0) / (a + b + 2.0) {
+        return 1.0 - regularized_incomplete_beta(b, a, 1.0 - x);
+    }
+
+    // Compute the log of the prefactor: x^a * (1-x)^b / (a * B(a,b))
+    let ln_prefix = a * x.ln() + b * (1.0 - x).ln() - ln_gamma(a) - ln_gamma(b) + ln_gamma(a + b) - a.ln();
+
+    // Lentz's continued fraction for I_x(a,b)
+    let max_iter = 200;
+    let epsilon = 1e-14;
+    let tiny = 1e-30;
+
+    let mut c = 1.0;
+    let mut d = 1.0 - (a + b) * x / (a + 1.0);
+    if d.abs() < tiny {
+        d = tiny;
+    }
+    d = 1.0 / d;
+    let mut result = d;
+
+    for m in 1..=max_iter {
+        let m_f = m as f64;
+
+        // Even step: d_{2m}
+        let numerator_even = m_f * (b - m_f) * x / ((a + 2.0 * m_f - 1.0) * (a + 2.0 * m_f));
+        d = 1.0 + numerator_even * d;
+        if d.abs() < tiny { d = tiny; }
+        c = 1.0 + numerator_even / c;
+        if c.abs() < tiny { c = tiny; }
+        d = 1.0 / d;
+        result *= d * c;
+
+        // Odd step: d_{2m+1}
+        let numerator_odd = -((a + m_f) * (a + b + m_f) * x) / ((a + 2.0 * m_f) * (a + 2.0 * m_f + 1.0));
+        d = 1.0 + numerator_odd * d;
+        if d.abs() < tiny { d = tiny; }
+        c = 1.0 + numerator_odd / c;
+        if c.abs() < tiny { c = tiny; }
+        d = 1.0 / d;
+        let delta = d * c;
+        result *= delta;
+
+        if (delta - 1.0).abs() < epsilon {
+            break;
+        }
+    }
+
+    (ln_prefix + result.ln()).exp()
+}
+
+/// CDF of Student's t-distribution with `df` degrees of freedom, evaluated at `t`.
+fn student_t_cdf(t: f64, df: f64) -> f64 {
+    if df <= 0.0 {
+        return 0.5;
+    }
+    let x = df / (df + t * t);
+    let ibeta = regularized_incomplete_beta(df / 2.0, 0.5, x);
+    if t >= 0.0 {
+        1.0 - 0.5 * ibeta
+    } else {
+        0.5 * ibeta
     }
 }
 
@@ -892,5 +1006,82 @@ mod tests {
         let result = suite.evaluate(&sample);
 
         assert!(!result.metrics.is_empty());
+    }
+
+    #[test]
+    fn test_ln_gamma_known_values() {
+        // Gamma(1) = 1 → ln(1) = 0
+        assert!((ln_gamma(1.0)).abs() < 1e-10);
+        // Gamma(2) = 1 → ln(1) = 0
+        assert!((ln_gamma(2.0)).abs() < 1e-10);
+        // Gamma(5) = 24 → ln(24) ≈ 3.1781
+        assert!((ln_gamma(5.0) - 24.0_f64.ln()).abs() < 1e-8);
+        // Gamma(0.5) = sqrt(pi) → ln(sqrt(pi)) ≈ 0.5724
+        assert!((ln_gamma(0.5) - (std::f64::consts::PI.sqrt().ln())).abs() < 1e-8);
+    }
+
+    #[test]
+    fn test_student_t_cdf_symmetry() {
+        // CDF at t=0 should be 0.5 for any df
+        assert!((student_t_cdf(0.0, 10.0) - 0.5).abs() < 1e-10);
+        assert!((student_t_cdf(0.0, 1.0) - 0.5).abs() < 1e-10);
+
+        // CDF(-t) = 1 - CDF(t) (symmetry)
+        let cdf_pos = student_t_cdf(2.0, 10.0);
+        let cdf_neg = student_t_cdf(-2.0, 10.0);
+        assert!((cdf_pos + cdf_neg - 1.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_student_t_cdf_known_values() {
+        // For df=1 (Cauchy): CDF(1) = 0.75
+        assert!((student_t_cdf(1.0, 1.0) - 0.75).abs() < 1e-4);
+
+        // For large df, should approach standard normal
+        // Normal CDF(1.96) ≈ 0.975
+        let cdf_large_df = student_t_cdf(1.96, 1000.0);
+        assert!((cdf_large_df - 0.975).abs() < 0.002);
+    }
+
+    #[test]
+    fn test_welch_t_test_significant() {
+        let mut manager = AbTestManager::new();
+        manager.register_test(AbTestConfig::new("sig_test", "A", "B"));
+
+        // Clearly different distributions: A ~ 0.9, B ~ 0.1
+        for _ in 0..50 {
+            manager.record_result("sig_test", "A", 0.9);
+            manager.record_result("sig_test", "B", 0.1);
+        }
+        // Add slight variance
+        for i in 0..10 {
+            manager.record_result("sig_test", "A", 0.85 + (i as f64 * 0.01));
+            manager.record_result("sig_test", "B", 0.05 + (i as f64 * 0.01));
+        }
+
+        let result = manager.get_results("sig_test").unwrap();
+        // Should have very low p-value (highly significant)
+        assert!(result.p_value < 0.001, "p_value was {}", result.p_value);
+        assert!(result.significant);
+        assert_eq!(result.winner, Some("A".to_string()));
+    }
+
+    #[test]
+    fn test_welch_t_test_not_significant() {
+        let mut manager = AbTestManager::new();
+        manager.register_test(AbTestConfig::new("ns_test", "A", "B"));
+
+        // Same distribution: both around 0.5 with variance
+        for i in 0..30 {
+            let v = 0.4 + (i as f64 * 0.007);
+            manager.record_result("ns_test", "A", v);
+            manager.record_result("ns_test", "B", v + 0.001);
+        }
+
+        let result = manager.get_results("ns_test").unwrap();
+        // p-value should be high (not significant)
+        assert!(result.p_value > 0.05, "p_value was {}", result.p_value);
+        assert!(!result.significant);
+        assert!(result.winner.is_none());
     }
 }

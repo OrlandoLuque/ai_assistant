@@ -146,7 +146,7 @@ impl Prefetcher {
         let model = model.into();
         let now = Instant::now();
 
-        let mut recent = self.recent_queries.lock().unwrap();
+        let mut recent = self.recent_queries.lock().unwrap_or_else(|e| e.into_inner());
 
         // Learn from previous query -> this query
         if let Some((prev_query, prev_model, _)) = recent.back() {
@@ -166,7 +166,7 @@ impl Prefetcher {
 
     /// Learn a pattern from observed query sequence
     fn learn_pattern(&self, trigger: String, followup: String, model: String) {
-        let mut patterns = self.patterns.write().unwrap();
+        let mut patterns = self.patterns.write().unwrap_or_else(|e| e.into_inner());
 
         let key = format!("{}::{}", trigger, model);
         let entries = patterns.entry(key).or_insert_with(Vec::new);
@@ -195,7 +195,7 @@ impl Prefetcher {
         });
 
         // Sort by confidence
-        entries.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap());
+        entries.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
 
         // Limit patterns per trigger
         entries.truncate(10);
@@ -208,7 +208,7 @@ impl Prefetcher {
 
     /// Get prefetch candidates based on current context
     pub fn get_candidates(&self, current_query: &str, model: &str) -> Vec<PrefetchCandidate> {
-        let patterns = self.patterns.read().unwrap();
+        let patterns = self.patterns.read().unwrap_or_else(|e| e.into_inner());
         let key = format!("{}::{}", current_query, model);
 
         let mut candidates = Vec::new();
@@ -255,7 +255,7 @@ impl Prefetcher {
     {
         // Check cooldown
         {
-            let last = self.last_prefetch.lock().unwrap();
+            let last = self.last_prefetch.lock().unwrap_or_else(|e| e.into_inner());
             if Instant::now().duration_since(*last) < self.config.prefetch_cooldown {
                 return;
             }
@@ -263,11 +263,11 @@ impl Prefetcher {
 
         // Update last prefetch time
         {
-            let mut last = self.last_prefetch.lock().unwrap();
+            let mut last = self.last_prefetch.lock().unwrap_or_else(|e| e.into_inner());
             *last = Instant::now();
         }
 
-        let mut cache = self.cache.write().unwrap();
+        let mut cache = self.cache.write().unwrap_or_else(|e| e.into_inner());
 
         for candidate in candidates.iter().take(self.config.max_prefetch_items) {
             let cache_key = format!("{}::{}", candidate.query, candidate.model);
@@ -304,7 +304,7 @@ impl Prefetcher {
     /// Try to get a prefetched response
     pub fn get_prefetched(&self, query: &str, model: &str) -> Option<PrefetchedResponse> {
         let cache_key = format!("{}::{}", query, model);
-        let mut cache = self.cache.write().unwrap();
+        let mut cache = self.cache.write().unwrap_or_else(|e| e.into_inner());
 
         if let Some(mut cached) = cache.remove(&cache_key) {
             // Check if still valid
@@ -335,7 +335,7 @@ impl Prefetcher {
     /// Check if a response is prefetched (without removing)
     pub fn has_prefetched(&self, query: &str, model: &str) -> bool {
         let cache_key = format!("{}::{}", query, model);
-        let cache = self.cache.read().unwrap();
+        let cache = self.cache.read().unwrap_or_else(|e| e.into_inner());
 
         if let Some(cached) = cache.get(&cache_key) {
             Instant::now().duration_since(cached.prefetched_at) < self.config.max_age

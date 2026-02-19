@@ -157,8 +157,8 @@ pub fn decompress(compressed: &CompressedData) -> Result<Vec<u8>, CompressionErr
 
 fn compress_gzip(data: &[u8], level: CompressionLevel) -> Vec<u8> {
     let mut encoder = GzEncoder::new(Vec::new(), level.to_flate2());
-    encoder.write_all(data).unwrap();
-    encoder.finish().unwrap()
+    encoder.write_all(data).expect("compression should not fail");
+    encoder.finish().expect("compression should not fail")
 }
 
 fn decompress_gzip(data: &[u8]) -> Result<Vec<u8>, CompressionError> {
@@ -171,8 +171,8 @@ fn decompress_gzip(data: &[u8]) -> Result<Vec<u8>, CompressionError> {
 
 fn compress_deflate(data: &[u8], level: CompressionLevel) -> Vec<u8> {
     let mut encoder = DeflateEncoder::new(Vec::new(), level.to_flate2());
-    encoder.write_all(data).unwrap();
-    encoder.finish().unwrap()
+    encoder.write_all(data).expect("compression should not fail");
+    encoder.finish().expect("compression should not fail")
 }
 
 fn decompress_deflate(data: &[u8]) -> Result<Vec<u8>, CompressionError> {

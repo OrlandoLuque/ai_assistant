@@ -94,7 +94,7 @@ impl PromptTemplate {
                             break;
                         }
                     } else {
-                        var_name.push(chars.next().unwrap());
+                        var_name.push(chars.next().expect("char verified by peek"));
                     }
                 }
 
@@ -656,7 +656,7 @@ mod tests {
 
     #[test]
     fn test_template_manager() {
-        let mut manager = TemplateManager::with_builtins();
+        let manager = TemplateManager::with_builtins();
 
         assert!(manager.get("code_review").is_some());
         assert!(manager.get("translation").is_some());

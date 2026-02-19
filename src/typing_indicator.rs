@@ -51,22 +51,22 @@ impl TypingIndicator {
     }
 
     pub fn start(&self, state: TypingState) {
-        *self.state.lock().unwrap() = state;
-        *self.started_at.lock().unwrap() = Some(Instant::now());
+        *self.state.lock().unwrap_or_else(|e| e.into_inner()) = state;
+        *self.started_at.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
     }
 
     pub fn stop(&self) {
-        *self.state.lock().unwrap() = TypingState::Finished;
-        *self.started_at.lock().unwrap() = None;
+        *self.state.lock().unwrap_or_else(|e| e.into_inner()) = TypingState::Finished;
+        *self.started_at.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
     pub fn error(&self, message: Option<String>) {
-        *self.state.lock().unwrap() = TypingState::Error;
-        *self.message.lock().unwrap() = message;
+        *self.state.lock().unwrap_or_else(|e| e.into_inner()) = TypingState::Error;
+        *self.message.lock().unwrap_or_else(|e| e.into_inner()) = message;
     }
 
     pub fn state(&self) -> TypingState {
-        *self.state.lock().unwrap()
+        *self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     pub fn is_active(&self) -> bool {
@@ -74,7 +74,7 @@ impl TypingIndicator {
     }
 
     pub fn elapsed(&self) -> Option<Duration> {
-        self.started_at.lock().unwrap().map(|t| t.elapsed())
+        self.started_at.lock().unwrap_or_else(|e| e.into_inner()).map(|t| t.elapsed())
     }
 
     pub fn display(&self) -> String {

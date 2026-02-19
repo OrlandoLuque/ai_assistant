@@ -510,7 +510,7 @@ impl ResponseParser {
                         found_link = true;
                         break;
                     }
-                    link_text.push(chars.next().unwrap());
+                    link_text.push(chars.next().expect("char verified by peek"));
                 }
 
                 if found_link && chars.peek() == Some(&'(') {

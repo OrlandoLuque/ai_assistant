@@ -1,4 +1,17 @@
 //! Context usage tracking and token estimation
+//!
+//! Provides token estimation, model context window sizes, and a global
+//! cache for context size lookups that avoids repeated API calls.
+
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
+
+/// Global cache for model context window sizes.
+///
+/// Keyed by lowercase model name. Populated by `get_model_context_size_cached`
+/// and shared across all `AiAssistant` instances.
+static CONTEXT_SIZE_CACHE: LazyLock<Mutex<HashMap<String, usize>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Context usage information
 #[derive(Debug, Clone)]
@@ -130,6 +143,77 @@ pub fn get_model_context_size(model_name: &str) -> usize {
     8_192
 }
 
+/// Get the context window size for a model, using a global cache.
+///
+/// Lookup order:
+/// 1. **Global cache** — instant, no network
+/// 2. **Provider API** — via the caller-supplied `fetcher` closure
+/// 3. **Static table** — `get_model_context_size()` pattern matching
+///
+/// Results from steps 2 and 3 are stored in the cache for future lookups.
+///
+/// The `fetcher` closure receives the model name and should query the
+/// provider API (e.g. `fetch_model_context_size`). Accepting a closure
+/// avoids a circular dependency between `context` and `providers`.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use ai_assistant::context::get_model_context_size_cached;
+///
+/// let size = get_model_context_size_cached("llama3.2:7b", |_name| {
+///     // In production, call fetch_model_context_size(config, name) here
+///     None
+/// });
+/// assert_eq!(size, 128_000);
+/// ```
+pub fn get_model_context_size_cached<F>(model_name: &str, fetcher: F) -> usize
+where
+    F: FnOnce(&str) -> Option<usize>,
+{
+    let key = model_name.to_lowercase();
+
+    // 1. Check global cache
+    if let Ok(cache) = CONTEXT_SIZE_CACHE.lock() {
+        if let Some(&size) = cache.get(&key) {
+            return size;
+        }
+    }
+
+    // 2. Try provider API via fetcher
+    let size = fetcher(model_name).unwrap_or_else(|| {
+        // 3. Fall back to static table
+        get_model_context_size(model_name)
+    });
+
+    // Store in cache
+    if let Ok(mut cache) = CONTEXT_SIZE_CACHE.lock() {
+        cache.insert(key, size);
+    }
+
+    size
+}
+
+/// Clear the global context size cache.
+///
+/// Useful in tests to ensure a clean state, or when switching providers
+/// where the same model name might report a different context window.
+pub fn clear_context_size_cache() {
+    if let Ok(mut cache) = CONTEXT_SIZE_CACHE.lock() {
+        cache.clear();
+    }
+}
+
+/// Return the number of entries currently in the context size cache.
+///
+/// Primarily intended for testing and diagnostics.
+pub fn context_size_cache_len() -> usize {
+    CONTEXT_SIZE_CACHE
+        .lock()
+        .map(|c| c.len())
+        .unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -177,5 +261,70 @@ mod tests {
         let usage_critical = ContextUsage::calculate(200, 5000, 1500, 8192);
         assert!(usage_critical.is_warning);
         assert!(usage_critical.is_critical); // 6700 / 6553 = ~102%
+    }
+
+    #[test]
+    fn test_cached_uses_static_table_when_fetcher_returns_none() {
+        clear_context_size_cache();
+
+        let size = get_model_context_size_cached("llama3.2:7b", |_| None);
+        assert_eq!(size, 128_000); // falls back to static table
+        assert_eq!(context_size_cache_len(), 1); // cached
+    }
+
+    #[test]
+    fn test_cached_uses_fetcher_when_available() {
+        clear_context_size_cache();
+
+        let size = get_model_context_size_cached("custom-model-xyz", |_| Some(65_536));
+        assert_eq!(size, 65_536); // from fetcher, not static table
+    }
+
+    #[test]
+    fn test_cached_returns_cached_value_on_second_call() {
+        clear_context_size_cache();
+
+        // First call — fetcher is invoked
+        let mut fetcher_called = false;
+        let size1 = get_model_context_size_cached("cache-test-model", |_| {
+            fetcher_called = true;
+            Some(99_999)
+        });
+        assert!(fetcher_called);
+        assert_eq!(size1, 99_999);
+
+        // Second call — fetcher should NOT be invoked (cache hit)
+        let size2 = get_model_context_size_cached("cache-test-model", |_| {
+            panic!("fetcher should not be called on cache hit");
+        });
+        assert_eq!(size2, 99_999);
+    }
+
+    #[test]
+    fn test_clear_context_size_cache() {
+        clear_context_size_cache();
+
+        get_model_context_size_cached("clear-test", |_| Some(42_000));
+        assert!(context_size_cache_len() > 0);
+
+        clear_context_size_cache();
+        assert_eq!(context_size_cache_len(), 0);
+
+        // After clear, fetcher is called again
+        let size = get_model_context_size_cached("clear-test", |_| Some(77_000));
+        assert_eq!(size, 77_000); // new value, not the old 42_000
+    }
+
+    #[test]
+    fn test_cached_case_insensitive_key() {
+        clear_context_size_cache();
+
+        get_model_context_size_cached("MyModel:7B", |_| Some(50_000));
+
+        // Same model, different case — should hit cache
+        let size = get_model_context_size_cached("mymodel:7b", |_| {
+            panic!("should use cache regardless of case");
+        });
+        assert_eq!(size, 50_000);
     }
 }

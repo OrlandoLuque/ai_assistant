@@ -256,7 +256,7 @@ impl BatchProcessor {
 
         // Initialize stats
         {
-            let mut stats = self.stats.lock().unwrap();
+            let mut stats = self.stats.lock().unwrap_or_else(|e| e.into_inner());
             *stats = BatchStats {
                 total,
                 started_at: Some(Instant::now()),
@@ -290,7 +290,7 @@ impl BatchProcessor {
             let handle = thread::spawn(move || {
                 loop {
                     let request = {
-                        let rx = rx.lock().unwrap();
+                        let rx = rx.lock().unwrap_or_else(|e| e.into_inner());
                         rx.recv().ok()
                     };
                     let Some(request) = request else { break };
@@ -333,7 +333,7 @@ impl BatchProcessor {
 
                     // Update stats
                     {
-                        let mut stats = stats.lock().unwrap();
+                        let mut stats = stats.lock().unwrap_or_else(|e| e.into_inner());
                         stats.completed += 1;
                         if result.success {
                             stats.successful += 1;
@@ -357,7 +357,7 @@ impl BatchProcessor {
                         }
                     }
 
-                    results.lock().unwrap().push(result);
+                    results.lock().unwrap_or_else(|e| e.into_inner()).push(result);
                 }
             });
 
@@ -391,17 +391,17 @@ impl BatchProcessor {
 
         // Finalize stats
         {
-            let mut stats = self.stats.lock().unwrap();
+            let mut stats = self.stats.lock().unwrap_or_else(|e| e.into_inner());
             stats.completed_at = Some(Instant::now());
         }
 
         // Collect results
-        let mut final_results = results.lock().unwrap().clone();
+        let mut final_results = results.lock().unwrap_or_else(|e| e.into_inner()).clone();
         final_results.sort_by(|a, b| a.id.cmp(&b.id));
 
         BatchResults {
             results: final_results,
-            stats: self.stats.lock().unwrap().clone(),
+            stats: self.stats.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         }
     }
 
@@ -417,7 +417,7 @@ impl BatchProcessor {
 
     /// Get current stats
     pub fn stats(&self) -> BatchStats {
-        self.stats.lock().unwrap().clone()
+        self.stats.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 }
 

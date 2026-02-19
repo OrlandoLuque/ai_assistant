@@ -596,7 +596,7 @@ impl CrawlPolicy {
             if let Some((_, fetched_at)) = self.robots_cache.get(domain) {
                 if now.duration_since(*fetched_at) < self.config.robots_cache_ttl() {
                     // Cache is still valid - return reference
-                    return Ok(&self.robots_cache.get(domain).unwrap().0);
+                    return Ok(&self.robots_cache.get(domain).expect("domain just verified").0);
                 }
             }
         }
@@ -624,7 +624,7 @@ impl CrawlPolicy {
         self.robots_cache
             .insert(domain.to_string(), (parsed, Instant::now()));
 
-        Ok(&self.robots_cache.get(domain).unwrap().0)
+        Ok(&self.robots_cache.get(domain).expect("domain just inserted").0)
     }
 
     // ─────────────────────────────────────────────────────────────────────────

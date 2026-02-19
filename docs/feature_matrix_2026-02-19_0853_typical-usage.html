@@ -1,0 +1,1208 @@
+<!DOCTYPE html>
+<!-- saved from url=(0093)file:///C:/Users/Lander/Desktop/_varios/_dev/ai_assistant_standalone/docs/feature_matrix.html -->
+<html lang="es"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Assistant - Feature Matrix (2026-02-19 - Typical Usage Perspective)</title>
+<style>
+  :root {
+    --core: #2563eb;
+    --auto: #7c3aed;
+    --available: #059669;
+    --feature: #d97706;
+    --na: #9ca3af;
+    --edited: #e11d48;
+    --bg: #0f172a;
+    --surface: #1e293b;
+    --surface2: #334155;
+    --text: #f1f5f9;
+    --text-dim: #94a3b8;
+    --border: #475569;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 20px;
+    min-height: 100vh;
+  }
+
+  h1 {
+    text-align: center;
+    font-size: 1.6rem;
+    margin-bottom: 8px;
+    background: linear-gradient(135deg, #60a5fa, #a78bfa);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .subtitle {
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 0.85rem;
+    margin-bottom: 20px;
+  }
+
+  .legend {
+    display: flex;
+    justify-content: center;
+    gap: 18px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.78rem;
+    color: var(--text-dim);
+  }
+
+  .legend-dot {
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+
+  .toolbar {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+  }
+
+  .toolbar button {
+    padding: 10px 22px;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .btn-generate {
+    background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+    color: white;
+  }
+  .btn-generate:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(59,130,246,0.4); }
+  .btn-generate:disabled { opacity: 0.4; cursor: not-allowed; transform: none; box-shadow: none; }
+
+  .btn-clear {
+    background: var(--surface2);
+    color: var(--text-dim);
+  }
+  .btn-clear:hover { background: #475569; color: var(--text); }
+
+  .btn-collapse {
+    background: var(--surface2);
+    color: var(--text-dim);
+  }
+  .btn-collapse:hover { background: #475569; color: var(--text); }
+
+  .edit-count {
+    display: inline-flex;
+    align-items: center;
+    background: var(--edited);
+    color: white;
+    border-radius: 12px;
+    padding: 2px 10px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    margin-left: 6px;
+  }
+
+  .table-wrapper {
+    overflow-x: auto;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 1400px;
+    font-size: 0.78rem;
+  }
+
+  thead th {
+    background: #1a2332;
+    color: #93c5fd;
+    padding: 10px 8px;
+    text-align: center;
+    border-bottom: 2px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    font-size: 0.76rem;
+    white-space: nowrap;
+  }
+
+  thead th:first-child {
+    text-align: left;
+    padding-left: 14px;
+    min-width: 220px;
+    position: sticky;
+    left: 0;
+    z-index: 11;
+    background: #1a2332;
+  }
+
+  thead th .use-case-num {
+    display: block;
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    font-weight: 400;
+  }
+
+  .group-header td {
+    background: #172033;
+    color: #93c5fd;
+    font-weight: 700;
+    font-size: 0.82rem;
+    padding: 8px 14px;
+    border-top: 2px solid var(--border);
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .group-header td:hover {
+    background: #1e2d47;
+  }
+
+  .group-header .collapse-icon {
+    display: inline-block;
+    width: 16px;
+    transition: transform 0.2s;
+    margin-right: 6px;
+  }
+
+  .group-header.collapsed .collapse-icon {
+    transform: rotate(-90deg);
+  }
+
+  .group-hidden {
+    display: none;
+  }
+
+  tbody td {
+    padding: 0;
+    border-bottom: 1px solid #2d3a4d;
+    text-align: center;
+    vertical-align: middle;
+    height: 44px;
+  }
+
+  tbody td:first-child {
+    text-align: left;
+    padding: 6px 14px;
+    color: var(--text);
+    font-weight: 500;
+    position: sticky;
+    left: 0;
+    background: var(--surface);
+    z-index: 5;
+    border-right: 1px solid #2d3a4d;
+  }
+
+  tbody tr:hover td { background: #253347; }
+  tbody tr:hover td:first-child { background: #253347; }
+
+  .cell-btn {
+    width: 100%;
+    height: 100%;
+    min-height: 44px;
+    border: none;
+    cursor: pointer;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 4px 6px;
+    transition: all 0.15s;
+    position: relative;
+  }
+
+  .cell-btn:hover { filter: brightness(1.2); }
+
+  .cell-btn.status-core { background: rgba(37,99,235,0.25); color: #93c5fd; }
+  .cell-btn.status-auto { background: rgba(124,58,237,0.25); color: #c4b5fd; }
+  .cell-btn.status-available { background: rgba(5,150,105,0.25); color: #6ee7b7; }
+  .cell-btn.status-feature { background: rgba(217,119,6,0.25); color: #fcd34d; }
+  .cell-btn.status-na { background: rgba(156,163,175,0.08); color: #6b7280; }
+
+  .cell-btn.edited {
+    outline: 2px solid var(--edited);
+    outline-offset: -2px;
+    position: relative;
+  }
+
+  .cell-btn.edited::after {
+    content: '';
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    width: 7px;
+    height: 7px;
+    background: var(--edited);
+    border-radius: 50%;
+  }
+
+  .cell-btn .feature-flag {
+    display: block;
+    font-size: 0.6rem;
+    opacity: 0.7;
+    font-weight: 400;
+  }
+
+  /* Modal */
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 100;
+    justify-content: center;
+    align-items: center;
+    backdrop-filter: blur(4px);
+  }
+
+  .modal-overlay.active { display: flex; }
+
+  .modal {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 28px;
+    width: 520px;
+    max-width: 95vw;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  }
+
+  .modal h3 {
+    font-size: 1.1rem;
+    margin-bottom: 4px;
+    color: #93c5fd;
+  }
+
+  .modal .modal-subtitle {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    margin-bottom: 18px;
+  }
+
+  .modal .current-info {
+    background: var(--bg);
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 16px;
+    font-size: 0.8rem;
+  }
+
+  .modal .current-info .label {
+    color: var(--text-dim);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+  }
+
+  .modal .current-info .value {
+    font-weight: 600;
+  }
+
+  .modal label {
+    display: block;
+    font-size: 0.82rem;
+    font-weight: 600;
+    margin-bottom: 6px;
+    color: var(--text);
+  }
+
+  .modal select {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 0.85rem;
+    margin-bottom: 16px;
+    cursor: pointer;
+  }
+
+  .modal select:focus { outline: 2px solid #3b82f6; outline-offset: -1px; }
+
+  .modal textarea {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 0.85rem;
+    min-height: 100px;
+    resize: vertical;
+    font-family: inherit;
+    margin-bottom: 18px;
+  }
+
+  .modal textarea:focus { outline: 2px solid #3b82f6; outline-offset: -1px; }
+  .modal textarea::placeholder { color: #64748b; }
+
+  .modal-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+  }
+
+  .modal-actions button {
+    padding: 9px 20px;
+    border-radius: 8px;
+    border: none;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .btn-save { background: #3b82f6; color: white; }
+  .btn-save:hover { background: #2563eb; }
+  .btn-cancel { background: var(--surface2); color: var(--text-dim); }
+  .btn-cancel:hover { background: #475569; }
+  .btn-remove { background: transparent; color: var(--edited); border: 1px solid var(--edited) !important; }
+  .btn-remove:hover { background: rgba(225,29,72,0.1); }
+
+  /* Prompt output */
+  .prompt-output {
+    display: none;
+    margin-top: 20px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+  }
+
+  .prompt-output.active { display: block; }
+
+  .prompt-output h3 {
+    font-size: 1rem;
+    margin-bottom: 10px;
+    color: #93c5fd;
+  }
+
+  .prompt-output pre {
+    background: var(--bg);
+    border-radius: 8px;
+    padding: 16px;
+    font-size: 0.82rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 400px;
+    overflow-y: auto;
+    line-height: 1.5;
+    color: #e2e8f0;
+  }
+
+  .prompt-output .copy-btn {
+    margin-top: 10px;
+    padding: 9px 20px;
+    background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .prompt-output .copy-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(59,130,246,0.4); }
+  .prompt-output .copy-btn.copied { background: #059669; }
+
+  /* Filter bar */
+  .filter-bar {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+  }
+
+  .filter-btn {
+    padding: 5px 14px;
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    background: transparent;
+    color: var(--text-dim);
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .filter-btn:hover { border-color: #60a5fa; color: #60a5fa; }
+  .filter-btn.active { background: #1e3a5f; border-color: #3b82f6; color: #93c5fd; }
+
+  @media (max-width: 768px) {
+    body { padding: 10px; }
+    h1 { font-size: 1.2rem; }
+    table { min-width: 900px; font-size: 0.7rem; }
+    .modal { padding: 18px; width: 95vw; }
+  }
+</style>
+<style type="text/css" id="operaUserStyle"></style></head>
+<body>
+
+<h1>AI Assistant — Matriz Casos de Uso vs Tecnologías</h1>
+<p class="subtitle">Haz clic en cualquier celda para editarla. Las celdas modificadas se marcan en rojo.</p>
+
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="background:var(--core)"></div>Core (siempre activo)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:var(--auto)"></div>Auto (se activa solo)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:var(--available)"></div>Available (usar explícitamente)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:var(--feature)"></div>Feature flag (opt-in)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:var(--na)"></div>N/A</div>
+  <div class="legend-item"><div class="legend-dot" style="background:var(--edited)"></div>Editado por usuario</div>
+</div>
+
+<div class="filter-bar" id="filterBar"><button class="filter-btn active">Todos</button><button class="filter-btn">Core</button><button class="filter-btn">Auto</button><button class="filter-btn">Available</button><button class="filter-btn">Feature</button><button class="filter-btn">Editados</button></div>
+
+<div class="toolbar">
+  <button class="btn-collapse" onclick="toggleAllGroups()">Colapsar/Expandir grupos</button>
+  <button class="btn-generate" id="btnGenerate" disabled="" onclick="generatePrompt()">
+    Generar Prompt<span class="edit-count" id="editCount" style="display:none">0</span>
+  </button>
+  <button class="btn-clear" onclick="clearAll()">Limpiar todo</button>
+</div>
+
+<div class="table-wrapper">
+  <table id="matrixTable">
+    <thead><tr id="headerRow"><th>Tecnología / Módulo</th><th><span class="use-case-num">Chat</span>Chat IA Básico</th><th><span class="use-case-num">RAG</span>Chat con RAG</th><th><span class="use-case-num">KPKG</span>Paquetes de Conocimiento</th><th><span class="use-case-num">Multi-user</span>Multi-usuario</th><th><span class="use-case-num">Agent</span>Agente + Tools</th><th><span class="use-case-num">Autónomo</span>Agente Autónomo</th><th><span class="use-case-num">Multi-Agent</span>Multi-Agente</th><th><span class="use-case-num">HTTP</span>Servidor HTTP/API</th><th><span class="use-case-num">Distrib.</span>Computación Distribuida</th><th><span class="use-case-num">P2P</span>Red P2P</th></tr></thead>
+    <tbody id="matrixBody"><tr class="group-header"><td colspan="11"><span class="collapse-icon">▼</span>Core &amp; Providers <span style="opacity:0.5;font-weight:400;font-size:0.72rem">(6)</span></td></tr><tr><td>Providers (OpenAI, Anthropic, Ollama, etc.)</td><td><button class="cell-btn status-core">Core</button></td><td><button class="cell-btn status-core">Core</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-core">Core</button></td><td><button class="cell-btn status-core">Core</button></td><td><button class="cell-btn status-core">Core</button></td><td><button class="cell-btn status-core">Core</button></td><td><button class="cell-btn status-core">Core</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Config &amp; Session</td><td><button class="cell-btn status-core">Core</button></td><td><button class="cell-btn status-core">Core</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-core">Core</button></td><td><button class="cell-btn status-core">Core</button></td><td><button class="cell-btn status-core">Core</button></td><td><button class="cell-btn status-core">Core</button></td><td><button class="cell-btn status-core">Core</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td></tr><tr><td>Context Window Management</td><td><button class="cell-btn status-core">Core</button></td><td><button class="cell-btn status-core">Core</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-core">Core</button></td><td><button class="cell-btn status-core">Core</button></td><td><button class="cell-btn status-core">Core</button></td><td><button class="cell-btn status-core">Core</button></td><td><button class="cell-btn status-core">Core</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>HTTP Client</td><td><button class="cell-btn status-core">Core</button></td><td><button class="cell-btn status-core">Core</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-core">Core</button></td><td><button class="cell-btn status-core">Core</button></td><td><button class="cell-btn status-core">Core</button></td><td><button class="cell-btn status-core">Core</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Cloud Providers (AWS/GCP/Azure)</td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Async Providers <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[async-runtime]</span></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr class="group-header"><td colspan="11"><span class="collapse-icon">▼</span>RAG &amp; Knowledge <span style="opacity:0.5;font-weight:400;font-size:0.72rem">(10)</span></td></tr><tr><td>RAG Core (vector search, chunking) <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[rag]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td></tr><tr><td>Embeddings &amp; Vector DB <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[embeddings]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td></tr><tr><td>LanceDB Backend <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[vector-lancedb]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Knowledge Graph <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[rag]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td></tr><tr><td>Multi-Layer Graph</td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-available">Available</button></td></tr><tr><td>Document Parsing (PDF, DOCX, etc.) <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[documents]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Feed Monitor (RSS/Atom)</td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Encrypted Knowledge Packages (KPKG) <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[rag]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td></tr><tr><td>Query Expansion &amp; Citations <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[rag]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Auto Indexing <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[rag]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr class="group-header"><td colspan="11"><span class="collapse-icon">▼</span>Security &amp; Access Control <span style="opacity:0.5;font-weight:400;font-size:0.72rem">(8)</span></td></tr><tr><td>Input Sanitization &amp; Injection Detection <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[security]</span></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>PII Detection <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[security]</span></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Content Moderation <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[security]</span></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Access Control (RBAC, MFA, CIDR) <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[security]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td></tr><tr><td>Content Encryption (AES-256-GCM) <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[rag]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td></tr><tr><td>Data Anonymization <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[security]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Request Signing</td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td></tr><tr><td>Log Redaction</td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td></tr><tr class="group-header"><td colspan="11"><span class="collapse-icon">▼</span>Tools &amp; Agent <span style="opacity:0.5;font-weight:400;font-size:0.72rem">(4)</span></td></tr><tr><td>Tool Registry &amp; Function Calling <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[tools]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Agentic Loop (tool-using agent) <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[tools]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>MCP Protocol <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[tools]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Prompt Chaining <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[tools]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr class="group-header"><td colspan="11"><span class="collapse-icon">▼</span>Autonomous Agent <span style="opacity:0.5;font-weight:400;font-size:0.72rem">(12)</span></td></tr><tr><td>Autonomous Loop <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[autonomous]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Agent Policy &amp; Sandbox <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[autonomous]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>OS Tools (file, shell, HTTP) <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[autonomous]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Mode Manager (5-level autonomy) <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[autonomous]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Task Board (Kanban) <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[autonomous]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>User Interaction Handler <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[autonomous]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Agent Profiles &amp; Templates <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[autonomous]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Interactive Commands (bilingual) <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[autonomous]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Scheduler (Cron) <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[scheduler]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Trigger System <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[scheduler]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Butler (env auto-detection) <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[butler]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Browser Tools (CDP) <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[browser]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr class="group-header"><td colspan="11"><span class="collapse-icon">▼</span>Multi-Agent &amp; Orchestration <span style="opacity:0.5;font-weight:400;font-size:0.72rem">(4)</span></td></tr><tr><td>Agent Orchestrator <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[multi-agent]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Agent Memory (shared) <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[multi-agent]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Task Decomposition <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[multi-agent]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Distributed Agents <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[distributed-agents]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr class="group-header"><td colspan="11"><span class="collapse-icon">▼</span>Networking &amp; Distribution <span style="opacity:0.5;font-weight:400;font-size:0.72rem">(8)</span></td></tr><tr><td>Distributed Core (DHT, CRDT, MapReduce) <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[distributed]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td></tr><tr><td>Distributed Network (QUIC/TLS) <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[distributed-network]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Consistent Hashing <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[distributed-network]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Failure Detector (Phi Accrual) <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[distributed-network]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Merkle Sync (anti-entropy) <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[distributed-network]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Node Security (TLS, tokens) <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[distributed-network]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>P2P Manager <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[p2p]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td></tr><tr><td>Knowledge Broadcast (P2P) <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[p2p]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td></tr><tr class="group-header"><td colspan="11"><span class="collapse-icon">▼</span>HTTP Server &amp; API <span style="opacity:0.5;font-weight:400;font-size:0.72rem">(6)</span></td></tr><tr><td>HTTP Server (REST)</td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>SSE Streaming <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[advanced-streaming]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>WebSocket Streaming <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[advanced-streaming]</span></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>OpenAPI Export</td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Webhooks</td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Request Queue &amp; Priority</td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr class="group-header"><td colspan="11"><span class="collapse-icon">▼</span>Analytics &amp; Evaluation <span style="opacity:0.5;font-weight:400;font-size:0.72rem">(7)</span></td></tr><tr><td>Metrics &amp; Telemetry <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[analytics]</span></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Conversation Analytics <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[analytics]</span></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Confidence Scoring <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[eval]</span></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Hallucination Detection <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[eval]</span></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Model Ensemble <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[eval]</span></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Evaluation (A/B, t-test) <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[eval]</span></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Quality Scoring <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[eval]</span></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr class="group-header"><td colspan="11"><span class="collapse-icon">▼</span>Cross-Cutting Utilities <span style="opacity:0.5;font-weight:400;font-size:0.72rem">(19)</span></td></tr><tr><td>Adaptive Thinking</td><td><button class="cell-btn status-auto">Auto</button></td><td><button class="cell-btn status-auto">Auto</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-auto">Auto</button></td><td><button class="cell-btn status-auto">Auto</button></td><td><button class="cell-btn status-auto">Auto</button></td><td><button class="cell-btn status-auto">Auto</button></td><td><button class="cell-btn status-auto">Auto</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Memory &amp; Context Pinning</td><td><button class="cell-btn status-auto">Auto</button></td><td><button class="cell-btn status-auto">Auto</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-auto">Auto</button></td><td><button class="cell-btn status-auto">Auto</button></td><td><button class="cell-btn status-auto">Auto</button></td><td><button class="cell-btn status-auto">Auto</button></td><td><button class="cell-btn status-auto">Auto</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Event Bus</td><td><button class="cell-btn status-auto">Auto</button></td><td><button class="cell-btn status-auto">Auto</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-auto">Auto</button></td><td><button class="cell-btn status-auto">Auto</button></td><td><button class="cell-btn status-auto">Auto</button></td><td><button class="cell-btn status-auto">Auto</button></td><td><button class="cell-btn status-auto">Auto</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td></tr><tr><td>Streaming (response)</td><td><button class="cell-btn status-core">Core</button></td><td><button class="cell-btn status-core">Core</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-core">Core</button></td><td><button class="cell-btn status-core">Core</button></td><td><button class="cell-btn status-core">Core</button></td><td><button class="cell-btn status-core">Core</button></td><td><button class="cell-btn status-core">Core</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Conversation Management</td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Caching &amp; Compression</td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Retry &amp; Fallback</td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Entity Extraction</td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Structured Output (JSON schema)</td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Cost Tracking &amp; Budgets</td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Templates &amp; Prompt Optimizer</td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Plugins</td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>i18n</td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td></tr><tr><td>Export (JSON, Markdown)</td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Vision / Multimodal <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[vision]</span></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>External Adapters <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[adapters]</span></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>WASM Support <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[wasm]</span></td><td><button class="cell-btn status-feature">Feature</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Quantization</td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-na">N/A</button></td><td><button class="cell-btn status-na">N/A</button></td></tr><tr><td>Debug &amp; Health Check</td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td><td><button class="cell-btn status-available">Available</button></td></tr></tbody>
+  </table>
+</div>
+
+<div class="prompt-output" id="promptOutput">
+  <h3>Prompt generado</h3>
+  <pre id="promptText"></pre>
+  <button class="copy-btn" onclick="copyPrompt()">Copiar al portapapeles</button>
+</div>
+
+<!-- Modal -->
+<div class="modal-overlay" id="modalOverlay" onclick="closeModalOutside(event)">
+  <div class="modal">
+    <h3 id="modalTitle">Knowledge Graph</h3>
+    <p class="modal-subtitle" id="modalSubtitle">Caso de uso: Computación Distribuida</p>
+    <div class="current-info">
+      <div class="label">Estado actual</div>
+      <div class="value" id="modalCurrentStatus">N/A [feature: rag]</div>
+    </div>
+    <div class="current-info" id="modalNotesInfo" style="display: block;">
+      <div class="label">Notas del sistema</div>
+      <div class="value" id="modalNotes">Entidades, relaciones, graph traversal. Parte de rag feature.</div>
+    </div>
+    <label for="modalSelect">Cambiar estado a:</label>
+    <select id="modalSelect">
+      <option value="">(sin cambio)</option>
+      <option value="core">Core — siempre activo, no se puede desactivar</option>
+      <option value="auto">Auto — se activa automáticamente si está compilado</option>
+      <option value="available">Available — compilado, pero el caller lo usa explícitamente</option>
+      <option value="feature">Feature flag — requiere activar feature en Cargo.toml</option>
+      <option value="na">N/A — no aplica para este caso de uso</option>
+      <option value="should-be-core">Propuesta: debería ser Core</option>
+      <option value="should-be-auto">Propuesta: debería auto-activarse</option>
+      <option value="should-be-configurable">Propuesta: debería ser configurable</option>
+      <option value="should-add">Propuesta: añadir soporte</option>
+      <option value="should-remove">Propuesta: eliminar / no tiene sentido</option>
+      <option value="question">Pregunta / duda</option>
+    </select>
+    <label for="modalText">Comentario o instrucciones:</label>
+    <textarea id="modalText" placeholder="Escribe aquí tu comentario, pregunta o instrucciones sobre esta combinación..."></textarea>
+    <div class="modal-actions">
+      <button class="btn-remove" id="btnRemoveEdit" style="display:none" onclick="removeEdit()">Quitar edición</button>
+      <button class="btn-cancel" onclick="closeModal()">Cancelar</button>
+      <button class="btn-save" onclick="saveEdit()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// DATA
+// ============================================================
+
+const USE_CASES = [
+  { id: 'basic_chat', name: 'Chat IA Básico', short: 'Chat' },
+  { id: 'rag_chat', name: 'Chat con RAG', short: 'RAG' },
+  { id: 'kpkg', name: 'Paquetes de Conocimiento', short: 'KPKG' },
+  { id: 'multi_user', name: 'Multi-usuario', short: 'Multi-user' },
+  { id: 'agent_tools', name: 'Agente + Tools', short: 'Agent' },
+  { id: 'autonomous', name: 'Agente Autónomo', short: 'Autónomo' },
+  { id: 'multi_agent', name: 'Multi-Agente', short: 'Multi-Agent' },
+  { id: 'http_server', name: 'Servidor HTTP/API', short: 'HTTP' },
+  { id: 'distributed', name: 'Computación Distribuida', short: 'Distrib.' },
+  { id: 'p2p', name: 'Red P2P', short: 'P2P' },
+];
+
+const GROUPS = [
+  {
+    name: 'Core & Providers',
+    rows: [
+      { tech: 'Providers (OpenAI, Anthropic, Ollama, etc.)', flag: null,
+        cells: { basic_chat:'core', rag_chat:'core', kpkg:'na', multi_user:'core', agent_tools:'core', autonomous:'core', multi_agent:'core', http_server:'core', distributed:'na', p2p:'na' },
+        notes: 'Config, AiProvider, send_message. Siempre compilado.' },
+      { tech: 'Config & Session', flag: null,
+        cells: { basic_chat:'core', rag_chat:'core', kpkg:'available', multi_user:'core', agent_tools:'core', autonomous:'core', multi_agent:'core', http_server:'core', distributed:'available', p2p:'available' },
+        notes: 'AiConfig, ChatSession, ChatSessionStore.' },
+      { tech: 'Context Window Management', flag: null,
+        cells: { basic_chat:'core', rag_chat:'core', kpkg:'na', multi_user:'core', agent_tools:'core', autonomous:'core', multi_agent:'core', http_server:'core', distributed:'na', p2p:'na' },
+        notes: 'estimate_tokens, ContextUsage, auto-truncation.' },
+      { tech: 'HTTP Client', flag: null,
+        cells: { basic_chat:'core', rag_chat:'core', kpkg:'na', multi_user:'core', agent_tools:'core', autonomous:'core', multi_agent:'core', http_server:'available', distributed:'na', p2p:'na' },
+        notes: 'Internal HTTP client para comunicación con providers.' },
+      { tech: 'Cloud Providers (AWS/GCP/Azure)', flag: null,
+        cells: { basic_chat:'available', rag_chat:'available', kpkg:'na', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'na', p2p:'na' },
+        notes: 'Bedrock, Vertex AI, Azure OpenAI. Siempre compilado, caller elige.' },
+      { tech: 'Async Providers', flag: 'async-runtime',
+        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'na', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'na', p2p:'na' },
+        notes: 'Alternativas async a las llamadas blocking de providers.' },
+    ]
+  },
+  {
+    name: 'RAG & Knowledge',
+    rows: [
+      { tech: 'RAG Core (vector search, chunking)', flag: 'rag',
+        cells: { basic_chat:'na', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
+        notes: 'rusqlite + aes-gcm. init_rag() requerido.' },
+      { tech: 'Embeddings & Vector DB', flag: 'embeddings',
+        cells: { basic_chat:'na', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
+        notes: 'LocalEmbedder, cosine similarity, embedding cache.' },
+      { tech: 'LanceDB Backend', flag: 'vector-lancedb',
+        cells: { basic_chat:'na', rag_chat:'feature', kpkg:'na', multi_user:'feature', agent_tools:'na', autonomous:'na', multi_agent:'na', http_server:'feature', distributed:'feature', p2p:'na' },
+        notes: 'Upgrade opcional del vector store in-memory. Heavy dep.' },
+      { tech: 'Knowledge Graph', flag: 'rag',
+        cells: { basic_chat:'na', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'na', p2p:'feature' },
+        notes: 'Entidades, relaciones, graph traversal. Parte de rag feature.' },
+      { tech: 'Multi-Layer Graph', flag: null,
+        cells: { basic_chat:'na', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'na', p2p:'available' },
+        notes: 'Siempre compilado. Grafos multi-capa para análisis avanzado.' },
+      { tech: 'Document Parsing (PDF, DOCX, etc.)', flag: 'documents',
+        cells: { basic_chat:'na', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'na', http_server:'feature', distributed:'na', p2p:'na' },
+        notes: 'zip + pdf-extract. Ingesta de documentos.' },
+      { tech: 'Feed Monitor (RSS/Atom)', flag: null,
+        cells: { basic_chat:'na', rag_chat:'available', kpkg:'na', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'na', http_server:'available', distributed:'na', p2p:'na' },
+        notes: 'Monitoreo de feeds. Siempre compilado.' },
+      { tech: 'Encrypted Knowledge Packages (KPKG)', flag: 'rag',
+        cells: { basic_chat:'na', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'na', autonomous:'na', multi_agent:'na', http_server:'feature', distributed:'na', p2p:'feature' },
+        notes: 'Paquetes de conocimiento cifrados. Requiere RAG.' },
+      { tech: 'Query Expansion & Citations', flag: 'rag',
+        cells: { basic_chat:'na', rag_chat:'feature', kpkg:'na', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'na', p2p:'na' },
+        notes: 'Expansión de queries con sinónimos. Auto-applied por RAG strategies.' },
+      { tech: 'Auto Indexing', flag: 'rag',
+        cells: { basic_chat:'na', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'na', autonomous:'feature', multi_agent:'na', http_server:'feature', distributed:'na', p2p:'na' },
+        notes: 'Chunking y indexación automática de documentos.' },
+    ]
+  },
+  {
+    name: 'Security & Access Control',
+    rows: [
+      { tech: 'Input Sanitization & Injection Detection', flag: 'security',
+        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'na', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'na', p2p:'na' },
+        notes: 'Auto-applied a inputs si security habilitado.' },
+      { tech: 'PII Detection', flag: 'security',
+        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'na', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'na', p2p:'na' },
+        notes: 'Emails, phones, SSN, credit cards.' },
+      { tech: 'Content Moderation', flag: 'security',
+        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'na', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'na', p2p:'na' },
+        notes: 'Blocked terms, risk scoring.' },
+      { tech: 'Access Control (RBAC, MFA, CIDR)', flag: 'security',
+        cells: { basic_chat:'na', rag_chat:'na', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
+        notes: 'Roles, permisos, MFA, IP ranges, usage limits.' },
+      { tech: 'Content Encryption (AES-256-GCM)', flag: 'rag',
+        cells: { basic_chat:'na', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'na', autonomous:'na', multi_agent:'na', http_server:'na', distributed:'na', p2p:'feature' },
+        notes: 'Cifrado real con rag feature; XOR fallback sin él.' },
+      { tech: 'Data Anonymization', flag: 'security',
+        cells: { basic_chat:'na', rag_chat:'feature', kpkg:'na', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'na', p2p:'na' },
+        notes: 'Anonimización de datos sensibles.' },
+      { tech: 'Request Signing', flag: null,
+        cells: { basic_chat:'na', rag_chat:'na', kpkg:'na', multi_user:'available', agent_tools:'na', autonomous:'na', multi_agent:'na', http_server:'available', distributed:'available', p2p:'available' },
+        notes: 'HMAC signing para verificar autenticidad. Siempre compilado.' },
+      { tech: 'Log Redaction', flag: null,
+        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
+        notes: 'Redacción de datos sensibles en logs. Siempre compilado.' },
+    ]
+  },
+  {
+    name: 'Tools & Agent',
+    rows: [
+      { tech: 'Tool Registry & Function Calling', flag: 'tools',
+        cells: { basic_chat:'na', rag_chat:'na', kpkg:'na', multi_user:'na', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'na', p2p:'na' },
+        notes: 'Definición y ejecución de tools. Caller define los tools.' },
+      { tech: 'Agentic Loop (tool-using agent)', flag: 'tools',
+        cells: { basic_chat:'na', rag_chat:'na', kpkg:'na', multi_user:'na', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'na', p2p:'na' },
+        notes: 'Loop de agente con multi-format parser (JSON/OpenAI/XML).' },
+      { tech: 'MCP Protocol', flag: 'tools',
+        cells: { basic_chat:'na', rag_chat:'na', kpkg:'na', multi_user:'na', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'na', p2p:'na' },
+        notes: 'Model Context Protocol para integración con servidores MCP.' },
+      { tech: 'Prompt Chaining', flag: 'tools',
+        cells: { basic_chat:'na', rag_chat:'na', kpkg:'na', multi_user:'na', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'na', p2p:'na' },
+        notes: 'Ejecución secuencial de prompts con variables.' },
+    ]
+  },
+  {
+    name: 'Autonomous Agent',
+    rows: [
+      { tech: 'Autonomous Loop', flag: 'autonomous',
+        cells: { basic_chat:'na', rag_chat:'na', kpkg:'na', multi_user:'na', agent_tools:'na', autonomous:'feature', multi_agent:'feature', http_server:'na', distributed:'na', p2p:'na' },
+        notes: 'Loop autónomo con CostConfig, multi-format parser, tool tracking.' },
+      { tech: 'Agent Policy & Sandbox', flag: 'autonomous',
+        cells: { basic_chat:'na', rag_chat:'na', kpkg:'na', multi_user:'na', agent_tools:'na', autonomous:'feature', multi_agent:'feature', http_server:'na', distributed:'na', p2p:'na' },
+        notes: 'Políticas de seguridad, niveles de riesgo, audit trail.' },
+      { tech: 'OS Tools (file, shell, HTTP)', flag: 'autonomous',
+        cells: { basic_chat:'na', rag_chat:'na', kpkg:'na', multi_user:'na', agent_tools:'na', autonomous:'feature', multi_agent:'feature', http_server:'na', distributed:'na', p2p:'na' },
+        notes: 'Operaciones de sistema con sandbox validation.' },
+      { tech: 'Mode Manager (5-level autonomy)', flag: 'autonomous',
+        cells: { basic_chat:'na', rag_chat:'na', kpkg:'na', multi_user:'na', agent_tools:'na', autonomous:'feature', multi_agent:'feature', http_server:'na', distributed:'na', p2p:'na' },
+        notes: 'Manual → Supervised → Assisted → Autonomous → Full. Auto-escalate.' },
+      { tech: 'Task Board (Kanban)', flag: 'autonomous',
+        cells: { basic_chat:'na', rag_chat:'na', kpkg:'na', multi_user:'na', agent_tools:'na', autonomous:'feature', multi_agent:'feature', http_server:'na', distributed:'na', p2p:'na' },
+        notes: 'Board con columnas, prioridades, undo, Markdown export.' },
+      { tech: 'User Interaction Handler', flag: 'autonomous',
+        cells: { basic_chat:'na', rag_chat:'na', kpkg:'na', multi_user:'na', agent_tools:'na', autonomous:'feature', multi_agent:'feature', http_server:'na', distributed:'na', p2p:'na' },
+        notes: 'AutoApprove, Buffered, Custom handlers para confirmaciones.' },
+      { tech: 'Agent Profiles & Templates', flag: 'autonomous',
+        cells: { basic_chat:'na', rag_chat:'na', kpkg:'na', multi_user:'na', agent_tools:'na', autonomous:'feature', multi_agent:'feature', http_server:'na', distributed:'na', p2p:'na' },
+        notes: 'ProfileRegistry con roles predefinidos y workflows.' },
+      { tech: 'Interactive Commands (bilingual)', flag: 'autonomous',
+        cells: { basic_chat:'na', rag_chat:'na', kpkg:'na', multi_user:'na', agent_tools:'na', autonomous:'feature', multi_agent:'na', http_server:'na', distributed:'na', p2p:'na' },
+        notes: 'Parser bilingüe EN/ES, CommandProcessor, undo.' },
+      { tech: 'Scheduler (Cron)', flag: 'scheduler',
+        cells: { basic_chat:'na', rag_chat:'na', kpkg:'na', multi_user:'na', agent_tools:'na', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'na', p2p:'na' },
+        notes: 'Requiere autonomous. Cron expressions, job lifecycle.' },
+      { tech: 'Trigger System', flag: 'scheduler',
+        cells: { basic_chat:'na', rag_chat:'na', kpkg:'na', multi_user:'na', agent_tools:'na', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'na', p2p:'na' },
+        notes: 'Manual, Cron, FileChange, FeedUpdate triggers con cooldowns.' },
+      { tech: 'Butler (env auto-detection)', flag: 'butler',
+        cells: { basic_chat:'na', rag_chat:'na', kpkg:'na', multi_user:'na', agent_tools:'na', autonomous:'feature', multi_agent:'feature', http_server:'na', distributed:'na', p2p:'na' },
+        notes: 'Detecta Ollama, LM Studio, GPU, Docker, browser, red, MCP.' },
+      { tech: 'Browser Tools (CDP)', flag: 'browser',
+        cells: { basic_chat:'na', rag_chat:'na', kpkg:'na', multi_user:'na', agent_tools:'na', autonomous:'feature', multi_agent:'feature', http_server:'na', distributed:'na', p2p:'na' },
+        notes: 'Chrome DevTools Protocol real. Navigate, click, screenshot.' },
+    ]
+  },
+  {
+    name: 'Multi-Agent & Orchestration',
+    rows: [
+      { tech: 'Agent Orchestrator', flag: 'multi-agent',
+        cells: { basic_chat:'na', rag_chat:'na', kpkg:'na', multi_user:'na', agent_tools:'na', autonomous:'na', multi_agent:'feature', http_server:'na', distributed:'na', p2p:'na' },
+        notes: 'Coordina múltiples agentes con roles distintos.' },
+      { tech: 'Agent Memory (shared)', flag: 'multi-agent',
+        cells: { basic_chat:'na', rag_chat:'na', kpkg:'na', multi_user:'na', agent_tools:'na', autonomous:'na', multi_agent:'feature', http_server:'na', distributed:'na', p2p:'na' },
+        notes: 'Memoria compartida thread-safe entre agentes.' },
+      { tech: 'Task Decomposition', flag: 'multi-agent',
+        cells: { basic_chat:'na', rag_chat:'na', kpkg:'na', multi_user:'na', agent_tools:'na', autonomous:'na', multi_agent:'feature', http_server:'na', distributed:'na', p2p:'na' },
+        notes: 'Descomposición de tareas complejas en sub-tareas.' },
+      { tech: 'Distributed Agents', flag: 'distributed-agents',
+        cells: { basic_chat:'na', rag_chat:'na', kpkg:'na', multi_user:'na', agent_tools:'na', autonomous:'na', multi_agent:'feature', http_server:'na', distributed:'feature', p2p:'na' },
+        notes: 'Agentes en nodos distribuidos. Requiere autonomous + distributed-network.' },
+    ]
+  },
+  {
+    name: 'Networking & Distribution',
+    rows: [
+      { tech: 'Distributed Core (DHT, CRDT, MapReduce)', flag: 'distributed',
+        cells: { basic_chat:'na', rag_chat:'na', kpkg:'na', multi_user:'na', agent_tools:'na', autonomous:'na', multi_agent:'na', http_server:'na', distributed:'feature', p2p:'feature' },
+        notes: 'Primitivas distribuidas. Parte de full feature.' },
+      { tech: 'Distributed Network (QUIC/TLS)', flag: 'distributed-network',
+        cells: { basic_chat:'na', rag_chat:'na', kpkg:'na', multi_user:'na', agent_tools:'na', autonomous:'na', multi_agent:'na', http_server:'na', distributed:'feature', p2p:'na' },
+        notes: 'Quinn QUIC, rustls, rcgen. Heavy deps, opt-in.' },
+      { tech: 'Consistent Hashing', flag: 'distributed-network',
+        cells: { basic_chat:'na', rag_chat:'na', kpkg:'na', multi_user:'na', agent_tools:'na', autonomous:'na', multi_agent:'na', http_server:'na', distributed:'feature', p2p:'na' },
+        notes: 'Hash ring con vnodes para distribución de datos.' },
+      { tech: 'Failure Detector (Phi Accrual)', flag: 'distributed-network',
+        cells: { basic_chat:'na', rag_chat:'na', kpkg:'na', multi_user:'na', agent_tools:'na', autonomous:'na', multi_agent:'na', http_server:'na', distributed:'feature', p2p:'na' },
+        notes: 'Detección de fallos basada en heartbeats.' },
+      { tech: 'Merkle Sync (anti-entropy)', flag: 'distributed-network',
+        cells: { basic_chat:'na', rag_chat:'na', kpkg:'na', multi_user:'na', agent_tools:'na', autonomous:'na', multi_agent:'na', http_server:'na', distributed:'feature', p2p:'na' },
+        notes: 'Sincronización con Merkle trees y SHA-256.' },
+      { tech: 'Node Security (TLS, tokens)', flag: 'distributed-network',
+        cells: { basic_chat:'na', rag_chat:'na', kpkg:'na', multi_user:'na', agent_tools:'na', autonomous:'na', multi_agent:'na', http_server:'na', distributed:'feature', p2p:'na' },
+        notes: 'Certificados, join tokens, challenge-response.' },
+      { tech: 'P2P Manager', flag: 'p2p',
+        cells: { basic_chat:'na', rag_chat:'na', kpkg:'na', multi_user:'na', agent_tools:'na', autonomous:'na', multi_agent:'na', http_server:'na', distributed:'na', p2p:'feature' },
+        notes: 'STUN/UPnP/NAT-PMP, ICE, TCP bootstrap, reputation.' },
+      { tech: 'Knowledge Broadcast (P2P)', flag: 'p2p',
+        cells: { basic_chat:'na', rag_chat:'na', kpkg:'feature', multi_user:'na', agent_tools:'na', autonomous:'na', multi_agent:'na', http_server:'na', distributed:'na', p2p:'feature' },
+        notes: 'Difusión de conocimiento entre peers.' },
+    ]
+  },
+  {
+    name: 'HTTP Server & API',
+    rows: [
+      { tech: 'HTTP Server (REST)', flag: null,
+        cells: { basic_chat:'na', rag_chat:'na', kpkg:'na', multi_user:'available', agent_tools:'na', autonomous:'na', multi_agent:'na', http_server:'available', distributed:'na', p2p:'na' },
+        notes: 'AiServer. Siempre compilado, caller lo instancia.' },
+      { tech: 'SSE Streaming', flag: 'advanced-streaming',
+        cells: { basic_chat:'na', rag_chat:'na', kpkg:'na', multi_user:'na', agent_tools:'na', autonomous:'na', multi_agent:'na', http_server:'feature', distributed:'na', p2p:'na' },
+        notes: 'Server-Sent Events para streaming de responses.' },
+      { tech: 'WebSocket Streaming', flag: 'advanced-streaming',
+        cells: { basic_chat:'na', rag_chat:'na', kpkg:'na', multi_user:'na', agent_tools:'na', autonomous:'na', multi_agent:'na', http_server:'feature', distributed:'na', p2p:'na' },
+        notes: 'RFC 6455 WebSocket con SHA-1 handshake.' },
+      { tech: 'OpenAPI Export', flag: null,
+        cells: { basic_chat:'na', rag_chat:'na', kpkg:'na', multi_user:'na', agent_tools:'na', autonomous:'na', multi_agent:'na', http_server:'available', distributed:'na', p2p:'na' },
+        notes: 'Genera spec OpenAPI del asistente. Siempre compilado.' },
+      { tech: 'Webhooks', flag: null,
+        cells: { basic_chat:'na', rag_chat:'na', kpkg:'na', multi_user:'available', agent_tools:'na', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'na', p2p:'na' },
+        notes: 'Notificaciones async. Siempre compilado.' },
+      { tech: 'Request Queue & Priority', flag: null,
+        cells: { basic_chat:'na', rag_chat:'na', kpkg:'na', multi_user:'available', agent_tools:'na', autonomous:'na', multi_agent:'na', http_server:'available', distributed:'na', p2p:'na' },
+        notes: 'Cola de prioridad para requests. Siempre compilado.' },
+    ]
+  },
+  {
+    name: 'Analytics & Evaluation',
+    rows: [
+      { tech: 'Metrics & Telemetry', flag: 'analytics',
+        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'na', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'na' },
+        notes: 'MetricsTracker basico siempre activo; detailed con analytics.' },
+      { tech: 'Conversation Analytics', flag: 'analytics',
+        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'na', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'na', p2p:'na' },
+        notes: 'Análisis de conversaciones, engagement, effectiveness.' },
+      { tech: 'Confidence Scoring', flag: 'eval',
+        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'na', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'na', p2p:'na' },
+        notes: 'Puntuación de confianza en respuestas.' },
+      { tech: 'Hallucination Detection', flag: 'eval',
+        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'na', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'na', p2p:'na' },
+        notes: 'Verificación de claims contra fuentes.' },
+      { tech: 'Model Ensemble', flag: 'eval',
+        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'na', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'na', p2p:'na' },
+        notes: 'Combina respuestas de múltiples modelos.' },
+      { tech: 'Evaluation (A/B, t-test)', flag: 'eval',
+        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'na', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'na', p2p:'na' },
+        notes: 'Welch t-test, benchmarking, comparación de modelos.' },
+      { tech: 'Quality Scoring', flag: 'eval',
+        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'na', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'na', p2p:'na' },
+        notes: 'Scoring de calidad de respuestas.' },
+    ]
+  },
+  {
+    name: 'Cross-Cutting Utilities',
+    rows: [
+      { tech: 'Adaptive Thinking', flag: null,
+        cells: { basic_chat:'auto', rag_chat:'auto', kpkg:'na', multi_user:'auto', agent_tools:'auto', autonomous:'auto', multi_agent:'auto', http_server:'auto', distributed:'na', p2p:'na' },
+        notes: 'Auto-ajusta config/prompt si habilitado.' },
+      { tech: 'Memory & Context Pinning', flag: null,
+        cells: { basic_chat:'auto', rag_chat:'auto', kpkg:'na', multi_user:'auto', agent_tools:'auto', autonomous:'auto', multi_agent:'auto', http_server:'auto', distributed:'na', p2p:'na' },
+        notes: 'Memory auto-managed; caller puede hacer pin.' },
+      { tech: 'Event Bus', flag: null,
+        cells: { basic_chat:'auto', rag_chat:'auto', kpkg:'available', multi_user:'auto', agent_tools:'auto', autonomous:'auto', multi_agent:'auto', http_server:'auto', distributed:'available', p2p:'available' },
+        notes: 'Auto-instanciado. Caller subscribe a eventos.' },
+      { tech: 'Streaming (response)', flag: null,
+        cells: { basic_chat:'core', rag_chat:'core', kpkg:'na', multi_user:'core', agent_tools:'core', autonomous:'core', multi_agent:'core', http_server:'core', distributed:'na', p2p:'na' },
+        notes: 'StreamBuffer para responses. Auto-applied.' },
+      { tech: 'Conversation Management', flag: null,
+        cells: { basic_chat:'available', rag_chat:'available', kpkg:'na', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'na', p2p:'na' },
+        notes: 'Control, compaction, snapshot, templates.' },
+      { tech: 'Caching & Compression', flag: null,
+        cells: { basic_chat:'available', rag_chat:'available', kpkg:'na', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'na', p2p:'na' },
+        notes: 'Semantic cache, response caching, compression.' },
+      { tech: 'Retry & Fallback', flag: null,
+        cells: { basic_chat:'available', rag_chat:'available', kpkg:'na', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'na', p2p:'na' },
+        notes: 'Retry policy, fallback chain. Caller configura.' },
+      { tech: 'Entity Extraction', flag: null,
+        cells: { basic_chat:'available', rag_chat:'available', kpkg:'na', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'na', p2p:'na' },
+        notes: 'Nombres, organizaciones, localizaciones.' },
+      { tech: 'Structured Output (JSON schema)', flag: null,
+        cells: { basic_chat:'available', rag_chat:'available', kpkg:'na', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'na', p2p:'na' },
+        notes: 'Fuerza schema JSON en respuestas.' },
+      { tech: 'Cost Tracking & Budgets', flag: null,
+        cells: { basic_chat:'available', rag_chat:'available', kpkg:'na', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'na', p2p:'na' },
+        notes: 'CostTracker, token budgets, daily limits.' },
+      { tech: 'Templates & Prompt Optimizer', flag: null,
+        cells: { basic_chat:'available', rag_chat:'available', kpkg:'na', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'na', p2p:'na' },
+        notes: 'PromptTemplate, Few-shot, optimization.' },
+      { tech: 'Plugins', flag: null,
+        cells: { basic_chat:'available', rag_chat:'available', kpkg:'na', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'na', p2p:'na' },
+        notes: 'Custom message processors.' },
+      { tech: 'i18n', flag: null,
+        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
+        notes: 'Internacionalización. Siempre compilado.' },
+      { tech: 'Export (JSON, Markdown)', flag: null,
+        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'na', p2p:'na' },
+        notes: 'Exportación de conversaciones.' },
+      { tech: 'Vision / Multimodal', flag: 'vision',
+        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'na', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'na', p2p:'na' },
+        notes: 'Envío de imágenes al modelo.' },
+      { tech: 'External Adapters', flag: 'adapters',
+        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'na', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'na', p2p:'na' },
+        notes: 'OpenAI, Anthropic, HuggingFace adapters.' },
+      { tech: 'WASM Support', flag: 'wasm',
+        cells: { basic_chat:'feature', rag_chat:'na', kpkg:'na', multi_user:'na', agent_tools:'na', autonomous:'na', multi_agent:'na', http_server:'na', distributed:'na', p2p:'na' },
+        notes: 'Solo en wasm32. web-sys, js-sys, getrandom.' },
+      { tech: 'Quantization', flag: null,
+        cells: { basic_chat:'available', rag_chat:'available', kpkg:'na', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'na', p2p:'na' },
+        notes: 'Cuantización de modelos locales.' },
+      { tech: 'Debug & Health Check', flag: null,
+        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
+        notes: 'Debug mode, health checks de providers.' },
+    ]
+  },
+];
+
+// ============================================================
+// STATE
+// ============================================================
+
+const edits = {}; // key: "row_tech|use_case_id" => { status, text }
+let currentCellKey = null;
+let collapsedGroups = new Set();
+let activeFilter = 'all';
+
+// ============================================================
+// RENDER
+// ============================================================
+
+function statusLabel(s) {
+  const map = {
+    'core': 'Core',
+    'auto': 'Auto',
+    'available': 'Available',
+    'feature': 'Feature',
+    'na': 'N/A',
+    'should-be-core': 'Prop: Core',
+    'should-be-auto': 'Prop: Auto',
+    'should-be-configurable': 'Prop: Config.',
+    'should-add': 'Prop: Añadir',
+    'should-remove': 'Prop: Eliminar',
+    'question': 'Pregunta',
+  };
+  return map[s] || s;
+}
+
+function statusClass(s) {
+  if (s.startsWith('should-') || s === 'question') return 'status-na';
+  return 'status-' + s;
+}
+
+function cellKey(tech, ucId) {
+  return tech + '|' + ucId;
+}
+
+function buildFilterBar() {
+  const bar = document.getElementById('filterBar');
+  const filters = [
+    { id: 'all', label: 'Todos' },
+    { id: 'core', label: 'Core' },
+    { id: 'auto', label: 'Auto' },
+    { id: 'available', label: 'Available' },
+    { id: 'feature', label: 'Feature' },
+    { id: 'edited', label: 'Editados' },
+  ];
+  filters.forEach(f => {
+    const btn = document.createElement('button');
+    btn.className = 'filter-btn' + (f.id === 'all' ? ' active' : '');
+    btn.textContent = f.label;
+    btn.onclick = () => {
+      activeFilter = f.id;
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      renderTable();
+    };
+    bar.appendChild(btn);
+  });
+}
+
+function renderTable() {
+  // Header
+  const hr = document.getElementById('headerRow');
+  hr.innerHTML = '<th>Tecnología / Módulo</th>';
+  USE_CASES.forEach(uc => {
+    hr.innerHTML += `<th><span class="use-case-num">${uc.short}</span>${uc.name}</th>`;
+  });
+
+  // Body
+  const body = document.getElementById('matrixBody');
+  body.innerHTML = '';
+
+  GROUPS.forEach((group, gi) => {
+    const isCollapsed = collapsedGroups.has(gi);
+
+    // Filter: check if any row in group passes filter
+    const visibleRows = group.rows.filter(row => rowPassesFilter(row));
+    if (visibleRows.length === 0 && activeFilter !== 'all') return;
+
+    // Group header
+    const gtr = document.createElement('tr');
+    gtr.className = 'group-header' + (isCollapsed ? ' collapsed' : '');
+    gtr.innerHTML = `<td colspan="${USE_CASES.length + 1}"><span class="collapse-icon">▼</span>${group.name} <span style="opacity:0.5;font-weight:400;font-size:0.72rem">(${group.rows.length})</span></td>`;
+    gtr.onclick = () => {
+      if (collapsedGroups.has(gi)) collapsedGroups.delete(gi);
+      else collapsedGroups.add(gi);
+      renderTable();
+    };
+    body.appendChild(gtr);
+
+    if (isCollapsed) return;
+
+    group.rows.forEach(row => {
+      if (activeFilter !== 'all' && !rowPassesFilter(row)) return;
+
+      const tr = document.createElement('tr');
+
+      // Tech name cell
+      const tdName = document.createElement('td');
+      let nameHtml = row.tech;
+      if (row.flag) {
+        nameHtml += ` <span style="color:#fbbf24;font-size:0.65rem;opacity:0.8">[${row.flag}]</span>`;
+      }
+      tdName.innerHTML = nameHtml;
+      tr.appendChild(tdName);
+
+      // Use case cells
+      USE_CASES.forEach(uc => {
+        const td = document.createElement('td');
+        const key = cellKey(row.tech, uc.id);
+        const originalStatus = row.cells[uc.id] || 'na';
+        const edit = edits[key];
+        const displayStatus = edit ? (edit.status || originalStatus) : originalStatus;
+        const isEdited = !!edit;
+
+        const btn = document.createElement('button');
+        btn.className = `cell-btn ${statusClass(displayStatus)}${isEdited ? ' edited' : ''}`;
+        btn.innerHTML = statusLabel(displayStatus);
+        btn.onclick = (e) => {
+          e.stopPropagation();
+          openModal(row, uc, key, originalStatus);
+        };
+        td.appendChild(btn);
+        tr.appendChild(td);
+      });
+
+      body.appendChild(tr);
+    });
+  });
+}
+
+function rowPassesFilter(row) {
+  if (activeFilter === 'all') return true;
+  if (activeFilter === 'edited') {
+    return USE_CASES.some(uc => edits[cellKey(row.tech, uc.id)]);
+  }
+  return USE_CASES.some(uc => {
+    const key = cellKey(row.tech, uc.id);
+    const edit = edits[key];
+    const status = edit ? (edit.status || row.cells[uc.id]) : (row.cells[uc.id] || 'na');
+    return status === activeFilter;
+  });
+}
+
+// ============================================================
+// MODAL
+// ============================================================
+
+function openModal(row, uc, key, originalStatus) {
+  currentCellKey = key;
+  document.getElementById('modalTitle').textContent = row.tech;
+  document.getElementById('modalSubtitle').textContent = `Caso de uso: ${uc.name}`;
+  document.getElementById('modalCurrentStatus').textContent = statusLabel(originalStatus) + (row.flag ? ` [feature: ${row.flag}]` : ' [siempre compilado]');
+
+  if (row.notes) {
+    document.getElementById('modalNotesInfo').style.display = 'block';
+    document.getElementById('modalNotes').textContent = row.notes;
+  } else {
+    document.getElementById('modalNotesInfo').style.display = 'none';
+  }
+
+  const edit = edits[key];
+  document.getElementById('modalSelect').value = edit ? (edit.status || '') : '';
+  document.getElementById('modalText').value = edit ? (edit.text || '') : '';
+  document.getElementById('btnRemoveEdit').style.display = edit ? 'inline-block' : 'none';
+
+  document.getElementById('modalOverlay').classList.add('active');
+  setTimeout(() => document.getElementById('modalText').focus(), 100);
+}
+
+function closeModal() {
+  document.getElementById('modalOverlay').classList.remove('active');
+  currentCellKey = null;
+}
+
+function closeModalOutside(e) {
+  if (e.target === document.getElementById('modalOverlay')) closeModal();
+}
+
+function saveEdit() {
+  const status = document.getElementById('modalSelect').value;
+  const text = document.getElementById('modalText').value.trim();
+
+  if (!status && !text) {
+    delete edits[currentCellKey];
+  } else {
+    edits[currentCellKey] = { status, text };
+  }
+
+  closeModal();
+  renderTable();
+  updateEditCount();
+}
+
+function removeEdit() {
+  delete edits[currentCellKey];
+  closeModal();
+  renderTable();
+  updateEditCount();
+}
+
+function updateEditCount() {
+  const count = Object.keys(edits).length;
+  const badge = document.getElementById('editCount');
+  const btn = document.getElementById('btnGenerate');
+  if (count > 0) {
+    badge.style.display = 'inline-flex';
+    badge.textContent = count;
+    btn.disabled = false;
+  } else {
+    badge.style.display = 'none';
+    btn.disabled = true;
+  }
+}
+
+// ============================================================
+// PROMPT GENERATION
+// ============================================================
+
+function generatePrompt() {
+  const entries = Object.entries(edits);
+  if (entries.length === 0) return;
+
+  // Group edits by type
+  const statusChanges = [];
+  const questions = [];
+  const instructions = [];
+
+  entries.forEach(([key, edit]) => {
+    const [tech, ucId] = key.split('|');
+    const uc = USE_CASES.find(u => u.id === ucId);
+    const ucName = uc ? uc.name : ucId;
+
+    // Find original status
+    let original = 'na';
+    for (const g of GROUPS) {
+      const row = g.rows.find(r => r.tech === tech);
+      if (row) { original = row.cells[ucId] || 'na'; break; }
+    }
+
+    const entry = { tech, ucName, original, edit };
+
+    if (edit.status === 'question' || (!edit.status && edit.text)) {
+      questions.push(entry);
+    } else if (edit.status && edit.status.startsWith('should-')) {
+      instructions.push(entry);
+    } else if (edit.status) {
+      statusChanges.push(entry);
+    }
+    // If has text but categorized above, it'll be included in that category
+    if (edit.text && edit.status && edit.status !== 'question') {
+      // Text already included in the entry above
+    }
+  });
+
+  let prompt = `Tengo la siguiente lista de cambios y preguntas sobre la matriz de Casos de Uso vs Tecnologías del AI Assistant:\n\n`;
+
+  if (statusChanges.length > 0) {
+    prompt += `## Cambios de estado\n\n`;
+    statusChanges.forEach(e => {
+      prompt += `- **${e.tech}** × **${e.ucName}**: cambiar de "${statusLabel(e.original)}" a "${statusLabel(e.edit.status)}"`;
+      if (e.edit.text) prompt += `\n  Nota: ${e.edit.text}`;
+      prompt += `\n`;
+    });
+    prompt += `\n`;
+  }
+
+  if (instructions.length > 0) {
+    prompt += `## Propuestas de cambio\n\n`;
+    instructions.forEach(e => {
+      prompt += `- **${e.tech}** × **${e.ucName}**: ${statusLabel(e.edit.status)} (actualmente: ${statusLabel(e.original)})`;
+      if (e.edit.text) prompt += `\n  Detalle: ${e.edit.text}`;
+      prompt += `\n`;
+    });
+    prompt += `\n`;
+  }
+
+  if (questions.length > 0) {
+    prompt += `## Preguntas\n\n`;
+    questions.forEach(e => {
+      prompt += `- **${e.tech}** × **${e.ucName}** (actualmente: ${statusLabel(e.original)})`;
+      if (e.edit.text) prompt += `\n  ${e.edit.text}`;
+      prompt += `\n`;
+    });
+    prompt += `\n`;
+  }
+
+  prompt += `\nPor favor, para cada punto:\n1. Confirma si el cambio es viable y correcto\n2. Si requiere cambios de código, indica qué archivos y qué modificaciones\n3. Si es una pregunta, responde con contexto técnico\n`;
+
+  document.getElementById('promptText').textContent = prompt;
+  document.getElementById('promptOutput').classList.add('active');
+  document.getElementById('promptOutput').scrollIntoView({ behavior: 'smooth' });
+}
+
+function copyPrompt() {
+  const text = document.getElementById('promptText').textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.querySelector('.copy-btn');
+    btn.textContent = 'Copiado!';
+    btn.classList.add('copied');
+    setTimeout(() => {
+      btn.textContent = 'Copiar al portapapeles';
+      btn.classList.remove('copied');
+    }, 2000);
+  });
+}
+
+function clearAll() {
+  if (Object.keys(edits).length === 0) return;
+  if (!confirm('¿Limpiar todas las ediciones?')) return;
+  for (const k in edits) delete edits[k];
+  renderTable();
+  updateEditCount();
+  document.getElementById('promptOutput').classList.remove('active');
+}
+
+function toggleAllGroups() {
+  if (collapsedGroups.size === GROUPS.length) {
+    collapsedGroups.clear();
+  } else {
+    GROUPS.forEach((_, i) => collapsedGroups.add(i));
+  }
+  renderTable();
+}
+
+// Keyboard shortcuts
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeModal();
+  if (e.key === 'Enter' && e.ctrlKey && document.getElementById('modalOverlay').classList.contains('active')) saveEdit();
+});
+
+// ============================================================
+// INIT
+// ============================================================
+
+buildFilterBar();
+renderTable();
+updateEditCount();
+</script>
+
+
+
+</body></html>

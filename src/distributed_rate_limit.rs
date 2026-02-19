@@ -40,19 +40,19 @@ impl Default for InMemoryBackend {
 
 impl RateLimitBackend for InMemoryBackend {
     fn get(&self, key: &str) -> Option<RateLimitState> {
-        let data = self.data.lock().unwrap();
+        let data = self.data.lock().unwrap_or_else(|e| e.into_inner());
         data.get(key).map(|(s, _)| s.clone())
     }
 
     fn set(&self, key: &str, state: RateLimitState, _ttl: Duration) {
-        let mut data = self.data.lock().unwrap();
+        let mut data = self.data.lock().unwrap_or_else(|e| e.into_inner());
         data.insert(key.to_string(), (state, Instant::now()));
     }
 
     fn increment(&self, key: &str, requests: usize, tokens: usize) -> RateLimitState {
-        let mut data = self.data.lock().unwrap();
+        let mut data = self.data.lock().unwrap_or_else(|e| e.into_inner());
         let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+            .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
 
         let entry = data.entry(key.to_string()).or_insert_with(|| {
             (RateLimitState {
@@ -87,7 +87,7 @@ impl DistributedRateLimiter {
 
     pub fn check(&self, key: &str) -> DistributedRateLimitResult {
         let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+            .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
 
         if let Some(state) = self.backend.get(key) {
             if now - state.window_start < self.window_seconds {

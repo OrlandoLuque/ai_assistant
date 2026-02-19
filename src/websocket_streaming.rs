@@ -137,18 +137,26 @@ impl WsFrame {
 }
 
 fn rand_mask() -> [u8; 4] {
-    // Simple pseudo-random mask
-    let seed = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u32)
-        .unwrap_or(0);
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
-    [
-        (seed & 0xFF) as u8,
-        ((seed >> 8) & 0xFF) as u8,
-        ((seed >> 16) & 0xFF) as u8,
-        ((seed >> 24) & 0xFF) as u8,
-    ]
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+
+    let mut result = [0u8; 4];
+    for (i, byte) in result.iter_mut().enumerate() {
+        let mut hasher = DefaultHasher::new();
+        nanos.hash(&mut hasher);
+        (i as u64).hash(&mut hasher);
+        std::thread::current().id().hash(&mut hasher);
+        let stack_var = 0u8;
+        (&stack_var as *const u8 as u64).hash(&mut hasher);
+        *byte = hasher.finish() as u8;
+    }
+    result
 }
 
 /// WebSocket close codes
@@ -488,22 +496,140 @@ impl WsHandshake {
         request
     }
 
+    /// Compute the expected Sec-WebSocket-Accept value per RFC 6455 Section 4.2.2.
+    /// SHA-1( key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11" ) → base64
     pub fn expected_accept(&self) -> String {
-        // In real implementation, compute SHA-1 of key + magic string
-        // For now, return placeholder
-        format!("accept_{}", self.key)
+        let concat = format!("{}258EAFA5-E914-47DA-95CA-C5AB0DC85B11", self.key);
+        let hash = sha1_hash(concat.as_bytes());
+        base64_encode(&hash)
     }
 }
 
+/// Generate a random WebSocket key: 16 random bytes → base64 (RFC 6455 Section 4.1)
 fn generate_ws_key() -> String {
-    // Generate 16 random bytes and base64 encode
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
-    // Simple base64-like encoding for demo
-    format!("key_{:016x}", timestamp)
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+
+    let mut bytes = [0u8; 16];
+    for (i, byte) in bytes.iter_mut().enumerate() {
+        let mut hasher = DefaultHasher::new();
+        nanos.hash(&mut hasher);
+        (i as u64).hash(&mut hasher);
+        std::thread::current().id().hash(&mut hasher);
+        let stack_var = 0u8;
+        (&stack_var as *const u8 as u64).hash(&mut hasher);
+        *byte = hasher.finish() as u8;
+    }
+    base64_encode(&bytes)
+}
+
+/// SHA-1 hash (RFC 3174). Returns 20-byte digest.
+fn sha1_hash(data: &[u8]) -> [u8; 20] {
+    let mut h0: u32 = 0x67452301;
+    let mut h1: u32 = 0xEFCDAB89;
+    let mut h2: u32 = 0x98BADCFE;
+    let mut h3: u32 = 0x10325476;
+    let mut h4: u32 = 0xC3D2E1F0;
+
+    // Pre-processing: pad message
+    let bit_len = (data.len() as u64) * 8;
+    let mut msg = data.to_vec();
+    msg.push(0x80);
+    while (msg.len() % 64) != 56 {
+        msg.push(0x00);
+    }
+    msg.extend_from_slice(&bit_len.to_be_bytes());
+
+    // Process each 512-bit (64-byte) block
+    for block in msg.chunks_exact(64) {
+        let mut w = [0u32; 80];
+        for i in 0..16 {
+            w[i] = u32::from_be_bytes([
+                block[i * 4],
+                block[i * 4 + 1],
+                block[i * 4 + 2],
+                block[i * 4 + 3],
+            ]);
+        }
+        for i in 16..80 {
+            w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
+        }
+
+        let (mut a, mut b, mut c, mut d, mut e) = (h0, h1, h2, h3, h4);
+
+        for i in 0..80 {
+            let (f, k) = match i {
+                0..=19 => ((b & c) | ((!b) & d), 0x5A827999u32),
+                20..=39 => (b ^ c ^ d, 0x6ED9EBA1u32),
+                40..=59 => ((b & c) | (b & d) | (c & d), 0x8F1BBCDCu32),
+                _ => (b ^ c ^ d, 0xCA62C1D6u32),
+            };
+
+            let temp = a.rotate_left(5)
+                .wrapping_add(f)
+                .wrapping_add(e)
+                .wrapping_add(k)
+                .wrapping_add(w[i]);
+            e = d;
+            d = c;
+            c = b.rotate_left(30);
+            b = a;
+            a = temp;
+        }
+
+        h0 = h0.wrapping_add(a);
+        h1 = h1.wrapping_add(b);
+        h2 = h2.wrapping_add(c);
+        h3 = h3.wrapping_add(d);
+        h4 = h4.wrapping_add(e);
+    }
+
+    let mut result = [0u8; 20];
+    result[0..4].copy_from_slice(&h0.to_be_bytes());
+    result[4..8].copy_from_slice(&h1.to_be_bytes());
+    result[8..12].copy_from_slice(&h2.to_be_bytes());
+    result[12..16].copy_from_slice(&h3.to_be_bytes());
+    result[16..20].copy_from_slice(&h4.to_be_bytes());
+    result
+}
+
+/// Standard base64 encoding (RFC 4648)
+fn base64_encode(data: &[u8]) -> String {
+    const CHARS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    let mut result = String::with_capacity((data.len() + 2) / 3 * 4);
+    let chunks = data.chunks(3);
+
+    for chunk in chunks {
+        let b0 = chunk[0] as u32;
+        let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
+        let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
+
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+
+        result.push(CHARS[((triple >> 18) & 0x3F) as usize] as char);
+        result.push(CHARS[((triple >> 12) & 0x3F) as usize] as char);
+
+        if chunk.len() > 1 {
+            result.push(CHARS[((triple >> 6) & 0x3F) as usize] as char);
+        } else {
+            result.push('=');
+        }
+
+        if chunk.len() > 2 {
+            result.push(CHARS[(triple & 0x3F) as usize] as char);
+        } else {
+            result.push('=');
+        }
+    }
+
+    result
 }
 
 /// Bidirectional stream manager
@@ -614,5 +740,56 @@ mod tests {
 
         let frames = stream.drain_outgoing();
         assert_eq!(frames.len(), 1);
+    }
+
+    #[test]
+    fn test_sha1_known_vectors() {
+        // RFC 3174 test vectors
+        let hash = sha1_hash(b"abc");
+        assert_eq!(
+            hash,
+            [0xA9, 0x99, 0x3E, 0x36, 0x47, 0x06, 0x81, 0x6A, 0xBA, 0x3E,
+             0x25, 0x71, 0x78, 0x50, 0xC2, 0x6C, 0x9C, 0xD0, 0xD8, 0x9D]
+        );
+
+        let hash2 = sha1_hash(b"");
+        assert_eq!(
+            hash2,
+            [0xDA, 0x39, 0xA3, 0xEE, 0x5E, 0x6B, 0x4B, 0x0D, 0x32, 0x55,
+             0xBF, 0xEF, 0x95, 0x60, 0x18, 0x90, 0xAF, 0xD8, 0x07, 0x09]
+        );
+    }
+
+    #[test]
+    fn test_base64_encode() {
+        assert_eq!(base64_encode(b""), "");
+        assert_eq!(base64_encode(b"f"), "Zg==");
+        assert_eq!(base64_encode(b"fo"), "Zm8=");
+        assert_eq!(base64_encode(b"foo"), "Zm9v");
+        assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
+    }
+
+    #[test]
+    fn test_websocket_accept_rfc6455() {
+        // RFC 6455 Section 4.2.2 example
+        let handshake = WsHandshake {
+            host: "example.com".to_string(),
+            path: "/chat".to_string(),
+            key: "dGhlIHNhbXBsZSBub25jZQ==".to_string(),
+            protocols: Vec::new(),
+            extensions: Vec::new(),
+            headers: HashMap::new(),
+        };
+
+        assert_eq!(handshake.expected_accept(), "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=");
+    }
+
+    #[test]
+    fn test_generate_ws_key_format() {
+        let key = generate_ws_key();
+        // WebSocket key should be base64-encoded 16 bytes = 24 chars with padding
+        assert_eq!(key.len(), 24);
+        // Should be valid base64
+        assert!(key.chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '='));
     }
 }

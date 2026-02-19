@@ -223,7 +223,7 @@ impl KeepaliveManager {
 
     /// Register a connection to monitor
     pub fn register(&self, provider: &str, endpoint: &str) {
-        let mut connections = self.connections.write().unwrap();
+        let mut connections = self.connections.write().unwrap_or_else(|e| e.into_inner());
         connections.insert(
             provider.to_string(),
             ConnectionInfo::new(provider.to_string(), endpoint.to_string()),
@@ -232,31 +232,31 @@ impl KeepaliveManager {
 
     /// Unregister a connection
     pub fn unregister(&self, provider: &str) {
-        let mut connections = self.connections.write().unwrap();
+        let mut connections = self.connections.write().unwrap_or_else(|e| e.into_inner());
         connections.remove(provider);
     }
 
     /// Get connection state
     pub fn get_state(&self, provider: &str) -> Option<ConnectionState> {
-        let connections = self.connections.read().unwrap();
+        let connections = self.connections.read().unwrap_or_else(|e| e.into_inner());
         connections.get(provider).map(|c| c.state)
     }
 
     /// Get connection info
     pub fn get_info(&self, provider: &str) -> Option<ConnectionInfo> {
-        let connections = self.connections.read().unwrap();
+        let connections = self.connections.read().unwrap_or_else(|e| e.into_inner());
         connections.get(provider).cloned()
     }
 
     /// Get all connections
     pub fn all_connections(&self) -> Vec<ConnectionInfo> {
-        let connections = self.connections.read().unwrap();
+        let connections = self.connections.read().unwrap_or_else(|e| e.into_inner());
         connections.values().cloned().collect()
     }
 
     /// Mark connection as connected
     pub fn mark_connected(&self, provider: &str) {
-        let mut connections = self.connections.write().unwrap();
+        let mut connections = self.connections.write().unwrap_or_else(|e| e.into_inner());
         if let Some(conn) = connections.get_mut(provider) {
             conn.state = ConnectionState::Connected;
             conn.connected_since = Some(Instant::now());
@@ -271,7 +271,7 @@ impl KeepaliveManager {
 
     /// Mark connection as disconnected
     pub fn mark_disconnected(&self, provider: &str, reason: &str) {
-        let mut connections = self.connections.write().unwrap();
+        let mut connections = self.connections.write().unwrap_or_else(|e| e.into_inner());
         if let Some(conn) = connections.get_mut(provider) {
             conn.state = ConnectionState::Disconnected;
             conn.connected_since = None;
@@ -285,7 +285,7 @@ impl KeepaliveManager {
 
     /// Record heartbeat result
     pub fn record_heartbeat(&self, provider: &str, result: HeartbeatResult) {
-        let mut connections = self.connections.write().unwrap();
+        let mut connections = self.connections.write().unwrap_or_else(|e| e.into_inner());
         if let Some(conn) = connections.get_mut(provider) {
             if result.success {
                 conn.last_heartbeat = Some(Instant::now());
@@ -336,7 +336,7 @@ impl KeepaliveManager {
     /// Attempt reconnection
     pub fn attempt_reconnect(&self, provider: &str) -> bool {
         let should_reconnect = {
-            let mut connections = self.connections.write().unwrap();
+            let mut connections = self.connections.write().unwrap_or_else(|e| e.into_inner());
             if let Some(conn) = connections.get_mut(provider) {
                 if conn.reconnect_attempts >= self.config.max_reconnect_attempts {
                     return false;
@@ -352,7 +352,7 @@ impl KeepaliveManager {
 
         if should_reconnect {
             let attempts = {
-                let connections = self.connections.read().unwrap();
+                let connections = self.connections.read().unwrap_or_else(|e| e.into_inner());
                 connections.get(provider).map(|c| c.reconnect_attempts).unwrap_or(0)
             };
 
@@ -367,7 +367,7 @@ impl KeepaliveManager {
 
     /// Reset reconnection counter
     pub fn reset_reconnect_counter(&self, provider: &str) {
-        let mut connections = self.connections.write().unwrap();
+        let mut connections = self.connections.write().unwrap_or_else(|e| e.into_inner());
         if let Some(conn) = connections.get_mut(provider) {
             conn.reconnect_attempts = 0;
         }
@@ -375,12 +375,12 @@ impl KeepaliveManager {
 
     /// Add event callback
     pub fn on_event(&self, callback: EventCallback) {
-        let mut callbacks = self.callbacks.write().unwrap();
+        let mut callbacks = self.callbacks.write().unwrap_or_else(|e| e.into_inner());
         callbacks.push(callback);
     }
 
     fn emit_event(&self, event: KeepaliveEvent) {
-        let callbacks = self.callbacks.read().unwrap();
+        let callbacks = self.callbacks.read().unwrap_or_else(|e| e.into_inner());
         for callback in callbacks.iter() {
             callback(event.clone());
         }
@@ -388,7 +388,7 @@ impl KeepaliveManager {
 
     /// Check if any connection needs attention
     pub fn needs_attention(&self) -> Vec<String> {
-        let connections = self.connections.read().unwrap();
+        let connections = self.connections.read().unwrap_or_else(|e| e.into_inner());
         connections.iter()
             .filter(|(_, conn)| conn.state.needs_action())
             .map(|(name, _)| name.clone())
@@ -397,7 +397,7 @@ impl KeepaliveManager {
 
     /// Get healthy connections
     pub fn healthy_connections(&self) -> Vec<String> {
-        let connections = self.connections.read().unwrap();
+        let connections = self.connections.read().unwrap_or_else(|e| e.into_inner());
         connections.iter()
             .filter(|(_, conn)| conn.state == ConnectionState::Connected)
             .map(|(name, _)| name.clone())
@@ -406,7 +406,7 @@ impl KeepaliveManager {
 
     /// Get summary statistics
     pub fn stats(&self) -> KeepaliveStats {
-        let connections = self.connections.read().unwrap();
+        let connections = self.connections.read().unwrap_or_else(|e| e.into_inner());
 
         let mut stats = KeepaliveStats::default();
         stats.total_connections = connections.len();
@@ -436,7 +436,7 @@ impl KeepaliveManager {
     /// Perform a heartbeat check on a provider
     pub fn heartbeat(&self, provider: &str) -> Option<HeartbeatResult> {
         let endpoint = {
-            let connections = self.connections.read().unwrap();
+            let connections = self.connections.read().unwrap_or_else(|e| e.into_inner());
             connections.get(provider).map(|c| c.endpoint.clone())
         }?;
 
@@ -476,20 +476,20 @@ impl KeepaliveManager {
     /// Start the keepalive monitoring loop
     pub fn start(&self) -> KeepaliveHandle {
         let running = self.running.clone();
-        *running.lock().unwrap() = true;
+        *running.lock().unwrap_or_else(|e| e.into_inner()) = true;
 
         KeepaliveHandle { running }
     }
 
     /// Stop the keepalive monitoring
     pub fn stop(&self) {
-        let mut running = self.running.lock().unwrap();
+        let mut running = self.running.lock().unwrap_or_else(|e| e.into_inner());
         *running = false;
     }
 
     /// Check if monitoring is running
     pub fn is_running(&self) -> bool {
-        *self.running.lock().unwrap()
+        *self.running.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
 
@@ -507,13 +507,13 @@ pub struct KeepaliveHandle {
 impl KeepaliveHandle {
     /// Stop the keepalive monitoring
     pub fn stop(&self) {
-        let mut running = self.running.lock().unwrap();
+        let mut running = self.running.lock().unwrap_or_else(|e| e.into_inner());
         *running = false;
     }
 
     /// Check if still running
     pub fn is_running(&self) -> bool {
-        *self.running.lock().unwrap()
+        *self.running.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
 
@@ -565,7 +565,7 @@ impl ConnectionMonitor {
 
     /// Get current state
     pub fn state(&self) -> ConnectionState {
-        *self.state.read().unwrap()
+        *self.state.read().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Check connection now
@@ -583,7 +583,7 @@ impl ConnectionMonitor {
         let success = result.is_ok();
 
         {
-            let mut state = self.state.write().unwrap();
+            let mut state = self.state.write().unwrap_or_else(|e| e.into_inner());
             *state = if success {
                 ConnectionState::Connected
             } else {
@@ -592,7 +592,7 @@ impl ConnectionMonitor {
         }
 
         {
-            let mut last_check = self.last_check.write().unwrap();
+            let mut last_check = self.last_check.write().unwrap_or_else(|e| e.into_inner());
             *last_check = Some(Instant::now());
         }
 
@@ -601,7 +601,7 @@ impl ConnectionMonitor {
 
     /// Check if monitoring should run
     pub fn should_check(&self) -> bool {
-        let last_check = self.last_check.read().unwrap();
+        let last_check = self.last_check.read().unwrap_or_else(|e| e.into_inner());
         match *last_check {
             None => true,
             Some(last) => last.elapsed() >= self.config.heartbeat_interval,

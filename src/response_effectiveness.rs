@@ -372,12 +372,12 @@ impl BatchEvaluator {
 
         let best_idx = scores.iter()
             .enumerate()
-            .max_by(|(_, a), (_, b)| a.overall.partial_cmp(&b.overall).unwrap())
+            .max_by(|(_, a), (_, b)| a.overall.partial_cmp(&b.overall).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(i, _)| i);
 
         let worst_idx = scores.iter()
             .enumerate()
-            .min_by(|(_, a), (_, b)| a.overall.partial_cmp(&b.overall).unwrap())
+            .min_by(|(_, a), (_, b)| a.overall.partial_cmp(&b.overall).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(i, _)| i);
 
         BatchResult {

@@ -510,11 +510,13 @@ impl ConfigFile {
             "textgenwebui" | "text_gen_webui" => AiProvider::TextGenWebUI,
             "kobold" | "koboldcpp" => AiProvider::KoboldCpp,
             "localai" | "local_ai" => AiProvider::LocalAI,
-            "openai_compatible" | "openai" => {
+            "openai_compatible" => {
                 AiProvider::OpenAICompatible {
                     base_url: self.provider.custom_url.clone().unwrap_or_default(),
                 }
             }
+            "openai" => AiProvider::OpenAI,
+            "anthropic" => AiProvider::Anthropic,
             _ => AiProvider::Ollama,
         };
 
@@ -527,8 +529,10 @@ impl ConfigFile {
             kobold_url: self.urls.kobold.clone(),
             local_ai_url: self.urls.local_ai.clone(),
             custom_url: self.provider.custom_url.clone().unwrap_or_default(),
+            api_key: self.provider.api_key.clone().unwrap_or_default(),
             max_history_messages: self.generation.max_history,
             temperature: self.generation.temperature,
+            retry_config: crate::retry::RetryConfig::default(),
         }
     }
 
@@ -543,6 +547,8 @@ impl ConfigFile {
             AiProvider::OpenAICompatible { base_url } => {
                 ("openai_compatible".to_string(), Some(base_url.clone()))
             }
+            AiProvider::OpenAI => ("openai".to_string(), None),
+            AiProvider::Anthropic => ("anthropic".to_string(), None),
         };
 
         Self {
@@ -816,15 +822,15 @@ pub fn save_config(config: &AiConfig, path: &Path) -> Result<(), AiError> {
 
 /// Get the default config file path for the current platform
 pub fn default_config_path() -> std::path::PathBuf {
-    if let Some(config_dir) = dirs_next_stub::config_dir() {
+    if let Some(config_dir) = platform_dirs::config_dir() {
         config_dir.join("ai_assistant").join("config.toml")
     } else {
         std::path::PathBuf::from("ai_assistant_config.toml")
     }
 }
 
-/// Stub for dirs_next functionality
-mod dirs_next_stub {
+/// Platform-specific config directory resolution (replaces dirs_next crate)
+mod platform_dirs {
     use std::path::PathBuf;
 
     pub fn config_dir() -> Option<PathBuf> {

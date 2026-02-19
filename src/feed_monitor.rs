@@ -340,7 +340,7 @@ impl FeedParser {
         );
         let re = Regex::new(&pattern).ok()?;
         re.captures(xml).map(|c| {
-            let text = c.get(1).unwrap().as_str().trim().to_string();
+            let text = c.get(1).expect("capture group 1").as_str().trim().to_string();
             // Strip CDATA wrapping if present
             strip_cdata(&text)
         })
@@ -358,7 +358,7 @@ impl FeedParser {
         };
         re.captures_iter(xml)
             .map(|c| {
-                let text = c.get(1).unwrap().as_str().trim().to_string();
+                let text = c.get(1).expect("capture group 1").as_str().trim().to_string();
                 strip_cdata(&text)
             })
             .collect()
@@ -372,7 +372,7 @@ impl FeedParser {
         );
         let re = Regex::new(&pattern).ok()?;
         re.captures(tag_content)
-            .map(|c| c.get(1).unwrap().as_str().to_string())
+            .map(|c| c.get(1).expect("capture group 1").as_str().to_string())
     }
 
     /// Parse a date string trying multiple common formats.
@@ -438,7 +438,7 @@ impl FeedParser {
         let pattern = r#"(?si)<link\s[^>]*href\s*=\s*["']([^"']+)["'][^>]*/?\s*>"#;
         let re = Regex::new(pattern).ok()?;
         re.captures(xml)
-            .map(|c| c.get(1).unwrap().as_str().to_string())
+            .map(|c| c.get(1).expect("capture group 1").as_str().to_string())
     }
 
     /// Extract category terms from Atom <category term="..."/> elements.
@@ -612,6 +612,19 @@ impl FeedMonitor {
         let state: FeedMonitorState = serde_json::from_str(json)
             .map_err(|e| anyhow!("Failed to parse state JSON: {}", e))?;
         self.state = state;
+        Ok(())
+    }
+
+    /// Export state to internal binary format (bincode+gzip when feature enabled).
+    #[cfg(feature = "binary-storage")]
+    pub fn export_state_bytes(&self) -> Result<Vec<u8>> {
+        crate::internal_storage::serialize_internal(&self.state)
+    }
+
+    /// Import state from internal binary format (auto-detects binary or JSON).
+    #[cfg(feature = "binary-storage")]
+    pub fn import_state_bytes(&mut self, bytes: &[u8]) -> Result<()> {
+        self.state = crate::internal_storage::deserialize_internal(bytes)?;
         Ok(())
     }
 

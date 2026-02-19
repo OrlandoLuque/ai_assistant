@@ -25,7 +25,7 @@ impl ContextMessage {
             token_count: estimate_tokens(content),
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs(),
             pinned: false,
             importance: 0.5,
@@ -218,7 +218,7 @@ impl ContextWindow {
         let pos = self.messages.iter()
             .enumerate()
             .filter(|(_, m)| !m.pinned)
-            .min_by(|(_, a), (_, b)| a.importance.partial_cmp(&b.importance).unwrap())
+            .min_by(|(_, a), (_, b)| a.importance.partial_cmp(&b.importance).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(i, _)| i);
 
         if let Some(pos) = pos {

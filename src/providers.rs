@@ -5,75 +5,81 @@ use std::io::BufRead;
 use anyhow::{Context, Result};
 
 use crate::config::{AiConfig, AiProvider};
+use crate::retry::{retry_with_config, RetryConfig};
 use crate::messages::{AiResponse, ChatMessage};
 use crate::models::{format_size, ModelInfo};
 use crate::session::UserPreferences;
 use crate::conversation_control::CancellationToken;
 
-/// Fetch models from Ollama API
+/// Fetch models from Ollama API.
+///
+/// Uses `RetryConfig::fast()` (2 retries with short backoff) to handle
+/// transient connection errors when listing available models.
 pub fn fetch_ollama_models(base_url: &str) -> Result<Vec<ModelInfo>> {
     let url = format!("{}/api/tags", base_url);
+    retry_with_config(RetryConfig::fast(), || {
+        let response = ureq::get(&url)
+            .timeout(std::time::Duration::from_secs(5))
+            .call()?;
+        let body: serde_json::Value = response.into_json()?;
 
-    let response = ureq::get(&url)
-        .timeout(std::time::Duration::from_secs(5))
-        .call()
-        .context("Failed to connect to Ollama")?;
-
-    let body: serde_json::Value = response.into_json()?;
-
-    let mut models = Vec::new();
-    if let Some(model_list) = body.get("models").and_then(|m| m.as_array()) {
-        for model in model_list {
-            if let Some(name) = model.get("name").and_then(|n| n.as_str()) {
-                models.push(ModelInfo {
-                    name: name.to_string(),
-                    provider: AiProvider::Ollama,
-                    size: model.get("size").and_then(|s| s.as_u64()).map(format_size),
-                    modified_at: model.get("modified_at").and_then(|m| m.as_str()).map(|s| s.to_string()),
-                });
+        let mut models = Vec::new();
+        if let Some(model_list) = body.get("models").and_then(|m| m.as_array()) {
+            for model in model_list {
+                if let Some(name) = model.get("name").and_then(|n| n.as_str()) {
+                    models.push(ModelInfo {
+                        name: name.to_string(),
+                        provider: AiProvider::Ollama,
+                        size: model.get("size").and_then(|s| s.as_u64()).map(format_size),
+                        modified_at: model.get("modified_at").and_then(|m| m.as_str()).map(|s| s.to_string()),
+                    });
+                }
             }
         }
-    }
-
-    Ok(models)
+        Ok(models)
+    }).context("Failed to fetch Ollama models")
 }
 
 /// Fetch models from OpenAI-compatible API (LM Studio, LocalAI, etc.)
+///
+/// Uses `RetryConfig::fast()` (2 retries) for transient connection errors.
 pub fn fetch_openai_compatible_models(base_url: &str, provider: AiProvider) -> Result<Vec<ModelInfo>> {
     let url = format!("{}/v1/models", base_url);
+    retry_with_config(RetryConfig::fast(), || {
+        let response = ureq::get(&url)
+            .timeout(std::time::Duration::from_secs(5))
+            .call()?;
+        let body: serde_json::Value = response.into_json()?;
 
-    let response = ureq::get(&url)
-        .timeout(std::time::Duration::from_secs(5))
-        .call()
-        .context("Failed to connect to OpenAI-compatible API")?;
-
-    let body: serde_json::Value = response.into_json()?;
-
-    let mut models = Vec::new();
-    if let Some(data) = body.get("data").and_then(|d| d.as_array()) {
-        for model in data {
-            if let Some(id) = model.get("id").and_then(|i| i.as_str()) {
-                models.push(ModelInfo {
-                    name: id.to_string(),
-                    provider: provider.clone(),
-                    size: None,
-                    modified_at: None,
-                });
+        let mut models = Vec::new();
+        if let Some(data) = body.get("data").and_then(|d| d.as_array()) {
+            for model in data {
+                if let Some(id) = model.get("id").and_then(|i| i.as_str()) {
+                    models.push(ModelInfo {
+                        name: id.to_string(),
+                        provider: provider.clone(),
+                        size: None,
+                        modified_at: None,
+                    });
+                }
             }
         }
-    }
-
-    Ok(models)
+        Ok(models)
+    }).context("Failed to fetch OpenAI-compatible models")
 }
 
-/// Fetch models from Kobold.cpp API
+/// Fetch models from Kobold.cpp API.
+///
+/// Uses `RetryConfig::fast()` for the primary model endpoint. The fallback
+/// version-check endpoint uses best-effort (no retry) since it's already a fallback.
 pub fn fetch_kobold_models(base_url: &str) -> Result<Vec<ModelInfo>> {
     let url = format!("{}/api/v1/model", base_url);
-
-    let response = ureq::get(&url)
-        .timeout(std::time::Duration::from_secs(5))
-        .call()
-        .context("Failed to connect to Kobold.cpp")?;
+    let response = retry_with_config(RetryConfig::fast(), || {
+        let resp = ureq::get(&url)
+            .timeout(std::time::Duration::from_secs(5))
+            .call()?;
+        Ok(resp)
+    }).context("Failed to connect to Kobold.cpp")?;
 
     let body: serde_json::Value = response.into_json()?;
 
@@ -91,7 +97,7 @@ pub fn fetch_kobold_models(base_url: &str) -> Result<Vec<ModelInfo>> {
         }
     }
 
-    // If no model from result, check if Kobold is running
+    // If no model from result, check if Kobold is running (best-effort, no retry)
     if models.is_empty() {
         let version_url = format!("{}/api/v1/info/version", base_url);
         if ureq::get(&version_url)
@@ -236,10 +242,13 @@ pub fn generate_ollama_streaming(
         }
     });
 
-    let response = ureq::post(&url)
-        .timeout(std::time::Duration::from_secs(300))
-        .send_json(&request_body)
-        .context("Failed to send request to Ollama")?;
+    // Retry only the connection; stream reading is not retried
+    let response = retry_with_config(config.retry_config.clone(), || {
+        let resp = ureq::post(&url)
+            .timeout(std::time::Duration::from_secs(300))
+            .send_json(&request_body)?;
+        Ok(resp)
+    }).context("Failed to send request to Ollama")?;
 
     let reader = std::io::BufReader::new(response.into_reader());
     let mut full_response = String::new();
@@ -298,10 +307,13 @@ pub fn generate_openai_streaming(
         "temperature": config.temperature
     });
 
-    let response = ureq::post(&url)
-        .timeout(std::time::Duration::from_secs(300))
-        .send_json(&request_body)
-        .context("Failed to send request to LLM API")?;
+    // Retry only the connection; stream reading is not retried
+    let response = retry_with_config(config.retry_config.clone(), || {
+        let resp = ureq::post(&url)
+            .timeout(std::time::Duration::from_secs(300))
+            .send_json(&request_body)?;
+        Ok(resp)
+    }).context("Failed to send request to LLM API")?;
 
     let reader = std::io::BufReader::new(response.into_reader());
     let mut full_response = String::new();
@@ -359,10 +371,12 @@ pub fn generate_ollama_response(
         }
     });
 
-    let response = ureq::post(&url)
-        .timeout(std::time::Duration::from_secs(120))
-        .send_json(&request_body)
-        .context("Failed to send request to Ollama")?;
+    let response = retry_with_config(config.retry_config.clone(), || {
+        let resp = ureq::post(&url)
+            .timeout(std::time::Duration::from_secs(120))
+            .send_json(&request_body)?;
+        Ok(resp)
+    }).context("Failed to send request to Ollama")?;
 
     let body: serde_json::Value = response.into_json()?;
 
@@ -401,10 +415,12 @@ pub fn generate_openai_response(
         "stream": false
     });
 
-    let response = ureq::post(&url)
-        .timeout(std::time::Duration::from_secs(120))
-        .send_json(&request_body)
-        .context("Failed to send request to API")?;
+    let response = retry_with_config(config.retry_config.clone(), || {
+        let resp = ureq::post(&url)
+            .timeout(std::time::Duration::from_secs(120))
+            .send_json(&request_body)?;
+        Ok(resp)
+    }).context("Failed to send request to API")?;
 
     let body: serde_json::Value = response.into_json()?;
 
@@ -447,10 +463,12 @@ pub fn generate_kobold_response(
         "rep_pen": 1.1
     });
 
-    let response = ureq::post(&url)
-        .timeout(std::time::Duration::from_secs(120))
-        .send_json(&request_body)
-        .context("Failed to send request to Kobold.cpp")?;
+    let response = retry_with_config(config.retry_config.clone(), || {
+        let resp = ureq::post(&url)
+            .timeout(std::time::Duration::from_secs(120))
+            .send_json(&request_body)?;
+        Ok(resp)
+    }).context("Failed to send request to Kobold.cpp")?;
 
     let body: serde_json::Value = response.into_json()?;
 
@@ -487,7 +505,9 @@ pub fn generate_response_streaming(
         AiProvider::LMStudio
         | AiProvider::TextGenWebUI
         | AiProvider::LocalAI
-        | AiProvider::OpenAICompatible { .. } => {
+        | AiProvider::OpenAICompatible { .. }
+        | AiProvider::OpenAI
+        | AiProvider::Anthropic => {
             generate_openai_streaming(config, conversation, system_prompt, tx)
         }
     }
@@ -509,7 +529,9 @@ pub fn generate_response(
         AiProvider::LMStudio
         | AiProvider::TextGenWebUI
         | AiProvider::LocalAI
-        | AiProvider::OpenAICompatible { .. } => {
+        | AiProvider::OpenAICompatible { .. }
+        | AiProvider::OpenAI
+        | AiProvider::Anthropic => {
             generate_openai_response(config, conversation, system_prompt)
         }
     }
@@ -540,10 +562,13 @@ pub fn generate_ollama_streaming_cancellable(
         }
     });
 
-    let response = ureq::post(&url)
-        .timeout(std::time::Duration::from_secs(300))
-        .send_json(&request_body)
-        .context("Failed to send request to Ollama")?;
+    // Retry only the connection; stream reading is not retried
+    let response = retry_with_config(config.retry_config.clone(), || {
+        let resp = ureq::post(&url)
+            .timeout(std::time::Duration::from_secs(300))
+            .send_json(&request_body)?;
+        Ok(resp)
+    }).context("Failed to send request to Ollama")?;
 
     let reader = std::io::BufReader::new(response.into_reader());
     let mut full_response = String::new();
@@ -608,10 +633,13 @@ pub fn generate_openai_streaming_cancellable(
         "temperature": config.temperature
     });
 
-    let response = ureq::post(&url)
-        .timeout(std::time::Duration::from_secs(300))
-        .send_json(&request_body)
-        .context("Failed to send request to OpenAI-compatible API")?;
+    // Retry only the connection; stream reading is not retried
+    let response = retry_with_config(config.retry_config.clone(), || {
+        let resp = ureq::post(&url)
+            .timeout(std::time::Duration::from_secs(300))
+            .send_json(&request_body)?;
+        Ok(resp)
+    }).context("Failed to send request to OpenAI-compatible API")?;
 
     let reader = std::io::BufReader::new(response.into_reader());
     let mut full_response = String::new();
@@ -697,8 +725,188 @@ pub fn generate_response_streaming_cancellable(
         AiProvider::LMStudio
         | AiProvider::TextGenWebUI
         | AiProvider::LocalAI
-        | AiProvider::OpenAICompatible { .. } => {
+        | AiProvider::OpenAICompatible { .. }
+        | AiProvider::OpenAI
+        | AiProvider::Anthropic => {
             generate_openai_streaming_cancellable(config, conversation, system_prompt, tx, cancel_token)
         }
+    }
+}
+
+// ============================================================================
+// Context Size Detection
+// ============================================================================
+
+/// Fetch the context window size for a model from the provider
+/// Returns the context size in tokens, or None if it couldn't be determined
+pub fn fetch_model_context_size(config: &AiConfig, model_name: &str) -> Option<usize> {
+    match &config.provider {
+        AiProvider::Ollama => fetch_ollama_model_context(&config.ollama_url, model_name),
+        AiProvider::KoboldCpp => fetch_kobold_context_size(&config.kobold_url),
+        AiProvider::LMStudio => fetch_openai_model_context(&config.lm_studio_url, model_name),
+        AiProvider::TextGenWebUI => fetch_openai_model_context(&config.text_gen_webui_url, model_name),
+        AiProvider::LocalAI => fetch_openai_model_context(&config.local_ai_url, model_name),
+        AiProvider::OpenAICompatible { base_url } => fetch_openai_model_context(base_url, model_name),
+        AiProvider::OpenAI => {
+            // OpenAI doesn't expose context size via API; use well-known sizes
+            match model_name {
+                m if m.starts_with("gpt-4o") => Some(128_000),
+                m if m.starts_with("gpt-4-turbo") => Some(128_000),
+                m if m.starts_with("gpt-4") => Some(8_192),
+                m if m.starts_with("gpt-3.5") => Some(16_385),
+                m if m.starts_with("o1") || m.starts_with("o3") => Some(200_000),
+                _ => Some(128_000),
+            }
+        }
+        AiProvider::Anthropic => {
+            // Anthropic Claude models have known context sizes
+            match model_name {
+                m if m.contains("opus-4") || m.contains("sonnet-4") || m.contains("haiku-4") => Some(200_000),
+                m if m.contains("3-5") || m.contains("3.5") => Some(200_000),
+                m if m.contains("3") => Some(200_000),
+                _ => Some(200_000),
+            }
+        }
+    }
+}
+
+/// Fetch context size from Ollama using /api/show
+fn fetch_ollama_model_context(base_url: &str, model_name: &str) -> Option<usize> {
+    let url = format!("{}/api/show", base_url);
+
+    let body = serde_json::json!({
+        "name": model_name
+    });
+
+    let response = ureq::post(&url)
+        .timeout(std::time::Duration::from_secs(5))
+        .send_json(&body)
+        .ok()?;
+
+    let json: serde_json::Value = response.into_json().ok()?;
+
+    // Try to get num_ctx from model_info first (more reliable)
+    if let Some(ctx) = json.get("model_info")
+        .and_then(|info| info.get("llama.context_length"))
+        .and_then(|v| v.as_u64())
+    {
+        return Some(ctx as usize);
+    }
+
+    // Fallback: parse parameters string for num_ctx
+    if let Some(params) = json.get("parameters").and_then(|p| p.as_str()) {
+        for line in params.lines() {
+            let line = line.trim();
+            if line.starts_with("num_ctx") {
+                // Format: "num_ctx                          4096"
+                if let Some(value) = line.split_whitespace().last() {
+                    if let Ok(ctx) = value.parse::<usize>() {
+                        return Some(ctx);
+                    }
+                }
+            }
+        }
+    }
+
+    // Try modelfile template parameters
+    if let Some(template) = json.get("template").and_then(|t| t.as_str()) {
+        // Some models have context in template
+        if template.contains("context_length") {
+            // Parse if present
+        }
+    }
+
+    None
+}
+
+/// Fetch context size from Kobold.cpp
+fn fetch_kobold_context_size(base_url: &str) -> Option<usize> {
+    // Try the max_context_length endpoint
+    let url = format!("{}/api/v1/config/max_context_length", base_url);
+
+    if let Ok(response) = ureq::get(&url)
+        .timeout(std::time::Duration::from_secs(5))
+        .call()
+    {
+        if let Ok(json) = response.into_json::<serde_json::Value>() {
+            if let Some(result) = json.get("value").and_then(|v| v.as_u64()) {
+                return Some(result as usize);
+            }
+        }
+    }
+
+    // Try alternative endpoint
+    let url_alt = format!("{}/api/extra/true_max_context_length", base_url);
+    if let Ok(response) = ureq::get(&url_alt)
+        .timeout(std::time::Duration::from_secs(5))
+        .call()
+    {
+        if let Ok(json) = response.into_json::<serde_json::Value>() {
+            if let Some(result) = json.get("value").and_then(|v| v.as_u64()) {
+                return Some(result as usize);
+            }
+        }
+    }
+
+    None
+}
+
+/// Fetch context size from OpenAI-compatible API
+fn fetch_openai_model_context(base_url: &str, model_name: &str) -> Option<usize> {
+    // Try to get specific model info
+    let url = format!("{}/v1/models/{}", base_url, model_name);
+
+    if let Ok(response) = ureq::get(&url)
+        .timeout(std::time::Duration::from_secs(5))
+        .call()
+    {
+        if let Ok(json) = response.into_json::<serde_json::Value>() {
+            // LM Studio and some others include context_length
+            if let Some(ctx) = json.get("context_length").and_then(|v| v.as_u64()) {
+                return Some(ctx as usize);
+            }
+            // Some use max_context_length
+            if let Some(ctx) = json.get("max_context_length").and_then(|v| v.as_u64()) {
+                return Some(ctx as usize);
+            }
+            // LocalAI might use context_size
+            if let Some(ctx) = json.get("context_size").and_then(|v| v.as_u64()) {
+                return Some(ctx as usize);
+            }
+        }
+    }
+
+    // Try listing all models and finding ours
+    let models_url = format!("{}/v1/models", base_url);
+    if let Ok(response) = ureq::get(&models_url)
+        .timeout(std::time::Duration::from_secs(5))
+        .call()
+    {
+        if let Ok(json) = response.into_json::<serde_json::Value>() {
+            if let Some(data) = json.get("data").and_then(|d| d.as_array()) {
+                for model in data {
+                    if model.get("id").and_then(|i| i.as_str()) == Some(model_name) {
+                        if let Some(ctx) = model.get("context_length").and_then(|v| v.as_u64()) {
+                            return Some(ctx as usize);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+#[cfg(test)]
+mod context_size_tests {
+    use super::*;
+
+    #[test]
+    fn test_fetch_model_context_size_fallback() {
+        // With no server running, should return None (not panic)
+        let config = AiConfig::default();
+        let result = fetch_model_context_size(&config, "nonexistent");
+        assert!(result.is_none());
     }
 }

@@ -294,7 +294,7 @@ impl JsonSchema {
         if self.properties.is_none() {
             self.properties = Some(HashMap::new());
         }
-        self.properties.as_mut().unwrap().insert(name.into(), schema);
+        self.properties.as_mut().expect("properties must be initialized").insert(name.into(), schema);
         self
     }
 
@@ -375,7 +375,7 @@ impl OpenApiBuilder {
         if self.spec.components.is_none() {
             self.spec.components = Some(OpenApiComponents::default());
         }
-        self.spec.components.as_mut().unwrap().schemas.insert(name.into(), schema);
+        self.spec.components.as_mut().expect("components must be initialized").schemas.insert(name.into(), schema);
         self
     }
 

@@ -290,7 +290,7 @@ impl LatencyTracker {
             .or_insert_with(|| ProviderMetrics::new(self.max_records_per_provider));
 
         metrics.add(record);
-        metrics.records.back().unwrap()
+        metrics.records.back().expect("record just added")
     }
 
     /// Get statistics for a provider
@@ -375,7 +375,7 @@ impl LatencyTracker {
         self.all_stats()
             .into_iter()
             .filter(|s| s.total_requests >= 10) // Minimum sample size
-            .max_by(|a, b| a.success_rate.partial_cmp(&b.success_rate).unwrap())
+            .max_by(|a, b| a.success_rate.partial_cmp(&b.success_rate).unwrap_or(std::cmp::Ordering::Equal))
             .map(|s| s.provider)
     }
 

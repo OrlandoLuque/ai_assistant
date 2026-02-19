@@ -122,7 +122,7 @@ impl ResponseRanker {
             .collect();
 
         // Sort by score descending
-        ranked.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+        ranked.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
 
         // Assign ranks
         for (i, r) in ranked.iter_mut().enumerate() {

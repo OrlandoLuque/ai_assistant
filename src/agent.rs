@@ -417,7 +417,7 @@ impl PlanningAgent {
             tool: None,
             status: PlanStepStatus::Pending,
         });
-        self.plan.last_mut().unwrap()
+        self.plan.last_mut().expect("plan step was just pushed")
     }
 
     /// Get the plan
@@ -571,7 +571,7 @@ impl AgentCallback for LoggingCallback {
     }
 
     fn on_error(&self, agent_id: &str, error: &str) {
-        eprintln!("[{}] Error: {}", agent_id, error);
+        log::error!("[{}] Error: {}", agent_id, error);
     }
 }
 
@@ -612,7 +612,10 @@ fn evaluate_simple_math(expr: &str) -> Result<f64, String> {
 
     // Handle parentheses first
     if expr.contains('(') {
-        let start = expr.rfind('(').unwrap();
+        let start = match expr.rfind('(') {
+            Some(pos) => pos,
+            None => return Err("Mismatched parentheses".to_string()),
+        };
         let end = expr[start..].find(')').map(|i| start + i)
             .ok_or("Mismatched parentheses")?;
         let inner = &expr[start + 1..end];
@@ -796,5 +799,619 @@ mod tests {
         agent.reset();
         assert!(agent.steps().is_empty());
         assert_eq!(*agent.state(), AgentState::Idle);
+    }
+
+    // === Additional Unit Tests ===
+
+    #[test]
+    fn test_agent_config_default() {
+        let config = AgentConfig::default();
+        assert_eq!(config.max_steps, 10);
+        assert_eq!(config.max_retries, 3);
+        assert!(!config.verbose);
+        assert!(!config.stop_on_error);
+        assert!(config.system_prompt.is_none());
+    }
+
+    #[test]
+    fn test_agent_config_custom() {
+        let config = AgentConfig {
+            max_steps: 20,
+            max_retries: 5,
+            verbose: true,
+            stop_on_error: true,
+            system_prompt: Some("Custom prompt".to_string()),
+        };
+
+        assert_eq!(config.max_steps, 20);
+        assert_eq!(config.max_retries, 5);
+        assert!(config.verbose);
+        assert!(config.stop_on_error);
+        assert_eq!(config.system_prompt.as_ref().unwrap(), "Custom prompt");
+    }
+
+    #[test]
+    fn test_all_agent_states() {
+        let states = vec![
+            AgentState::Idle,
+            AgentState::Thinking,
+            AgentState::ExecutingTool("test_tool".to_string()),
+            AgentState::WaitingForInput,
+            AgentState::Completed,
+            AgentState::Failed("error message".to_string()),
+        ];
+
+        for state in states {
+            match state {
+                AgentState::Idle => assert_eq!(state, AgentState::Idle),
+                AgentState::Thinking => assert_eq!(state, AgentState::Thinking),
+                AgentState::ExecutingTool(ref name) => assert_eq!(name, "test_tool"),
+                AgentState::WaitingForInput => assert_eq!(state, AgentState::WaitingForInput),
+                AgentState::Completed => assert_eq!(state, AgentState::Completed),
+                AgentState::Failed(ref msg) => assert_eq!(msg, "error message"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_agent_tool_error() {
+        let tool = AgentTool::new("failing_tool", "Always fails", |_| {
+            Err("Intentional failure".to_string())
+        });
+
+        let result = tool.execute("input");
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Intentional failure");
+    }
+
+    #[test]
+    fn test_execute_step_unknown_tool() {
+        let mut agent = ReactAgent::new(AgentConfig {
+            stop_on_error: false,
+            ..Default::default()
+        });
+
+        let result = agent.execute_step(
+            "Thinking".to_string(),
+            "nonexistent_tool".to_string(),
+            "input".to_string(),
+        );
+
+        assert!(result.is_ok());
+        assert!(result.unwrap().contains("Unknown tool"));
+    }
+
+    #[test]
+    fn test_execute_step_unknown_tool_stop_on_error() {
+        let mut agent = ReactAgent::new(AgentConfig {
+            stop_on_error: true,
+            ..Default::default()
+        });
+
+        let result = agent.execute_step(
+            "Thinking".to_string(),
+            "nonexistent_tool".to_string(),
+            "input".to_string(),
+        );
+
+        assert!(result.is_err());
+        assert!(matches!(*agent.state(), AgentState::Failed(_)));
+    }
+
+    #[test]
+    fn test_execute_step_tool_error_with_stop() {
+        let mut agent = ReactAgent::new(AgentConfig {
+            stop_on_error: true,
+            ..Default::default()
+        });
+        agent.add_tool(AgentTool::new("failing", "Fails", |_| Err("Error!".to_string())));
+
+        let result = agent.execute_step(
+            "Thinking".to_string(),
+            "failing".to_string(),
+            "input".to_string(),
+        );
+
+        assert!(result.is_err());
+        assert!(matches!(*agent.state(), AgentState::Failed(_)));
+    }
+
+    #[test]
+    fn test_execute_step_tool_error_continue() {
+        let mut agent = ReactAgent::new(AgentConfig {
+            stop_on_error: false,
+            ..Default::default()
+        });
+        agent.add_tool(AgentTool::new("failing", "Fails", |_| Err("Error!".to_string())));
+
+        let result = agent.execute_step(
+            "Thinking".to_string(),
+            "failing".to_string(),
+            "input".to_string(),
+        );
+
+        assert!(result.is_ok());
+        assert!(result.unwrap().contains("Error:"));
+        assert_eq!(*agent.state(), AgentState::Thinking);
+    }
+
+    #[test]
+    fn test_should_stop_conditions() {
+        let mut agent = ReactAgent::new(AgentConfig {
+            max_steps: 5,
+            ..Default::default()
+        });
+
+        // Initially should not stop
+        assert!(!agent.should_stop());
+
+        // After completing, should stop
+        let _ = agent.execute_step(
+            "Done".to_string(),
+            "final_answer".to_string(),
+            "The answer".to_string(),
+        );
+        assert!(agent.should_stop());
+    }
+
+    #[test]
+    fn test_should_stop_max_steps() {
+        let mut agent = ReactAgent::new(AgentConfig {
+            max_steps: 2,
+            ..Default::default()
+        });
+        agent.add_tool(AgentTool::new("tool", "Tool", |_| Ok("ok".to_string())));
+
+        // Execute steps up to max
+        let _ = agent.execute_step("Step 1".to_string(), "tool".to_string(), "".to_string());
+        assert!(!agent.should_stop());
+
+        let _ = agent.execute_step("Step 2".to_string(), "tool".to_string(), "".to_string());
+        assert!(agent.should_stop());
+    }
+
+    #[test]
+    fn test_build_system_prompt() {
+        let mut agent = ReactAgent::new(AgentConfig::default());
+        agent.add_tool(
+            AgentTool::new("calculator", "Perform calculations", |_| Ok("0".to_string()))
+                .with_parameter("expression", "Math expression"),
+        );
+
+        let prompt = agent.build_system_prompt();
+
+        assert!(prompt.contains("calculator"));
+        assert!(prompt.contains("Perform calculations"));
+        assert!(prompt.contains("expression"));
+        assert!(prompt.contains("Thought:"));
+        assert!(prompt.contains("Action:"));
+        assert!(prompt.contains("Action Input:"));
+    }
+
+    #[test]
+    fn test_build_system_prompt_custom() {
+        let agent = ReactAgent::new(AgentConfig {
+            system_prompt: Some("Custom system prompt".to_string()),
+            ..Default::default()
+        });
+
+        let prompt = agent.build_system_prompt();
+        assert!(prompt.contains("Custom system prompt"));
+    }
+
+    #[test]
+    fn test_parse_response_invalid() {
+        let agent = ReactAgent::new(AgentConfig::default());
+
+        // Missing thought
+        let response1 = "Action: test\nAction Input: input";
+        assert!(agent.parse_response(response1).is_none());
+
+        // Missing action
+        let response2 = "Thought: thinking\nAction Input: input";
+        assert!(agent.parse_response(response2).is_none());
+
+        // Empty response
+        assert!(agent.parse_response("").is_none());
+
+        // Random text
+        assert!(agent.parse_response("Just some random text").is_none());
+    }
+
+    #[test]
+    fn test_parse_response_empty_action_input() {
+        let agent = ReactAgent::new(AgentConfig::default());
+
+        // Action input can be empty
+        let response = "Thought: thinking\nAction: test\nAction Input:";
+        let parsed = agent.parse_response(response);
+        assert!(parsed.is_some());
+        let (thought, action, input) = parsed.unwrap();
+        assert_eq!(thought, "thinking");
+        assert_eq!(action, "test");
+        assert_eq!(input, "");
+    }
+
+    #[test]
+    fn test_build_prompt_with_history() {
+        let mut agent = ReactAgent::new(AgentConfig::default());
+        agent.add_tool(AgentTool::new("tool", "Test", |_| Ok("result".to_string())));
+
+        // Execute some steps
+        let _ = agent.execute_step("First thought".to_string(), "tool".to_string(), "input1".to_string());
+        let _ = agent.execute_step("Second thought".to_string(), "tool".to_string(), "input2".to_string());
+
+        let prompt = agent.build_prompt_with_history("Test task");
+
+        assert!(prompt.contains("Task: Test task"));
+        assert!(prompt.contains("First thought"));
+        assert!(prompt.contains("Second thought"));
+        assert!(prompt.contains("Observation:"));
+        assert!(prompt.contains("Continue:"));
+    }
+
+    #[test]
+    fn test_finish_action_variants() {
+        for action in &["final_answer", "Final_Answer", "FINAL_ANSWER", "finish", "Finish", "FINISH"] {
+            let mut agent = ReactAgent::new(AgentConfig::default());
+            let result = agent.execute_step(
+                "Done".to_string(),
+                action.to_string(),
+                "Answer".to_string(),
+            );
+
+            assert!(result.is_ok());
+            assert_eq!(*agent.state(), AgentState::Completed);
+        }
+    }
+
+    #[test]
+    fn test_agent_step_timestamp() {
+        let mut agent = ReactAgent::new(AgentConfig::default());
+        agent.add_tool(AgentTool::new("tool", "Test", |_| Ok("ok".to_string())));
+
+        let _ = agent.execute_step("Thought".to_string(), "tool".to_string(), "input".to_string());
+
+        let step = &agent.steps()[0];
+        assert!(step.timestamp > 0);
+    }
+
+    #[test]
+    fn test_agent_context_default() {
+        let ctx = AgentContext::default();
+        assert!(ctx.variables.is_empty());
+        assert!(ctx.observations.is_empty());
+        assert_eq!(ctx.current_step, 0);
+    }
+
+    #[test]
+    fn test_planning_agent_fail_step() {
+        let mut agent = PlanningAgent::new(AgentConfig::default());
+        agent.add_step("Step 1");
+        agent.add_step("Step 2");
+
+        agent.fail_step(1, "Something went wrong".to_string());
+
+        let step1 = agent.plan().iter().find(|s| s.step == 1).unwrap();
+        assert!(matches!(step1.status, PlanStepStatus::Failed(_)));
+    }
+
+    #[test]
+    fn test_planning_agent_get_result() {
+        let mut agent = PlanningAgent::new(AgentConfig::default());
+        agent.add_step("Step 1");
+
+        agent.complete_step(1, "Result of step 1".to_string());
+
+        let result = agent.get_result(1);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), "Result of step 1");
+
+        // Non-existent step
+        assert!(agent.get_result(999).is_none());
+    }
+
+    #[test]
+    fn test_planning_agent_is_complete() {
+        let mut agent = PlanningAgent::new(AgentConfig::default());
+        agent.add_step("Step 1");
+        agent.add_step("Step 2");
+
+        assert!(!agent.is_complete());
+
+        agent.complete_step(1, "Done".to_string());
+        assert!(!agent.is_complete());
+
+        agent.complete_step(2, "Done".to_string());
+        assert!(agent.is_complete());
+    }
+
+    #[test]
+    fn test_planning_agent_summary() {
+        let mut agent = PlanningAgent::new(AgentConfig::default());
+        agent.add_step("First step");
+        agent.add_step("Second step");
+
+        agent.complete_step(1, "Done".to_string());
+
+        let summary = agent.summary();
+
+        assert!(summary.contains("Plan Status:"));
+        assert!(summary.contains("First step"));
+        assert!(summary.contains("Second step"));
+    }
+
+    #[test]
+    fn test_plan_step_with_tool() {
+        let mut agent = PlanningAgent::new(AgentConfig::default());
+        agent.add_step("Use calculator").with_tool("calculator");
+
+        let step = &agent.plan()[0];
+        assert_eq!(step.tool.as_ref().unwrap(), "calculator");
+    }
+
+    #[test]
+    fn test_plan_step_multiple_dependencies() {
+        let mut agent = PlanningAgent::new(AgentConfig::default());
+        agent.add_step("Step 1");
+        agent.add_step("Step 2");
+        agent.add_step("Step 3").depends_on(1).depends_on(2);
+
+        let step3 = agent.plan().iter().find(|s| s.step == 3).unwrap();
+        assert_eq!(step3.dependencies.len(), 2);
+        assert!(step3.dependencies.contains(&1));
+        assert!(step3.dependencies.contains(&2));
+    }
+
+    #[test]
+    fn test_planning_agent_next_step_with_dependencies() {
+        let mut agent = PlanningAgent::new(AgentConfig::default());
+        agent.add_step("Step 1");
+        agent.add_step("Step 2").depends_on(1);
+        agent.add_step("Step 3").depends_on(1).depends_on(2);
+
+        // Step 1 should be first
+        let next = agent.next_step();
+        assert_eq!(next.unwrap().step, 1);
+
+        // Complete step 1
+        agent.complete_step(1, "Done".to_string());
+
+        // Step 2 should be next
+        let next = agent.next_step();
+        assert_eq!(next.unwrap().step, 2);
+
+        // Complete step 2
+        agent.complete_step(2, "Done".to_string());
+
+        // Step 3 should be next (both dependencies met)
+        let next = agent.next_step();
+        assert_eq!(next.unwrap().step, 3);
+    }
+
+    #[test]
+    fn test_all_plan_step_statuses() {
+        let statuses = vec![
+            PlanStepStatus::Pending,
+            PlanStepStatus::InProgress,
+            PlanStepStatus::Completed,
+            PlanStepStatus::Failed("error".to_string()),
+            PlanStepStatus::Skipped,
+        ];
+
+        for status in statuses {
+            match status {
+                PlanStepStatus::Pending => assert_eq!(status, PlanStepStatus::Pending),
+                PlanStepStatus::InProgress => assert_eq!(status, PlanStepStatus::InProgress),
+                PlanStepStatus::Completed => assert_eq!(status, PlanStepStatus::Completed),
+                PlanStepStatus::Failed(ref msg) => assert_eq!(msg, "error"),
+                PlanStepStatus::Skipped => assert_eq!(status, PlanStepStatus::Skipped),
+            }
+        }
+    }
+
+    #[test]
+    fn test_agent_executor_new() {
+        let executor = AgentExecutor::new();
+        assert_eq!(executor.max_concurrent, 1);
+    }
+
+    #[test]
+    fn test_agent_executor_with_max_concurrent() {
+        let executor = AgentExecutor::new().with_max_concurrent(4);
+        assert_eq!(executor.max_concurrent, 4);
+    }
+
+    #[test]
+    fn test_agent_executor_default() {
+        let executor = AgentExecutor::default();
+        assert_eq!(executor.max_concurrent, 1);
+    }
+
+    #[test]
+    fn test_logging_callback() {
+        let callback = LoggingCallback { verbose: true };
+
+        // These should not panic
+        callback.on_thinking("test_agent");
+        callback.on_tool_execution("test_agent", "calculator", "2+2");
+        callback.on_tool_result("test_agent", "calculator", "4");
+        callback.on_error("test_agent", "test error");
+
+        let result = AgentResult {
+            success: true,
+            answer: Some("42".to_string()),
+            error: None,
+            steps: vec![],
+            execution_time_ms: 100,
+            total_tokens: Some(50),
+        };
+        callback.on_complete("test_agent", &result);
+    }
+
+    #[test]
+    fn test_simple_math_evaluator_division_by_zero() {
+        let result = evaluate_simple_math("10 / 0");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Division by zero"));
+    }
+
+    #[test]
+    fn test_simple_math_evaluator_parentheses() {
+        let result = evaluate_simple_math("(2 + 3) * 4").unwrap();
+        assert!((result - 20.0).abs() < 0.001);
+
+        let result = evaluate_simple_math("2 * (3 + 4)").unwrap();
+        assert!((result - 14.0).abs() < 0.001);
+
+        let result = evaluate_simple_math("((1 + 2) * (3 + 4))").unwrap();
+        assert!((result - 21.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_simple_math_evaluator_invalid() {
+        let result = evaluate_simple_math("abc");
+        assert!(result.is_err());
+
+        let result = evaluate_simple_math("(2 + 3");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_simple_math_evaluator_negative() {
+        let result = evaluate_simple_math("5 - 10").unwrap();
+        assert!((result - (-5.0)).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_simple_math_evaluator_decimals() {
+        let result = evaluate_simple_math("3.14 * 2").unwrap();
+        assert!((result - 6.28).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_string_tool_operations() {
+        let tools = create_builtin_agent_tools();
+        let str_tool = tools.iter().find(|t| t.name == "string_tool").unwrap();
+
+        // Test all operations
+        assert_eq!(str_tool.execute("upper: hello").unwrap(), "HELLO");
+        assert_eq!(str_tool.execute("lower: HELLO").unwrap(), "hello");
+        assert_eq!(str_tool.execute("reverse: hello").unwrap(), "olleh");
+        assert_eq!(str_tool.execute("length: hello").unwrap(), "5");
+        assert_eq!(str_tool.execute("trim:   hello   ").unwrap(), "hello");
+    }
+
+    #[test]
+    fn test_string_tool_invalid_operation() {
+        let tools = create_builtin_agent_tools();
+        let str_tool = tools.iter().find(|t| t.name == "string_tool").unwrap();
+
+        let result = str_tool.execute("invalid: text");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_string_tool_invalid_format() {
+        let tools = create_builtin_agent_tools();
+        let str_tool = tools.iter().find(|t| t.name == "string_tool").unwrap();
+
+        let result = str_tool.execute("no colon here");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Format"));
+    }
+
+    #[test]
+    fn test_agent_result_structure() {
+        let result = AgentResult {
+            success: true,
+            answer: Some("The answer is 42".to_string()),
+            error: None,
+            steps: vec![
+                AgentStep {
+                    step_number: 1,
+                    thought: "I need to calculate".to_string(),
+                    action: "calculator".to_string(),
+                    action_input: "6 * 7".to_string(),
+                    observation: Some("42".to_string()),
+                    timestamp: 1234567890,
+                },
+            ],
+            execution_time_ms: 150,
+            total_tokens: Some(100),
+        };
+
+        assert!(result.success);
+        assert_eq!(result.answer.unwrap(), "The answer is 42");
+        assert!(result.error.is_none());
+        assert_eq!(result.steps.len(), 1);
+        assert_eq!(result.execution_time_ms, 150);
+        assert_eq!(result.total_tokens.unwrap(), 100);
+    }
+
+    #[test]
+    fn test_react_agent_context_access() {
+        let mut agent = ReactAgent::new(AgentConfig::default());
+
+        // Test context_mut
+        agent.context_mut().set("key", "value");
+        agent.context_mut().add_observation("obs1");
+
+        // Test context
+        assert_eq!(agent.context().get("key"), Some(&"value".to_string()));
+        assert_eq!(agent.context().observations.len(), 1);
+    }
+
+    #[test]
+    fn test_observations_accumulate() {
+        let mut agent = ReactAgent::new(AgentConfig::default());
+        agent.add_tool(AgentTool::new("tool", "Test", |input| Ok(format!("Result: {}", input))));
+
+        let _ = agent.execute_step("Step 1".to_string(), "tool".to_string(), "a".to_string());
+        let _ = agent.execute_step("Step 2".to_string(), "tool".to_string(), "b".to_string());
+
+        assert_eq!(agent.context().observations.len(), 2);
+        assert!(agent.context().observations[0].contains("Result: a"));
+        assert!(agent.context().observations[1].contains("Result: b"));
+    }
+
+    #[test]
+    fn test_planning_agent_empty() {
+        let agent = PlanningAgent::new(AgentConfig::default());
+
+        assert!(agent.plan().is_empty());
+        assert!(agent.next_step().is_none());
+        assert!(agent.is_complete()); // Empty plan is complete
+    }
+
+    #[test]
+    fn test_react_agent_state_transitions() {
+        let mut agent = ReactAgent::new(AgentConfig::default());
+        agent.add_tool(AgentTool::new("tool", "Test", |_| Ok("ok".to_string())));
+
+        // Initial state
+        assert_eq!(*agent.state(), AgentState::Idle);
+
+        // After starting execution
+        let _ = agent.execute_step("Think".to_string(), "tool".to_string(), "input".to_string());
+        assert_eq!(*agent.state(), AgentState::Thinking);
+
+        // After final answer
+        let _ = agent.execute_step("Done".to_string(), "final_answer".to_string(), "answer".to_string());
+        assert_eq!(*agent.state(), AgentState::Completed);
+    }
+
+    #[test]
+    fn test_current_step_increments() {
+        let mut agent = ReactAgent::new(AgentConfig::default());
+        agent.add_tool(AgentTool::new("tool", "Test", |_| Ok("ok".to_string())));
+
+        assert_eq!(agent.context().current_step, 0);
+
+        let _ = agent.execute_step("1".to_string(), "tool".to_string(), "".to_string());
+        assert_eq!(agent.context().current_step, 1);
+
+        let _ = agent.execute_step("2".to_string(), "tool".to_string(), "".to_string());
+        assert_eq!(agent.context().current_step, 2);
     }
 }

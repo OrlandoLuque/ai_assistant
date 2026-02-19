@@ -259,9 +259,9 @@ impl AutoModelSelector {
                     if req.needs_code && !m.capabilities.code { return false; }
                     if req.needs_vision && !m.capabilities.vision { return false; }
                     if req.needs_function_calling && !m.capabilities.function_calling { return false; }
-                    if req.max_cost.is_some() && m.cost_input > req.max_cost.unwrap() { return false; }
-                    if req.max_latency.is_some() && m.avg_latency > req.max_latency.unwrap() { return false; }
-                    if req.min_context.is_some() && m.max_context < req.min_context.unwrap() { return false; }
+                    if let Some(max_cost) = req.max_cost { if m.cost_input > max_cost { return false; } }
+                    if let Some(max_latency) = req.max_latency { if m.avg_latency > max_latency { return false; } }
+                    if let Some(min_context) = req.min_context { if m.max_context < min_context { return false; } }
                 }
                 true
             })
@@ -303,7 +303,7 @@ impl AutoModelSelector {
             .collect();
 
         // Sort by score (descending)
-        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
         let best = scored[0].1;
         let score = scored[0].0;

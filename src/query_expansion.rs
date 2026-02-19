@@ -91,7 +91,7 @@ impl ExpansionResult {
     /// Get queries sorted by weight
     pub fn sorted_queries(&self) -> Vec<&ExpandedQuery> {
         let mut queries: Vec<_> = self.expansions.iter().collect();
-        queries.sort_by(|a, b| b.weight.partial_cmp(&a.weight).unwrap());
+        queries.sort_by(|a, b| b.weight.partial_cmp(&a.weight).unwrap_or(std::cmp::Ordering::Equal));
         queries
     }
 
@@ -398,7 +398,7 @@ impl MultiQueryRetriever {
 
         // Sort by score and match count
         all_results.sort_by(|a, b| {
-            let score_cmp = b.score.partial_cmp(&a.score).unwrap();
+            let score_cmp = b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal);
             if score_cmp == std::cmp::Ordering::Equal {
                 b.match_count.cmp(&a.match_count)
             } else {

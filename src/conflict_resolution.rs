@@ -44,7 +44,7 @@ impl Conflict {
     ) -> Self {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
 
         Self {
@@ -101,7 +101,7 @@ impl Resolution {
     pub fn new(strategy: ResolutionStrategy, value: Option<String>, resolved_by: &str) -> Self {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
 
         Self {

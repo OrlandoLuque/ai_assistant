@@ -153,7 +153,7 @@ impl IntentClassifier {
 
         // Get all intents sorted by score
         let mut all_intents: Vec<_> = scores.into_iter().collect();
-        all_intents.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        all_intents.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         let (primary, confidence) = all_intents.first()
             .cloned()

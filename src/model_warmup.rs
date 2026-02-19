@@ -140,7 +140,7 @@ impl WarmupManager {
         let model = model.into();
         let provider = provider.into();
 
-        let mut list = self.warm_list.write().unwrap();
+        let mut list = self.warm_list.write().unwrap_or_else(|e| e.into_inner());
 
         // Check if already in list
         if !list.iter().any(|(m, p)| m == &model && p == &provider) {
@@ -155,7 +155,7 @@ impl WarmupManager {
 
     /// Remove a model from the warm list
     pub fn remove_warm_model(&self, model: &str, provider: &str) {
-        let mut list = self.warm_list.write().unwrap();
+        let mut list = self.warm_list.write().unwrap_or_else(|e| e.into_inner());
         list.retain(|(m, p)| m != model || p != provider);
 
         // Also remove status
@@ -175,8 +175,8 @@ impl WarmupManager {
     /// Get models that need warming
     pub fn models_needing_warmup(&self) -> Vec<(String, String)> {
         let now = Instant::now();
-        let status = self.status.read().unwrap();
-        let list = self.warm_list.read().unwrap();
+        let status = self.status.read().unwrap_or_else(|e| e.into_inner());
+        let list = self.warm_list.read().unwrap_or_else(|e| e.into_inner());
 
         let mut needing_warmup = Vec::new();
 
@@ -215,7 +215,7 @@ impl WarmupManager {
         let result = generate(&self.config.warmup_prompt, model, provider);
         let latency = start.elapsed();
 
-        let mut status = self.status.write().unwrap();
+        let mut status = self.status.write().unwrap_or_else(|e| e.into_inner());
         let entry = status.entry(key.clone()).or_insert_with(|| WarmupStatus {
             model: model.to_string(),
             provider: provider.to_string(),
@@ -286,7 +286,7 @@ impl WarmupManager {
         }
 
         let top_models = {
-            let stats = self.usage_stats.lock().unwrap();
+            let stats = self.usage_stats.lock().unwrap_or_else(|e| e.into_inner());
             stats.top_models(self.config.auto_warm_count)
         };
 

@@ -94,7 +94,7 @@ impl HtmlSelector {
         }
 
         // Check for attribute selector: tag[attr=value]
-        let attr_re = Regex::new(r"^([a-zA-Z0-9-]*)?\[([a-zA-Z0-9-]+)=([^\]]*)\]$").unwrap();
+        let attr_re = Regex::new(r"^([a-zA-Z0-9-]*)?\[([a-zA-Z0-9-]+)=([^\]]*)\]$").expect("valid regex");
         if let Some(caps) = attr_re.captures(selector) {
             let tag_part = caps.get(1).map(|m| m.as_str()).unwrap_or("");
             if !tag_part.is_empty() {
@@ -370,7 +370,7 @@ impl HtmlExtractor {
         let mut meta = HtmlMetadata::default();
 
         // Title
-        let title_re = Regex::new(r"(?is)<title[^>]*>(.*?)</title>").unwrap();
+        let title_re = Regex::new(r"(?is)<title[^>]*>(.*?)</title>").expect("valid regex");
         if let Some(caps) = title_re.captures(html) {
             let title = strip_tags(&caps[1]).trim().to_string();
             if !title.is_empty() {
@@ -382,11 +382,11 @@ impl HtmlExtractor {
         let meta_re = Regex::new(
             r#"(?is)<meta\s+(?:[^>]*?\s+)?(?:name|property)=["']([^"']*)["']\s+(?:[^>]*?\s+)?content=["']([^"']*)["'][^>]*/?\s*>"#,
         )
-        .unwrap();
+        .expect("valid regex");
         let meta_rev_re = Regex::new(
             r#"(?is)<meta\s+(?:[^>]*?\s+)?content=["']([^"']*)["']\s+(?:[^>]*?\s+)?(?:name|property)=["']([^"']*)["'][^>]*/?\s*>"#,
         )
-        .unwrap();
+        .expect("valid regex");
 
         let mut meta_tags: HashMap<String, String> = HashMap::new();
 
@@ -435,10 +435,10 @@ impl HtmlExtractor {
         // Canonical URL
         let canonical_re =
             Regex::new(r#"(?is)<link[^>]*\s+rel=["']canonical["'][^>]*\s+href=["']([^"']*)["'][^>]*/?\s*>"#)
-                .unwrap();
+                .expect("valid regex");
         let canonical_rev_re =
             Regex::new(r#"(?is)<link[^>]*\s+href=["']([^"']*)["'][^>]*\s+rel=["']canonical["'][^>]*/?\s*>"#)
-                .unwrap();
+                .expect("valid regex");
         if let Some(caps) = canonical_re.captures(html) {
             meta.canonical_url = Some(caps[1].to_string());
         } else if let Some(caps) = canonical_rev_re.captures(html) {
@@ -446,7 +446,7 @@ impl HtmlExtractor {
         }
 
         // Language
-        let lang_re = Regex::new(r#"(?is)<html[^>]*\s+lang=["']([^"']*)["']"#).unwrap();
+        let lang_re = Regex::new(r#"(?is)<html[^>]*\s+lang=["']([^"']*)["']"#).expect("valid regex");
         if let Some(caps) = lang_re.captures(html) {
             meta.language = Some(caps[1].to_string());
         }
@@ -454,7 +454,7 @@ impl HtmlExtractor {
         // Schema.org JSON-LD
         let schema_re =
             Regex::new(r#"(?is)<script[^>]*type=["']application/ld\+json["'][^>]*>(.*?)</script>"#)
-                .unwrap();
+                .expect("valid regex");
         for caps in schema_re.captures_iter(html) {
             let json = caps[1].trim().to_string();
             if !json.is_empty() {
@@ -466,11 +466,11 @@ impl HtmlExtractor {
         let favicon_re = Regex::new(
             r#"(?is)<link[^>]*\s+rel=["'](?:shortcut\s+)?icon["'][^>]*\s+href=["']([^"']*)["'][^>]*/?\s*>"#,
         )
-        .unwrap();
+        .expect("valid regex");
         let favicon_rev_re = Regex::new(
             r#"(?is)<link[^>]*\s+href=["']([^"']*)["'][^>]*\s+rel=["'](?:shortcut\s+)?icon["'][^>]*/?\s*>"#,
         )
-        .unwrap();
+        .expect("valid regex");
         if let Some(caps) = favicon_re.captures(html) {
             meta.favicon = Some(caps[1].to_string());
         } else if let Some(caps) = favicon_rev_re.captures(html) {
@@ -481,11 +481,11 @@ impl HtmlExtractor {
         let feed_re = Regex::new(
             r#"(?is)<link[^>]*\s+type=["']application/(?:rss|atom)\+xml["'][^>]*\s+href=["']([^"']*)["'][^>]*/?\s*>"#,
         )
-        .unwrap();
+        .expect("valid regex");
         let feed_rev_re = Regex::new(
             r#"(?is)<link[^>]*\s+href=["']([^"']*)["'][^>]*\s+type=["']application/(?:rss|atom)\+xml["'][^>]*/?\s*>"#,
         )
-        .unwrap();
+        .expect("valid regex");
         for caps in feed_re.captures_iter(html) {
             meta.feed_urls.push(caps[1].to_string());
         }
@@ -526,7 +526,7 @@ impl HtmlExtractor {
         };
 
         // Try to extract body content first
-        let body_re = Regex::new(r"(?is)<body[^>]*>(.*?)</body>").unwrap();
+        let body_re = Regex::new(r"(?is)<body[^>]*>(.*?)</body>").expect("valid regex");
         let body_content = if let Some(caps) = body_re.captures(&cleaned) {
             caps[1].to_string()
         } else {
@@ -542,7 +542,7 @@ impl HtmlExtractor {
     /// If `base_url` is provided, relative URLs will be resolved against it.
     /// Links are classified as external if their domain differs from the base URL domain.
     pub fn extract_links(&self, html: &str, base_url: Option<&str>) -> Vec<HtmlLink> {
-        let link_re = Regex::new(r#"(?is)<a\s+([^>]*)>(.*?)</a>"#).unwrap();
+        let link_re = Regex::new(r#"(?is)<a\s+([^>]*)>(.*?)</a>"#).expect("valid regex");
         let mut links = Vec::new();
         let base_domain = base_url
             .map(|u| extract_domain_from_url(u))
@@ -557,7 +557,7 @@ impl HtmlExtractor {
             if href.is_none() {
                 continue;
             }
-            let href = href.unwrap();
+            let href = href.expect("href verified above");
 
             // Skip anchors and javascript
             if href.starts_with('#') || href.starts_with("javascript:") {
@@ -595,9 +595,9 @@ impl HtmlExtractor {
 
     /// Extract all ordered and unordered lists from HTML.
     pub fn extract_lists(&self, html: &str) -> Vec<HtmlList> {
-        let ul_re = Regex::new(r"(?is)<ul[^>]*>(.*?)</ul>").unwrap();
-        let ol_re = Regex::new(r"(?is)<ol[^>]*>(.*?)</ol>").unwrap();
-        let li_re = Regex::new(r"(?is)<li[^>]*>(.*?)</li>").unwrap();
+        let ul_re = Regex::new(r"(?is)<ul[^>]*>(.*?)</ul>").expect("valid regex");
+        let ol_re = Regex::new(r"(?is)<ol[^>]*>(.*?)</ol>").expect("valid regex");
+        let li_re = Regex::new(r"(?is)<li[^>]*>(.*?)</li>").expect("valid regex");
         let mut lists = Vec::new();
 
         // Extract unordered lists
@@ -671,9 +671,9 @@ impl HtmlExtractor {
 
     /// Remove <script> and <style> elements and their content.
     fn strip_scripts_and_styles(&self, html: &str) -> String {
-        let script_re = Regex::new(r"(?is)<script[^>]*>.*?</script>").unwrap();
-        let style_re = Regex::new(r"(?is)<style[^>]*>.*?</style>").unwrap();
-        let noscript_re = Regex::new(r"(?is)<noscript[^>]*>.*?</noscript>").unwrap();
+        let script_re = Regex::new(r"(?is)<script[^>]*>.*?</script>").expect("valid regex");
+        let style_re = Regex::new(r"(?is)<style[^>]*>.*?</style>").expect("valid regex");
+        let noscript_re = Regex::new(r"(?is)<noscript[^>]*>.*?</noscript>").expect("valid regex");
 
         let result = script_re.replace_all(html, "");
         let result = style_re.replace_all(&result, "");
@@ -764,14 +764,14 @@ impl HtmlExtractor {
 
     /// Parse an element string into an HtmlElement.
     fn parse_element(&self, html: &str) -> Option<HtmlElement> {
-        let open_re = Regex::new(r"(?is)^<([a-zA-Z][a-zA-Z0-9]*)\s*([^>]*)>").unwrap();
+        let open_re = Regex::new(r"(?is)^<([a-zA-Z][a-zA-Z0-9]*)\s*([^>]*)>").expect("valid regex");
 
         let caps = open_re.captures(html)?;
         let tag = caps[1].to_lowercase();
         let attrs_str = &caps[2];
 
         // Parse attributes
-        let attr_re = Regex::new(r#"([a-zA-Z][a-zA-Z0-9_-]*)=["']([^"']*)["']"#).unwrap();
+        let attr_re = Regex::new(r#"([a-zA-Z][a-zA-Z0-9_-]*)=["']([^"']*)["']"#).expect("valid regex");
         let mut attributes = HashMap::new();
         for attr_caps in attr_re.captures_iter(attrs_str) {
             attributes.insert(attr_caps[1].to_lowercase(), attr_caps[2].to_string());
@@ -789,13 +789,13 @@ impl HtmlExtractor {
         let text = strip_tags(&inner_html).trim().to_string();
 
         // Parse direct children (simplified - first level only)
-        let child_re = Regex::new(r"(?is)<([a-zA-Z][a-zA-Z0-9]*)\s*[^>]*>").unwrap();
+        let child_re = Regex::new(r"(?is)<([a-zA-Z][a-zA-Z0-9]*)\s*[^>]*>").expect("valid regex");
         let mut children = Vec::new();
         for child_match in child_re.captures_iter(&inner_html) {
             let child_tag = child_match[1].to_lowercase();
-            let child_start = child_match.get(0).unwrap().start();
+            let child_start = child_match.get(0).expect("capture group 0").start();
             if let Some(child_end) =
-                find_closing_tag(&inner_html, child_match.get(0).unwrap().end(), &child_tag)
+                find_closing_tag(&inner_html, child_match.get(0).expect("capture group 0").end(), &child_tag)
             {
                 let child_html = &inner_html[child_start..child_end];
                 if let Some(child_elem) = self.parse_element(child_html) {
@@ -830,13 +830,13 @@ fn extract_attribute(attrs: &str, attr_name: &str) -> Option<String> {
 
 /// Strip all HTML tags from a string, leaving only text content.
 fn strip_tags(html: &str) -> String {
-    let tag_re = Regex::new(r"<[^>]+>").unwrap();
+    let tag_re = Regex::new(r"<[^>]+>").expect("valid regex");
     tag_re.replace_all(html, "").to_string()
 }
 
 /// Normalize whitespace: collapse multiple spaces/newlines into single spaces.
 fn normalize_whitespace(text: &str) -> String {
-    let ws_re = Regex::new(r"\s+").unwrap();
+    let ws_re = Regex::new(r"\s+").expect("valid regex");
     ws_re.replace_all(text.trim(), " ").to_string()
 }
 

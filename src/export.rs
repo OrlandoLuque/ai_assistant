@@ -400,7 +400,7 @@ impl ConversationExporter {
 
         // Convert inline code
         while result.contains('`') {
-            if let (Some(start), Some(end)) = (result.find('`'), result[result.find('`').unwrap() + 1..].find('`')) {
+            if let (Some(start), Some(end)) = (result.find('`'), result[result.find('`').expect("char verified above") + 1..].find('`')) {
                 let code = &result[start + 1..start + 1 + end];
                 let html = format!("<code>{}</code>", html_escape(code));
                 result = format!(
