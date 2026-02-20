@@ -128,38 +128,53 @@ pub fn redact_with_config(text: &str, config: &RedactionConfig) -> String {
     let replacement = &config.replacement;
 
     if config.redact_pem_blocks {
-        result = p.pem_blocks.replace_all(&result, "***PEM_KEY***").to_string();
+        result = p
+            .pem_blocks
+            .replace_all(&result, "***PEM_KEY***")
+            .to_string();
     }
 
     if config.redact_api_keys {
         for pattern in &p.api_keys {
             // For patterns with capture groups (prefix + value), keep prefix
             if pattern.captures_len() > 1 {
-                result = pattern.replace_all(&result, |caps: &regex::Captures| {
-                    format!("{}{}", &caps[1], replacement)
-                }).to_string();
+                result = pattern
+                    .replace_all(&result, |caps: &regex::Captures| {
+                        format!("{}{}", &caps[1], replacement)
+                    })
+                    .to_string();
             } else {
-                result = pattern.replace_all(&result, replacement.as_str()).to_string();
+                result = pattern
+                    .replace_all(&result, replacement.as_str())
+                    .to_string();
             }
         }
     }
 
     if config.redact_auth_tokens {
         for pattern in &p.auth_tokens {
-            result = pattern.replace_all(&result, |caps: &regex::Captures| {
-                format!("{}{}", &caps[1], replacement)
-            }).to_string();
+            result = pattern
+                .replace_all(&result, |caps: &regex::Captures| {
+                    format!("{}{}", &caps[1], replacement)
+                })
+                .to_string();
         }
     }
 
     if config.redact_url_passwords {
-        result = p.url_passwords.replace_all(&result, |caps: &regex::Captures| {
-            format!("{}***{}", &caps[1], &caps[2])
-        }).to_string();
+        result = p
+            .url_passwords
+            .replace_all(&result, |caps: &regex::Captures| {
+                format!("{}***{}", &caps[1], &caps[2])
+            })
+            .to_string();
     }
 
     if config.redact_emails {
-        result = p.emails.replace_all(&result, replacement.as_str()).to_string();
+        result = p
+            .emails
+            .replace_all(&result, replacement.as_str())
+            .to_string();
     }
 
     // Custom patterns
@@ -290,7 +305,10 @@ mod tests {
 
     #[test]
     fn test_disabled_config() {
-        let config = RedactionConfig { enabled: false, ..Default::default() };
+        let config = RedactionConfig {
+            enabled: false,
+            ..Default::default()
+        };
         let text = "Bearer secret123";
         let result = redact_with_config(text, &config);
         assert_eq!(text, result);
@@ -327,7 +345,10 @@ mod tests {
         assert!(result.contains("user@example.com"));
 
         // Opt-in: emails redacted
-        let config = RedactionConfig { redact_emails: true, ..Default::default() };
+        let config = RedactionConfig {
+            redact_emails: true,
+            ..Default::default()
+        };
         let result = redact_with_config(text, &config);
         assert!(!result.contains("user@example.com"));
     }

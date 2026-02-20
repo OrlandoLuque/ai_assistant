@@ -290,7 +290,8 @@ impl ChainExecutor {
                     });
 
                     // Move to next step in sequence
-                    current_step = self.get_next_step(chain, step_name, true, &step.next_on_success);
+                    current_step =
+                        self.get_next_step(chain, step_name, true, &step.next_on_success);
                     continue;
                 }
             }
@@ -321,7 +322,8 @@ impl ChainExecutor {
                         skipped: false,
                     });
 
-                    current_step = self.get_next_step(chain, step_name, true, &step.next_on_success);
+                    current_step =
+                        self.get_next_step(chain, step_name, true, &step.next_on_success);
                 }
                 Err(e) => {
                     step_results.push(StepResult {
@@ -335,7 +337,8 @@ impl ChainExecutor {
                     });
 
                     if self.config.continue_on_error {
-                        current_step = self.get_next_step(chain, step_name, false, &step.next_on_failure);
+                        current_step =
+                            self.get_next_step(chain, step_name, false, &step.next_on_failure);
                     } else {
                         success = false;
                         break;
@@ -364,7 +367,11 @@ impl ChainExecutor {
     ) -> Option<&'a str> {
         // Use explicit next if specified
         if let Some(ref next) = explicit_next {
-            return chain.steps.iter().find(|s| &s.name == next).map(|s| s.name.as_str());
+            return chain
+                .steps
+                .iter()
+                .find(|s| &s.name == next)
+                .map(|s| s.name.as_str());
         }
 
         // Otherwise, go to next in sequence
@@ -413,8 +420,11 @@ impl ChainExecutor {
             }
             ExtractionMethod::JsonField(field) => {
                 let json: serde_json::Value = serde_json::from_str(response).ok()?;
-                json.get(field)
-                    .map(|v| v.as_str().map(|s| s.to_string()).unwrap_or_else(|| v.to_string()))
+                json.get(field).map(|v| {
+                    v.as_str()
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| v.to_string())
+                })
             }
             ExtractionMethod::FirstLine => response.lines().next().map(|s| s.to_string()),
             ExtractionMethod::LastLine => response.lines().last().map(|s| s.to_string()),

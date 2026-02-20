@@ -83,7 +83,10 @@ impl EffectivenessScorer {
         let completeness = self.score_completeness(qa);
         let clarity = self.score_clarity(&qa.response);
         let actionability = self.score_actionability(&qa.response);
-        let user_satisfaction = qa.user_feedback.as_ref().map(|f| self.score_user_feedback(f));
+        let user_satisfaction = qa
+            .user_feedback
+            .as_ref()
+            .map(|f| self.score_user_feedback(f));
 
         let mut overall = relevance * self.weights.relevance
             + completeness * self.weights.completeness
@@ -127,7 +130,12 @@ impl EffectivenessScorer {
         let question_terms: Vec<_> = question_lower
             .split_whitespace()
             .filter(|w| w.len() > 3)
-            .filter(|w| !["what", "how", "why", "when", "where", "which", "would", "could", "should"].contains(w))
+            .filter(|w| {
+                ![
+                    "what", "how", "why", "when", "where", "which", "would", "could", "should",
+                ]
+                .contains(w)
+            })
             .collect();
 
         if question_terms.is_empty() {
@@ -135,7 +143,8 @@ impl EffectivenessScorer {
         }
 
         // Check how many question terms appear in response
-        let matches = question_terms.iter()
+        let matches = question_terms
+            .iter()
             .filter(|term| response_lower.contains(*term))
             .count();
 
@@ -145,7 +154,9 @@ impl EffectivenessScorer {
         let topic_coverage = if qa.expected_topics.is_empty() {
             1.0
         } else {
-            let topic_matches = qa.expected_topics.iter()
+            let topic_matches = qa
+                .expected_topics
+                .iter()
                 .filter(|topic| response_lower.contains(&topic.to_lowercase()))
                 .count();
             topic_matches as f64 / qa.expected_topics.len() as f64
@@ -178,7 +189,10 @@ impl EffectivenessScorer {
 
         // Check for explanations
         let explanation_markers = ["because", "therefore", "this means", "in other words"];
-        if explanation_markers.iter().any(|m| response.to_lowercase().contains(m)) {
+        if explanation_markers
+            .iter()
+            .any(|m| response.to_lowercase().contains(m))
+        {
             score += 0.1;
         }
 
@@ -189,14 +203,17 @@ impl EffectivenessScorer {
         let mut score: f64 = 0.6;
 
         // Sentence structure
-        let sentences: Vec<_> = response.split(|c| c == '.' || c == '!' || c == '?')
+        let sentences: Vec<_> = response
+            .split(|c| c == '.' || c == '!' || c == '?')
             .filter(|s| !s.trim().is_empty())
             .collect();
 
         if !sentences.is_empty() {
-            let avg_sentence_length: f64 = sentences.iter()
+            let avg_sentence_length: f64 = sentences
+                .iter()
                 .map(|s| s.split_whitespace().count() as f64)
-                .sum::<f64>() / sentences.len() as f64;
+                .sum::<f64>()
+                / sentences.len() as f64;
 
             // Optimal sentence length is 15-25 words
             if (15.0..=25.0).contains(&avg_sentence_length) {
@@ -212,9 +229,7 @@ impl EffectivenessScorer {
         }
 
         // Avoid jargon density (simple heuristic)
-        let complex_words = response.split_whitespace()
-            .filter(|w| w.len() > 12)
-            .count();
+        let complex_words = response.split_whitespace().filter(|w| w.len() > 12).count();
 
         let total_words = response.split_whitespace().count().max(1);
         let complex_ratio = complex_words as f64 / total_words as f64;
@@ -232,13 +247,22 @@ impl EffectivenessScorer {
 
         // Check for action words
         let action_words = [
-            "can", "should", "try", "use", "run", "execute", "click",
-            "open", "create", "add", "remove", "install", "configure",
+            "can",
+            "should",
+            "try",
+            "use",
+            "run",
+            "execute",
+            "click",
+            "open",
+            "create",
+            "add",
+            "remove",
+            "install",
+            "configure",
         ];
 
-        let action_count = action_words.iter()
-            .filter(|w| lower.contains(*w))
-            .count();
+        let action_count = action_words.iter().filter(|w| lower.contains(*w)).count();
 
         score += (action_count as f64 / 5.0).min(0.3);
 
@@ -325,7 +349,9 @@ impl EffectivenessScorer {
 
         if let Some(avg) = self.get_average_scores() {
             if avg.relevance < 0.6 {
-                suggestions.push("Improve response relevance by focusing on key question terms".to_string());
+                suggestions.push(
+                    "Improve response relevance by focusing on key question terms".to_string(),
+                );
             }
             if avg.completeness < 0.6 {
                 suggestions.push("Provide more comprehensive responses with examples".to_string());
@@ -364,20 +390,29 @@ impl BatchEvaluator {
     }
 
     pub fn evaluate(&mut self, pairs: &[QAPair]) -> BatchResult {
-        let scores: Vec<_> = pairs.iter()
-            .map(|qa| self.scorer.score(qa))
-            .collect();
+        let scores: Vec<_> = pairs.iter().map(|qa| self.scorer.score(qa)).collect();
 
-        let overall_avg = scores.iter().map(|s| s.overall).sum::<f64>() / scores.len().max(1) as f64;
+        let overall_avg =
+            scores.iter().map(|s| s.overall).sum::<f64>() / scores.len().max(1) as f64;
 
-        let best_idx = scores.iter()
+        let best_idx = scores
+            .iter()
             .enumerate()
-            .max_by(|(_, a), (_, b)| a.overall.partial_cmp(&b.overall).unwrap_or(std::cmp::Ordering::Equal))
+            .max_by(|(_, a), (_, b)| {
+                a.overall
+                    .partial_cmp(&b.overall)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
             .map(|(i, _)| i);
 
-        let worst_idx = scores.iter()
+        let worst_idx = scores
+            .iter()
             .enumerate()
-            .min_by(|(_, a), (_, b)| a.overall.partial_cmp(&b.overall).unwrap_or(std::cmp::Ordering::Equal))
+            .min_by(|(_, a), (_, b)| {
+                a.overall
+                    .partial_cmp(&b.overall)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
             .map(|(i, _)| i);
 
         BatchResult {
@@ -416,7 +451,8 @@ mod tests {
             question: "How do I install Python?".to_string(),
             response: "To install Python, you can download it from python.org. \
                        First, go to the website. Then click download. \
-                       After downloading, run the installer.".to_string(),
+                       After downloading, run the installer."
+                .to_string(),
             context: None,
             expected_topics: vec!["python".to_string(), "install".to_string()],
             user_feedback: None,
@@ -471,5 +507,230 @@ mod tests {
 
         let result = evaluator.evaluate(&pairs);
         assert_eq!(result.scores.len(), 2);
+    }
+
+    #[test]
+    fn test_relevance_scoring() {
+        let mut scorer = EffectivenessScorer::new();
+
+        // High overlap: response contains many question terms
+        let high_overlap = QAPair {
+            question: "How do I configure database connections in Rust?".to_string(),
+            response: "To configure database connections in Rust, you need to set up \
+                       a connection pool. Database configuration typically involves \
+                       specifying the host, port, and credentials for your Rust application."
+                .to_string(),
+            context: None,
+            expected_topics: vec!["database".to_string(), "rust".to_string()],
+            user_feedback: None,
+        };
+        let high_score = scorer.score(&high_overlap);
+
+        // Low overlap: response has almost nothing in common with question
+        let low_overlap = QAPair {
+            question: "How do I configure database connections in Rust?".to_string(),
+            response: "The weather today is sunny with a high of 75 degrees. \
+                       Pack sunscreen if you plan to go outside."
+                .to_string(),
+            context: None,
+            expected_topics: vec!["database".to_string(), "rust".to_string()],
+            user_feedback: None,
+        };
+        let low_score = scorer.score(&low_overlap);
+
+        assert!(
+            high_score.relevance > low_score.relevance,
+            "High overlap relevance ({}) should exceed low overlap relevance ({})",
+            high_score.relevance,
+            low_score.relevance
+        );
+    }
+
+    #[test]
+    fn test_completeness_long_response() {
+        let mut scorer = EffectivenessScorer::new();
+
+        // Build a 50+ word response with structured content and explanation markers
+        let long_response = "To set up a Rust project you need to install the Rust toolchain. \
+            First download rustup from the official website. Then run the installer. \
+            After installation you can create a new project with cargo init. \
+            For example, you might run cargo new my_project to scaffold a binary. \
+            This means you will have a src/main.rs file ready. \
+            Because Cargo handles dependencies, adding crates is straightforward. \
+            Simply edit Cargo.toml and run cargo build to fetch everything.";
+
+        let qa = QAPair {
+            question: "How do I set up a Rust project?".to_string(),
+            response: long_response.to_string(),
+            context: None,
+            expected_topics: vec![],
+            user_feedback: None,
+        };
+
+        let score = scorer.score(&qa);
+
+        // 50+ words -> +0.2, contains "example" -> +0.1, has explanation marker "this means"/"because" -> +0.1
+        // Base 0.5 + 0.2 + 0.1 + 0.1 = 0.9
+        assert!(
+            score.completeness >= 0.7,
+            "Long detailed response should have high completeness, got {}",
+            score.completeness
+        );
+    }
+
+    #[test]
+    fn test_completeness_short_response() {
+        let mut scorer = EffectivenessScorer::new();
+
+        let qa = QAPair {
+            question: "How do I set up a Rust project?".to_string(),
+            response: "Use cargo.".to_string(),
+            context: None,
+            expected_topics: vec![],
+            user_feedback: None,
+        };
+
+        let score = scorer.score(&qa);
+
+        // Very short: < 20 words -> base 0.5 - 0.1 = 0.4, no structure/example/explanation
+        assert!(
+            score.completeness <= 0.5,
+            "Very short response should have low completeness, got {}",
+            score.completeness
+        );
+    }
+
+    #[test]
+    fn test_clarity_scoring() {
+        let mut scorer = EffectivenessScorer::new();
+
+        // Well-structured response with moderate sentence lengths and list markers
+        let clear_qa = QAPair {
+            question: "What are the benefits of Rust?".to_string(),
+            response: "Rust provides several key benefits for developers today. \
+                       Memory safety is guaranteed at compile time without garbage collection. \
+                       Concurrency is fearless thanks to the ownership system. \
+                       - Zero cost abstractions for high performance. \
+                       - Great tooling with cargo and rustfmt."
+                .to_string(),
+            context: None,
+            expected_topics: vec![],
+            user_feedback: None,
+        };
+        let clear_score = scorer.score(&clear_qa);
+
+        // Run-on response: one giant sentence with 40+ words and no structure
+        let unclear_qa = QAPair {
+            question: "What are the benefits of Rust?".to_string(),
+            response: "Rust is good because it has memory safety and it also has concurrency \
+                       and it has zero cost abstractions and it has great tooling and it compiles \
+                       fast and it has a nice community and it integrates well with C code and \
+                       it has pattern matching and it has traits and generics and lifetimes and \
+                       borrowing and ownership and move semantics and iterators and closures"
+                .to_string(),
+            context: None,
+            expected_topics: vec![],
+            user_feedback: None,
+        };
+        let unclear_score = scorer.score(&unclear_qa);
+
+        assert!(
+            clear_score.clarity > unclear_score.clarity,
+            "Well-structured text clarity ({}) should exceed run-on clarity ({})",
+            clear_score.clarity,
+            unclear_score.clarity
+        );
+    }
+
+    #[test]
+    fn test_actionability_scoring() {
+        let mut scorer = EffectivenessScorer::new();
+
+        // Response with action words, step-by-step instructions, and code blocks
+        let actionable_qa = QAPair {
+            question: "How do I create a web server?".to_string(),
+            response: "First, you should install the framework. Then create a new file. \
+                       Try using the following code:\n\
+                       ```rust\nfn main() { println!(\"hello\"); }\n```\n\
+                       Run the server with `cargo run`. You can configure the port \
+                       by adding an environment variable."
+                .to_string(),
+            context: None,
+            expected_topics: vec![],
+            user_feedback: None,
+        };
+        let actionable_score = scorer.score(&actionable_qa);
+
+        // Response with no actions, no steps, no code
+        let passive_qa = QAPair {
+            question: "How do I create a web server?".to_string(),
+            response: "Web servers are interesting pieces of technology. \
+                       They have been around for decades. Many languages support them."
+                .to_string(),
+            context: None,
+            expected_topics: vec![],
+            user_feedback: None,
+        };
+        let passive_score = scorer.score(&passive_qa);
+
+        assert!(
+            actionable_score.actionability > passive_score.actionability,
+            "Actionable response ({}) should score higher than passive ({})",
+            actionable_score.actionability,
+            passive_score.actionability
+        );
+        // The actionable response has action words + step words + code blocks
+        assert!(
+            actionable_score.actionability >= 0.7,
+            "Highly actionable response should be >= 0.7, got {}",
+            actionable_score.actionability
+        );
+    }
+
+    #[test]
+    fn test_average_scores() {
+        let mut scorer = EffectivenessScorer::new();
+
+        // Score with no history should be None
+        assert!(scorer.get_average_scores().is_none());
+
+        let qa1 = QAPair {
+            question: "What is Rust programming language used for in production?".to_string(),
+            response: "Rust is used for systems programming, web services, and CLI tools. \
+                       Because it guarantees memory safety, it is popular in production."
+                .to_string(),
+            context: None,
+            expected_topics: vec!["rust".to_string()],
+            user_feedback: None,
+        };
+        let score1 = scorer.score(&qa1);
+
+        let qa2 = QAPair {
+            question: "How does cargo manage dependencies in large projects?".to_string(),
+            response: "Cargo reads Cargo.toml to manage dependencies. You should run \
+                       cargo update to refresh the lock file. This means reproducible builds."
+                .to_string(),
+            context: None,
+            expected_topics: vec!["cargo".to_string()],
+            user_feedback: None,
+        };
+        let score2 = scorer.score(&qa2);
+
+        let avg = scorer.get_average_scores().expect("Should have averages after scoring");
+
+        let expected_overall = (score1.overall + score2.overall) / 2.0;
+        let expected_relevance = (score1.relevance + score2.relevance) / 2.0;
+        let expected_completeness = (score1.completeness + score2.completeness) / 2.0;
+        let expected_clarity = (score1.clarity + score2.clarity) / 2.0;
+        let expected_actionability = (score1.actionability + score2.actionability) / 2.0;
+
+        let eps = 1e-10;
+        assert!((avg.overall - expected_overall).abs() < eps, "overall mismatch");
+        assert!((avg.relevance - expected_relevance).abs() < eps, "relevance mismatch");
+        assert!((avg.completeness - expected_completeness).abs() < eps, "completeness mismatch");
+        assert!((avg.clarity - expected_clarity).abs() < eps, "clarity mismatch");
+        assert!((avg.actionability - expected_actionability).abs() < eps, "actionability mismatch");
+        // No user feedback provided, so satisfaction should be None
+        assert!(avg.user_satisfaction.is_none());
     }
 }

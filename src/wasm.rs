@@ -54,10 +54,10 @@ impl PlatformCapabilities {
         {
             Self {
                 filesystem: false,
-                network: true, // Via fetch API
-                threads: false, // No threads without SharedArrayBuffer
+                network: true,     // Via fetch API
+                threads: false,    // No threads without SharedArrayBuffer
                 system_time: true, // Via js_sys
-                sqlite: false, // No native SQLite
+                sqlite: false,     // No native SQLite
             }
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -156,7 +156,9 @@ pub mod time {
     impl Instant {
         /// Create a new instant
         pub fn now() -> Self {
-            Self { millis: now_millis() }
+            Self {
+                millis: now_millis(),
+            }
         }
 
         /// Duration since this instant
@@ -341,7 +343,9 @@ pub mod random {
     #[cfg(all(target_arch = "wasm32", not(feature = "wasm")))]
     pub fn random_u64() -> u64 {
         // Enable the `wasm` feature for cryptographically secure randomness via getrandom
-        super::time::now_millis().wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407)
+        super::time::now_millis()
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407)
     }
 
     /// Generate a random u64 — native (time-seeded LCG)
@@ -352,7 +356,8 @@ pub mod random {
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos() as u64;
-        seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407)
+        seed.wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407)
     }
 
     /// Generate a random UUID v4
@@ -454,7 +459,9 @@ mod tests {
     fn test_time_instant() {
         let start = time::Instant::now();
         // Small delay
-        for _ in 0..1000 { let _ = 1 + 1; }
+        for _ in 0..1000 {
+            let _ = 1 + 1;
+        }
         let _elapsed = start.elapsed();
     }
 

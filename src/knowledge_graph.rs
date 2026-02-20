@@ -618,8 +618,7 @@ impl PatternEntityExtractor {
 
     /// Add a known entity
     pub fn add_entity(mut self, name: &str, entity_type: EntityType) -> Self {
-        self.known_entities
-            .insert(name.to_lowercase(), entity_type);
+        self.known_entities.insert(name.to_lowercase(), entity_type);
         self
     }
 
@@ -670,15 +669,16 @@ impl PatternEntityExtractor {
         for (alias, canonical) in &self.aliases {
             if text_lower.contains(alias) {
                 if let Some(entity_type) = self.known_entities.get(&canonical.to_lowercase()) {
-                    let entry = found.entry(canonical.to_lowercase()).or_insert_with(|| {
-                        ExtractedEntity {
-                            name: canonical.clone(),
-                            entity_type: *entity_type,
-                            aliases: vec![],
-                            position: text_lower.find(alias),
-                            context: None,
-                        }
-                    });
+                    let entry =
+                        found
+                            .entry(canonical.to_lowercase())
+                            .or_insert_with(|| ExtractedEntity {
+                                name: canonical.clone(),
+                                entity_type: *entity_type,
+                                aliases: vec![],
+                                position: text_lower.find(alias),
+                                context: None,
+                            });
                     if !entry.aliases.contains(alias) {
                         entry.aliases.push(alias.clone());
                     }
@@ -691,15 +691,15 @@ impl PatternEntityExtractor {
             for caps in pattern.captures_iter(text) {
                 if let Some(m) = caps.get(0) {
                     let name = m.as_str().to_string();
-                    found.entry(name.to_lowercase()).or_insert_with(|| {
-                        ExtractedEntity {
+                    found
+                        .entry(name.to_lowercase())
+                        .or_insert_with(|| ExtractedEntity {
                             name,
                             entity_type: *entity_type,
                             aliases: vec![],
                             position: Some(m.start()),
                             context: None,
-                        }
-                    });
+                        });
                 }
             }
         }
@@ -771,7 +771,10 @@ impl KnowledgeGraphStore {
     /// Open or create a knowledge graph database
     pub fn open(path: impl AsRef<Path>, config: KnowledgeGraphConfig) -> Result<Self> {
         let conn = Connection::open(path)?;
-        let store = Self { conn: Mutex::new(conn), config };
+        let store = Self {
+            conn: Mutex::new(conn),
+            config,
+        };
         store.init_schema()?;
         Ok(store)
     }
@@ -779,7 +782,10 @@ impl KnowledgeGraphStore {
     /// Create an in-memory knowledge graph (for testing)
     pub fn in_memory(config: KnowledgeGraphConfig) -> Result<Self> {
         let conn = Connection::open_in_memory()?;
-        let store = Self { conn: Mutex::new(conn), config };
+        let store = Self {
+            conn: Mutex::new(conn),
+            config,
+        };
         store.init_schema()?;
         Ok(store)
     }
@@ -1063,14 +1069,15 @@ impl KnowledgeGraphStore {
                            WHERE r.from_entity_id = ?1 AND r.confidence >= ?2"#,
                     )?;
 
-                    let rows = stmt.query_map(params![eid, self.config.min_relation_confidence], |row| {
-                        Ok((
-                            row.get::<_, String>(0)?,
-                            row.get::<_, String>(1)?,
-                            row.get::<_, String>(2)?,
-                            row.get::<_, f32>(3)?,
-                        ))
-                    })?;
+                    let rows =
+                        stmt.query_map(params![eid, self.config.min_relation_confidence], |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, String>(1)?,
+                                row.get::<_, String>(2)?,
+                                row.get::<_, f32>(3)?,
+                            ))
+                        })?;
 
                     rows.collect::<std::result::Result<Vec<_>, _>>()?
                 };
@@ -1151,7 +1158,9 @@ impl KnowledgeGraphStore {
             return Ok(vec![]);
         }
 
-        let placeholders: Vec<String> = (0..entity_ids.len()).map(|i| format!("?{}", i + 1)).collect();
+        let placeholders: Vec<String> = (0..entity_ids.len())
+            .map(|i| format!("?{}", i + 1))
+            .collect();
         let query = format!(
             r#"SELECT DISTINCT c.id, c.source_doc, c.content, c.position,
                       GROUP_CONCAT(DISTINCT e.name) as entities,
@@ -1222,22 +1231,22 @@ impl KnowledgeGraphStore {
     pub fn get_stats(&self) -> Result<GraphStats> {
         let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
 
-        let total_entities: usize = conn
-            .query_row("SELECT COUNT(*) FROM entities", [], |row| row.get(0))?;
+        let total_entities: usize =
+            conn.query_row("SELECT COUNT(*) FROM entities", [], |row| row.get(0))?;
 
-        let total_relations: usize = conn
-            .query_row("SELECT COUNT(*) FROM relations", [], |row| row.get(0))?;
+        let total_relations: usize =
+            conn.query_row("SELECT COUNT(*) FROM relations", [], |row| row.get(0))?;
 
-        let total_chunks: usize = conn
-            .query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get(0))?;
+        let total_chunks: usize =
+            conn.query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get(0))?;
 
-        let total_mentions: usize = conn
-            .query_row("SELECT COUNT(*) FROM entity_mentions", [], |row| row.get(0))?;
+        let total_mentions: usize =
+            conn.query_row("SELECT COUNT(*) FROM entity_mentions", [], |row| row.get(0))?;
 
         let mut entities_by_type = HashMap::new();
         {
-            let mut stmt = conn
-                .prepare("SELECT entity_type, COUNT(*) FROM entities GROUP BY entity_type")?;
+            let mut stmt =
+                conn.prepare("SELECT entity_type, COUNT(*) FROM entities GROUP BY entity_type")?;
             let rows = stmt.query_map([], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, usize>(1)?))
             })?;
@@ -1488,8 +1497,43 @@ impl KnowledgeGraph {
     /// Clear the entire graph
     pub fn clear(&self) -> Result<()> {
         self.store.clear()?;
-        self.entity_cache.write().unwrap_or_else(|e| e.into_inner()).clear();
+        self.entity_cache
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
         Ok(())
+    }
+
+    /// Export the entire knowledge graph as JSON for visualization.
+    pub fn export_json(&self) -> anyhow::Result<serde_json::Value> {
+        let entities = self.store.list_all_entities()?;
+        let relations = self.store.list_all_relations()?;
+        let stats = self.stats()?;
+
+        Ok(serde_json::json!({
+            "entities": entities.iter().map(|(id, name, entity_type)| {
+                serde_json::json!({
+                    "id": id,
+                    "name": name,
+                    "entity_type": entity_type,
+                })
+            }).collect::<Vec<_>>(),
+            "relations": relations.iter().map(|(id, from_id, to_id, rel_type, confidence)| {
+                serde_json::json!({
+                    "id": id,
+                    "from_entity_id": from_id,
+                    "to_entity_id": to_id,
+                    "relation_type": rel_type,
+                    "confidence": confidence,
+                })
+            }).collect::<Vec<_>>(),
+            "stats": serde_json::json!({
+                "total_entities": stats.total_entities,
+                "total_relations": stats.total_relations,
+                "total_chunks": stats.total_chunks,
+                "total_mentions": stats.total_mentions,
+            }),
+        }))
     }
 
     fn chunk_text(&self, text: &str) -> Vec<String> {
@@ -1670,10 +1714,8 @@ impl KnowledgeGraphBuilder {
             .push(("RSI".to_string(), "Roberts Space Industries".to_string()));
         self.aliases
             .push(("MISC".to_string(), "Musashi Industrial".to_string()));
-        self.aliases.push((
-            "Consolidated Outland".to_string(),
-            "CNOU".to_string(),
-        ));
+        self.aliases
+            .push(("Consolidated Outland".to_string(), "CNOU".to_string()));
 
         self
     }
@@ -1686,7 +1728,8 @@ impl KnowledgeGraphBuilder {
 
     /// Add an alias
     pub fn add_alias(mut self, alias: &str, canonical: &str) -> Self {
-        self.aliases.push((alias.to_string(), canonical.to_string()));
+        self.aliases
+            .push((alias.to_string(), canonical.to_string()));
         self
     }
 
@@ -1702,7 +1745,9 @@ impl KnowledgeGraphBuilder {
         // Add aliases
         for (alias, canonical) in &self.aliases {
             if let Some(entity_id) = graph.store.find_entity_id(canonical)? {
-                graph.store.add_aliases(entity_id, &[alias.clone()])?;
+                graph
+                    .store
+                    .add_aliases(entity_id, std::slice::from_ref(alias))?;
             }
         }
 
@@ -1719,7 +1764,9 @@ impl KnowledgeGraphBuilder {
 
         for (alias, canonical) in &self.aliases {
             if let Some(entity_id) = graph.store.find_entity_id(canonical)? {
-                graph.store.add_aliases(entity_id, &[alias.clone()])?;
+                graph
+                    .store
+                    .add_aliases(entity_id, std::slice::from_ref(alias))?;
             }
         }
 
@@ -1734,6 +1781,704 @@ impl Default for KnowledgeGraphBuilder {
 }
 
 // ============================================================================
+// Cypher-like Query Builder
+// ============================================================================
+
+/// WHERE clause operators for graph queries.
+#[derive(Debug, Clone)]
+pub enum WhereClause {
+    /// Exact equality: field = 'value'
+    Eq(String, String),
+    /// Substring match: field LIKE '%value%'
+    Contains(String, String),
+    /// Greater than: field > value
+    Gt(String, f64),
+    /// Less than: field < value
+    Lt(String, f64),
+    /// Greater than or equal: field >= value
+    Gte(String, f64),
+    /// Less than or equal: field <= value
+    Lte(String, f64),
+    /// Set membership: field IN (values...)
+    In(String, Vec<String>),
+}
+
+/// A match pattern for graph query building.
+#[derive(Debug, Clone)]
+pub enum MatchPattern {
+    /// Match a node (entity) with optional type label and alias.
+    Node {
+        label: Option<String>,
+        alias: String,
+    },
+    /// Match a relationship (relation) with optional type, alias, and endpoint aliases.
+    Relationship {
+        rel_type: Option<String>,
+        alias: String,
+        from_alias: String,
+        to_alias: String,
+    },
+    /// Match a path between two node aliases up to max_hops.
+    Path {
+        from_alias: String,
+        to_alias: String,
+        max_hops: usize,
+    },
+}
+
+/// Result from a Cypher-like graph query execution.
+#[derive(Debug, Clone)]
+pub struct CypherQueryResult {
+    /// Column names from the query.
+    pub columns: Vec<String>,
+    /// Rows of string values.
+    pub rows: Vec<Vec<String>>,
+    /// Execution time in milliseconds.
+    pub execution_time_ms: u128,
+}
+
+/// Cypher-like query builder for the knowledge graph.
+///
+/// Builds SQL queries against the knowledge graph's SQLite schema.
+///
+/// # Example
+///
+/// ```ignore
+/// let query = GraphQuery::new()
+///     .match_node("n", Some("Organization"))
+///     .where_eq("n.name", "Aegis")
+///     .return_fields(&["n.name", "n.entity_type"])
+///     .limit(10);
+/// let sql = query.to_sql();
+/// ```
+#[derive(Debug, Clone)]
+pub struct GraphQuery {
+    match_patterns: Vec<MatchPattern>,
+    where_clauses: Vec<WhereClause>,
+    return_fields: Vec<String>,
+    order_by: Option<(String, bool)>, // (field, ascending)
+    limit_val: Option<usize>,
+    skip_val: Option<usize>,
+}
+
+impl GraphQuery {
+    /// Create a new empty query builder.
+    pub fn new() -> Self {
+        Self {
+            match_patterns: Vec::new(),
+            where_clauses: Vec::new(),
+            return_fields: Vec::new(),
+            order_by: None,
+            limit_val: None,
+            skip_val: None,
+        }
+    }
+
+    /// Add a node match pattern.
+    ///
+    /// `alias` is used to reference this node in other clauses.
+    /// `label` optionally filters by entity_type.
+    pub fn match_node(mut self, alias: &str, label: Option<&str>) -> Self {
+        self.match_patterns.push(MatchPattern::Node {
+            label: label.map(|s| s.to_string()),
+            alias: alias.to_string(),
+        });
+        self
+    }
+
+    /// Add a relationship match pattern joining two node aliases.
+    ///
+    /// `rel_type` optionally filters by relation_type.
+    pub fn match_relationship(
+        mut self,
+        alias: &str,
+        rel_type: Option<&str>,
+        from_alias: &str,
+        to_alias: &str,
+    ) -> Self {
+        self.match_patterns.push(MatchPattern::Relationship {
+            rel_type: rel_type.map(|s| s.to_string()),
+            alias: alias.to_string(),
+            from_alias: from_alias.to_string(),
+            to_alias: to_alias.to_string(),
+        });
+        self
+    }
+
+    /// Add a path match pattern between two node aliases.
+    ///
+    /// `max_hops` limits traversal depth.
+    pub fn match_path(mut self, from_alias: &str, to_alias: &str, max_hops: usize) -> Self {
+        self.match_patterns.push(MatchPattern::Path {
+            from_alias: from_alias.to_string(),
+            to_alias: to_alias.to_string(),
+            max_hops,
+        });
+        self
+    }
+
+    /// Add an equality WHERE clause: field = 'value'.
+    pub fn where_eq(mut self, field: &str, value: &str) -> Self {
+        self.where_clauses
+            .push(WhereClause::Eq(field.to_string(), value.to_string()));
+        self
+    }
+
+    /// Add a substring WHERE clause: field LIKE '%value%'.
+    pub fn where_contains(mut self, field: &str, value: &str) -> Self {
+        self.where_clauses
+            .push(WhereClause::Contains(field.to_string(), value.to_string()));
+        self
+    }
+
+    /// Add a greater-than WHERE clause: field > value.
+    pub fn where_gt(mut self, field: &str, value: f64) -> Self {
+        self.where_clauses
+            .push(WhereClause::Gt(field.to_string(), value));
+        self
+    }
+
+    /// Set the fields to return.
+    pub fn return_fields(mut self, fields: &[&str]) -> Self {
+        self.return_fields = fields.iter().map(|s| s.to_string()).collect();
+        self
+    }
+
+    /// Set the ORDER BY clause.
+    pub fn order_by(mut self, field: &str, ascending: bool) -> Self {
+        self.order_by = Some((field.to_string(), ascending));
+        self
+    }
+
+    /// Set the LIMIT clause.
+    pub fn limit(mut self, n: usize) -> Self {
+        self.limit_val = Some(n);
+        self
+    }
+
+    /// Set the OFFSET (skip) clause.
+    pub fn skip(mut self, n: usize) -> Self {
+        self.skip_val = Some(n);
+        self
+    }
+
+    /// Generate SQL query string from the builder state.
+    pub fn to_sql(&self) -> String {
+        // Build SELECT clause
+        let select = if self.return_fields.is_empty() {
+            "SELECT *".to_string()
+        } else {
+            format!("SELECT {}", self.return_fields.join(", "))
+        };
+
+        // Build FROM clause based on match patterns
+        let mut tables = Vec::new();
+        let mut joins = Vec::new();
+
+        for pattern in &self.match_patterns {
+            match pattern {
+                MatchPattern::Node { label, alias } => {
+                    if let Some(lbl) = label {
+                        tables.push(format!("entities AS {} /* type={} */", alias, lbl));
+                    } else {
+                        tables.push(format!("entities AS {}", alias));
+                    }
+                }
+                MatchPattern::Relationship {
+                    rel_type,
+                    alias,
+                    from_alias,
+                    to_alias,
+                } => {
+                    joins.push(format!(
+                        "JOIN relations AS {} ON {}.id = {}.from_entity_id AND {}.id = {}.to_entity_id{}",
+                        alias,
+                        from_alias,
+                        alias,
+                        to_alias,
+                        alias,
+                        if let Some(rt) = rel_type {
+                            format!(" AND {}.relation_type = '{}'", alias, rt)
+                        } else {
+                            String::new()
+                        }
+                    ));
+                }
+                MatchPattern::Path {
+                    from_alias,
+                    to_alias,
+                    max_hops,
+                } => {
+                    // Path queries use a CTE approach (simplified: single-hop join for SQL generation)
+                    joins.push(format!(
+                        "JOIN relations AS path_r ON {}.id = path_r.from_entity_id \
+                         JOIN entities AS {} ON {}.id = path_r.to_entity_id /* max_hops={} */",
+                        from_alias, to_alias, to_alias, max_hops
+                    ));
+                }
+            }
+        }
+
+        let from = if tables.is_empty() {
+            "FROM entities".to_string()
+        } else {
+            format!("FROM {}", tables.join(", "))
+        };
+
+        // Build WHERE clause
+        let mut where_parts = Vec::new();
+        for pattern in &self.match_patterns {
+            if let MatchPattern::Node {
+                label: Some(lbl),
+                alias,
+            } = pattern
+            {
+                where_parts.push(format!("{}.entity_type = '{}'", alias, lbl));
+            }
+        }
+        for clause in &self.where_clauses {
+            match clause {
+                WhereClause::Eq(field, value) => {
+                    where_parts.push(format!("{} = '{}'", field, value))
+                }
+                WhereClause::Contains(field, value) => {
+                    where_parts.push(format!("{} LIKE '%{}%'", field, value))
+                }
+                WhereClause::Gt(field, value) => where_parts.push(format!("{} > {}", field, value)),
+                WhereClause::Lt(field, value) => where_parts.push(format!("{} < {}", field, value)),
+                WhereClause::Gte(field, value) => {
+                    where_parts.push(format!("{} >= {}", field, value))
+                }
+                WhereClause::Lte(field, value) => {
+                    where_parts.push(format!("{} <= {}", field, value))
+                }
+                WhereClause::In(field, values) => {
+                    let vals = values
+                        .iter()
+                        .map(|v| format!("'{}'", v))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    where_parts.push(format!("{} IN ({})", field, vals));
+                }
+            }
+        }
+
+        let where_clause = if where_parts.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {}", where_parts.join(" AND "))
+        };
+
+        // Build ORDER BY
+        let order = match &self.order_by {
+            Some((field, asc)) => {
+                format!(" ORDER BY {} {}", field, if *asc { "ASC" } else { "DESC" })
+            }
+            None => String::new(),
+        };
+
+        // Build LIMIT/OFFSET
+        let limit = match self.limit_val {
+            Some(n) => format!(" LIMIT {}", n),
+            None => String::new(),
+        };
+        let offset = match self.skip_val {
+            Some(n) => format!(" OFFSET {}", n),
+            None => String::new(),
+        };
+
+        // Combine
+        let joins_str = if joins.is_empty() {
+            String::new()
+        } else {
+            format!(" {}", joins.join(" "))
+        };
+        format!(
+            "{} {}{}{}{}{}{}",
+            select, from, joins_str, where_clause, order, limit, offset
+        )
+    }
+
+    /// Execute the query against a KnowledgeGraphStore connection.
+    pub fn execute(&self, store: &KnowledgeGraphStore) -> Result<CypherQueryResult> {
+        let start = Instant::now();
+        let sql = self.to_sql();
+        let conn = store
+            .conn
+            .lock()
+            .map_err(|e| anyhow!("Lock error: {}", e))?;
+
+        let mut stmt = conn.prepare(&sql)?;
+        let column_count = stmt.column_count();
+        let columns: Vec<String> = (0..column_count)
+            .map(|i| stmt.column_name(i).unwrap_or("?").to_string())
+            .collect();
+
+        let rows: Vec<Vec<String>> = stmt
+            .query_map([], |row| {
+                let mut values = Vec::new();
+                for i in 0..column_count {
+                    let val: String = row
+                        .get::<_, rusqlite::types::Value>(i)
+                        .map(|v| match v {
+                            rusqlite::types::Value::Null => "NULL".to_string(),
+                            rusqlite::types::Value::Integer(i) => i.to_string(),
+                            rusqlite::types::Value::Real(f) => f.to_string(),
+                            rusqlite::types::Value::Text(s) => s,
+                            rusqlite::types::Value::Blob(b) => {
+                                format!("<blob:{} bytes>", b.len())
+                            }
+                        })
+                        .unwrap_or_else(|_| "ERROR".to_string());
+                    values.push(val);
+                }
+                Ok(values)
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(CypherQueryResult {
+            columns,
+            rows,
+            execution_time_ms: start.elapsed().as_millis(),
+        })
+    }
+}
+
+impl Default for GraphQuery {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ============================================================================
+// Graph Algorithms
+// ============================================================================
+
+/// Graph algorithms operating on the knowledge graph.
+///
+/// All algorithms load adjacency data from SQLite into memory, then compute
+/// in-memory for efficiency.
+pub struct GraphAlgorithms;
+
+impl GraphAlgorithms {
+    /// Find the shortest path between two entities using BFS.
+    ///
+    /// Returns entity IDs in order from `from_entity_id` to `to_entity_id`,
+    /// or `None` if no path exists. Treats the graph as undirected.
+    pub fn shortest_path(
+        store: &KnowledgeGraphStore,
+        from_entity_id: i64,
+        to_entity_id: i64,
+    ) -> Result<Option<Vec<i64>>> {
+        // Load adjacency list from relations table
+        let conn = store.conn.lock().map_err(|e| anyhow!("Lock: {}", e))?;
+        let mut adj: HashMap<i64, Vec<i64>> = HashMap::new();
+
+        let mut stmt = conn.prepare("SELECT from_entity_id, to_entity_id FROM relations")?;
+        let edges = stmt.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?;
+
+        for edge in edges {
+            let (from, to) = edge?;
+            adj.entry(from).or_default().push(to);
+            adj.entry(to).or_default().push(from); // undirected
+        }
+        drop(stmt);
+        drop(conn);
+
+        // BFS
+        use std::collections::VecDeque;
+        let mut queue = VecDeque::new();
+        let mut visited: HashMap<i64, i64> = HashMap::new(); // node -> parent
+        visited.insert(from_entity_id, -1);
+        queue.push_back(from_entity_id);
+
+        while let Some(current) = queue.pop_front() {
+            if current == to_entity_id {
+                // Reconstruct path
+                let mut path = vec![current];
+                let mut node = current;
+                while visited[&node] != -1 {
+                    node = visited[&node];
+                    path.push(node);
+                }
+                path.reverse();
+                return Ok(Some(path));
+            }
+
+            if let Some(neighbors) = adj.get(&current) {
+                for &next in neighbors {
+                    if !visited.contains_key(&next) {
+                        visited.insert(next, current);
+                        queue.push_back(next);
+                    }
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Compute PageRank for all entities in the graph.
+    ///
+    /// Returns a map of entity_id to PageRank score. Uses the standard
+    /// iterative power method with a damping factor (typically 0.85).
+    pub fn page_rank(
+        store: &KnowledgeGraphStore,
+        damping: f64,
+        iterations: usize,
+    ) -> Result<HashMap<i64, f64>> {
+        let conn = store.conn.lock().map_err(|e| anyhow!("Lock: {}", e))?;
+
+        // Load all entity IDs
+        let mut ids: Vec<i64> = Vec::new();
+        let mut stmt = conn.prepare("SELECT id FROM entities")?;
+        let rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
+        for r in rows {
+            ids.push(r?);
+        }
+        drop(stmt);
+
+        if ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        // Load outgoing edges
+        let mut outgoing: HashMap<i64, Vec<i64>> = HashMap::new();
+        let mut stmt = conn.prepare("SELECT from_entity_id, to_entity_id FROM relations")?;
+        let edges = stmt.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?;
+        for edge in edges {
+            let (from, to) = edge?;
+            outgoing.entry(from).or_default().push(to);
+        }
+        drop(stmt);
+        drop(conn);
+
+        let n = ids.len() as f64;
+        let mut ranks: HashMap<i64, f64> = ids.iter().map(|&id| (id, 1.0 / n)).collect();
+
+        for _ in 0..iterations {
+            let mut new_ranks: HashMap<i64, f64> =
+                ids.iter().map(|&id| (id, (1.0 - damping) / n)).collect();
+
+            for &id in &ids {
+                let rank = ranks[&id];
+                if let Some(targets) = outgoing.get(&id) {
+                    let share = rank / targets.len() as f64;
+                    for &target in targets {
+                        if let Some(r) = new_ranks.get_mut(&target) {
+                            *r += damping * share;
+                        }
+                    }
+                }
+            }
+
+            ranks = new_ranks;
+        }
+
+        Ok(ranks)
+    }
+
+    /// Find connected components using Union-Find.
+    ///
+    /// Returns a map of entity_id to component_id (the root entity of its component).
+    /// Treats the graph as undirected.
+    pub fn connected_components(store: &KnowledgeGraphStore) -> Result<HashMap<i64, i64>> {
+        let conn = store.conn.lock().map_err(|e| anyhow!("Lock: {}", e))?;
+
+        let mut ids: Vec<i64> = Vec::new();
+        let mut stmt = conn.prepare("SELECT id FROM entities")?;
+        let rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
+        for r in rows {
+            ids.push(r?);
+        }
+        drop(stmt);
+
+        // Union-Find
+        let mut parent: HashMap<i64, i64> = ids.iter().map(|&id| (id, id)).collect();
+
+        fn find(parent: &mut HashMap<i64, i64>, x: i64) -> i64 {
+            let p = parent[&x];
+            if p == x {
+                return x;
+            }
+            let root = find(parent, p);
+            parent.insert(x, root);
+            root
+        }
+
+        let mut stmt = conn.prepare("SELECT from_entity_id, to_entity_id FROM relations")?;
+        let edges = stmt.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?;
+        let edge_vec: Vec<(i64, i64)> = edges.filter_map(|e| e.ok()).collect();
+        drop(stmt);
+        drop(conn);
+
+        for (from, to) in edge_vec {
+            let root_from = find(&mut parent, from);
+            let root_to = find(&mut parent, to);
+            if root_from != root_to {
+                parent.insert(root_from, root_to);
+            }
+        }
+
+        // Flatten — ensure all nodes point directly to their root
+        let all_ids = ids.clone();
+        for id in all_ids {
+            find(&mut parent, id);
+        }
+
+        Ok(parent)
+    }
+
+    /// Compute degree centrality for all entities.
+    ///
+    /// Returns a tuple of (in_degree, out_degree) maps. Directed graph view.
+    pub fn degree_centrality(
+        store: &KnowledgeGraphStore,
+    ) -> Result<(HashMap<i64, usize>, HashMap<i64, usize>)> {
+        let conn = store.conn.lock().map_err(|e| anyhow!("Lock: {}", e))?;
+
+        let mut in_degree: HashMap<i64, usize> = HashMap::new();
+        let mut out_degree: HashMap<i64, usize> = HashMap::new();
+
+        // Initialize with all entities
+        let mut stmt = conn.prepare("SELECT id FROM entities")?;
+        let rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
+        for r in rows {
+            let id = r?;
+            in_degree.insert(id, 0);
+            out_degree.insert(id, 0);
+        }
+        drop(stmt);
+
+        let mut stmt = conn.prepare("SELECT from_entity_id, to_entity_id FROM relations")?;
+        let edges = stmt.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?;
+        for edge in edges {
+            let (from, to) = edge?;
+            *out_degree.entry(from).or_insert(0) += 1;
+            *in_degree.entry(to).or_insert(0) += 1;
+        }
+        drop(stmt);
+        drop(conn);
+
+        Ok((in_degree, out_degree))
+    }
+
+    /// Find all paths between two entities up to max_depth using DFS.
+    ///
+    /// Returns all paths found. Treats the graph as undirected.
+    /// `max_depth` limits the maximum number of edges in any path.
+    pub fn all_paths(
+        store: &KnowledgeGraphStore,
+        from_id: i64,
+        to_id: i64,
+        max_depth: usize,
+    ) -> Result<Vec<Vec<i64>>> {
+        let conn = store.conn.lock().map_err(|e| anyhow!("Lock: {}", e))?;
+        let mut adj: HashMap<i64, Vec<i64>> = HashMap::new();
+
+        let mut stmt = conn.prepare("SELECT from_entity_id, to_entity_id FROM relations")?;
+        let edges = stmt.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?;
+        for edge in edges {
+            let (from, to) = edge?;
+            adj.entry(from).or_default().push(to);
+            adj.entry(to).or_default().push(from); // undirected
+        }
+        drop(stmt);
+        drop(conn);
+
+        let mut results = Vec::new();
+        let mut visited = HashSet::new();
+        visited.insert(from_id);
+        let mut path = vec![from_id];
+
+        fn dfs(
+            current: i64,
+            target: i64,
+            max_depth: usize,
+            adj: &HashMap<i64, Vec<i64>>,
+            visited: &mut HashSet<i64>,
+            path: &mut Vec<i64>,
+            results: &mut Vec<Vec<i64>>,
+        ) {
+            if current == target {
+                results.push(path.clone());
+                return;
+            }
+            if path.len() > max_depth {
+                return;
+            }
+            if let Some(neighbors) = adj.get(&current) {
+                for &next in neighbors {
+                    if !visited.contains(&next) {
+                        visited.insert(next);
+                        path.push(next);
+                        dfs(next, target, max_depth, adj, visited, path, results);
+                        path.pop();
+                        visited.remove(&next);
+                    }
+                }
+            }
+        }
+
+        dfs(
+            from_id,
+            to_id,
+            max_depth,
+            &adj,
+            &mut visited,
+            &mut path,
+            &mut results,
+        );
+        Ok(results)
+    }
+}
+
+// ============================================================================
+// KnowledgeGraphStore Helper Methods for Visualization
+// ============================================================================
+
+impl KnowledgeGraphStore {
+    /// List all entities in the store.
+    ///
+    /// Returns tuples of (id, name, entity_type).
+    pub fn list_all_entities(&self) -> Result<Vec<(i64, String, String)>> {
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock: {}", e))?;
+        let mut stmt = conn.prepare("SELECT id, name, entity_type FROM entities")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| e.into())
+    }
+
+    /// List all relations in the store.
+    ///
+    /// Returns tuples of (id, from_entity_id, to_entity_id, relation_type, confidence).
+    pub fn list_all_relations(&self) -> Result<Vec<(i64, i64, i64, String, f64)>> {
+        let conn = self.conn.lock().map_err(|e| anyhow!("Lock: {}", e))?;
+        let mut stmt = conn.prepare(
+            "SELECT id, from_entity_id, to_entity_id, relation_type, confidence FROM relations",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, f64>(4)?,
+            ))
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| e.into())
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -1743,7 +2488,10 @@ mod tests {
 
     #[test]
     fn test_entity_type_conversion() {
-        assert_eq!(EntityType::from_str("organization"), EntityType::Organization);
+        assert_eq!(
+            EntityType::from_str("organization"),
+            EntityType::Organization
+        );
         assert_eq!(EntityType::from_str("ship"), EntityType::Product);
         assert_eq!(EntityType::from_str("unknown"), EntityType::Other);
         assert_eq!(EntityType::Organization.as_str(), "organization");
@@ -1760,8 +2508,14 @@ mod tests {
         let result = extractor.extract(text).unwrap();
 
         assert!(!result.entities.is_empty());
-        assert!(result.entities.iter().any(|e| e.name.to_lowercase() == "aegis"));
-        assert!(result.entities.iter().any(|e| e.name.to_lowercase() == "sabre"));
+        assert!(result
+            .entities
+            .iter()
+            .any(|e| e.name.to_lowercase() == "aegis"));
+        assert!(result
+            .entities
+            .iter()
+            .any(|e| e.name.to_lowercase() == "sabre"));
     }
 
     #[test]
@@ -1771,7 +2525,11 @@ mod tests {
 
         // Create entity
         let id = store
-            .get_or_create_entity("Aegis", EntityType::Organization, &["Aegis Dynamics".to_string()])
+            .get_or_create_entity(
+                "Aegis",
+                EntityType::Organization,
+                &["Aegis Dynamics".to_string()],
+            )
             .unwrap();
         assert!(id > 0);
 
@@ -1800,7 +2558,14 @@ mod tests {
             .unwrap();
 
         store
-            .add_relation(aegis_id, sabre_id, "manufactures", 0.9, Some("Aegis makes the Sabre"), None)
+            .add_relation(
+                aegis_id,
+                sabre_id,
+                "manufactures",
+                0.9,
+                Some("Aegis makes the Sabre"),
+                None,
+            )
             .unwrap();
 
         let relations = store.get_relations_from(aegis_id, 1).unwrap();
@@ -1889,5 +2654,330 @@ mod tests {
         assert_eq!(stats.total_entities, 3);
         assert_eq!(stats.entities_by_type.get("organization"), Some(&2));
         assert_eq!(stats.entities_by_type.get("product"), Some(&1));
+    }
+
+    // ========================================================================
+    // GraphQuery builder tests
+    // ========================================================================
+
+    #[test]
+    fn test_graph_query_new() {
+        let query = GraphQuery::new();
+        assert!(query.match_patterns.is_empty());
+        assert!(query.where_clauses.is_empty());
+        assert!(query.return_fields.is_empty());
+        assert!(query.order_by.is_none());
+        assert!(query.limit_val.is_none());
+        assert!(query.skip_val.is_none());
+        // Default SQL: SELECT * FROM entities
+        let sql = query.to_sql();
+        assert!(sql.contains("SELECT *"));
+        assert!(sql.contains("FROM entities"));
+    }
+
+    #[test]
+    fn test_graph_query_match_node() {
+        let query = GraphQuery::new().match_node("n", Some("Organization"));
+        let sql = query.to_sql();
+        assert!(sql.contains("entities AS n"));
+        assert!(sql.contains("n.entity_type = 'Organization'"));
+    }
+
+    #[test]
+    fn test_graph_query_where_eq() {
+        let query = GraphQuery::new()
+            .match_node("n", None)
+            .where_eq("n.name", "Aegis");
+        let sql = query.to_sql();
+        assert!(sql.contains("n.name = 'Aegis'"));
+    }
+
+    #[test]
+    fn test_graph_query_where_contains() {
+        let query = GraphQuery::new()
+            .match_node("n", None)
+            .where_contains("n.name", "Aeg");
+        let sql = query.to_sql();
+        assert!(sql.contains("n.name LIKE '%Aeg%'"));
+    }
+
+    #[test]
+    fn test_graph_query_where_gt() {
+        let query = GraphQuery::new()
+            .match_node("n", None)
+            .where_gt("r.confidence", 0.5);
+        let sql = query.to_sql();
+        assert!(sql.contains("r.confidence > 0.5"));
+    }
+
+    #[test]
+    fn test_graph_query_return_fields() {
+        let query = GraphQuery::new()
+            .match_node("n", None)
+            .return_fields(&["n.name", "n.entity_type"]);
+        let sql = query.to_sql();
+        assert!(sql.contains("SELECT n.name, n.entity_type"));
+    }
+
+    #[test]
+    fn test_graph_query_order_by_limit() {
+        let query = GraphQuery::new()
+            .match_node("n", None)
+            .order_by("n.name", true)
+            .limit(10);
+        let sql = query.to_sql();
+        assert!(sql.contains("ORDER BY n.name ASC"));
+        assert!(sql.contains("LIMIT 10"));
+    }
+
+    #[test]
+    fn test_graph_query_complex_sql() {
+        let query = GraphQuery::new()
+            .match_node("a", Some("Organization"))
+            .match_node("b", Some("Product"))
+            .match_relationship("r", Some("manufactures"), "a", "b")
+            .return_fields(&["a.name", "b.name", "r.confidence"])
+            .where_gt("r.confidence", 0.8)
+            .order_by("r.confidence", false)
+            .limit(5);
+        let sql = query.to_sql();
+        assert!(sql.contains("a.entity_type = 'Organization'"));
+        assert!(sql.contains("b.entity_type = 'Product'"));
+        assert!(sql.contains("JOIN relations AS r"));
+        assert!(sql.contains("r.relation_type = 'manufactures'"));
+        assert!(sql.contains("r.confidence > 0.8"));
+        assert!(sql.contains("ORDER BY r.confidence DESC"));
+        assert!(sql.contains("LIMIT 5"));
+    }
+
+    #[test]
+    fn test_graph_query_match_relationship() {
+        let query = GraphQuery::new()
+            .match_node("a", None)
+            .match_node("b", None)
+            .match_relationship("r", None, "a", "b");
+        let sql = query.to_sql();
+        assert!(sql
+            .contains("JOIN relations AS r ON a.id = r.from_entity_id AND b.id = r.to_entity_id"));
+    }
+
+    #[test]
+    fn test_graph_query_to_sql_with_skip() {
+        let query = GraphQuery::new().match_node("n", None).limit(10).skip(20);
+        let sql = query.to_sql();
+        assert!(sql.contains("LIMIT 10"));
+        assert!(sql.contains("OFFSET 20"));
+    }
+
+    // ========================================================================
+    // Graph algorithm tests
+    // ========================================================================
+
+    /// Helper: create an in-memory store with a graph:
+    /// A --manufactures--> B --uses--> C --located_in--> D
+    /// Also E is isolated (no edges).
+    fn create_test_graph() -> (KnowledgeGraphStore, i64, i64, i64, i64, i64) {
+        let config = KnowledgeGraphConfig::default();
+        let store = KnowledgeGraphStore::in_memory(config).unwrap();
+
+        let a = store
+            .get_or_create_entity("A", EntityType::Organization, &[])
+            .unwrap();
+        let b = store
+            .get_or_create_entity("B", EntityType::Product, &[])
+            .unwrap();
+        let c = store
+            .get_or_create_entity("C", EntityType::Product, &[])
+            .unwrap();
+        let d = store
+            .get_or_create_entity("D", EntityType::Location, &[])
+            .unwrap();
+        let e = store
+            .get_or_create_entity("E", EntityType::Person, &[])
+            .unwrap();
+
+        store
+            .add_relation(a, b, "manufactures", 0.9, None, None)
+            .unwrap();
+        store.add_relation(b, c, "uses", 0.8, None, None).unwrap();
+        store
+            .add_relation(c, d, "located_in", 0.7, None, None)
+            .unwrap();
+
+        (store, a, b, c, d, e)
+    }
+
+    #[test]
+    fn test_shortest_path_direct() {
+        let (store, a, b, _c, _d, _e) = create_test_graph();
+        let path = GraphAlgorithms::shortest_path(&store, a, b).unwrap();
+        assert_eq!(path, Some(vec![a, b]));
+    }
+
+    #[test]
+    fn test_shortest_path_indirect() {
+        let (store, a, _b, c, _d, _e) = create_test_graph();
+        // A -> B -> C (undirected, so BFS finds it)
+        let path = GraphAlgorithms::shortest_path(&store, a, c).unwrap();
+        let path = path.unwrap();
+        assert_eq!(path.len(), 3);
+        assert_eq!(path[0], a);
+        assert_eq!(path[2], c);
+    }
+
+    #[test]
+    fn test_shortest_path_no_path() {
+        let (store, a, _b, _c, _d, e) = create_test_graph();
+        // E is isolated
+        let path = GraphAlgorithms::shortest_path(&store, a, e).unwrap();
+        assert_eq!(path, None);
+    }
+
+    #[test]
+    fn test_page_rank_basic() {
+        let (store, a, b, c, d, e) = create_test_graph();
+        let ranks = GraphAlgorithms::page_rank(&store, 0.85, 20).unwrap();
+
+        // All entities should have a score
+        assert!(ranks.contains_key(&a));
+        assert!(ranks.contains_key(&b));
+        assert!(ranks.contains_key(&c));
+        assert!(ranks.contains_key(&d));
+        assert!(ranks.contains_key(&e));
+
+        // All scores > 0
+        for &score in ranks.values() {
+            assert!(score > 0.0);
+        }
+    }
+
+    #[test]
+    fn test_page_rank_convergence() {
+        // Create a graph with a cycle so rank is conserved: A -> B -> C -> A
+        let config = KnowledgeGraphConfig::default();
+        let store = KnowledgeGraphStore::in_memory(config).unwrap();
+        let a = store
+            .get_or_create_entity("X", EntityType::Organization, &[])
+            .unwrap();
+        let b = store
+            .get_or_create_entity("Y", EntityType::Product, &[])
+            .unwrap();
+        let c = store
+            .get_or_create_entity("Z", EntityType::Location, &[])
+            .unwrap();
+        store.add_relation(a, b, "r1", 0.9, None, None).unwrap();
+        store.add_relation(b, c, "r2", 0.9, None, None).unwrap();
+        store.add_relation(c, a, "r3", 0.9, None, None).unwrap();
+
+        let ranks = GraphAlgorithms::page_rank(&store, 0.85, 100).unwrap();
+
+        // In a fully connected cycle with no dangling nodes, sum of ranks should be ~1.0
+        let total: f64 = ranks.values().sum();
+        assert!(
+            (total - 1.0).abs() < 0.01,
+            "PageRank sum was {}, expected ~1.0",
+            total
+        );
+
+        // In a symmetric cycle, all nodes should have roughly equal rank
+        let avg = total / 3.0;
+        for &score in ranks.values() {
+            assert!(
+                (score - avg).abs() < 0.05,
+                "Score {} far from average {}",
+                score,
+                avg
+            );
+        }
+    }
+
+    #[test]
+    fn test_connected_components() {
+        let (store, a, b, c, d, e) = create_test_graph();
+        let components = GraphAlgorithms::connected_components(&store).unwrap();
+
+        // A, B, C, D should be in the same component
+        let comp_a = components[&a];
+        assert_eq!(components[&b], comp_a);
+        assert_eq!(components[&c], comp_a);
+        assert_eq!(components[&d], comp_a);
+
+        // E should be in its own component (isolated)
+        assert_ne!(components[&e], comp_a);
+    }
+
+    #[test]
+    fn test_degree_centrality() {
+        let (store, a, b, c, d, e) = create_test_graph();
+        let (in_deg, out_deg) = GraphAlgorithms::degree_centrality(&store).unwrap();
+
+        // A: out=1 (A->B), in=0
+        assert_eq!(out_deg[&a], 1);
+        assert_eq!(in_deg[&a], 0);
+
+        // B: out=1 (B->C), in=1 (A->B)
+        assert_eq!(out_deg[&b], 1);
+        assert_eq!(in_deg[&b], 1);
+
+        // C: out=1 (C->D), in=1 (B->C)
+        assert_eq!(out_deg[&c], 1);
+        assert_eq!(in_deg[&c], 1);
+
+        // D: out=0, in=1 (C->D)
+        assert_eq!(out_deg[&d], 0);
+        assert_eq!(in_deg[&d], 1);
+
+        // E: isolated, out=0, in=0
+        assert_eq!(out_deg[&e], 0);
+        assert_eq!(in_deg[&e], 0);
+    }
+
+    #[test]
+    fn test_all_paths_basic() {
+        let (store, a, _b, c, _d, _e) = create_test_graph();
+        // A -> B -> C (undirected), max_depth=3
+        let paths = GraphAlgorithms::all_paths(&store, a, c, 3).unwrap();
+        assert!(!paths.is_empty());
+        // At least one path of length 3 (A, B, C)
+        assert!(paths.iter().any(|p| p.len() == 3));
+    }
+
+    #[test]
+    fn test_list_all_entities() {
+        let (store, _a, _b, _c, _d, _e) = create_test_graph();
+        let entities = store.list_all_entities().unwrap();
+        assert_eq!(entities.len(), 5);
+        // Check we got the right names
+        let names: Vec<&str> = entities.iter().map(|(_, n, _)| n.as_str()).collect();
+        assert!(names.contains(&"A"));
+        assert!(names.contains(&"B"));
+        assert!(names.contains(&"C"));
+        assert!(names.contains(&"D"));
+        assert!(names.contains(&"E"));
+    }
+
+    #[test]
+    fn test_list_all_relations() {
+        let (store, _a, _b, _c, _d, _e) = create_test_graph();
+        let relations = store.list_all_relations().unwrap();
+        assert_eq!(relations.len(), 3);
+        // Check relation types
+        let types: Vec<&str> = relations
+            .iter()
+            .map(|(_, _, _, rt, _)| rt.as_str())
+            .collect();
+        assert!(types.contains(&"manufactures"));
+        assert!(types.contains(&"uses"));
+        assert!(types.contains(&"located_in"));
+    }
+
+    #[test]
+    fn test_knowledge_graph_export_json() {
+        let config = KnowledgeGraphConfig::default();
+        let kg = KnowledgeGraph::in_memory(config).unwrap();
+        let json = kg.export_json().unwrap();
+        assert!(json["entities"].as_array().unwrap().is_empty());
+        assert!(json["relations"].as_array().unwrap().is_empty());
+        assert_eq!(json["stats"]["total_entities"].as_u64().unwrap(), 0);
     }
 }

@@ -367,7 +367,8 @@ impl ToolBuilder {
 
     /// Add an optional string parameter.
     pub fn optional_string(mut self, name: impl Into<String>, desc: impl Into<String>) -> Self {
-        self.parameters.push(ParamSchema::string(name, desc).optional());
+        self.parameters
+            .push(ParamSchema::string(name, desc).optional());
         self
     }
 
@@ -379,7 +380,8 @@ impl ToolBuilder {
 
     /// Add an optional number parameter.
     pub fn optional_number(mut self, name: impl Into<String>, desc: impl Into<String>) -> Self {
-        self.parameters.push(ParamSchema::number(name, desc).optional());
+        self.parameters
+            .push(ParamSchema::number(name, desc).optional());
         self
     }
 
@@ -402,7 +404,8 @@ impl ToolBuilder {
         desc: impl Into<String>,
         values: Vec<String>,
     ) -> Self {
-        self.parameters.push(ParamSchema::enum_type(name, desc, values));
+        self.parameters
+            .push(ParamSchema::enum_type(name, desc, values));
         self
     }
 
@@ -533,10 +536,7 @@ pub enum ToolError {
     /// Required parameter is missing.
     MissingParameter(String),
     /// Parameter value is invalid.
-    InvalidParameter {
-        name: String,
-        message: String,
-    },
+    InvalidParameter { name: String, message: String },
     /// Tool exists but has no handler registered.
     NoHandler(String),
     /// Handler execution failed.
@@ -731,10 +731,7 @@ impl ToolRegistry {
             .ok_or_else(|| ToolError::NotFound(call.name.clone()))?;
 
         if !tool.definition.enabled {
-            return Err(ToolError::NotFound(format!(
-                "{} (disabled)",
-                call.name
-            )));
+            return Err(ToolError::NotFound(format!("{} (disabled)", call.name)));
         }
 
         for param in &tool.definition.parameters {
@@ -752,10 +749,7 @@ impl ToolRegistry {
                     if !enums.contains(&s.to_string()) {
                         return Err(ToolError::InvalidParameter {
                             name: param.name.clone(),
-                            message: format!(
-                                "value '{}' not in allowed values: {:?}",
-                                s, enums
-                            ),
+                            message: format!("value '{}' not in allowed values: {:?}", s, enums),
                         });
                     }
                 }
@@ -791,7 +785,10 @@ impl ToolRegistry {
     pub fn execute(&self, call: &ToolCall) -> Result<ToolOutput, ToolError> {
         self.validate_call(call)?;
 
-        let tool = self.tools.get(&call.name).expect("tool exists: validate_call verified");
+        let tool = self
+            .tools
+            .get(&call.name)
+            .expect("tool exists: validate_call verified");
         (tool.handler)(call)
     }
 
@@ -938,7 +935,9 @@ fn parse_single_call_json(v: &JsonValue) -> Option<ToolCall> {
     }
 
     // Direct format: {"name": ..., "arguments": ...}
-    let name = v.get("name").and_then(|n| n.as_str())
+    let name = v
+        .get("name")
+        .and_then(|n| n.as_str())
         .or_else(|| v.get("tool_name").and_then(|n| n.as_str()))?
         .to_string();
     let args_val = v
@@ -1040,8 +1039,8 @@ fn try_parse_xml_format(text: &str) -> Vec<ToolCall> {
     )
     .expect("valid regex");
 
-    let param_re =
-        regex::Regex::new(r#"<param\s+name\s*=\s*"(\w+)"[^>]*>([^<]*)</param>"#).expect("valid regex");
+    let param_re = regex::Regex::new(r#"<param\s+name\s*=\s*"(\w+)"[^>]*>([^<]*)</param>"#)
+        .expect("valid regex");
 
     re.captures_iter(text)
         .map(|cap| {
@@ -1053,8 +1052,8 @@ fn try_parse_xml_format(text: &str) -> Vec<ToolCall> {
                 let key = param_cap[1].to_string();
                 let val = param_cap[2].to_string();
                 // Try to parse as JSON, fallback to string
-                let json_val = serde_json::from_str(&val)
-                    .unwrap_or_else(|_| JsonValue::String(val));
+                let json_val =
+                    serde_json::from_str(&val).unwrap_or_else(|_| JsonValue::String(val));
                 arguments.insert(key, json_val);
             }
 
@@ -1131,11 +1130,7 @@ pub trait ProviderPlugin: Send + Sync {
     }
 
     /// Generate embeddings. Default: not supported.
-    fn generate_embeddings(
-        &self,
-        _model: &str,
-        _texts: &[&str],
-    ) -> Result<Vec<Vec<f32>>, String> {
+    fn generate_embeddings(&self, _model: &str, _texts: &[&str]) -> Result<Vec<Vec<f32>>, String> {
         Err("embeddings not supported by this provider".to_string())
     }
 }
@@ -1260,10 +1255,7 @@ pub fn builtin_tools() -> Vec<(ToolDef, ToolHandler)> {
                         let mins = (time_secs % 3600) / 60;
                         let s = time_secs % 60;
                         // Simple epoch-based date (not calendar-accurate, but functional)
-                        format!(
-                            "epoch+{}d {:02}:{:02}:{:02}Z",
-                            days, hours, mins, s
-                        )
+                        format!("epoch+{}d {:02}:{:02}:{:02}Z", days, hours, mins, s)
                     }
                 };
                 Ok(ToolOutput::text(content))
@@ -1276,9 +1268,9 @@ pub fn builtin_tools() -> Vec<(ToolDef, ToolHandler)> {
                 .category("math")
                 .build(),
             Arc::new(|call: &ToolCall| {
-                let expr = call.get_string("expression").ok_or_else(|| {
-                    ToolError::MissingParameter("expression".to_string())
-                })?;
+                let expr = call
+                    .get_string("expression")
+                    .ok_or_else(|| ToolError::MissingParameter("expression".to_string()))?;
                 match evaluate_math(expr) {
                     Ok(result) => Ok(ToolOutput::with_data(
                         result.to_string(),
@@ -1295,9 +1287,9 @@ pub fn builtin_tools() -> Vec<(ToolDef, ToolHandler)> {
                 .category("text")
                 .build(),
             Arc::new(|call: &ToolCall| {
-                let text = call.get_string("text").ok_or_else(|| {
-                    ToolError::MissingParameter("text".to_string())
-                })?;
+                let text = call
+                    .get_string("text")
+                    .ok_or_else(|| ToolError::MissingParameter("text".to_string()))?;
                 let len = text.len();
                 let chars = text.chars().count();
                 Ok(ToolOutput::with_data(
@@ -1313,9 +1305,9 @@ pub fn builtin_tools() -> Vec<(ToolDef, ToolHandler)> {
                 .category("text")
                 .build(),
             Arc::new(|call: &ToolCall| {
-                let json_str = call.get_string("json").ok_or_else(|| {
-                    ToolError::MissingParameter("json".to_string())
-                })?;
+                let json_str = call
+                    .get_string("json")
+                    .ok_or_else(|| ToolError::MissingParameter("json".to_string()))?;
                 match serde_json::from_str::<JsonValue>(json_str) {
                     Ok(_) => Ok(ToolOutput::text("Valid JSON")),
                     Err(e) => Ok(ToolOutput::text(format!("Invalid JSON: {}", e))),
@@ -1375,13 +1367,15 @@ fn tokenize_math(expr: &str) -> Result<Vec<MathToken>, String> {
                 let is_unary = tokens.is_empty()
                     || matches!(
                         tokens.last(),
-                        Some(MathToken::Plus
-                            | MathToken::Minus
-                            | MathToken::Star
-                            | MathToken::Slash
-                            | MathToken::Percent
-                            | MathToken::Power
-                            | MathToken::LParen)
+                        Some(
+                            MathToken::Plus
+                                | MathToken::Minus
+                                | MathToken::Star
+                                | MathToken::Slash
+                                | MathToken::Percent
+                                | MathToken::Power
+                                | MathToken::LParen
+                        )
                     );
                 if is_unary {
                     // Parse the number with sign
@@ -1557,7 +1551,8 @@ mod tests {
         let n = ParamSchema::number("limit", "Max results").optional();
         assert!(!n.required);
 
-        let e = ParamSchema::enum_type("format", "Output format", vec!["json".into(), "xml".into()]);
+        let e =
+            ParamSchema::enum_type("format", "Output format", vec!["json".into(), "xml".into()]);
         assert_eq!(e.enum_values.as_ref().unwrap().len(), 2);
 
         let r = ParamSchema::integer("count", "Count").with_range(Some(1.0), Some(100.0));
@@ -1726,10 +1721,7 @@ mod tests {
         assert_eq!(reg.len(), 1);
         assert!(reg.get("echo").is_some());
 
-        let call = ToolCall::new(
-            "echo",
-            [("text".into(), serde_json::json!("hello"))].into(),
-        );
+        let call = ToolCall::new("echo", [("text".into(), serde_json::json!("hello"))].into());
         let result = reg.execute(&call).unwrap();
         assert_eq!(result.content, "hello");
     }
@@ -1738,10 +1730,7 @@ mod tests {
     fn test_registry_not_found() {
         let reg = ToolRegistry::new();
         let call = ToolCall::new("missing", HashMap::new());
-        assert!(matches!(
-            reg.execute(&call),
-            Err(ToolError::NotFound(_))
-        ));
+        assert!(matches!(reg.execute(&call), Err(ToolError::NotFound(_))));
     }
 
     #[test]
@@ -1788,33 +1777,23 @@ mod tests {
     #[test]
     fn test_registry_range_validation() {
         let mut reg = ToolRegistry::new();
-        let def = ToolDef::new("test", "Test").with_param(
-            ParamSchema::number("value", "A value").with_range(Some(0.0), Some(100.0)),
-        );
+        let def = ToolDef::new("test", "Test")
+            .with_param(ParamSchema::number("value", "A value").with_range(Some(0.0), Some(100.0)));
         reg.register(def, Arc::new(|_| Ok(ToolOutput::text("ok"))));
 
         // In range
-        let call = ToolCall::new(
-            "test",
-            [("value".into(), serde_json::json!(50.0))].into(),
-        );
+        let call = ToolCall::new("test", [("value".into(), serde_json::json!(50.0))].into());
         assert!(reg.execute(&call).is_ok());
 
         // Below min
-        let call = ToolCall::new(
-            "test",
-            [("value".into(), serde_json::json!(-1.0))].into(),
-        );
+        let call = ToolCall::new("test", [("value".into(), serde_json::json!(-1.0))].into());
         assert!(matches!(
             reg.execute(&call),
             Err(ToolError::InvalidParameter { .. })
         ));
 
         // Above max
-        let call = ToolCall::new(
-            "test",
-            [("value".into(), serde_json::json!(200.0))].into(),
-        );
+        let call = ToolCall::new("test", [("value".into(), serde_json::json!(200.0))].into());
         assert!(matches!(
             reg.execute(&call),
             Err(ToolError::InvalidParameter { .. })
@@ -1861,11 +1840,15 @@ mod tests {
     #[test]
     fn test_registry_execute_all() {
         let mut reg = ToolRegistry::new();
-        let def = ToolBuilder::new("echo", "Echo").required_string("t", "text").build();
+        let def = ToolBuilder::new("echo", "Echo")
+            .required_string("t", "text")
+            .build();
         reg.register(
             def,
             Arc::new(|c: &ToolCall| {
-                Ok(ToolOutput::text(c.get_string("t").unwrap_or("").to_string()))
+                Ok(ToolOutput::text(
+                    c.get_string("t").unwrap_or("").to_string(),
+                ))
             }),
         );
 

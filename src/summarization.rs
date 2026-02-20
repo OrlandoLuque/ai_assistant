@@ -69,7 +69,9 @@ impl ConversationSummarizer {
         prompt.push_str("\n---\n");
 
         match self.config.style {
-            SummaryStyle::Concise => prompt.push_str("Provide a concise summary in 2-3 sentences.\n"),
+            SummaryStyle::Concise => {
+                prompt.push_str("Provide a concise summary in 2-3 sentences.\n")
+            }
             SummaryStyle::Detailed => prompt.push_str("Provide a detailed summary.\n"),
             SummaryStyle::Bullet => prompt.push_str("Provide a bullet-point summary.\n"),
             SummaryStyle::Narrative => prompt.push_str("Provide a narrative summary.\n"),
@@ -94,13 +96,13 @@ impl ConversationSummarizer {
 
         for sentence in text.split('.') {
             let trimmed = sentence.trim();
-            if trimmed.len() > 20 && (
-                trimmed.contains("important") ||
-                trimmed.contains("key") ||
-                trimmed.contains("must") ||
-                trimmed.contains("should") ||
-                trimmed.contains("need")
-            ) {
+            if trimmed.len() > 20
+                && (trimmed.contains("important")
+                    || trimmed.contains("key")
+                    || trimmed.contains("must")
+                    || trimmed.contains("should")
+                    || trimmed.contains("need"))
+            {
                 points.push(format!("{}.", trimmed));
             }
         }
@@ -114,7 +116,8 @@ impl ConversationSummarizer {
 
         for (_, content) in messages {
             for word in content.split_whitespace() {
-                let word = word.to_lowercase()
+                let word = word
+                    .to_lowercase()
                     .trim_matches(|c: char| !c.is_alphanumeric())
                     .to_string();
 
@@ -124,7 +127,8 @@ impl ConversationSummarizer {
             }
         }
 
-        let mut topics: Vec<_> = word_counts.into_iter()
+        let mut topics: Vec<_> = word_counts
+            .into_iter()
             .filter(|(_, count)| *count >= 2)
             .collect();
 
@@ -133,7 +137,11 @@ impl ConversationSummarizer {
     }
 
     /// Create rolling summary for long conversations
-    pub fn rolling_summary(&self, existing_summary: &str, new_messages: &[(String, String)]) -> String {
+    pub fn rolling_summary(
+        &self,
+        existing_summary: &str,
+        new_messages: &[(String, String)],
+    ) -> String {
         let mut prompt = String::new();
 
         if !existing_summary.is_empty() {
@@ -145,7 +153,9 @@ impl ConversationSummarizer {
             prompt.push_str(&format!("{}: {}\n", role, content));
         }
 
-        prompt.push_str("\nUpdate the summary to include the new information while keeping it concise.");
+        prompt.push_str(
+            "\nUpdate the summary to include the new information while keeping it concise.",
+        );
 
         prompt
     }
@@ -159,18 +169,15 @@ impl Default for ConversationSummarizer {
 
 fn is_stop_word(word: &str) -> bool {
     const STOP_WORDS: &[&str] = &[
-        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
-        "have", "has", "had", "do", "does", "did", "will", "would", "could",
-        "should", "may", "might", "must", "shall", "can", "need", "dare",
-        "ought", "used", "to", "of", "in", "for", "on", "with", "at", "by",
-        "from", "as", "into", "through", "during", "before", "after",
-        "above", "below", "between", "under", "again", "further", "then",
-        "once", "here", "there", "when", "where", "why", "how", "all",
-        "each", "few", "more", "most", "other", "some", "such", "no", "nor",
-        "not", "only", "own", "same", "so", "than", "too", "very", "just",
-        "also", "now", "and", "but", "or", "if", "because", "until", "while",
-        "this", "that", "these", "those", "what", "which", "who", "whom",
-        "their", "them", "they", "your", "you", "our", "its", "his", "her",
+        "the", "a", "an", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had",
+        "do", "does", "did", "will", "would", "could", "should", "may", "might", "must", "shall",
+        "can", "need", "dare", "ought", "used", "to", "of", "in", "for", "on", "with", "at", "by",
+        "from", "as", "into", "through", "during", "before", "after", "above", "below", "between",
+        "under", "again", "further", "then", "once", "here", "there", "when", "where", "why",
+        "how", "all", "each", "few", "more", "most", "other", "some", "such", "no", "nor", "not",
+        "only", "own", "same", "so", "than", "too", "very", "just", "also", "now", "and", "but",
+        "or", "if", "because", "until", "while", "this", "that", "these", "those", "what", "which",
+        "who", "whom", "their", "them", "they", "your", "you", "our", "its", "his", "her",
     ];
 
     STOP_WORDS.contains(&word)
@@ -185,7 +192,10 @@ mod tests {
         let summarizer = ConversationSummarizer::default();
         let messages = vec![
             ("User".to_string(), "What is AI?".to_string()),
-            ("Assistant".to_string(), "AI is artificial intelligence.".to_string()),
+            (
+                "Assistant".to_string(),
+                "AI is artificial intelligence.".to_string(),
+            ),
         ];
 
         let prompt = summarizer.build_summary_prompt(&messages);
@@ -197,8 +207,15 @@ mod tests {
     fn test_topic_extraction() {
         let summarizer = ConversationSummarizer::default();
         let messages = vec![
-            ("User".to_string(), "Tell me about machine learning and deep learning.".to_string()),
-            ("Assistant".to_string(), "Machine learning is a subset of AI. Deep learning uses neural networks.".to_string()),
+            (
+                "User".to_string(),
+                "Tell me about machine learning and deep learning.".to_string(),
+            ),
+            (
+                "Assistant".to_string(),
+                "Machine learning is a subset of AI. Deep learning uses neural networks."
+                    .to_string(),
+            ),
         ];
 
         let topics = summarizer.extract_topics(&messages);

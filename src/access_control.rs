@@ -135,19 +135,25 @@ impl AccessControlManager {
         };
 
         // Create default roles
-        manager.add_role(Role::new("viewer")
-            .with_permission(ResourceType::Conversation, Permission::Read)
-            .with_permission(ResourceType::Message, Permission::Read));
+        manager.add_role(
+            Role::new("viewer")
+                .with_permission(ResourceType::Conversation, Permission::Read)
+                .with_permission(ResourceType::Message, Permission::Read),
+        );
 
-        manager.add_role(Role::new("editor")
-            .inherits_from("viewer")
-            .with_permission(ResourceType::Conversation, Permission::Write)
-            .with_permission(ResourceType::Message, Permission::Write));
+        manager.add_role(
+            Role::new("editor")
+                .inherits_from("viewer")
+                .with_permission(ResourceType::Conversation, Permission::Write)
+                .with_permission(ResourceType::Message, Permission::Write),
+        );
 
-        manager.add_role(Role::new("admin")
-            .inherits_from("editor")
-            .with_permission(ResourceType::Conversation, Permission::Admin)
-            .with_permission(ResourceType::Settings, Permission::Admin));
+        manager.add_role(
+            Role::new("admin")
+                .inherits_from("editor")
+                .with_permission(ResourceType::Conversation, Permission::Admin)
+                .with_permission(ResourceType::Settings, Permission::Admin),
+        );
 
         manager
     }
@@ -174,7 +180,8 @@ impl AccessControlManager {
     }
 
     pub fn deny(&mut self, principal: &str, resource_type: ResourceType, permission: Permission) {
-        self.deny_list.insert((principal.to_string(), resource_type, permission));
+        self.deny_list
+            .insert((principal.to_string(), resource_type, permission));
     }
 
     pub fn check_permission(
@@ -185,7 +192,10 @@ impl AccessControlManager {
         resource_id: Option<&str>,
     ) -> AccessResult {
         // Check deny list first
-        if self.deny_list.contains(&(principal.to_string(), resource_type, permission)) {
+        if self
+            .deny_list
+            .contains(&(principal.to_string(), resource_type, permission))
+        {
             return AccessResult::Denied("Explicitly denied".to_string());
         }
 
@@ -201,7 +211,9 @@ impl AccessControlManager {
                 if entry.permissions.contains(&permission) {
                     // Check conditions
                     let resource_key = resource_id.unwrap_or("");
-                    if let Some(reason) = self.check_conditions(principal, resource_key, &entry.conditions) {
+                    if let Some(reason) =
+                        self.check_conditions(principal, resource_key, &entry.conditions)
+                    {
                         return AccessResult::Denied(reason);
                     }
                     return AccessResult::Allowed;
@@ -287,7 +299,12 @@ impl AccessControlManager {
         self.current_request_ip = None;
     }
 
-    fn check_conditions(&self, principal: &str, resource_key: &str, conditions: &[AccessCondition]) -> Option<String> {
+    fn check_conditions(
+        &self,
+        principal: &str,
+        resource_key: &str,
+        conditions: &[AccessCondition],
+    ) -> Option<String> {
         use std::time::{SystemTime, UNIX_EPOCH};
 
         let now = SystemTime::now()
@@ -310,7 +327,10 @@ impl AccessControlManager {
                 AccessCondition::IpRange(cidr) => {
                     if let Some(ref request_ip) = self.current_request_ip {
                         if !ip_in_cidr(request_ip, cidr) {
-                            return Some(format!("IP {} not in allowed range {}", request_ip, cidr));
+                            return Some(format!(
+                                "IP {} not in allowed range {}",
+                                request_ip, cidr
+                            ));
                         }
                     }
                     // If no request IP is set, allow (permissive default)
@@ -332,7 +352,10 @@ impl AccessControlManager {
         None
     }
 
-    pub fn get_user_permissions(&self, principal: &str) -> HashMap<ResourceType, HashSet<Permission>> {
+    pub fn get_user_permissions(
+        &self,
+        principal: &str,
+    ) -> HashMap<ResourceType, HashSet<Permission>> {
         let mut all_perms: HashMap<ResourceType, HashSet<Permission>> = HashMap::new();
 
         // Collect from direct entries
@@ -471,11 +494,20 @@ mod tests {
         acl.add_entry(
             AccessControlEntry::new("user1", ResourceType::Conversation)
                 .with_permission(Permission::Read)
-                .with_permission(Permission::Write)
+                .with_permission(Permission::Write),
         );
 
-        assert!(acl.check_permission("user1", ResourceType::Conversation, Permission::Read, None).is_allowed());
-        assert!(!acl.check_permission("user1", ResourceType::Conversation, Permission::Delete, None).is_allowed());
+        assert!(acl
+            .check_permission("user1", ResourceType::Conversation, Permission::Read, None)
+            .is_allowed());
+        assert!(!acl
+            .check_permission(
+                "user1",
+                ResourceType::Conversation,
+                Permission::Delete,
+                None
+            )
+            .is_allowed());
     }
 
     #[test]
@@ -484,8 +516,12 @@ mod tests {
 
         acl.assign_role("user1", "editor");
 
-        assert!(acl.check_permission("user1", ResourceType::Conversation, Permission::Read, None).is_allowed());
-        assert!(acl.check_permission("user1", ResourceType::Conversation, Permission::Write, None).is_allowed());
+        assert!(acl
+            .check_permission("user1", ResourceType::Conversation, Permission::Read, None)
+            .is_allowed());
+        assert!(acl
+            .check_permission("user1", ResourceType::Conversation, Permission::Write, None)
+            .is_allowed());
     }
 
     #[test]
@@ -495,7 +531,9 @@ mod tests {
         acl.assign_role("user1", "admin");
         acl.deny("user1", ResourceType::Settings, Permission::Admin);
 
-        assert!(!acl.check_permission("user1", ResourceType::Settings, Permission::Admin, None).is_allowed());
+        assert!(!acl
+            .check_permission("user1", ResourceType::Settings, Permission::Admin, None)
+            .is_allowed());
     }
 
     #[test]
@@ -505,11 +543,25 @@ mod tests {
         acl.add_entry(
             AccessControlEntry::new("user1", ResourceType::Conversation)
                 .with_permission(Permission::Read)
-                .for_resource("conv1")
+                .for_resource("conv1"),
         );
 
-        assert!(acl.check_permission("user1", ResourceType::Conversation, Permission::Read, Some("conv1")).is_allowed());
-        assert!(!acl.check_permission("user1", ResourceType::Conversation, Permission::Read, Some("conv2")).is_allowed());
+        assert!(acl
+            .check_permission(
+                "user1",
+                ResourceType::Conversation,
+                Permission::Read,
+                Some("conv1")
+            )
+            .is_allowed());
+        assert!(!acl
+            .check_permission(
+                "user1",
+                ResourceType::Conversation,
+                Permission::Read,
+                Some("conv2")
+            )
+            .is_allowed());
     }
 
     #[test]
@@ -519,23 +571,30 @@ mod tests {
         acl.add_entry(
             AccessControlEntry::new("user1", ResourceType::Settings)
                 .with_permission(Permission::Admin)
-                .with_condition(AccessCondition::RequiresMfa)
+                .with_condition(AccessCondition::RequiresMfa),
         );
 
         // Without MFA → denied
         let result = acl.check_permission("user1", ResourceType::Settings, Permission::Admin, None);
         assert!(!result.is_allowed());
-        assert_eq!(result, AccessResult::Denied("MFA verification required".to_string()));
+        assert_eq!(
+            result,
+            AccessResult::Denied("MFA verification required".to_string())
+        );
 
         // After MFA verification → allowed
         acl.verify_mfa("user1");
         assert!(acl.is_mfa_verified("user1"));
-        assert!(acl.check_permission("user1", ResourceType::Settings, Permission::Admin, None).is_allowed());
+        assert!(acl
+            .check_permission("user1", ResourceType::Settings, Permission::Admin, None)
+            .is_allowed());
 
         // Revoke MFA → denied again
         acl.revoke_mfa("user1");
         assert!(!acl.is_mfa_verified("user1"));
-        assert!(!acl.check_permission("user1", ResourceType::Settings, Permission::Admin, None).is_allowed());
+        assert!(!acl
+            .check_permission("user1", ResourceType::Settings, Permission::Admin, None)
+            .is_allowed());
     }
 
     #[test]
@@ -545,24 +604,31 @@ mod tests {
         acl.add_entry(
             AccessControlEntry::new("user1", ResourceType::Conversation)
                 .with_permission(Permission::Read)
-                .with_condition(AccessCondition::IpRange("192.168.1.0/24".to_string()))
+                .with_condition(AccessCondition::IpRange("192.168.1.0/24".to_string())),
         );
 
         // No IP set → permissive (allowed)
-        assert!(acl.check_permission("user1", ResourceType::Conversation, Permission::Read, None).is_allowed());
+        assert!(acl
+            .check_permission("user1", ResourceType::Conversation, Permission::Read, None)
+            .is_allowed());
 
         // IP in range → allowed
         acl.set_request_ip("192.168.1.50");
-        assert!(acl.check_permission("user1", ResourceType::Conversation, Permission::Read, None).is_allowed());
+        assert!(acl
+            .check_permission("user1", ResourceType::Conversation, Permission::Read, None)
+            .is_allowed());
 
         // IP outside range → denied
         acl.set_request_ip("10.0.0.1");
-        let result = acl.check_permission("user1", ResourceType::Conversation, Permission::Read, None);
+        let result =
+            acl.check_permission("user1", ResourceType::Conversation, Permission::Read, None);
         assert!(!result.is_allowed());
 
         // Clear IP → permissive again
         acl.clear_request_ip();
-        assert!(acl.check_permission("user1", ResourceType::Conversation, Permission::Read, None).is_allowed());
+        assert!(acl
+            .check_permission("user1", ResourceType::Conversation, Permission::Read, None)
+            .is_allowed());
     }
 
     #[test]
@@ -573,25 +639,51 @@ mod tests {
             AccessControlEntry::new("user1", ResourceType::Model)
                 .with_permission(Permission::Execute)
                 .for_resource("gpt-4")
-                .with_condition(AccessCondition::MaxUsage(3))
+                .with_condition(AccessCondition::MaxUsage(3)),
         );
 
         // 0 usage → allowed
-        assert!(acl.check_permission("user1", ResourceType::Model, Permission::Execute, Some("gpt-4")).is_allowed());
+        assert!(acl
+            .check_permission(
+                "user1",
+                ResourceType::Model,
+                Permission::Execute,
+                Some("gpt-4")
+            )
+            .is_allowed());
 
         // Record 3 usages → should be denied
         acl.record_usage("user1", "gpt-4");
         acl.record_usage("user1", "gpt-4");
-        assert!(acl.check_permission("user1", ResourceType::Model, Permission::Execute, Some("gpt-4")).is_allowed());
+        assert!(acl
+            .check_permission(
+                "user1",
+                ResourceType::Model,
+                Permission::Execute,
+                Some("gpt-4")
+            )
+            .is_allowed());
         acl.record_usage("user1", "gpt-4");
         assert_eq!(acl.get_usage("user1", "gpt-4"), 3);
-        let result = acl.check_permission("user1", ResourceType::Model, Permission::Execute, Some("gpt-4"));
+        let result = acl.check_permission(
+            "user1",
+            ResourceType::Model,
+            Permission::Execute,
+            Some("gpt-4"),
+        );
         assert!(!result.is_allowed());
 
         // Reset usage → allowed again
         acl.reset_usage("user1");
         assert_eq!(acl.get_usage("user1", "gpt-4"), 0);
-        assert!(acl.check_permission("user1", ResourceType::Model, Permission::Execute, Some("gpt-4")).is_allowed());
+        assert!(acl
+            .check_permission(
+                "user1",
+                ResourceType::Model,
+                Permission::Execute,
+                Some("gpt-4")
+            )
+            .is_allowed());
     }
 
     #[test]
@@ -624,11 +716,13 @@ mod tests {
         acl.add_entry(
             AccessControlEntry::new("user1", ResourceType::Plugin)
                 .with_permission(Permission::Execute)
-                .with_condition(AccessCondition::Custom("require_license".to_string()))
+                .with_condition(AccessCondition::Custom("require_license".to_string())),
         );
 
         // Custom conditions pass by default (application must check externally)
-        assert!(acl.check_permission("user1", ResourceType::Plugin, Permission::Execute, None).is_allowed());
+        assert!(acl
+            .check_permission("user1", ResourceType::Plugin, Permission::Execute, None)
+            .is_allowed());
     }
 
     #[test]
@@ -639,20 +733,26 @@ mod tests {
             AccessControlEntry::new("user1", ResourceType::Settings)
                 .with_permission(Permission::Admin)
                 .with_condition(AccessCondition::RequiresMfa)
-                .with_condition(AccessCondition::IpRange("10.0.0.0/8".to_string()))
+                .with_condition(AccessCondition::IpRange("10.0.0.0/8".to_string())),
         );
 
         // Neither condition met (no IP = permissive, but MFA required)
-        assert!(!acl.check_permission("user1", ResourceType::Settings, Permission::Admin, None).is_allowed());
+        assert!(!acl
+            .check_permission("user1", ResourceType::Settings, Permission::Admin, None)
+            .is_allowed());
 
         // MFA verified but wrong IP
         acl.verify_mfa("user1");
         acl.set_request_ip("192.168.1.1");
-        assert!(!acl.check_permission("user1", ResourceType::Settings, Permission::Admin, None).is_allowed());
+        assert!(!acl
+            .check_permission("user1", ResourceType::Settings, Permission::Admin, None)
+            .is_allowed());
 
         // MFA verified and correct IP
         acl.set_request_ip("10.5.3.1");
-        assert!(acl.check_permission("user1", ResourceType::Settings, Permission::Admin, None).is_allowed());
+        assert!(acl
+            .check_permission("user1", ResourceType::Settings, Permission::Admin, None)
+            .is_allowed());
     }
 
     #[test]
@@ -660,13 +760,24 @@ mod tests {
         let mut acl = AccessControlManager::new();
 
         acl.add_entry(
-            AccessControlEntry::new("user1", ResourceType::Memory)
-                .with_permissions(&[Permission::Read, Permission::Write, Permission::Delete])
+            AccessControlEntry::new("user1", ResourceType::Memory).with_permissions(&[
+                Permission::Read,
+                Permission::Write,
+                Permission::Delete,
+            ]),
         );
 
-        assert!(acl.check_permission("user1", ResourceType::Memory, Permission::Read, None).is_allowed());
-        assert!(acl.check_permission("user1", ResourceType::Memory, Permission::Write, None).is_allowed());
-        assert!(acl.check_permission("user1", ResourceType::Memory, Permission::Delete, None).is_allowed());
-        assert!(!acl.check_permission("user1", ResourceType::Memory, Permission::Admin, None).is_allowed());
+        assert!(acl
+            .check_permission("user1", ResourceType::Memory, Permission::Read, None)
+            .is_allowed());
+        assert!(acl
+            .check_permission("user1", ResourceType::Memory, Permission::Write, None)
+            .is_allowed());
+        assert!(acl
+            .check_permission("user1", ResourceType::Memory, Permission::Delete, None)
+            .is_allowed());
+        assert!(!acl
+            .check_permission("user1", ResourceType::Memory, Permission::Admin, None)
+            .is_allowed());
     }
 }

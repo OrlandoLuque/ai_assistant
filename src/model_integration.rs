@@ -3,10 +3,10 @@
 //! Unified interface for integrating any LLM (local or cloud) with
 //! tool calling, web search, and agentic capabilities.
 
-use std::collections::HashMap;
+use crate::tool_calling::{Tool, ToolCall, ToolRegistry};
+use crate::web_search::{SearchConfig, WebSearchManager};
 use serde::{Deserialize, Serialize};
-use crate::tool_calling::{ToolRegistry, ToolCall, Tool};
-use crate::web_search::{WebSearchManager, SearchConfig};
+use std::collections::HashMap;
 
 /// Unified message format for any model
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,7 +49,11 @@ pub struct FunctionCall {
 /// Model provider trait
 pub trait ModelProvider: Send + Sync {
     /// Send messages and get a response
-    fn chat(&self, messages: &[ChatMessage], tools: Option<&[serde_json::Value]>) -> Result<ChatResponse, ModelError>;
+    fn chat(
+        &self,
+        messages: &[ChatMessage],
+        tools: Option<&[serde_json::Value]>,
+    ) -> Result<ChatResponse, ModelError>;
 
     /// Get provider name
     fn name(&self) -> &str;
@@ -139,13 +143,20 @@ impl OllamaProvider {
 }
 
 impl ModelProvider for OllamaProvider {
-    fn chat(&self, messages: &[ChatMessage], _tools: Option<&[serde_json::Value]>) -> Result<ChatResponse, ModelError> {
-        let ollama_messages: Vec<serde_json::Value> = messages.iter().map(|m| {
-            serde_json::json!({
-                "role": format!("{:?}", m.role).to_lowercase(),
-                "content": m.content
+    fn chat(
+        &self,
+        messages: &[ChatMessage],
+        _tools: Option<&[serde_json::Value]>,
+    ) -> Result<ChatResponse, ModelError> {
+        let ollama_messages: Vec<serde_json::Value> = messages
+            .iter()
+            .map(|m| {
+                serde_json::json!({
+                    "role": format!("{:?}", m.role).to_lowercase(),
+                    "content": m.content
+                })
             })
-        }).collect();
+            .collect();
 
         let request_body = serde_json::json!({
             "model": self.model,
@@ -157,7 +168,8 @@ impl ModelProvider for OllamaProvider {
             .send_json(&request_body)
             .map_err(|e| ModelError::ConnectionError(e.to_string()))?;
 
-        let response_json: serde_json::Value = response.into_json()
+        let response_json: serde_json::Value = response
+            .into_json()
             .map_err(|e| ModelError::ProviderError(e.to_string()))?;
 
         let content = response_json["message"]["content"]
@@ -210,23 +222,30 @@ impl Default for LMStudioProvider {
 }
 
 impl ModelProvider for LMStudioProvider {
-    fn chat(&self, messages: &[ChatMessage], tools: Option<&[serde_json::Value]>) -> Result<ChatResponse, ModelError> {
-        let openai_messages: Vec<serde_json::Value> = messages.iter().map(|m| {
-            let mut msg = serde_json::json!({
-                "role": format!("{:?}", m.role).to_lowercase(),
-                "content": m.content
-            });
+    fn chat(
+        &self,
+        messages: &[ChatMessage],
+        tools: Option<&[serde_json::Value]>,
+    ) -> Result<ChatResponse, ModelError> {
+        let openai_messages: Vec<serde_json::Value> = messages
+            .iter()
+            .map(|m| {
+                let mut msg = serde_json::json!({
+                    "role": format!("{:?}", m.role).to_lowercase(),
+                    "content": m.content
+                });
 
-            if let Some(ref tc) = m.tool_calls {
-                msg["tool_calls"] = serde_json::to_value(tc).unwrap_or_default();
-            }
+                if let Some(ref tc) = m.tool_calls {
+                    msg["tool_calls"] = serde_json::to_value(tc).unwrap_or_default();
+                }
 
-            if let Some(ref id) = m.tool_call_id {
-                msg["tool_call_id"] = serde_json::Value::String(id.clone());
-            }
+                if let Some(ref id) = m.tool_call_id {
+                    msg["tool_call_id"] = serde_json::Value::String(id.clone());
+                }
 
-            msg
-        }).collect();
+                msg
+            })
+            .collect();
 
         let mut request_body = serde_json::json!({
             "messages": openai_messages
@@ -240,7 +259,8 @@ impl ModelProvider for LMStudioProvider {
             .send_json(&request_body)
             .map_err(|e| ModelError::ConnectionError(e.to_string()))?;
 
-        let response_json: serde_json::Value = response.into_json()
+        let response_json: serde_json::Value = response
+            .into_json()
             .map_err(|e| ModelError::ProviderError(e.to_string()))?;
 
         let choice = &response_json["choices"][0];
@@ -251,16 +271,18 @@ impl ModelProvider for LMStudioProvider {
         let tool_calls: Vec<ToolCallInfo> = message["tool_calls"]
             .as_array()
             .map(|arr| {
-                arr.iter().filter_map(|tc| {
-                    Some(ToolCallInfo {
-                        id: tc["id"].as_str()?.to_string(),
-                        r#type: tc["type"].as_str().unwrap_or("function").to_string(),
-                        function: FunctionCall {
-                            name: tc["function"]["name"].as_str()?.to_string(),
-                            arguments: tc["function"]["arguments"].as_str()?.to_string(),
-                        },
+                arr.iter()
+                    .filter_map(|tc| {
+                        Some(ToolCallInfo {
+                            id: tc["id"].as_str()?.to_string(),
+                            r#type: tc["type"].as_str().unwrap_or("function").to_string(),
+                            function: FunctionCall {
+                                name: tc["function"]["name"].as_str()?.to_string(),
+                                arguments: tc["function"]["arguments"].as_str()?.to_string(),
+                            },
+                        })
                     })
-                }).collect()
+                    .collect()
             })
             .unwrap_or_default();
 
@@ -271,12 +293,10 @@ impl ModelProvider for LMStudioProvider {
             _ => FinishReason::Stop,
         };
 
-        let usage = response_json["usage"].as_object().map(|u| {
-            TokenUsage {
-                prompt_tokens: u["prompt_tokens"].as_u64().unwrap_or(0) as usize,
-                completion_tokens: u["completion_tokens"].as_u64().unwrap_or(0) as usize,
-                total_tokens: u["total_tokens"].as_u64().unwrap_or(0) as usize,
-            }
+        let usage = response_json["usage"].as_object().map(|u| TokenUsage {
+            prompt_tokens: u["prompt_tokens"].as_u64().unwrap_or(0) as usize,
+            completion_tokens: u["completion_tokens"].as_u64().unwrap_or(0) as usize,
+            total_tokens: u["total_tokens"].as_u64().unwrap_or(0) as usize,
         });
 
         Ok(ChatResponse {
@@ -400,7 +420,9 @@ impl IntegratedModelClient {
             });
         }
 
-        response.content.ok_or(ModelError::ProviderError("No content in response".to_string()))
+        response.content.ok_or(ModelError::ProviderError(
+            "No content in response".to_string(),
+        ))
     }
 
     /// Handle tool calls from model response
@@ -457,23 +479,27 @@ impl IntegratedModelClient {
             });
         }
 
-        final_response.content.ok_or(ModelError::ProviderError("No content in response".to_string()))
+        final_response.content.ok_or(ModelError::ProviderError(
+            "No content in response".to_string(),
+        ))
     }
 
     /// Execute a single tool call
     fn execute_tool_call(&mut self, tool_call: &ToolCallInfo) -> Result<String, ModelError> {
         let name = &tool_call.function.name;
-        let args: HashMap<String, serde_json::Value> = serde_json::from_str(&tool_call.function.arguments)
-            .map_err(|e| ModelError::ToolExecutionError(format!("Invalid arguments: {}", e)))?;
+        let args: HashMap<String, serde_json::Value> =
+            serde_json::from_str(&tool_call.function.arguments)
+                .map_err(|e| ModelError::ToolExecutionError(format!("Invalid arguments: {}", e)))?;
 
         // Special handling for web search
         if name == "web_search" {
             if let Some(ref mut search_manager) = self.search_manager {
-                let query = args.get("query")
-                    .and_then(|v| v.as_str())
-                    .ok_or(ModelError::ToolExecutionError("Missing query parameter".to_string()))?;
+                let query = args.get("query").and_then(|v| v.as_str()).ok_or(
+                    ModelError::ToolExecutionError("Missing query parameter".to_string()),
+                )?;
 
-                return search_manager.search_for_context(query, 2500)
+                return search_manager
+                    .search_for_context(query, 2500)
                     .map_err(|e| ModelError::ToolExecutionError(e.to_string()));
             }
         }
@@ -490,7 +516,9 @@ impl IntegratedModelClient {
         if result.success {
             Ok(result.output)
         } else {
-            Err(ModelError::ToolExecutionError(result.error.unwrap_or_default()))
+            Err(ModelError::ToolExecutionError(
+                result.error.unwrap_or_default(),
+            ))
         }
     }
 
@@ -526,8 +554,7 @@ mod tests {
 
     #[test]
     fn test_ollama_provider_creation() {
-        let provider = OllamaProvider::new("llama2")
-            .with_url("http://localhost:11434");
+        let provider = OllamaProvider::new("llama2").with_url("http://localhost:11434");
         assert_eq!(provider.name(), "ollama");
         assert!(!provider.supports_tools());
     }

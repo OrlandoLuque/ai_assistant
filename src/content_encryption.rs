@@ -9,7 +9,10 @@
 use std::collections::HashMap;
 
 #[cfg(feature = "aes-gcm")]
-use aes_gcm::{Aes256Gcm, aead::{Aead, KeyInit}};
+use aes_gcm::{
+    aead::{Aead, KeyInit},
+    Aes256Gcm,
+};
 
 /// Encryption algorithm
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,11 +108,12 @@ impl ContentEncryptor {
     }
 
     pub fn encrypt(&self, plaintext: &[u8]) -> Result<EncryptedContent, EncryptionError> {
-        let key_id = self.active_key_id.as_ref()
+        let key_id = self
+            .active_key_id
+            .as_ref()
             .ok_or(EncryptionError::NoActiveKey)?;
 
-        let key = self.keys.get(key_id)
-            .ok_or(EncryptionError::KeyNotFound)?;
+        let key = self.keys.get(key_id).ok_or(EncryptionError::KeyNotFound)?;
 
         if key.is_expired() {
             return Err(EncryptionError::KeyExpired);
@@ -127,14 +131,21 @@ impl ContentEncryptor {
     }
 
     pub fn decrypt(&self, encrypted: &EncryptedContent) -> Result<Vec<u8>, EncryptionError> {
-        let key = self.keys.get(&encrypted.key_id)
+        let key = self
+            .keys
+            .get(&encrypted.key_id)
             .ok_or(EncryptionError::KeyNotFound)?;
 
         if key.algorithm != encrypted.algorithm {
             return Err(EncryptionError::AlgorithmMismatch);
         }
 
-        self.decrypt_with_key(&encrypted.ciphertext, &key.key, &encrypted.nonce, key.algorithm)
+        self.decrypt_with_key(
+            &encrypted.ciphertext,
+            &key.key,
+            &encrypted.nonce,
+            key.algorithm,
+        )
     }
 
     pub fn encrypt_string(&self, plaintext: &str) -> Result<EncryptedContent, EncryptionError> {
@@ -157,9 +168,9 @@ impl ContentEncryptor {
         }
 
         // Generate random nonce by mixing multiple entropy sources
-        use std::time::{SystemTime, UNIX_EPOCH};
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
+        use std::time::{SystemTime, UNIX_EPOCH};
 
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -192,7 +203,8 @@ impl ContentEncryptor {
                 if key.is_empty() {
                     return Err(EncryptionError::EncryptionFailed);
                 }
-                Ok(plaintext.iter()
+                Ok(plaintext
+                    .iter()
                     .enumerate()
                     .map(|(i, b)| b ^ key[i % key.len()])
                     .collect())
@@ -206,7 +218,8 @@ impl ContentEncryptor {
 
                 let cipher = Aes256Gcm::new(aes_gcm::Key::<Aes256Gcm>::from_slice(&key_bytes));
                 let aes_nonce = aes_gcm::Nonce::from_slice(nonce);
-                cipher.encrypt(aes_nonce, plaintext)
+                cipher
+                    .encrypt(aes_nonce, plaintext)
                     .map_err(|_| EncryptionError::EncryptionFailed)
             }
             #[cfg(not(feature = "aes-gcm"))]
@@ -215,11 +228,16 @@ impl ContentEncryptor {
                 if key.is_empty() {
                     return Err(EncryptionError::EncryptionFailed);
                 }
-                Ok(plaintext.iter()
+                Ok(plaintext
+                    .iter()
                     .enumerate()
                     .map(|(i, b)| {
                         let k = key[i % key.len()];
-                        let n = if nonce.is_empty() { 0 } else { nonce[i % nonce.len()] };
+                        let n = if nonce.is_empty() {
+                            0
+                        } else {
+                            nonce[i % nonce.len()]
+                        };
                         b ^ k ^ n
                     })
                     .collect())
@@ -247,7 +265,8 @@ impl ContentEncryptor {
 
                 let cipher = Aes256Gcm::new(aes_gcm::Key::<Aes256Gcm>::from_slice(&key_bytes));
                 let aes_nonce = aes_gcm::Nonce::from_slice(nonce);
-                cipher.decrypt(aes_nonce, ciphertext)
+                cipher
+                    .decrypt(aes_nonce, ciphertext)
                     .map_err(|_| EncryptionError::DecryptionFailed)
             }
             #[cfg(not(feature = "aes-gcm"))]
@@ -322,8 +341,7 @@ impl EncryptedMessageStore {
     }
 
     pub fn retrieve(&self, id: &str) -> Result<String, EncryptionError> {
-        let encrypted = self.messages.get(id)
-            .ok_or(EncryptionError::KeyNotFound)?;
+        let encrypted = self.messages.get(id).ok_or(EncryptionError::KeyNotFound)?;
         self.encryptor.decrypt_string(encrypted)
     }
 
@@ -405,7 +423,11 @@ mod tests {
         let mut encryptor = ContentEncryptor::new();
         // AES-256 needs a 32-byte key
         let key = b"this_is_a_32_byte_key_for_aes!!".to_vec();
-        encryptor.add_key(EncryptionKey::new("aes_key", key, EncryptionAlgorithm::Aes256Gcm));
+        encryptor.add_key(EncryptionKey::new(
+            "aes_key",
+            key,
+            EncryptionAlgorithm::Aes256Gcm,
+        ));
 
         let plaintext = "Top secret AES-encrypted message";
         let encrypted = encryptor.encrypt_string(plaintext).unwrap();
@@ -425,7 +447,11 @@ mod tests {
     fn test_aes256gcm_tamper_detection() {
         let mut encryptor = ContentEncryptor::new();
         let key = b"another_32_byte_key_for_testing!".to_vec();
-        encryptor.add_key(EncryptionKey::new("aes_key", key, EncryptionAlgorithm::Aes256Gcm));
+        encryptor.add_key(EncryptionKey::new(
+            "aes_key",
+            key,
+            EncryptionAlgorithm::Aes256Gcm,
+        ));
 
         let encrypted = encryptor.encrypt_string("sensitive data").unwrap();
 
@@ -436,7 +462,10 @@ mod tests {
         }
 
         // Decryption should fail due to authentication
-        assert_eq!(encryptor.decrypt(&tampered), Err(EncryptionError::DecryptionFailed));
+        assert_eq!(
+            encryptor.decrypt(&tampered),
+            Err(EncryptionError::DecryptionFailed)
+        );
     }
 
     #[cfg(feature = "aes-gcm")]
@@ -444,7 +473,11 @@ mod tests {
     fn test_chacha20_uses_aes_backend() {
         let mut encryptor = ContentEncryptor::new();
         let key = b"32_bytes_key_for_chacha_compat!!".to_vec();
-        encryptor.add_key(EncryptionKey::new("cc_key", key, EncryptionAlgorithm::ChaCha20Poly1305));
+        encryptor.add_key(EncryptionKey::new(
+            "cc_key",
+            key,
+            EncryptionAlgorithm::ChaCha20Poly1305,
+        ));
 
         let plaintext = "ChaCha20 routed to AES-256-GCM backend";
         let encrypted = encryptor.encrypt_string(plaintext).unwrap();

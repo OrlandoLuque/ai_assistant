@@ -63,10 +63,10 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
-use crate::rag_tiers::{RagConfig, RagFeatures, RagRequirement, RagStats, RagTier};
 use crate::rag_debug::{
     RagDebugConfig, RagDebugLogger, RagDebugStep, RagQuerySession, ScoreChange,
 };
+use crate::rag_tiers::{RagConfig, RagFeatures, RagRequirement, RagStats, RagTier};
 
 // ============================================================================
 // Pipeline Result Types
@@ -535,7 +535,13 @@ impl RagPipeline {
         // Start debug session
         let debug_session = self.debug_logger.start_query(query);
         debug_session.set_tier(self.config.rag_config.tier.display_name());
-        debug_session.set_features(features.enabled_features().iter().map(|s| s.to_string()).collect());
+        debug_session.set_features(
+            features
+                .enabled_features()
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+        );
 
         let mut stats = RagPipelineStats::default();
         let mut llm_calls_remaining = self.config.rag_config.max_extra_llm_calls;
@@ -596,18 +602,19 @@ impl RagPipeline {
 
         // Stage 5: Context Assembly
         let assembly_start = Instant::now();
-        let (context, used_chunks, was_truncated) = self.assemble_context(
-            &final_chunks,
-            &features,
-            &debug_session,
-        );
+        let (context, used_chunks, was_truncated) =
+            self.assemble_context(&final_chunks, &features, &debug_session);
         stats.assembly_ms = assembly_start.elapsed().as_millis() as u64;
         stats.chunks_used = used_chunks.len();
 
         // Calculate final stats
         stats.total_duration_ms = start.elapsed().as_millis() as u64;
         stats.llm_calls = self.config.rag_config.max_extra_llm_calls - llm_calls_remaining;
-        stats.features_executed = features.enabled_features().iter().map(|s| s.to_string()).collect();
+        stats.features_executed = features
+            .enabled_features()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
 
         // Collect sources
         let sources: Vec<String> = used_chunks
@@ -624,7 +631,8 @@ impl RagPipeline {
 
         // Update global stats
         self.stats.record_query();
-        self.stats.record_llm_calls(stats.llm_calls, stats.total_duration_ms);
+        self.stats
+            .record_llm_calls(stats.llm_calls, stats.total_duration_ms);
         self.stats.record_retrieval(
             stats.chunks_retrieved,
             stats.chunks_used,
@@ -853,25 +861,23 @@ impl RagPipeline {
                 if let Some(embed_fn) = embeddings {
                     let start = Instant::now();
                     match embed_fn.embed(query) {
-                        Ok(embedding) => {
-                            match retrieval.semantic_search(&embedding, limit) {
-                                Ok(chunks) => {
-                                    let top_sim = chunks.first().map(|c| c.score);
-                                    debug.log_semantic_search(
-                                        query,
-                                        embed_fn.model_name(),
-                                        chunks.len(),
-                                        top_sim,
-                                        start.elapsed(),
-                                    );
-                                    all_chunks.extend(chunks);
-                                }
-                                Err(e) if self.config.continue_on_error => {
-                                    debug.log_warning("semantic_search", &e);
-                                }
-                                Err(e) => return Err(RagPipelineError::RetrievalError(e)),
+                        Ok(embedding) => match retrieval.semantic_search(&embedding, limit) {
+                            Ok(chunks) => {
+                                let top_sim = chunks.first().map(|c| c.score);
+                                debug.log_semantic_search(
+                                    query,
+                                    embed_fn.model_name(),
+                                    chunks.len(),
+                                    top_sim,
+                                    start.elapsed(),
+                                );
+                                all_chunks.extend(chunks);
                             }
-                        }
+                            Err(e) if self.config.continue_on_error => {
+                                debug.log_warning("semantic_search", &e);
+                            }
+                            Err(e) => return Err(RagPipelineError::RetrievalError(e)),
+                        },
                         Err(e) if self.config.continue_on_error => {
                             debug.log_warning("embedding", &e);
                         }
@@ -913,11 +919,22 @@ impl RagPipeline {
                 keyword_results: keyword_count,
                 semantic_results: semantic_count,
                 fused_results: all_chunks.len(),
-                method: if features.fusion_rrf { "rrf" } else { "weighted" }.to_string(),
+                method: if features.fusion_rrf {
+                    "rrf"
+                } else {
+                    "weighted"
+                }
+                .to_string(),
                 weights: Some(
                     [
-                        ("keyword".to_string(), self.config.rag_config.hybrid_weights.keyword),
-                        ("semantic".to_string(), self.config.rag_config.hybrid_weights.semantic),
+                        (
+                            "keyword".to_string(),
+                            self.config.rag_config.hybrid_weights.keyword,
+                        ),
+                        (
+                            "semantic".to_string(),
+                            self.config.rag_config.hybrid_weights.semantic,
+                        ),
                     ]
                     .into_iter()
                     .collect(),
@@ -1015,13 +1032,17 @@ impl RagPipeline {
         // Calculate RRF scores
         for (rank, chunk) in keyword_ranked.iter().enumerate() {
             let rrf = 1.0 / (k + rank as f32 + 1.0);
-            let entry = scores.entry(chunk.chunk_id.clone()).or_insert((0.0, (*chunk).clone()));
+            let entry = scores
+                .entry(chunk.chunk_id.clone())
+                .or_insert((0.0, (*chunk).clone()));
             entry.0 += rrf;
         }
 
         for (rank, chunk) in semantic_ranked.iter().enumerate() {
             let rrf = 1.0 / (k + rank as f32 + 1.0);
-            let entry = scores.entry(chunk.chunk_id.clone()).or_insert((0.0, (*chunk).clone()));
+            let entry = scores
+                .entry(chunk.chunk_id.clone())
+                .or_insert((0.0, (*chunk).clone()));
             entry.0 += rrf;
         }
 
@@ -1034,7 +1055,11 @@ impl RagPipeline {
             })
             .collect();
 
-        result.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        result.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         result
     }
 
@@ -1045,7 +1070,9 @@ impl RagPipeline {
         let mut grouped: HashMap<String, RetrievedChunk> = HashMap::new();
 
         for chunk in chunks {
-            let entry = grouped.entry(chunk.chunk_id.clone()).or_insert(chunk.clone());
+            let entry = grouped
+                .entry(chunk.chunk_id.clone())
+                .or_insert(chunk.clone());
 
             // Combine scores
             let kw = chunk.keyword_score.unwrap_or(0.0) * weights.keyword;
@@ -1058,7 +1085,11 @@ impl RagPipeline {
         }
 
         let mut result: Vec<_> = grouped.into_values().collect();
-        result.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        result.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         result
     }
 
@@ -1073,7 +1104,11 @@ impl RagPipeline {
         }
 
         let mut result: Vec<_> = seen.into_values().collect();
-        result.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        result.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         result
     }
 
@@ -1326,8 +1361,7 @@ impl RagPipeline {
                 "Extract only the parts relevant to answering: \"{}\"\n\n\
                  Text: {}\n\n\
                  Relevant extract (be concise):",
-                query,
-                &chunk.content
+                query, &chunk.content
             );
 
             match llm.generate(&prompt, self.config.compression_target_tokens) {
@@ -1381,7 +1415,8 @@ impl RagPipeline {
                         duration_ms: start.elapsed().as_millis() as u64,
                     });
 
-                    if !sufficient && confidence < self.config.rag_config.self_reflection_threshold {
+                    if !sufficient && confidence < self.config.rag_config.self_reflection_threshold
+                    {
                         triggered = true;
                         // Could trigger re-retrieval here
                     }
@@ -1470,7 +1505,10 @@ impl RagPipeline {
 
         // Parse response
         let parts: Vec<&str> = response.split('|').collect();
-        let sufficient = parts.first().map(|s| s.trim().to_uppercase().contains("YES")).unwrap_or(false);
+        let sufficient = parts
+            .first()
+            .map(|s| s.trim().to_uppercase().contains("YES"))
+            .unwrap_or(false);
         let confidence = parts
             .get(1)
             .and_then(|s| s.trim().parse::<f32>().ok())
@@ -1558,7 +1596,11 @@ impl RagPipeline {
             *llm_calls -= 1;
 
             let (action, observation, is_complete) = if response.to_uppercase().contains("DONE") {
-                ("done".to_string(), "Sufficient information gathered".to_string(), true)
+                (
+                    "done".to_string(),
+                    "Sufficient information gathered".to_string(),
+                    true,
+                )
             } else if let Some(refined) = response
                 .split("SEARCH:")
                 .nth(1)
@@ -1619,11 +1661,7 @@ impl RagPipeline {
             }
 
             // Format chunk with source attribution
-            let formatted = format!(
-                "[Source: {}]\n{}\n",
-                chunk.source,
-                chunk.content.trim()
-            );
+            let formatted = format!("[Source: {}]\n{}\n", chunk.source, chunk.content.trim());
 
             context_parts.push(formatted);
             used_chunks.push(chunk.clone());
@@ -1695,7 +1733,11 @@ mod tests {
 
     struct MockRetrieval;
     impl RetrievalCallback for MockRetrieval {
-        fn keyword_search(&self, _query: &str, limit: usize) -> Result<Vec<RetrievedChunk>, String> {
+        fn keyword_search(
+            &self,
+            _query: &str,
+            limit: usize,
+        ) -> Result<Vec<RetrievedChunk>, String> {
             Ok((0..limit.min(3))
                 .map(|i| RetrievedChunk {
                     chunk_id: format!("chunk_{}", i),
@@ -1742,10 +1784,7 @@ mod tests {
     fn test_pipeline_creation() {
         let config = RagConfig::with_tier(RagTier::Fast);
         let pipeline = RagPipeline::new(config);
-        assert_eq!(
-            pipeline.config().rag_config.tier,
-            RagTier::Fast
-        );
+        assert_eq!(pipeline.config().rag_config.tier, RagTier::Fast);
     }
 
     #[test]

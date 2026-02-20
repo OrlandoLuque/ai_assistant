@@ -1,15 +1,15 @@
 //! Provider-specific API implementations
 
-use std::sync::mpsc::Sender;
-use std::io::BufRead;
 use anyhow::{Context, Result};
+use std::io::BufRead;
+use std::sync::mpsc::Sender;
 
 use crate::config::{AiConfig, AiProvider};
-use crate::retry::{retry_with_config, RetryConfig};
+use crate::conversation_control::CancellationToken;
 use crate::messages::{AiResponse, ChatMessage};
 use crate::models::{format_size, ModelInfo};
+use crate::retry::{retry_with_config, RetryConfig};
 use crate::session::UserPreferences;
-use crate::conversation_control::CancellationToken;
 
 /// Fetch models from Ollama API.
 ///
@@ -31,19 +31,27 @@ pub fn fetch_ollama_models(base_url: &str) -> Result<Vec<ModelInfo>> {
                         name: name.to_string(),
                         provider: AiProvider::Ollama,
                         size: model.get("size").and_then(|s| s.as_u64()).map(format_size),
-                        modified_at: model.get("modified_at").and_then(|m| m.as_str()).map(|s| s.to_string()),
+                        modified_at: model
+                            .get("modified_at")
+                            .and_then(|m| m.as_str())
+                            .map(|s| s.to_string()),
+                        capabilities: None,
                     });
                 }
             }
         }
         Ok(models)
-    }).context("Failed to fetch Ollama models")
+    })
+    .context("Failed to fetch Ollama models")
 }
 
 /// Fetch models from OpenAI-compatible API (LM Studio, LocalAI, etc.)
 ///
 /// Uses `RetryConfig::fast()` (2 retries) for transient connection errors.
-pub fn fetch_openai_compatible_models(base_url: &str, provider: AiProvider) -> Result<Vec<ModelInfo>> {
+pub fn fetch_openai_compatible_models(
+    base_url: &str,
+    provider: AiProvider,
+) -> Result<Vec<ModelInfo>> {
     let url = format!("{}/v1/models", base_url);
     retry_with_config(RetryConfig::fast(), || {
         let response = ureq::get(&url)
@@ -60,12 +68,14 @@ pub fn fetch_openai_compatible_models(base_url: &str, provider: AiProvider) -> R
                         provider: provider.clone(),
                         size: None,
                         modified_at: None,
+                        capabilities: None,
                     });
                 }
             }
         }
         Ok(models)
-    }).context("Failed to fetch OpenAI-compatible models")
+    })
+    .context("Failed to fetch OpenAI-compatible models")
 }
 
 /// Fetch models from Kobold.cpp API.
@@ -79,7 +89,8 @@ pub fn fetch_kobold_models(base_url: &str) -> Result<Vec<ModelInfo>> {
             .timeout(std::time::Duration::from_secs(5))
             .call()?;
         Ok(resp)
-    }).context("Failed to connect to Kobold.cpp")?;
+    })
+    .context("Failed to connect to Kobold.cpp")?;
 
     let body: serde_json::Value = response.into_json()?;
 
@@ -93,6 +104,7 @@ pub fn fetch_kobold_models(base_url: &str) -> Result<Vec<ModelInfo>> {
                 provider: AiProvider::KoboldCpp,
                 size: None,
                 modified_at: None,
+                capabilities: None,
             });
         }
     }
@@ -110,6 +122,7 @@ pub fn fetch_kobold_models(base_url: &str) -> Result<Vec<ModelInfo>> {
                 provider: AiProvider::KoboldCpp,
                 size: None,
                 modified_at: None,
+                capabilities: None,
             });
         }
     }
@@ -175,7 +188,10 @@ pub fn build_system_prompt_with_notes(
 
     // Add user preferences
     if !preferences.ships_owned.is_empty() {
-        prompt.push_str(&format!("\nUser's ships: {}", preferences.ships_owned.join(", ")));
+        prompt.push_str(&format!(
+            "\nUser's ships: {}",
+            preferences.ships_owned.join(", ")
+        ));
     }
 
     if let Some(ref target) = preferences.target_ship {
@@ -183,13 +199,20 @@ pub fn build_system_prompt_with_notes(
     }
 
     if !preferences.interests.is_empty() {
-        prompt.push_str(&format!("\nInterests: {}", preferences.interests.join(", ")));
+        prompt.push_str(&format!(
+            "\nInterests: {}",
+            preferences.interests.join(", ")
+        ));
     }
 
     match preferences.response_style {
         crate::session::ResponseStyle::Concise => prompt.push_str("\n\nBe brief and concise."),
-        crate::session::ResponseStyle::Detailed => prompt.push_str("\n\nProvide detailed explanations."),
-        crate::session::ResponseStyle::Technical => prompt.push_str("\n\nInclude technical details."),
+        crate::session::ResponseStyle::Detailed => {
+            prompt.push_str("\n\nProvide detailed explanations.")
+        }
+        crate::session::ResponseStyle::Technical => {
+            prompt.push_str("\n\nInclude technical details.")
+        }
         crate::session::ResponseStyle::Normal => {}
     }
 
@@ -248,7 +271,8 @@ pub fn generate_ollama_streaming(
             .timeout(std::time::Duration::from_secs(300))
             .send_json(&request_body)?;
         Ok(resp)
-    }).context("Failed to send request to Ollama")?;
+    })
+    .context("Failed to send request to Ollama")?;
 
     let reader = std::io::BufReader::new(response.into_reader());
     let mut full_response = String::new();
@@ -261,7 +285,8 @@ pub fn generate_ollama_streaming(
 
         if let Ok(chunk) = serde_json::from_str::<serde_json::Value>(&line) {
             // Ollama format: {"message": {"content": "..."}, "done": false}
-            if let Some(content) = chunk.get("message")
+            if let Some(content) = chunk
+                .get("message")
                 .and_then(|m| m.get("content"))
                 .and_then(|c| c.as_str())
             {
@@ -289,11 +314,19 @@ pub fn generate_openai_streaming(
     tx: &Sender<AiResponse>,
 ) -> Result<()> {
     let base_url = match &config.provider {
-        AiProvider::LMStudio => &config.lm_studio_url,
-        AiProvider::TextGenWebUI => &config.text_gen_webui_url,
-        AiProvider::LocalAI => &config.local_ai_url,
-        AiProvider::OpenAICompatible { base_url } => base_url,
-        _ => return Err(anyhow::anyhow!("Invalid provider for OpenAI-compatible API")),
+        AiProvider::LMStudio => config.lm_studio_url.clone(),
+        AiProvider::TextGenWebUI => config.text_gen_webui_url.clone(),
+        AiProvider::LocalAI => config.local_ai_url.clone(),
+        AiProvider::OpenAICompatible { base_url } => base_url.clone(),
+        AiProvider::OpenAI
+        | AiProvider::Anthropic
+        | AiProvider::Gemini
+        | AiProvider::Bedrock { .. } => config.get_base_url(),
+        _ => {
+            return Err(anyhow::anyhow!(
+                "Invalid provider for OpenAI-compatible API"
+            ))
+        }
     };
 
     let url = format!("{}/v1/chat/completions", base_url);
@@ -313,7 +346,8 @@ pub fn generate_openai_streaming(
             .timeout(std::time::Duration::from_secs(300))
             .send_json(&request_body)?;
         Ok(resp)
-    }).context("Failed to send request to LLM API")?;
+    })
+    .context("Failed to send request to LLM API")?;
 
     let reader = std::io::BufReader::new(response.into_reader());
     let mut full_response = String::new();
@@ -334,7 +368,8 @@ pub fn generate_openai_streaming(
 
         if let Ok(chunk) = serde_json::from_str::<serde_json::Value>(json_str) {
             // OpenAI format: {"choices": [{"delta": {"content": "..."}}]}
-            if let Some(content) = chunk.get("choices")
+            if let Some(content) = chunk
+                .get("choices")
                 .and_then(|c| c.get(0))
                 .and_then(|c| c.get("delta"))
                 .and_then(|d| d.get("content"))
@@ -376,7 +411,8 @@ pub fn generate_ollama_response(
             .timeout(std::time::Duration::from_secs(120))
             .send_json(&request_body)?;
         Ok(resp)
-    }).context("Failed to send request to Ollama")?;
+    })
+    .context("Failed to send request to Ollama")?;
 
     let body: serde_json::Value = response.into_json()?;
 
@@ -397,11 +433,19 @@ pub fn generate_openai_response(
     system_prompt: &str,
 ) -> Result<String> {
     let base_url = match &config.provider {
-        AiProvider::LMStudio => &config.lm_studio_url,
-        AiProvider::TextGenWebUI => &config.text_gen_webui_url,
-        AiProvider::LocalAI => &config.local_ai_url,
-        AiProvider::OpenAICompatible { base_url } => base_url,
-        _ => return Err(anyhow::anyhow!("Invalid provider for OpenAI-compatible API")),
+        AiProvider::LMStudio => config.lm_studio_url.clone(),
+        AiProvider::TextGenWebUI => config.text_gen_webui_url.clone(),
+        AiProvider::LocalAI => config.local_ai_url.clone(),
+        AiProvider::OpenAICompatible { base_url } => base_url.clone(),
+        AiProvider::OpenAI
+        | AiProvider::Anthropic
+        | AiProvider::Gemini
+        | AiProvider::Bedrock { .. } => config.get_base_url(),
+        _ => {
+            return Err(anyhow::anyhow!(
+                "Invalid provider for OpenAI-compatible API"
+            ))
+        }
     };
 
     let url = format!("{}/v1/chat/completions", base_url);
@@ -420,7 +464,8 @@ pub fn generate_openai_response(
             .timeout(std::time::Duration::from_secs(120))
             .send_json(&request_body)?;
         Ok(resp)
-    }).context("Failed to send request to API")?;
+    })
+    .context("Failed to send request to API")?;
 
     let body: serde_json::Value = response.into_json()?;
 
@@ -447,9 +492,15 @@ pub fn generate_kobold_response(
     // Build prompt from conversation (Kobold uses a single prompt string)
     let mut full_prompt = format!("### System:\n{}\n\n", system_prompt);
 
-    let history_start = conversation.len().saturating_sub(config.max_history_messages);
+    let history_start = conversation
+        .len()
+        .saturating_sub(config.max_history_messages);
     for msg in &conversation[history_start..] {
-        let role_name = if msg.role == "user" { "User" } else { "Assistant" };
+        let role_name = if msg.role == "user" {
+            "User"
+        } else {
+            "Assistant"
+        };
         full_prompt.push_str(&format!("### {}:\n{}\n\n", role_name, msg.content));
     }
 
@@ -468,7 +519,8 @@ pub fn generate_kobold_response(
             .timeout(std::time::Duration::from_secs(120))
             .send_json(&request_body)?;
         Ok(resp)
-    }).context("Failed to send request to Kobold.cpp")?;
+    })
+    .context("Failed to send request to Kobold.cpp")?;
 
     let body: serde_json::Value = response.into_json()?;
 
@@ -493,9 +545,7 @@ pub fn generate_response_streaming(
     tx: &Sender<AiResponse>,
 ) -> Result<()> {
     match &config.provider {
-        AiProvider::Ollama => {
-            generate_ollama_streaming(config, conversation, system_prompt, tx)
-        }
+        AiProvider::Ollama => generate_ollama_streaming(config, conversation, system_prompt, tx),
         AiProvider::KoboldCpp => {
             // Kobold doesn't support streaming well, fall back to non-streaming
             let response = generate_kobold_response(config, conversation, system_prompt)?;
@@ -507,7 +557,9 @@ pub fn generate_response_streaming(
         | AiProvider::LocalAI
         | AiProvider::OpenAICompatible { .. }
         | AiProvider::OpenAI
-        | AiProvider::Anthropic => {
+        | AiProvider::Anthropic
+        | AiProvider::Gemini
+        | AiProvider::Bedrock { .. } => {
             generate_openai_streaming(config, conversation, system_prompt, tx)
         }
     }
@@ -520,18 +572,16 @@ pub fn generate_response(
     system_prompt: &str,
 ) -> Result<String> {
     match &config.provider {
-        AiProvider::Ollama => {
-            generate_ollama_response(config, conversation, system_prompt)
-        }
-        AiProvider::KoboldCpp => {
-            generate_kobold_response(config, conversation, system_prompt)
-        }
+        AiProvider::Ollama => generate_ollama_response(config, conversation, system_prompt),
+        AiProvider::KoboldCpp => generate_kobold_response(config, conversation, system_prompt),
         AiProvider::LMStudio
         | AiProvider::TextGenWebUI
         | AiProvider::LocalAI
         | AiProvider::OpenAICompatible { .. }
         | AiProvider::OpenAI
-        | AiProvider::Anthropic => {
+        | AiProvider::Anthropic
+        | AiProvider::Gemini
+        | AiProvider::Bedrock { .. } => {
             generate_openai_response(config, conversation, system_prompt)
         }
     }
@@ -568,7 +618,8 @@ pub fn generate_ollama_streaming_cancellable(
             .timeout(std::time::Duration::from_secs(300))
             .send_json(&request_body)?;
         Ok(resp)
-    }).context("Failed to send request to Ollama")?;
+    })
+    .context("Failed to send request to Ollama")?;
 
     let reader = std::io::BufReader::new(response.into_reader());
     let mut full_response = String::new();
@@ -586,7 +637,8 @@ pub fn generate_ollama_streaming_cancellable(
         }
 
         if let Ok(chunk) = serde_json::from_str::<serde_json::Value>(&line) {
-            if let Some(content) = chunk.get("message")
+            if let Some(content) = chunk
+                .get("message")
                 .and_then(|m| m.get("content"))
                 .and_then(|c| c.as_str())
             {
@@ -615,11 +667,19 @@ pub fn generate_openai_streaming_cancellable(
     cancel_token: &CancellationToken,
 ) -> Result<()> {
     let base_url = match &config.provider {
-        AiProvider::LMStudio => &config.lm_studio_url,
-        AiProvider::TextGenWebUI => &config.text_gen_webui_url,
-        AiProvider::LocalAI => &config.local_ai_url,
-        AiProvider::OpenAICompatible { base_url } => base_url,
-        _ => return Err(anyhow::anyhow!("Invalid provider for OpenAI-compatible API")),
+        AiProvider::LMStudio => config.lm_studio_url.clone(),
+        AiProvider::TextGenWebUI => config.text_gen_webui_url.clone(),
+        AiProvider::LocalAI => config.local_ai_url.clone(),
+        AiProvider::OpenAICompatible { base_url } => base_url.clone(),
+        AiProvider::OpenAI
+        | AiProvider::Anthropic
+        | AiProvider::Gemini
+        | AiProvider::Bedrock { .. } => config.get_base_url(),
+        _ => {
+            return Err(anyhow::anyhow!(
+                "Invalid provider for OpenAI-compatible API"
+            ))
+        }
     };
 
     let url = format!("{}/v1/chat/completions", base_url);
@@ -639,7 +699,8 @@ pub fn generate_openai_streaming_cancellable(
             .timeout(std::time::Duration::from_secs(300))
             .send_json(&request_body)?;
         Ok(resp)
-    }).context("Failed to send request to OpenAI-compatible API")?;
+    })
+    .context("Failed to send request to OpenAI-compatible API")?;
 
     let reader = std::io::BufReader::new(response.into_reader());
     let mut full_response = String::new();
@@ -665,7 +726,8 @@ pub fn generate_openai_streaming_cancellable(
         };
 
         if let Ok(chunk) = serde_json::from_str::<serde_json::Value>(json_str) {
-            if let Some(content) = chunk.get("choices")
+            if let Some(content) = chunk
+                .get("choices")
                 .and_then(|c| c.get(0))
                 .and_then(|c| c.get("delta"))
                 .and_then(|d| d.get("content"))
@@ -678,7 +740,8 @@ pub fn generate_openai_streaming_cancellable(
             }
 
             // Check for finish_reason
-            if let Some(finish) = chunk.get("choices")
+            if let Some(finish) = chunk
+                .get("choices")
                 .and_then(|c| c.get(0))
                 .and_then(|c| c.get("finish_reason"))
             {
@@ -708,9 +771,13 @@ pub fn generate_response_streaming_cancellable(
     }
 
     match &config.provider {
-        AiProvider::Ollama => {
-            generate_ollama_streaming_cancellable(config, conversation, system_prompt, tx, cancel_token)
-        }
+        AiProvider::Ollama => generate_ollama_streaming_cancellable(
+            config,
+            conversation,
+            system_prompt,
+            tx,
+            cancel_token,
+        ),
         AiProvider::KoboldCpp => {
             // Kobold doesn't support streaming well, fall back to non-streaming
             // Check cancellation before blocking call
@@ -727,9 +794,15 @@ pub fn generate_response_streaming_cancellable(
         | AiProvider::LocalAI
         | AiProvider::OpenAICompatible { .. }
         | AiProvider::OpenAI
-        | AiProvider::Anthropic => {
-            generate_openai_streaming_cancellable(config, conversation, system_prompt, tx, cancel_token)
-        }
+        | AiProvider::Anthropic
+        | AiProvider::Gemini
+        | AiProvider::Bedrock { .. } => generate_openai_streaming_cancellable(
+            config,
+            conversation,
+            system_prompt,
+            tx,
+            cancel_token,
+        ),
     }
 }
 
@@ -744,9 +817,13 @@ pub fn fetch_model_context_size(config: &AiConfig, model_name: &str) -> Option<u
         AiProvider::Ollama => fetch_ollama_model_context(&config.ollama_url, model_name),
         AiProvider::KoboldCpp => fetch_kobold_context_size(&config.kobold_url),
         AiProvider::LMStudio => fetch_openai_model_context(&config.lm_studio_url, model_name),
-        AiProvider::TextGenWebUI => fetch_openai_model_context(&config.text_gen_webui_url, model_name),
+        AiProvider::TextGenWebUI => {
+            fetch_openai_model_context(&config.text_gen_webui_url, model_name)
+        }
         AiProvider::LocalAI => fetch_openai_model_context(&config.local_ai_url, model_name),
-        AiProvider::OpenAICompatible { base_url } => fetch_openai_model_context(base_url, model_name),
+        AiProvider::OpenAICompatible { base_url } => {
+            fetch_openai_model_context(base_url, model_name)
+        }
         AiProvider::OpenAI => {
             // OpenAI doesn't expose context size via API; use well-known sizes
             match model_name {
@@ -761,11 +838,21 @@ pub fn fetch_model_context_size(config: &AiConfig, model_name: &str) -> Option<u
         AiProvider::Anthropic => {
             // Anthropic Claude models have known context sizes
             match model_name {
-                m if m.contains("opus-4") || m.contains("sonnet-4") || m.contains("haiku-4") => Some(200_000),
+                m if m.contains("opus-4") || m.contains("sonnet-4") || m.contains("haiku-4") => {
+                    Some(200_000)
+                }
                 m if m.contains("3-5") || m.contains("3.5") => Some(200_000),
                 m if m.contains("3") => Some(200_000),
                 _ => Some(200_000),
             }
+        }
+        AiProvider::Gemini => {
+            // Gemini models support up to 1M token context
+            Some(1_048_576)
+        }
+        AiProvider::Bedrock { .. } => {
+            // Bedrock typically runs Claude models with 200K context
+            Some(200_000)
         }
     }
 }
@@ -786,7 +873,8 @@ fn fetch_ollama_model_context(base_url: &str, model_name: &str) -> Option<usize>
     let json: serde_json::Value = response.into_json().ok()?;
 
     // Try to get num_ctx from model_info first (more reliable)
-    if let Some(ctx) = json.get("model_info")
+    if let Some(ctx) = json
+        .get("model_info")
         .and_then(|info| info.get("llama.context_length"))
         .and_then(|v| v.as_u64())
     {
@@ -908,5 +996,159 @@ mod context_size_tests {
         let config = AiConfig::default();
         let result = fetch_model_context_size(&config, "nonexistent");
         assert!(result.is_none());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::session::{ResponseStyle, UserPreferences};
+
+    #[test]
+    fn test_build_system_prompt_empty_knowledge() {
+        let prefs = UserPreferences::default();
+        let result = build_system_prompt("You are a helpful assistant.", &prefs, "");
+        assert!(result.starts_with("You are a helpful assistant."));
+        assert!(!result.contains("KNOWLEDGE BASE"));
+    }
+
+    #[test]
+    fn test_build_system_prompt_with_knowledge() {
+        let prefs = UserPreferences::default();
+        let knowledge = "The Orion constellation contains Betelgeuse.";
+        let result = build_system_prompt("Base prompt.", &prefs, knowledge);
+        assert!(
+            result.contains("KNOWLEDGE BASE"),
+            "prompt should contain KNOWLEDGE BASE section"
+        );
+        assert!(
+            result.contains(knowledge),
+            "prompt should contain the knowledge text"
+        );
+    }
+
+    #[test]
+    fn test_build_system_prompt_with_notes() {
+        let mut prefs = UserPreferences::default();
+        prefs.global_notes = "Always answer in English.".to_string();
+
+        let result = build_system_prompt_with_notes(
+            "Base prompt.",
+            &prefs,
+            "Some knowledge.",
+            "Focus on astronomy.",
+            "Star catalog v2.",
+        );
+
+        assert!(
+            result.contains("USER NOTES"),
+            "prompt should contain USER NOTES section"
+        );
+        assert!(
+            result.contains("Always answer in English."),
+            "prompt should contain global notes text"
+        );
+        assert!(
+            result.contains("Session-specific notes:"),
+            "prompt should contain session notes header"
+        );
+        assert!(
+            result.contains("Focus on astronomy."),
+            "prompt should contain session notes text"
+        );
+        assert!(
+            result.contains("KNOWLEDGE NOTES"),
+            "prompt should contain KNOWLEDGE NOTES section"
+        );
+        assert!(
+            result.contains("Star catalog v2."),
+            "prompt should contain knowledge notes text"
+        );
+        assert!(
+            result.contains("KNOWLEDGE BASE"),
+            "prompt should contain KNOWLEDGE BASE section"
+        );
+        assert!(
+            result.contains("Some knowledge."),
+            "prompt should contain knowledge text"
+        );
+    }
+
+    #[test]
+    fn test_build_system_prompt_response_style() {
+        let styles_and_expected: Vec<(ResponseStyle, Option<&str>)> = vec![
+            (ResponseStyle::Concise, Some("Be brief and concise.")),
+            (
+                ResponseStyle::Detailed,
+                Some("Provide detailed explanations."),
+            ),
+            (ResponseStyle::Technical, Some("Include technical details.")),
+            (ResponseStyle::Normal, None),
+        ];
+
+        for (style, expected_fragment) in styles_and_expected {
+            let prefs = UserPreferences {
+                response_style: style.clone(),
+                ..UserPreferences::default()
+            };
+            let result = build_system_prompt("Base.", &prefs, "");
+
+            if let Some(fragment) = expected_fragment {
+                assert!(
+                    result.contains(fragment),
+                    "Style {:?} should produce '{}' in prompt, got: {}",
+                    style,
+                    fragment,
+                    result
+                );
+            } else {
+                // Normal style should not add any of the other style instructions
+                assert!(
+                    !result.contains("Be brief and concise."),
+                    "Normal should not contain Concise instruction"
+                );
+                assert!(
+                    !result.contains("Provide detailed explanations."),
+                    "Normal should not contain Detailed instruction"
+                );
+                assert!(
+                    !result.contains("Include technical details."),
+                    "Normal should not contain Technical instruction"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_build_system_prompt_user_preferences() {
+        let prefs = UserPreferences {
+            ships_owned: vec!["Cutlass Black".to_string(), "Freelancer".to_string()],
+            target_ship: Some("Constellation Andromeda".to_string()),
+            interests: vec!["mining".to_string(), "trading".to_string()],
+            ..UserPreferences::default()
+        };
+
+        let result = build_system_prompt("Base.", &prefs, "");
+
+        assert!(
+            result.contains("Cutlass Black"),
+            "prompt should contain first ship owned"
+        );
+        assert!(
+            result.contains("Freelancer"),
+            "prompt should contain second ship owned"
+        );
+        assert!(
+            result.contains("Constellation Andromeda"),
+            "prompt should contain target ship"
+        );
+        assert!(
+            result.contains("mining"),
+            "prompt should contain first interest"
+        );
+        assert!(
+            result.contains("trading"),
+            "prompt should contain second interest"
+        );
     }
 }

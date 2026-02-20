@@ -17,7 +17,6 @@ use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 
-
 #[cfg(feature = "documents")]
 use super::document_parsing::ParsedDocument;
 
@@ -320,17 +319,13 @@ impl AutoIndexer {
             metadata: HashMap::new(),
         };
 
-        self.state.total_chunks = self
-            .state
-            .total_chunks
-            .saturating_sub(
-                self.state
-                    .documents
-                    .get(source)
-                    .map(|m| m.chunk_count)
-                    .unwrap_or(0),
-            )
-            + chunk_count;
+        self.state.total_chunks = self.state.total_chunks.saturating_sub(
+            self.state
+                .documents
+                .get(source)
+                .map(|m| m.chunk_count)
+                .unwrap_or(0),
+        ) + chunk_count;
 
         self.save_document_meta(&meta)?;
         self.state.documents.insert(source.to_string(), meta);
@@ -345,15 +340,8 @@ impl AutoIndexer {
 
     /// Index a `ParsedDocument` (available when the `documents` feature is enabled).
     #[cfg(feature = "documents")]
-    pub fn index_parsed_document(
-        &mut self,
-        doc: &ParsedDocument,
-    ) -> Result<IndexingResult> {
-        let source = doc
-            .source_path
-            .as_deref()
-            .unwrap_or("unknown")
-            .to_string();
+    pub fn index_parsed_document(&mut self, doc: &ParsedDocument) -> Result<IndexingResult> {
+        let source = doc.source_path.as_deref().unwrap_or("unknown").to_string();
         let content_type = match doc.format {
             super::document_parsing::DocumentFormat::Epub => "application/epub+zip",
             super::document_parsing::DocumentFormat::Docx => {
@@ -365,6 +353,15 @@ impl AutoIndexer {
             super::document_parsing::DocumentFormat::Pdf => "application/pdf",
             super::document_parsing::DocumentFormat::Html => "text/html",
             super::document_parsing::DocumentFormat::PlainText => "text/plain",
+            super::document_parsing::DocumentFormat::Csv => "text/csv",
+            super::document_parsing::DocumentFormat::Email => "message/rfc822",
+            super::document_parsing::DocumentFormat::Image => "image/unknown",
+            super::document_parsing::DocumentFormat::Pptx => {
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            }
+            super::document_parsing::DocumentFormat::Xlsx => {
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            }
         };
         self.index_text(&doc.text, &source, content_type)
     }
@@ -483,10 +480,9 @@ impl AutoIndexer {
                                 Ok(sub) => result.merge(&sub),
                                 Err(err) => {
                                     result.documents_failed += 1;
-                                    result.errors.push(format!(
-                                        "Failed to reindex {}: {}",
-                                        source, err
-                                    ));
+                                    result
+                                        .errors
+                                        .push(format!("Failed to reindex {}: {}", source, err));
                                 }
                             }
                         } else {
@@ -527,8 +523,10 @@ impl AutoIndexer {
         if let Some(meta) = self.state.documents.remove(source) {
             self.state.total_chunks = self.state.total_chunks.saturating_sub(meta.chunk_count);
         }
-        self.db
-            .execute("DELETE FROM indexed_documents WHERE source = ?1", params![source])?;
+        self.db.execute(
+            "DELETE FROM indexed_documents WHERE source = ?1",
+            params![source],
+        )?;
         Ok(())
     }
 
@@ -551,12 +549,8 @@ impl AutoIndexer {
     pub fn stats(&self) -> IndexStats {
         let total_documents = self.state.documents.len();
         let total_chunks = self.state.total_chunks;
-        let total_tokens_estimated: usize = self
-            .state
-            .documents
-            .values()
-            .map(|m| m.token_count)
-            .sum();
+        let total_tokens_estimated: usize =
+            self.state.documents.values().map(|m| m.token_count).sum();
 
         let avg_chunks_per_doc = if total_documents > 0 {
             total_chunks as f64 / total_documents as f64
@@ -663,8 +657,10 @@ impl AutoIndexer {
 
     /// Remove all chunks for a given source from the database.
     fn remove_chunks(&mut self, source: &str) -> Result<()> {
-        self.db
-            .execute("DELETE FROM indexed_chunks WHERE source = ?1", params![source])?;
+        self.db.execute(
+            "DELETE FROM indexed_chunks WHERE source = ?1",
+            params![source],
+        )?;
         Ok(())
     }
 

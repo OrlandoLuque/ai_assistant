@@ -3,9 +3,7 @@
 //! Validates every agent action against an [`AgentPolicy`] before execution.
 //! Maintains a full audit log of all decisions.
 
-use crate::agent_policy::{
-    ActionDescriptor, ActionType, AgentPolicy, ApprovalHandler, RiskLevel,
-};
+use crate::agent_policy::{ActionDescriptor, ActionType, AgentPolicy, ApprovalHandler, RiskLevel};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -46,8 +44,11 @@ pub struct SandboxError {
 
 impl std::fmt::Display for SandboxError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Sandbox denied {:?} ({}): {}",
-            self.action.action_type, self.action.target, self.message)
+        write!(
+            f,
+            "Sandbox denied {:?} ({}): {}",
+            self.action.action_type, self.action.target, self.message
+        )
     }
 }
 
@@ -118,7 +119,10 @@ impl SandboxValidator {
         }
 
         // Validate against policy
-        match self.policy.validate_action(action, self.approval_handler.as_ref()) {
+        match self
+            .policy
+            .validate_action(action, self.approval_handler.as_ref())
+        {
             Ok(()) => {
                 // Determine if approval was needed
                 let decision = if self.policy.needs_approval(action) {
@@ -232,7 +236,10 @@ impl SandboxValidator {
 
     /// Count entries by decision type.
     pub fn count_by_decision(&self, decision: &AuditDecision) -> usize {
-        self.audit_log.iter().filter(|e| &e.decision == decision).count()
+        self.audit_log
+            .iter()
+            .filter(|e| &e.decision == decision)
+            .count()
     }
 
     /// Export audit log as JSON.
@@ -290,7 +297,9 @@ mod tests {
             .build();
         let mut sandbox = SandboxValidator::new(policy);
 
-        assert!(sandbox.validate_file_read("/home/user/project/src/main.rs").is_ok());
+        assert!(sandbox
+            .validate_file_read("/home/user/project/src/main.rs")
+            .is_ok());
         assert_eq!(sandbox.audit_count(), 1);
         assert_eq!(sandbox.audit_log()[0].decision, AuditDecision::Approved);
     }
@@ -309,22 +318,21 @@ mod tests {
 
     #[test]
     fn test_validate_command_with_approval() {
-        let policy = AgentPolicyBuilder::new()
-            .allow_command("cargo")
-            .build();
+        let policy = AgentPolicyBuilder::new().allow_command("cargo").build();
         let handler: Arc<dyn ApprovalHandler> = Arc::new(AutoApproveAll);
         let mut sandbox = SandboxValidator::with_approval(policy, handler);
 
         // cargo is allowed, but ShellExec is Medium risk → needs approval
         assert!(sandbox.validate_command("cargo build").is_ok());
-        assert_eq!(sandbox.audit_log()[0].decision, AuditDecision::ApprovedByUser);
+        assert_eq!(
+            sandbox.audit_log()[0].decision,
+            AuditDecision::ApprovedByUser
+        );
     }
 
     #[test]
     fn test_validate_command_denied_by_user() {
-        let policy = AgentPolicyBuilder::new()
-            .allow_command("cargo")
-            .build();
+        let policy = AgentPolicyBuilder::new().allow_command("cargo").build();
         let handler: Arc<dyn ApprovalHandler> = Arc::new(AutoDenyAll);
         let mut sandbox = SandboxValidator::with_approval(policy, handler);
 
@@ -345,9 +353,7 @@ mod tests {
 
     #[test]
     fn test_validate_mcp() {
-        let policy = AgentPolicyBuilder::new()
-            .allow_mcp("filesystem")
-            .build();
+        let policy = AgentPolicyBuilder::new().allow_mcp("filesystem").build();
         let mut sandbox = SandboxValidator::new(policy);
 
         assert!(sandbox.validate_mcp("filesystem").is_ok());
@@ -371,9 +377,7 @@ mod tests {
 
     #[test]
     fn test_export_audit() {
-        let policy = AgentPolicyBuilder::new()
-            .allow_path("/tmp")
-            .build();
+        let policy = AgentPolicyBuilder::new().allow_path("/tmp").build();
         let mut sandbox = SandboxValidator::new(policy);
 
         sandbox.validate_file_read("/tmp/file.txt").unwrap();
@@ -385,9 +389,7 @@ mod tests {
 
     #[test]
     fn test_count_by_decision() {
-        let policy = AgentPolicyBuilder::new()
-            .allow_path("/tmp")
-            .build();
+        let policy = AgentPolicyBuilder::new().allow_path("/tmp").build();
         let mut sandbox = SandboxValidator::new(policy);
 
         sandbox.validate_file_read("/tmp/a.txt").unwrap();
@@ -416,18 +418,14 @@ mod tests {
     #[test]
     fn test_set_policy() {
         // Start with a policy that only allows /tmp
-        let policy1 = AgentPolicyBuilder::new()
-            .allow_path("/tmp")
-            .build();
+        let policy1 = AgentPolicyBuilder::new().allow_path("/tmp").build();
         let mut sandbox = SandboxValidator::new(policy1);
 
         // /home should be denied under the first policy
         assert!(sandbox.validate_file_read("/home/user/file.txt").is_err());
 
         // Switch to a policy that allows /home
-        let policy2 = AgentPolicyBuilder::new()
-            .allow_path("/home")
-            .build();
+        let policy2 = AgentPolicyBuilder::new().allow_path("/home").build();
         sandbox.set_policy(policy2);
 
         // Now /home should be allowed
@@ -446,18 +444,22 @@ mod tests {
 
         // Allowed tool should pass
         assert!(sandbox.validate_tool("read_file").is_ok());
-        assert_eq!(sandbox.audit_log().last().unwrap().decision, AuditDecision::Approved);
+        assert_eq!(
+            sandbox.audit_log().last().unwrap().decision,
+            AuditDecision::Approved
+        );
 
         // Denied tool should fail
         assert!(sandbox.validate_tool("delete_file").is_err());
-        assert_eq!(sandbox.audit_log().last().unwrap().decision, AuditDecision::Denied);
+        assert_eq!(
+            sandbox.audit_log().last().unwrap().decision,
+            AuditDecision::Denied
+        );
     }
 
     #[test]
     fn test_clear_audit() {
-        let policy = AgentPolicyBuilder::new()
-            .allow_path("/tmp")
-            .build();
+        let policy = AgentPolicyBuilder::new().allow_path("/tmp").build();
         let mut sandbox = SandboxValidator::new(policy);
 
         // Perform some actions to generate audit entries

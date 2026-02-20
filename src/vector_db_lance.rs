@@ -33,8 +33,8 @@
 use std::sync::Arc;
 
 use arrow_array::{
-    FixedSizeListArray, Float32Array, RecordBatch, RecordBatchIterator, StringArray, UInt64Array,
-    types::Float32Type,
+    types::Float32Type, FixedSizeListArray, Float32Array, RecordBatch, RecordBatchIterator,
+    StringArray, UInt64Array,
 };
 use arrow_schema::{DataType, Field, Schema};
 use futures::TryStreamExt;
@@ -108,12 +108,14 @@ fn build_record_batch(
     let metadata_array = Arc::new(StringArray::from(metadatas));
     let timestamp_array = Arc::new(UInt64Array::from(timestamps));
 
-    let vector_array = Arc::new(FixedSizeListArray::from_iter_primitive::<Float32Type, _, _>(
-        vectors
-            .into_iter()
-            .map(|v| Some(v.into_iter().map(Some).collect::<Vec<_>>())),
-        dim as i32,
-    ));
+    let vector_array = Arc::new(
+        FixedSizeListArray::from_iter_primitive::<Float32Type, _, _>(
+            vectors
+                .into_iter()
+                .map(|v| Some(v.into_iter().map(Some).collect::<Vec<_>>())),
+            dim as i32,
+        ),
+    );
 
     RecordBatch::try_new(
         schema.clone(),
@@ -122,7 +124,10 @@ fn build_record_batch(
 }
 
 /// Wrap a RecordBatch into a RecordBatchIterator that implements IntoArrow.
-fn into_arrow(batch: RecordBatch, schema: Arc<Schema>) -> Box<RecordBatchIterator<std::vec::IntoIter<Result<RecordBatch, arrow_schema::ArrowError>>>> {
+fn into_arrow(
+    batch: RecordBatch,
+    schema: Arc<Schema>,
+) -> Box<RecordBatchIterator<std::vec::IntoIter<Result<RecordBatch, arrow_schema::ArrowError>>>> {
     Box::new(RecordBatchIterator::new(
         vec![Ok(batch)].into_iter(),
         schema,
@@ -167,7 +172,10 @@ fn extract_stored_vectors(batches: &[RecordBatch]) -> Vec<StoredVector> {
             let vector = vectors
                 .map(|vecs| {
                     let arr = vecs.value(i);
-                    let floats = arr.as_any().downcast_ref::<Float32Array>().expect("Arrow array must be Float32Array");
+                    let floats = arr
+                        .as_any()
+                        .downcast_ref::<Float32Array>()
+                        .expect("Arrow array must be Float32Array");
                     (0..floats.len()).map(|j| floats.value(j)).collect()
                 })
                 .unwrap_or_default();
@@ -214,7 +222,10 @@ fn extract_search_results(batches: &[RecordBatch]) -> Vec<VectorSearchResult> {
             let score = 1.0 - distance.min(1.0);
             let vector = vectors.map(|vecs| {
                 let arr = vecs.value(i);
-                let floats = arr.as_any().downcast_ref::<Float32Array>().expect("Arrow array must be Float32Array");
+                let floats = arr
+                    .as_any()
+                    .downcast_ref::<Float32Array>()
+                    .expect("Arrow array must be Float32Array");
                 (0..floats.len()).map(|j| floats.value(j)).collect()
             });
 
@@ -263,15 +274,18 @@ impl LanceVectorDb {
             .map_err(lance_err)?;
 
         // Try to open existing table, fallback to create empty
-        let table = rt.block_on(async {
-            match db.open_table(&table_name).execute().await {
-                Ok(t) => Ok(t),
-                Err(_) => db
-                    .create_empty_table(&table_name, schema.clone())
-                    .execute()
-                    .await,
-            }
-        }).map_err(lance_err)?;
+        let table = rt
+            .block_on(async {
+                match db.open_table(&table_name).execute().await {
+                    Ok(t) => Ok(t),
+                    Err(_) => {
+                        db.create_empty_table(&table_name, schema.clone())
+                            .execute()
+                            .await
+                    }
+                }
+            })
+            .map_err(lance_err)?;
 
         Ok(Self {
             db,
@@ -297,12 +311,7 @@ impl LanceVectorDb {
 }
 
 impl VectorDb for LanceVectorDb {
-    fn insert(
-        &mut self,
-        id: &str,
-        vector: Vec<f32>,
-        metadata: serde_json::Value,
-    ) -> AiResult<()> {
+    fn insert(&mut self, id: &str, vector: Vec<f32>, metadata: serde_json::Value) -> AiResult<()> {
         if vector.len() != self.config.dimensions {
             return Err(AiError::Validation(crate::error::ValidationError::Custom {
                 field: "vector".to_string(),
@@ -375,9 +384,15 @@ impl VectorDb for LanceVectorDb {
             timestamps.push(ts);
         }
 
-        let batch =
-            build_record_batch(&self.schema, ids, vecs, metas, timestamps, self.config.dimensions)
-                .map_err(arrow_err)?;
+        let batch = build_record_batch(
+            &self.schema,
+            ids,
+            vecs,
+            metas,
+            timestamps,
+            self.config.dimensions,
+        )
+        .map_err(arrow_err)?;
 
         let arrow_data = into_arrow(batch, self.schema.clone());
         self.rt
@@ -408,9 +423,7 @@ impl VectorDb for LanceVectorDb {
 
         self.rt.block_on(async {
             let query_vec: Vec<f32> = query.to_vec();
-            let mut builder = table
-                .vector_search(query_vec)
-                .map_err(lance_err)?;
+            let mut builder = table.vector_search(query_vec).map_err(lance_err)?;
 
             builder = builder.limit(limit);
 
@@ -490,24 +503,27 @@ impl VectorDb for LanceVectorDb {
         // Drop and recreate the table for a clean clear
         let table_name = self.table_name.clone();
         let schema = self.schema.clone();
-        let new_table = self.rt
-            .block_on(async {
-                self.db.drop_table(&table_name, &[]).await.map_err(lance_err)?;
-                self.db
-                    .create_empty_table(&table_name, schema)
-                    .execute()
-                    .await
-                    .map_err(lance_err)
-            })?;
+        let new_table = self.rt.block_on(async {
+            self.db
+                .drop_table(&table_name, &[])
+                .await
+                .map_err(lance_err)?;
+            self.db
+                .create_empty_table(&table_name, schema)
+                .execute()
+                .await
+                .map_err(lance_err)
+        })?;
         self.table = Some(new_table);
         Ok(())
     }
 
     fn health_check(&self) -> AiResult<bool> {
         // Verify we can list tables (connection alive)
-        match self.rt.block_on(async {
-            self.db.table_names().execute().await
-        }) {
+        match self
+            .rt
+            .block_on(async { self.db.table_names().execute().await })
+        {
             Ok(_) => Ok(true),
             Err(_) => Ok(false),
         }
@@ -561,9 +577,15 @@ impl VectorDb for LanceVectorDb {
             timestamps.push(v.timestamp);
         }
 
-        let batch =
-            build_record_batch(&self.schema, ids, vecs, metas, timestamps, self.config.dimensions)
-                .map_err(arrow_err)?;
+        let batch = build_record_batch(
+            &self.schema,
+            ids,
+            vecs,
+            metas,
+            timestamps,
+            self.config.dimensions,
+        )
+        .map_err(arrow_err)?;
 
         let arrow_data = into_arrow(batch, self.schema.clone());
         self.rt
@@ -651,8 +673,12 @@ mod tests {
             .unwrap();
         db.insert("v2", vec![0.0, 1.0, 0.0], serde_json::json!({"label": "y"}))
             .unwrap();
-        db.insert("v3", vec![0.9, 0.1, 0.0], serde_json::json!({"label": "near_x"}))
-            .unwrap();
+        db.insert(
+            "v3",
+            vec![0.9, 0.1, 0.0],
+            serde_json::json!({"label": "near_x"}),
+        )
+        .unwrap();
 
         let results = db.search(&[1.0, 0.0, 0.0], 2, None).unwrap();
         assert_eq!(results.len(), 2);
@@ -786,7 +812,7 @@ mod tests {
 
     #[test]
     fn test_lance_migration_roundtrip() {
-        use crate::vector_db::{InMemoryVectorDb, migrate_vectors};
+        use crate::vector_db::{migrate_vectors, InMemoryVectorDb};
 
         // Create in-memory DB with data
         let config = VectorDbConfig {
@@ -795,10 +821,18 @@ mod tests {
         };
         let mut mem_db = InMemoryVectorDb::new(config);
         mem_db
-            .insert("a", vec![1.0, 0.0, 0.0], serde_json::json!({"from": "memory"}))
+            .insert(
+                "a",
+                vec![1.0, 0.0, 0.0],
+                serde_json::json!({"from": "memory"}),
+            )
             .unwrap();
         mem_db
-            .insert("b", vec![0.0, 1.0, 0.0], serde_json::json!({"from": "memory"}))
+            .insert(
+                "b",
+                vec![0.0, 1.0, 0.0],
+                serde_json::json!({"from": "memory"}),
+            )
             .unwrap();
 
         // Migrate to Lance

@@ -1,761 +1,699 @@
-# Mejoras para ai_assistant — Inspiradas en el Análisis de OpenClaw
+# Plan de Mejoras para ai_assistant — v2
 
-> Documento generado el 2026-02-13.
-> Basado en análisis comparativo de OpenClaw (gateway IA multi-canal, TypeScript, ~100K LOC)
-> vs ai_assistant (librería IA local-first, Rust, ~10K+ LOC).
+> Documento generado el 2026-02-19.
+> Basado en análisis comparativo de **20 frameworks de IA** (ver `docs/framework_comparison.html`)
+> y auditoría arquitectónica interna de providers, embeddings, MCP, VectorDB y sync/async.
 >
-> Ver también: `docs/OPENCLAW_ANALYSIS.md` y `docs/OPENCLAW_SECURITY.md`
+> **Plan anterior** (v1, basado en OpenClaw): 15 mejoras, **TODAS completadas**.
+> Ver historial al final de este documento.
 
 ---
 
-## Resumen
+## Contexto
 
-`ai_assistant` ya tiene una base sólida: buen sistema de features, RAG con SQLite/FTS5,
-gestión de sesiones, múltiples proveedores locales, streaming, y módulos avanzados
-(knowledge graphs, document parsing, decision trees, etc.).
+`ai_assistant` es un crate Rust con 191 archivos fuente, 30k+ LoC, 1786+ tests y 0 stubs.
+Tras compararlo con LangChain, LlamaIndex, Semantic Kernel, Haystack, AutoGen, CrewAI,
+Vercel AI SDK, Rig, DSPy, OpenAI Agents SDK, Google ADK, Pydantic AI, Agno, smolagents,
+Mastra, Dify, Spring AI, y otros — las fortalezas únicas de ai_assistant son:
 
-Tras analizar OpenClaw (un proyecto maduro con 15+ canales, 20+ proveedores IA, herramientas
-de agente, y uso en producción), identifico las siguientes áreas de mejora organizadas
-por **prioridad** e **impacto**.
+- **Distributed/P2P**: QUIC, CRDTs, DHT, MapReduce, NAT traversal — ningún otro framework lo tiene
+- **Security-first**: RBAC, AES-256-GCM, PII, guardrails, Constitutional AI
+- **Autonomous agents**: 5 niveles de autonomía, task board, multi-agent sessions
+- **Document parsing**: PDF (con tablas), EPUB, DOCX, ODT, HTML, feeds
+- **RAG avanzado**: Self-RAG, CRAG, Graph RAG, RAPTOR, chunking strategies
+- **Rendimiento**: Rust nativo, sin runtime GC
 
----
-
-## PRIORIDAD ALTA — Mejoras Arquitectónicas
-
-### 1. Sistema de Failover entre Proveedores
-
-**Estado actual**: Si Ollama no responde, se devuelve un error y punto.
-
-**Lo que hace OpenClaw**: Tiene un sistema de failover con múltiples perfiles de auth,
-cooldown por perfil, y cadena de fallback configurable:
-```
-Perfil primario → cooldown → siguiente perfil → fallback → error
-```
-
-**Propuesta para ai_assistant**:
-
-```rust
-// En config.rs
-pub struct FailoverConfig {
-    /// Proveedores en orden de preferencia
-    pub providers: Vec<AiProvider>,
-    /// Cooldown después de error (en segundos)
-    pub cooldown_secs: u64,
-    /// Máximo de reintentos antes de pasar al siguiente
-    pub max_retries: u32,
-}
-
-// En providers.rs
-pub struct ProviderPool {
-    providers: Vec<ProviderState>,
-}
-
-struct ProviderState {
-    provider: AiProvider,
-    url: String,
-    cooldown_until: Option<Instant>,
-    consecutive_failures: u32,
-}
-
-impl ProviderPool {
-    /// Obtiene el siguiente proveedor disponible (no en cooldown)
-    pub fn next_available(&mut self) -> Option<&ProviderState> { ... }
-
-    /// Marca un proveedor como fallido
-    pub fn mark_failed(&mut self, provider: &AiProvider) { ... }
-
-    /// Marca un proveedor como exitoso (resetea cooldown)
-    pub fn mark_success(&mut self, provider: &AiProvider) { ... }
-}
-```
-
-**Impacto**: Alto. La mayoría de usuarios tendrán Ollama + al menos un backup.
-Un fallo de Ollama no debería ser terminal.
+Las **brechas principales** frente a la industria son:
+1. Pocos proveedores cloud (solo OpenAI + Anthropic)
+2. MCP en spec 2024-11-05 (industria en 2025-11-25)
+3. Embeddings solo locales (TF-IDF), sin APIs remotas
+4. Vector DBs limitados (InMemory, Qdrant, LanceDB)
+5. Async incompleto (solo providers tienen variante async)
+6. Sin ecosistema/comunidad pública
 
 ---
 
-### 2. Gestión de Contexto con Auto-Compactación
+## Decisiones de Diseño (confirmadas)
 
-**Estado actual**: `ContextUsage` calcula uso y tiene umbrales de warning/critical,
-pero no actúa sobre ellos. Si el contexto se llena, simplemente falla.
-
-**Lo que hace OpenClaw**: Auto-compactación cuando el contexto se desborda, con
-truncado de resultados de herramientas como fallback.
-
-**Propuesta**:
-
-```rust
-// En context.rs
-pub enum ContextAction {
-    /// El contexto está bien, proceder normalmente
-    Ok,
-    /// Comprimir: resumir mensajes antiguos
-    Compact { messages_to_summarize: usize },
-    /// Truncar: los últimos mensajes no caben, recortar
-    Truncate { max_chars: usize },
-    /// Crítico: no queda espacio ni para el prompt del sistema
-    Abort { reason: String },
-}
-
-impl ContextUsage {
-    /// Determina qué acción tomar dado el uso actual
-    pub fn recommended_action(&self) -> ContextAction {
-        if self.usage_percent < 70.0 {
-            ContextAction::Ok
-        } else if self.usage_percent < 90.0 {
-            // Compactar mensajes antiguos para liberar espacio
-            let to_summarize = self.conversation_tokens / 3;
-            ContextAction::Compact {
-                messages_to_summarize: to_summarize / 100, // aprox msgs
-            }
-        } else if self.usage_percent < 99.0 {
-            ContextAction::Truncate {
-                max_chars: self.remaining_tokens() * 3, // aprox chars
-            }
-        } else {
-            ContextAction::Abort {
-                reason: "Context window full".into(),
-            }
-        }
-    }
-}
-```
-
-En `assistant.rs`, antes de cada llamada al modelo:
-```rust
-let usage = self.calculate_context_usage();
-match usage.recommended_action() {
-    ContextAction::Compact { messages_to_summarize } => {
-        self.compact_history(messages_to_summarize);
-    }
-    ContextAction::Truncate { max_chars } => {
-        self.truncate_oldest_messages(max_chars);
-    }
-    ContextAction::Abort { reason } => {
-        return Err(AiError::ResourceLimit(
-            ResourceLimitError::ContextOverflow(reason)
-        ));
-    }
-    ContextAction::Ok => {}
-}
-```
-dw
-**Impacto**: Alto. Evita errores de "context too long" que frustran al usuario.
+| Decisión | Elección |
+|---|---|
+| **MCP upgrade** | Usar `rmcp` (crate oficial de Anthropic) |
+| **Sync vs Async** | Dual mode: sync + async para TODO componente nuevo |
+| **Vector DB backends** | Un feature flag por backend (`pinecone`, `weaviate`, `chroma`, etc.) |
+| **Embeddings** | `EmbeddingProvider` trait + implementaciones API completas |
 
 ---
 
-### 3. Redacción de Datos Sensibles en Logs
+## Fase 1 — Fundamentos Críticos (Alto ROI)
 
-**Estado actual**: El crate usa `println!` para debug. Sin redacción.
+### 1.1 Upgrade MCP a spec 2025-11-25 via `rmcp`
 
-**Lo que hace OpenClaw**: Sistema de redacción robusto (`src/logging/redact.ts`) que
-oculta API keys, tokens, passwords, claves PEM, etc. en todos los logs.
+**Estado actual**: `mcp_protocol.rs` implementa JSON-RPC básico, spec 2024-11-05.
+McpServer maneja requests in-process. McpClient usa `ureq` sync. Sin streaming,
+sin OAuth, sin server identity.
 
-**Propuesta**:
+**Objetivo**: Compatibilidad completa con el ecosistema MCP (10,000+ servidores).
 
-```rust
-// Nuevo módulo: src/logging.rs
-use regex::Regex;
-use std::sync::LazyLock;
-
-static REDACTION_PATTERNS: LazyLock<Vec<(Regex, &str)>> = LazyLock::new(|| vec![
-    // API keys genéricas
-    (Regex::new(r"(?i)(api[_-]?key|token|secret|password)\s*[=:]\s*\S+").unwrap(),
-     "$1=***REDACTED***"),
-    // Bearer tokens
-    (Regex::new(r"(?i)bearer\s+\S+").unwrap(), "Bearer ***REDACTED***"),
-    // OpenAI-style keys
-    (Regex::new(r"sk-[a-zA-Z0-9]{20,}").unwrap(), "sk-***REDACTED***"),
-]);
-
-pub fn redact(text: &str) -> String {
-    let mut result = text.to_string();
-    for (pattern, replacement) in REDACTION_PATTERNS.iter() {
-        result = pattern.replace_all(&result, *replacement).to_string();
-    }
-    result
-}
-
-/// Macro para logging seguro
-macro_rules! safe_log {
-    ($($arg:tt)*) => {
-        eprintln!("{}", $crate::logging::redact(&format!($($arg)*)));
-    };
-}
-```
-
-**Impacto**: Alto para seguridad. Especialmente si el usuario redirige logs a archivo.
-
----
-
-### 4. Migración a Async/Await (tokio)
-
-**Estado actual**: HTTP síncrono con `ureq`, threads manuales para streaming.
-
-**Lo que hace OpenClaw**: Node.js es async por naturaleza. Todo el I/O es non-blocking.
-
-**Propuesta**: Migrar gradualmente a `reqwest` (async) + `tokio`:
-
-```toml
-# Cargo.toml - nueva dependencia
-[dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros"], optional = true }
-reqwest = { version = "0.12", features = ["json", "stream"], optional = true }
-
-[features]
-async-runtime = ["tokio", "reqwest"]
-```
-
-**Fase 1**: Añadir variantes async de las funciones de providers sin romper la API actual:
-```rust
-#[cfg(feature = "async-runtime")]
-pub async fn fetch_ollama_models_async(base_url: &str) -> Result<Vec<ModelInfo>> {
-    let url = format!("{}/api/tags", base_url);
-    let response = reqwest::get(&url).await?;
-    let body: serde_json::Value = response.json().await?;
-    // ... parseo igual que la versión sync
-}
-```
-
-**Fase 2**: Streaming via `tokio::sync::mpsc` (unbounded o bounded con backpressure).
-
-**Fase 3**: Paralelizar operaciones independientes (fetch models de múltiples providers).
-
-**Impacto**: Alto a largo plazo. Permite streaming real, múltiples requests concurrentes,
-y mejor integración con frameworks web (axum, actix).
-
----
-
-## PRIORIDAD MEDIA — Funcionalidades Nuevas
-
-### 5. Sistema de Herramientas (Tool Use / Function Calling)
-
-**Estado actual**: El feature flag `tools` existe en Cargo.toml pero la implementación
-es básica (definiciones de herramientas, no ejecución real).
-
-**Lo que hace OpenClaw**: Sistema completo de herramientas con:
-- Definiciones con schema JSON
-- Ejecución con streaming de resultados
-- Gating de permisos
-- Loop agentic (el modelo puede invocar herramientas iterativamente)
-
-**Propuesta**: Implementar un sistema de herramientas ejecutable:
-
-```rust
-// src/tools.rs
-pub trait Tool: Send + Sync {
-    /// Nombre único de la herramienta
-    fn name(&self) -> &str;
-
-    /// Descripción para el modelo
-    fn description(&self) -> &str;
-
-    /// Schema de parámetros (JSON Schema)
-    fn parameters_schema(&self) -> serde_json::Value;
-
-    /// Ejecutar la herramienta
-    fn execute(&self, params: serde_json::Value) -> Result<ToolResult>;
-}
-
-pub struct ToolResult {
-    pub content: String,
-    pub is_error: bool,
-}
-
-pub struct ToolRegistry {
-    tools: HashMap<String, Box<dyn Tool>>,
-}
-
-impl ToolRegistry {
-    pub fn register(&mut self, tool: Box<dyn Tool>) { ... }
-    pub fn execute(&self, name: &str, params: Value) -> Result<ToolResult> { ... }
-    pub fn schemas_for_model(&self) -> Vec<Value> { ... } // Para enviar al modelo
-}
-```
-
-**Herramientas built-in sugeridas**:
-- `file_read` — Leer archivos locales
-- `web_fetch` — Hacer peticiones HTTP
-- `rag_search` — Buscar en la base de conocimiento
-- `calculator` — Operaciones matemáticas
-- `datetime` — Fecha/hora actual
-
-**Impacto**: Medio-Alto. Convierte al asistente de un chatbot en un agente capaz.
-
----
-
-### 6. Sesiones como Event Log (JSONL)
-
-**Estado actual**: Las sesiones se guardan como JSON completo (todo el array de mensajes
-serializado de una vez).
-
-**Lo que hace OpenClaw**: Sesiones como archivos `.jsonl` (append-only):
-- Solo añade líneas, nunca reescribe el archivo completo
-- Más eficiente para conversaciones largas
-- Más resistente a corrupción (un crash no pierde todo el archivo)
-- Permite compactación selectiva
-
-**Propuesta**:
-
-```rust
-// En session.rs
-pub struct JournalSession {
-    path: PathBuf,
-    /// Cache en memoria de los mensajes actuales
-    messages: Vec<ChatMessage>,
-}
-
-impl JournalSession {
-    /// Añade un mensaje al journal (append, no rewrite)
-    pub fn append_message(&mut self, msg: &ChatMessage) -> Result<()> {
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)?;
-        let line = serde_json::to_string(msg)?;
-        writeln!(file, "{}", line)?;
-        self.messages.push(msg.clone());
-        Ok(())
-    }
-
-    /// Carga una sesión desde un archivo JSONL
-    pub fn load(path: &Path) -> Result<Self> {
-        let mut messages = Vec::new();
-        if path.exists() {
-            let file = File::open(path)?;
-            for line in BufReader::new(file).lines() {
-                let line = line?;
-                if !line.trim().is_empty() {
-                    let msg: ChatMessage = serde_json::from_str(&line)?;
-                    messages.push(msg);
-                }
-            }
-        }
-        Ok(Self { path: path.to_path_buf(), messages })
-    }
-
-    /// Compacta: resume mensajes antiguos y reescribe el archivo
-    pub fn compact(&mut self, keep_last: usize) -> Result<()> { ... }
-}
-```
-
-**Impacto**: Medio. Mejor rendimiento y resiliencia para conversaciones largas.
-
----
-
-### 7. Detección Dinámica de Contexto del Modelo
-
-**Estado actual**: Tabla hardcodeada de contextos por modelo (`get_model_context_size`).
-Si el modelo no está en la tabla, devuelve 8K por defecto.
-
-**Lo que hace OpenClaw**: Consulta al proveedor el tamaño real del contexto,
-con caché por modelo.
-
-**Propuesta**: Ya existe `fetch_model_context_size` en providers.rs.
-Integrar mejor con caché:
-
-```rust
-// En context.rs
-use std::collections::HashMap;
-use std::sync::Mutex;
-
-static CONTEXT_CACHE: LazyLock<Mutex<HashMap<String, usize>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-
-pub fn get_model_context_size_cached(
-    model_name: &str,
-    provider: &AiProvider,
-    base_url: &str,
-) -> usize {
-    // 1. Comprobar caché
-    if let Some(&size) = CONTEXT_CACHE.lock().unwrap().get(model_name) {
-        return size;
-    }
-
-    // 2. Intentar consultar al proveedor
-    if let Ok(size) = fetch_model_context_size(base_url, model_name) {
-        if size > 0 {
-            CONTEXT_CACHE.lock().unwrap().insert(model_name.to_string(), size);
-            return size;
-        }
-    }
-
-    // 3. Fallback a tabla estática
-    let size = get_model_context_size(model_name);
-    CONTEXT_CACHE.lock().unwrap().insert(model_name.to_string(), size);
-    size
-}
-```
-
-**Impacto**: Medio. Evita subestimar/sobreestimar el contexto disponible.
-
----
-
-### 8. Cola de Peticiones con Prioridad
-
-**Estado actual**: Las peticiones se procesan una a una de forma síncrona.
-
-**Lo que hace OpenClaw**: Cola de comandos con lanes (global + por sesión), que previene
-condiciones de carrera y permite priorización.
-
-**Propuesta** (útil cuando ai_assistant se use en un servidor multi-usuario):
-
-```rust
-pub struct RequestQueue {
-    queue: VecDeque<QueuedRequest>,
-    active: Option<QueuedRequest>,
-    max_concurrent: usize,
-}
-
-struct QueuedRequest {
-    id: String,
-    session_id: Option<String>,
-    priority: RequestPriority,
-    message: ChatMessage,
-    response_tx: mpsc::Sender<AiResponse>,
-}
-
-pub enum RequestPriority {
-    High,    // Cancelaciones, comandos del sistema
-    Normal,  // Mensajes de usuario
-    Low,     // Indexación, tareas de fondo
-}
-```
-
-**Impacto**: Medio. Necesario si se usa como backend de un servicio.
-
----
-
-## PRIORIDAD MEDIA-BAJA — Calidad y Operaciones
-
-### 9. Tests con Mocks de Proveedores
-
-**Estado actual**: El test harness es un binario CLI que necesita proveedores reales
-para testear. No hay mocks.
-
-**Lo que hace OpenClaw**: Tests extensivos con Vitest, mocking de APIs,
-tests unitarios sin dependencias externas.
-
-**Propuesta**: Crear un trait para abstraer las llamadas HTTP:
-
-```rust
-// En providers.rs
-pub trait HttpClient: Send + Sync {
-    fn get(&self, url: &str) -> Result<serde_json::Value>;
-    fn post(&self, url: &str, body: &serde_json::Value) -> Result<serde_json::Value>;
-}
-
-/// Cliente real que usa ureq
-pub struct UreqClient;
-impl HttpClient for UreqClient { ... }
-
-/// Cliente mock para tests
-#[cfg(test)]
-pub struct MockClient {
-    responses: HashMap<String, serde_json::Value>,
-}
-
-#[cfg(test)]
-impl MockClient {
-    pub fn with_response(mut self, url: &str, response: Value) -> Self {
-        self.responses.insert(url.to_string(), response);
-        self
-    }
-}
-
-#[cfg(test)]
-impl HttpClient for MockClient { ... }
-```
-
-Esto permite:
-```rust
-#[test]
-fn test_ollama_models_parsing() {
-    let client = MockClient::new()
-        .with_response("http://localhost:11434/api/tags", json!({
-            "models": [{"name": "llama3:latest", "size": 4_000_000_000}]
-        }));
-
-    let models = fetch_ollama_models_with_client("http://localhost:11434", &client).unwrap();
-    assert_eq!(models.len(), 1);
-    assert_eq!(models[0].name, "llama3:latest");
-}
-```
-
-**Impacto**: Medio. Tests más rápidos y fiables, CI sin Ollama.
-
----
-
-### 10. Retry con Backoff Exponencial
-
-**Estado actual**: Sin reintentos. Si una petición falla, error inmediato.
-
-**Lo que hace OpenClaw**: Reintentos con cooldown, tracking de errores por perfil.
-
-**Propuesta**:
-
-```rust
-// En providers.rs (o un nuevo módulo retry.rs)
-pub struct RetryConfig {
-    pub max_retries: u32,
-    pub initial_delay_ms: u64,
-    pub max_delay_ms: u64,
-    pub backoff_multiplier: f64,
-}
-
-impl Default for RetryConfig {
-    fn default() -> Self {
-        Self {
-            max_retries: 3,
-            initial_delay_ms: 500,
-            max_delay_ms: 10_000,
-            backoff_multiplier: 2.0,
-        }
-    }
-}
-
-pub fn with_retry<F, T>(config: &RetryConfig, mut operation: F) -> Result<T>
-where
-    F: FnMut() -> Result<T>,
-{
-    let mut delay = config.initial_delay_ms;
-    let mut last_error = None;
-
-    for attempt in 0..=config.max_retries {
-        match operation() {
-            Ok(result) => return Ok(result),
-            Err(e) => {
-                last_error = Some(e);
-                if attempt < config.max_retries {
-                    std::thread::sleep(Duration::from_millis(delay));
-                    delay = (delay as f64 * config.backoff_multiplier)
-                        .min(config.max_delay_ms as f64) as u64;
-                }
-            }
-        }
-    }
-
-    Err(last_error.unwrap())
-}
-```
-
-**Impacto**: Medio. Resilencia ante errores transitorios de red.
-
----
-
-### 11. Logging Estructurado
-
-**Estado actual**: `println!` y `eprintln!` para debug.
-
-**Propuesta**: Usar `log` crate + `env_logger` (o `tracing` para async futuro):
-
+**Implementación**:
 ```toml
 # Cargo.toml
-log = "0.4"
-env_logger = { version = "0.11", optional = true }
+rmcp = { version = "0.1", features = ["transport-sse", "transport-stdio"], optional = true }
 
 [features]
-logging = ["env_logger"]
+mcp = ["dep:rmcp"]
 ```
 
-```rust
-// En vez de println!, usar:
-log::info!("Fetching models from {}", provider);
-log::debug!("Response: {:?}", redact(&response));
-log::warn!("Context at {}%, approaching limit", usage.usage_percent);
-log::error!("Provider {} unavailable: {}", provider, err);
-```
+**Tareas**:
+- [ ] Añadir dependencia `rmcp` bajo feature flag `mcp`
+- [ ] Crear `src/mcp_rmcp.rs` con wrapper sobre `rmcp` que exponga nuestra API actual
+- [ ] Implementar `McpServerRmcp` compatible con Streamable HTTP + stdio transport
+- [ ] Implementar `McpClientRmcp` con descubrimiento de herramientas remoto
+- [ ] Migrar registros de tools/resources/prompts existentes a formato rmcp
+- [ ] Mantener `mcp_protocol.rs` como fallback ligero (sin dep externa)
+- [ ] Tests: conexión a un MCP server estándar (mock), listado de tools, ejecución
+- [ ] Dual mode: sync wrapper + async nativo (rmcp es async por naturaleza)
 
-**Impacto**: Medio-Bajo. Mejor debugging sin contaminar stdout.
+**Riesgo**: rmcp es async-first (tokio). Requiere el feature `async-runtime`.
+Mitigación: el fallback sin rmcp sigue siendo nuestro MCP sync actual.
+
+**Prioridad**: CRÍTICA | **Esfuerzo**: M | **Impacto**: Muy Alto
 
 ---
 
-### 12. Cifrado de Sesiones en Reposo
+### 1.2 Trait `EmbeddingProvider` + Implementaciones API
 
-**Estado actual**: Las sesiones se guardan en JSON sin cifrar.
+**Estado actual**: `embeddings.rs` solo tiene `LocalEmbedder` (TF-IDF con hashing trick).
+`OllamaProvider` y `OpenAICompatibleProvider` tienen `generate_embeddings()` en el trait
+`ProviderPlugin`, pero no hay un trait dedicado ni gestión de modelos de embedding.
 
-**Lo que hace OpenClaw**: Tampoco cifra (depende del OS). Pero ya tenemos `aes-gcm`
-como dependencia para KPKG.
+**Objetivo**: Trait unificado para embeddings locales y remotos, con implementaciones completas.
 
-**Propuesta**: Reutilizar la infraestructura de cifrado de `encrypted_knowledge`:
-
+**Implementación**:
 ```rust
-// En session.rs (feature = "rag" ya trae aes-gcm)
-#[cfg(feature = "rag")]
-impl ChatSessionStore {
-    /// Guarda la sesión cifrada con AES-256-GCM
-    pub fn save_encrypted(&self, path: &Path, key: &[u8; 32]) -> Result<()> {
-        let json = serde_json::to_vec(&self.sessions)?;
-        let encrypted = encrypt_aes256gcm(&json, key)?;
-        std::fs::write(path, encrypted)?;
-        Ok(())
-    }
+// src/embedding_providers.rs (nuevo)
 
-    /// Carga una sesión cifrada
-    pub fn load_encrypted(path: &Path, key: &[u8; 32]) -> Result<Self> {
-        let encrypted = std::fs::read(path)?;
-        let decrypted = decrypt_aes256gcm(&encrypted, key)?;
-        let sessions: Vec<ChatSession> = serde_json::from_slice(&decrypted)?;
-        Ok(Self { sessions, current_session_id: None })
+/// Trait para proveedores de embeddings (sync)
+pub trait EmbeddingProvider: Send + Sync {
+    fn name(&self) -> &str;
+    fn dimensions(&self) -> usize;
+    fn max_tokens(&self) -> usize;
+    fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>>;
+    fn embed_single(&self, text: &str) -> Result<Vec<f32>> {
+        Ok(self.embed(&[text])?.remove(0))
     }
 }
+
+/// Trait async (feature = "async-runtime")
+#[cfg(feature = "async-runtime")]
+#[async_trait]
+pub trait AsyncEmbeddingProvider: Send + Sync {
+    fn name(&self) -> &str;
+    fn dimensions(&self) -> usize;
+    fn max_tokens(&self) -> usize;
+    async fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>>;
+}
 ```
 
-**Impacto**: Medio para usuarios con datos sensibles (como búsqueda de empleo).
+**Implementaciones previstas**:
+
+| Provider | Feature flag | API endpoint | Modelos |
+|---|---|---|---|
+| `LocalTfIdf` | (siempre) | N/A | TF-IDF local (wrapper de `LocalEmbedder`) |
+| `OllamaEmbeddings` | (siempre) | `POST /api/embed` | nomic-embed-text, mxbai-embed-large, etc. |
+| `OpenAIEmbeddings` | `openai-embeddings` | `POST /v1/embeddings` | text-embedding-3-small/large, ada-002 |
+| `CohereEmbeddings` | `cohere-embeddings` | `POST /v2/embed` | embed-v4.0, embed-multilingual |
+| `HuggingFaceEmbeddings` | `hf-embeddings` | `POST /pipeline/feature-extraction` | sentence-transformers, BGE, E5 |
+| `VoyageEmbeddings` | `voyage-embeddings` | `POST /v1/embeddings` | voyage-3, voyage-code-3 |
+
+**Integración con RAG**: `RagPipeline` y `RagAdvanced` recibirán un `Box<dyn EmbeddingProvider>`
+en vez de depender solo de `LocalEmbedder`.
+
+**Prioridad**: CRÍTICA | **Esfuerzo**: M | **Impacto**: Muy Alto
 
 ---
 
-## PRIORIDAD BAJA — Futuro
+### 1.3 Adaptador Genérico OpenAI-Compatible
 
-### 13. Soporte para Proveedores Cloud (Anthropic, OpenAI)
+**Estado actual**: `OpenAICompatibleProvider` en `provider_plugins.rs` ya existe y soporta
+`/v1/chat/completions` + `/v1/models` + `/v1/embeddings`. Pero requiere configuración manual
+de `base_url`.
 
-**Estado actual**: Solo soporta proveedores locales (Ollama, LM Studio, KoboldCpp, etc.)
-y OpenAI-compatible genérico.
+**Objetivo**: Presets para los proveedores OpenAI-compatible más populares, con auto-detección
+de capacidades.
 
-**Lo que hace OpenClaw**: 20+ proveedores incluyendo Anthropic Claude, OpenAI, Google
-Gemini, AWS Bedrock, etc.
-
-**Propuesta**: Añadir `AiProvider::Anthropic` y `AiProvider::OpenAI` con sus APIs
-nativas (no solo OpenAI-compatible). Esto daría acceso a:
-- Extended thinking de Claude
-- Function calling nativo de cada proveedor
-- Prompt caching de Anthropic
-- Modelos más potentes para tareas complejas
-
-**Impacto**: Bajo por ahora (el crate es local-first), pero Alto si se quiere
-ampliar el público objetivo.
-
----
-
-### 14. Sistema de Hooks/Eventos
-
-**Estado actual**: Sin sistema de eventos.
-
-**Lo que hace OpenClaw**: Sistema de hooks event-driven con lifecycle completo.
-
-**Propuesta**:
-
+**Implementación**:
 ```rust
-pub enum AiEvent {
-    SessionStarted { session_id: String },
-    MessageSent { role: String, content: String },
-    ResponseReceived { content: String, tokens: usize },
-    ContextWarning { usage_percent: f32 },
-    ProviderFailed { provider: String, error: String },
-    ToolExecuted { name: String, result: String },
+// Extender config.rs AiProvider enum
+pub enum AiProvider {
+    // ... existentes ...
+    Groq,            // https://api.groq.com/openai
+    Together,        // https://api.together.xyz
+    Fireworks,       // https://api.fireworks.ai/inference
+    DeepSeek,        // https://api.deepseek.com
+    Perplexity,      // https://api.perplexity.ai
+    OpenRouter,      // https://openrouter.ai/api
 }
-
-pub trait EventHandler: Send + Sync {
-    fn on_event(&self, event: &AiEvent);
-}
-
-// En AiAssistant:
-pub fn add_event_handler(&mut self, handler: Box<dyn EventHandler>) { ... }
 ```
 
-**Impacto**: Bajo. Útil para integración con UIs y telemetría custom.
+**Tareas**:
+- [ ] Añadir variantes al enum `AiProvider` con sus URLs base por defecto
+- [ ] Mapear cada nueva variante a `OpenAICompatibleProvider` en `provider_plugins.rs`
+- [ ] Resolver API keys desde env vars (`GROQ_API_KEY`, `TOGETHER_API_KEY`, etc.)
+- [ ] Auto-detección de capacidades por provider (tool calling, vision, embeddings)
+- [ ] Context size lookup hardcodeado para modelos populares de cada provider
+- [ ] Tests unitarios con mock HTTP para cada preset
+
+**Riesgo**: Bajo. Reutiliza infraestructura existente al 95%.
+
+**Prioridad**: CRÍTICA | **Esfuerzo**: S | **Impacto**: Muy Alto
 
 ---
 
-### 15. WebSocket / HTTP Server Embebido
+### 1.4 Provider Nativo para Google Gemini
 
-**Estado actual**: Es una librería pura, sin servidor.
+**Estado actual**: No soportado.
 
-**Lo que hace OpenClaw**: Gateway WebSocket completo con broadcasting.
+**Objetivo**: Soporte completo del tercer mayor proveedor de IA.
 
-**Propuesta futura**: Un feature `server` que exponga un mini-gateway:
+**Implementación**:
+```rust
+// Nuevo en config.rs
+AiProvider::Gemini  // https://generativelanguage.googleapis.com
+
+// Nuevo: src/gemini_provider.rs
+pub struct GeminiProvider { api_key: String, base_url: String }
+```
+
+API de Gemini usa formato propio (`/v1beta/models/{model}:generateContent`), no OpenAI-compatible.
+
+**Tareas**:
+- [ ] Añadir `AiProvider::Gemini` al enum
+- [ ] Implementar `GeminiProvider` con trait `ProviderPlugin`
+- [ ] Soporte de `generateContent` (sync + async)
+- [ ] Soporte de streaming via SSE
+- [ ] Model listing via `GET /v1beta/models`
+- [ ] Embeddings via `embedContent` endpoint
+- [ ] API key desde `GEMINI_API_KEY` / `GOOGLE_API_KEY`
+- [ ] Tests con mock HTTP
+
+**Prioridad**: ALTA | **Esfuerzo**: M | **Impacto**: Alto
+
+---
+
+### 1.5 Provider Nativo para Mistral AI
+
+**Estado actual**: No soportado. Aunque Mistral es OpenAI-compatible en chat completions,
+tiene endpoints propios para embeddings y capacidades específicas (tool calling nativo, JSON mode).
+
+**Tareas**:
+- [ ] Añadir `AiProvider::Mistral` con URL `https://api.mistral.ai`
+- [ ] Implementar como `OpenAICompatibleProvider` preset con capacidades específicas
+- [ ] Embeddings via `/v1/embeddings` (mistral-embed)
+- [ ] API key desde `MISTRAL_API_KEY`
+- [ ] Tests con mock HTTP
+
+**Prioridad**: ALTA | **Esfuerzo**: S | **Impacto**: Alto
+
+---
+
+## Fase 2 — Expansión de Infraestructura
+
+### 2.1 Vector DB Backends Adicionales
+
+**Estado actual**: `VectorDb` trait con 3 implementaciones: `InMemoryVectorDb`,
+`QdrantClient` (REST via ureq), `LanceVectorDb` (embedded).
+
+**Objetivo**: Backends para los vector DBs más populares del ecosistema.
+
+**Implementación**: Un feature flag por backend, cada uno trae sus deps.
 
 ```toml
 [features]
-server = ["axum", "tokio", "async-runtime"]
+pinecone = ["dep:reqwest", "dep:tokio"]     # REST API, async-only con sync bridge
+weaviate = ["dep:reqwest", "dep:tokio"]     # REST + GraphQL
+chroma = []                                  # REST via ureq (ligero)
+elasticsearch = ["dep:reqwest", "dep:tokio"] # REST API
+pgvector = ["dep:tokio-postgres"]           # PostgreSQL wire protocol
+milvus = ["dep:reqwest", "dep:tokio"]       # REST API (v2)
 ```
 
-Permitiría usar `ai_assistant` como backend de una UI web, app móvil, etc.
+**Para cada backend**:
+- [ ] Implementar `VectorDb` trait (sync)
+- [ ] Implementar `AsyncVectorDb` trait (async, donde aplique)
+- [ ] Manejo de conexión, retry, health check
+- [ ] Soporte de metadata filtering (traducción a query nativa)
+- [ ] Tests con mock HTTP / embedded
+- [ ] Documentación de configuración
 
-**Impacto**: Bajo por ahora. Sería un proyecto separado que use el crate como dependencia.
+**Orden de implementación** (por popularidad/demanda):
+1. Chroma (ligero, ureq, popular en dev local)
+2. Pinecone (líder cloud, async)
+3. pgvector (popular en producción, SQL estándar)
+4. Weaviate (GraphQL, hybrid search nativo)
+5. Elasticsearch (enterprise, KNN + BM25)
+6. Milvus (escala masiva)
+
+**Prioridad**: ALTA | **Esfuerzo**: L | **Impacto**: Alto
+
+---
+
+### 2.2 Async Parity — `AsyncProviderPlugin` Trait
+
+**Estado actual** (auditoría detallada):
+
+| Componente | Sync | Async |
+|---|---|---|
+| `HttpClient` / `UreqClient` | Si | No |
+| `AsyncHttpClient` / `ReqwestClient` | Bridge | Si |
+| Funciones provider (`providers.rs`) | Si | No (excepto `async_providers.rs`) |
+| `ProviderPlugin` trait + 5 impls | Si | No |
+| `McpServer` / `McpClient` | Si | No |
+| `VectorDb` trait + 3 impls | Si | No |
+| `EmbeddingProvider` (nuevo) | Si | Si (diseñado así) |
+| `embeddings.rs` (local TF-IDF) | Si | N/A (sin I/O) |
+
+`async_providers.rs` tiene funciones async (`fetch_models_async`, `generate_response_async`),
+pero el **streaming async es fake** (llama a non-streaming y emite un solo callback).
+No existe un `AsyncProviderPlugin` trait.
+
+**Objetivo**: Trait async paralelo al sync para todos los componentes con I/O.
+
+**Tareas**:
+- [ ] Crear `AsyncProviderPlugin` trait en `tools.rs`:
+  ```rust
+  #[cfg(feature = "async-runtime")]
+  #[async_trait]
+  pub trait AsyncProviderPlugin: Send + Sync {
+      fn name(&self) -> &str;
+      fn capabilities(&self) -> ProviderCapabilities;
+      async fn is_available(&self) -> bool;
+      async fn list_models(&self) -> Result<Vec<ModelInfo>>;
+      async fn generate(&self, config: &AiConfig, messages: &[ChatMessage], system_prompt: Option<&str>) -> Result<String>;
+      async fn generate_streaming(&self, config: &AiConfig, messages: &[ChatMessage], system_prompt: Option<&str>, tx: &tokio::sync::mpsc::Sender<AiResponse>) -> Result<()>;
+      async fn generate_with_tools(&self, ...) -> Result<(String, Vec<ToolCall>)> { ... }
+      async fn generate_embeddings(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> { ... }
+  }
+  ```
+- [ ] Implementar `AsyncProviderPlugin` para cada provider existente
+- [ ] Fix del streaming async fake: implementar SSE parsing real con `reqwest::Response::bytes_stream()`
+- [ ] Crear `AsyncVectorDb` trait paralelo a `VectorDb`
+- [ ] Bridge sync→async: `block_on` wrapper (ya existe en `async_providers.rs`)
+- [ ] Bridge async→sync: wrapper que ejecuta sync en `spawn_blocking`
+- [ ] Tests async con `#[tokio::test]`
+
+**Riesgo**: Medio. Duplicación de código significativa. Mitigación: macros para generar
+ambas variantes desde una sola definición, o bien el trait sync como wrapper del async.
+
+**Prioridad**: ALTA | **Esfuerzo**: L | **Impacto**: Alto
+
+---
+
+### 2.3 Formatos de Documento Adicionales
+
+**Estado actual**: `DocumentParser` soporta PDF, EPUB, DOCX, ODT, HTML, TXT, feeds (RSS/Atom).
+Monolítico (no basado en traits).
+
+**Objetivo**: Expandir a formatos enterprise comunes.
+
+**Tareas**:
+- [ ] PowerPoint (PPTX): parsear con crate `zip` + XML directo (similar a DOCX)
+- [ ] Excel (XLSX): usar crate `calamine` para lectura de hojas
+- [ ] CSV: usar crate `csv` para parsing tabular
+- [ ] Markdown: parser nativo (AST → texto plano)
+- [ ] Considerar trait `DocumentLoader` para extensibilidad:
+  ```rust
+  pub trait DocumentLoader: Send + Sync {
+      fn supported_formats(&self) -> &[DocumentFormat];
+      fn parse(&self, content: &[u8], format: DocumentFormat) -> Result<ParsedDocument>;
+  }
+  ```
+- [ ] Feature flags: `documents-office` (PPTX, XLSX), `documents-data` (CSV)
+
+**Prioridad**: MEDIA-ALTA | **Esfuerzo**: M | **Impacto**: Medio-Alto
+
+---
+
+### 2.4 Structured Output / JSON Mode
+
+**Estado actual**: Algunos providers (Ollama, LM Studio, OpenAICompatible) reportan
+`json_mode: true` en capabilities. Pero no hay enforcement de schemas ni validación
+de output contra un schema JSON esperado.
+
+**Objetivo**: Generación con schema enforcement (como Instructor en Python, Vercel AI SDK
+`generateObject`, o Pydantic AI `result_type`).
+
+**Tareas**:
+- [ ] Crear `src/structured_output.rs`:
+  ```rust
+  pub struct StructuredGeneration {
+      pub schema: serde_json::Value,  // JSON Schema
+      pub retry_on_invalid: bool,
+      pub max_retries: u32,
+  }
+  ```
+- [ ] Inyectar schema en system prompt cuando el provider no soporta JSON mode nativo
+- [ ] Validar respuesta contra schema (usar crate `jsonschema` o validación manual)
+- [ ] Retry automático con error feedback si la validación falla
+- [ ] Integración con `ProviderPlugin::generate()` y `AiAssistant::send_message()`
+- [ ] Tests con schemas simples y complejos (nested objects, enums, arrays)
+
+**Prioridad**: MEDIA | **Esfuerzo**: M | **Impacto**: Alto
+
+---
+
+## Fase 3 — Capacidades Avanzadas
+
+### 3.1 Observabilidad / Tracing
+
+**Estado actual**: `log` crate para logging estructurado (mejora v1 #11).
+`events.rs` con `EventBus` y `AiEvent`. Sin métricas exportables ni traces.
+
+**Objetivo**: Integración con estándares de observabilidad (OpenTelemetry, Prometheus).
+
+**Tareas**:
+- [ ] Feature flag `observability` con `tracing` crate (reemplazo progresivo de `log`)
+- [ ] Spans para cada operación (provider call, embedding, RAG query, MCP call)
+- [ ] Métricas: latencia por provider, tokens consumidos, cache hits, errores
+- [ ] Exportador OpenTelemetry (feature `otel`) para dashboards externos
+- [ ] Integration con nuestro `EventBus` existente (propagación automática)
+- [ ] Callback de uso de tokens para cost tracking
+
+**Prioridad**: MEDIA | **Esfuerzo**: M | **Impacto**: Medio
+
+---
+
+### 3.2 LLM-as-Judge / Evaluación Avanzada
+
+**Estado actual**: `evaluation.rs` tiene benchmarks, A/B testing con Welch's t-test,
+hallucination detection, ensemble evaluation. Robusto estadísticamente.
+
+**Objetivo**: Añadir evaluación basada en LLM (LLM-as-judge), similar a lo que ofrecen
+LangSmith, RAGAS, o DSPy evaluators.
+
+**Tareas**:
+- [ ] `LlmJudge` struct que use un provider para evaluar respuestas:
+  ```rust
+  pub struct LlmJudge {
+      provider: Box<dyn ProviderPlugin>,
+      criteria: Vec<EvalCriterion>,
+  }
+  pub enum EvalCriterion { Relevance, Coherence, Faithfulness, Toxicity, Custom(String) }
+  ```
+- [ ] Evaluación de RAG: faithfulness (¿la respuesta se basa en los documentos?),
+  relevance (¿los documentos son relevantes a la query?)
+- [ ] Pairwise comparison (¿qué respuesta es mejor?)
+- [ ] Batch evaluation con report
+- [ ] Integración con `EvaluationRunner` existente
+
+**Prioridad**: MEDIA | **Esfuerzo**: M | **Impacto**: Medio
+
+---
+
+### 3.3 Tool Calling Unificado
+
+**Estado actual**: `OpenAICompatibleProvider` es el único con `generate_with_tools()`.
+`OllamaProvider` no lo implementa (aunque Ollama lo soporta desde v0.3).
+El resto de providers ignoran tools.
+
+**Objetivo**: Tool calling en todos los providers que lo soporten.
+
+**Tareas**:
+- [ ] Implementar `generate_with_tools()` en `OllamaProvider` (Ollama tool calling API)
+- [ ] Implementar para `GeminiProvider` (function calling nativo de Gemini)
+- [ ] Implementar para `Anthropic` (tool use nativo de Claude)
+- [ ] Fallback para providers sin soporte nativo: inyectar tools como texto en el prompt,
+  parsear llamadas a tools del output
+- [ ] Estandarizar `ToolCall` / `ToolResult` format across providers
+- [ ] Agentic loop: permitir encadenamiento tool call → result → continue
+
+**Prioridad**: MEDIA | **Esfuerzo**: M | **Impacto**: Alto
+
+---
+
+### 3.4 Prompt Templates / Prompt Management
+
+**Estado actual**: System prompts como strings literales. `build_system_prompt()` y
+`build_system_prompt_with_notes()` en `providers.rs` concatenan partes.
+
+**Objetivo**: Sistema de templates reutilizables con variables, similar a LangChain
+PromptTemplate o Semantic Kernel prompts.
+
+**Tareas**:
+- [ ] Crear `src/prompt_template.rs`:
+  ```rust
+  pub struct PromptTemplate {
+      template: String,          // "You are {role}. Context: {context}"
+      variables: HashSet<String>,
+  }
+  impl PromptTemplate {
+      pub fn render(&self, vars: &HashMap<String, String>) -> Result<String>;
+  }
+  ```
+- [ ] Templates composables (system + user + few-shot examples)
+- [ ] Serialización/carga desde archivos (YAML, JSON, texto plano)
+- [ ] Biblioteca de templates built-in (RAG, summarization, code generation, etc.)
+- [ ] Integración con `AiAssistant::send_message()`
+
+**Prioridad**: MEDIA-BAJA | **Esfuerzo**: S | **Impacto**: Medio
+
+---
+
+### 3.5 Guardrails v2 — Pipeline de Validación
+
+**Estado actual**: `guardrails.rs` implementa ContentGuard, TopicGuard, PII detection,
+Constitutional AI. Funcional pero invocado manualmente.
+
+**Objetivo**: Pipeline automático de guardrails que se aplique before/after cada
+llamada al modelo, configurable por sesión.
+
+**Tareas**:
+- [ ] `GuardrailPipeline` con stages pre-send y post-receive:
+  ```rust
+  pub struct GuardrailPipeline {
+      pre_guards: Vec<Box<dyn Guard>>,
+      post_guards: Vec<Box<dyn Guard>>,
+  }
+  pub trait Guard: Send + Sync {
+      fn check(&self, content: &str) -> GuardResult;
+  }
+  pub enum GuardResult { Pass, Warn(String), Block(String) }
+  ```
+- [ ] Auto-aplicación en `AiAssistant::send_message()` (configurable on/off)
+- [ ] Rate limiting guard (tokens/min, requests/min)
+- [ ] Content length guard (max tokens en input/output)
+- [ ] Custom regex guard para políticas específicas
+- [ ] Logging de violaciones
+
+**Prioridad**: MEDIA-BAJA | **Esfuerzo**: S-M | **Impacto**: Medio
+
+---
+
+## Fase 4 — Ecosistema y Comunidad
+
+### 4.1 Preparación para crates.io
+
+**Tareas**:
+- [ ] Auditar `pub` exports en `lib.rs` (API pública limpia)
+- [ ] Añadir `#[doc]` a todos los tipos públicos
+- [ ] Semver: definir versión 0.1.0 inicial
+- [ ] `Cargo.toml`: license, repository, description, keywords, categories
+- [ ] `README.md` con ejemplos de uso, feature matrix, badges
+- [ ] `CHANGELOG.md`
+- [ ] Verificar que `cargo publish --dry-run` funciona
+
+### 4.2 Documentación
+
+**Tareas**:
+- [ ] Rustdoc completo con ejemplos en cada módulo público
+- [ ] Libro/guía (mdbook) con tutoriales paso a paso
+- [ ] Diagrama de arquitectura
+- [ ] Guía de migración entre versiones
+
+### 4.3 Ejemplos y Templates
+
+**Tareas**:
+- [ ] `examples/` directorio con:
+  - `basic_chat.rs` — conversación mínima
+  - `rag_pipeline.rs` — RAG completo con embeddings
+  - `multi_agent.rs` — sesión multi-agente
+  - `mcp_server.rs` — servidor MCP con herramientas custom
+  - `distributed_agents.rs` — agentes distribuidos
+
+### 4.4 CI/CD
+
+**Tareas**:
+- [ ] GitHub Actions: `cargo check`, `cargo test`, `cargo clippy`, `cargo fmt`
+- [ ] Matrix de features (test cada feature flag independiente)
+- [ ] Cobertura de código (tarpaulin o llvm-cov)
+- [ ] Release automation
+
+**Prioridad (Fase 4 completa)**: BAJA | **Esfuerzo**: L | **Impacto**: Alto (largo plazo)
+
+---
+
+## Fase 5 — Testing y Calidad
+
+### 5.1 Cobertura de Tests P2P Completa
+
+**Estado actual**: 19→32 tests unitarios en `p2p.rs`. Las 12 funciones públicas sin tests
+han sido cubiertas: ICE candidates, unban, get_top_peers, get_connectable_address,
+discover_nat (vacío/inalcanzable), upnp/nat_pmp disabled, start/stop/stats.
+
+**Estrategia de testing para funciones dependientes de red**:
+- Paths deshabilitados: verificar que la función devuelve error correcto al deshabilitar la feature
+- Servidores inalcanzables: usar direcciones RFC 5737 TEST-NET (`198.51.100.x`) que no enrutan
+- Configs vacías: ejecutar el path completo con listas de servidores vacías
+- Parsing: testear lógica de parseo (STUN XOR-MAPPED-ADDRESS) con datos sintéticos
+
+**Tareas**:
+- [x] Tests para NatTraversal (discover_nat, upnp_mapping, nat_pmp_mapping, get_connectable_address)
+- [x] Tests para IceAgent (add_local_candidate, add_remote_candidate, get_local_candidates)
+- [x] Tests para PeerReputation::unban()
+- [x] Tests para ReputationSystem::get_top_peers()
+- [x] Tests para P2PManager (start, stop, stats)
+
+**Prioridad**: ALTA | **Esfuerzo**: S | **Impacto**: Alto | **Estado**: HECHO
+
+---
+
+### 5.2 Cobertura de Tests Failure Detector
+
+**Estado actual**: 13→15 tests. Las 2 funciones sin tests cubiertas:
+`PhiAccrualDetector::is_suspicious()` (boundary test con verificación de consistencia)
+y `HeartbeatManager::get_suspicious_nodes()` (multi-nodo con thresholds generosos).
+
+**Tareas**:
+- [x] Test para PhiAccrualDetector::is_suspicious() — boundary con threshold*0.5
+- [x] Test para HeartbeatManager::get_suspicious_nodes() — nodos healthy vs stale
+
+**Prioridad**: ALTA | **Esfuerzo**: S | **Impacto**: Medio | **Estado**: HECHO
+
+---
+
+### 5.3 Test Harness — Categorías P2P
+
+**Estado actual**: 122→125 categorías en `ai_test_harness`. 3 nuevas categorías P2P
+compiladas condicionalmente con `#[cfg(feature = "p2p")]`.
+
+**Categorías añadidas**:
+- `p2p_nat` (5 tests): NatType helpers, NatTraversal construction, P2PConfig defaults, UPnP disabled
+- `p2p_reputation` (5 tests): lifecycle, ban/unban, accuracy, is_trusted, get_top_peers
+- `p2p_manager` (6 tests): creation, start disabled, stop, stats, Ping→Pong, local_peer_id
+
+**Ejecución**: `cargo run --bin ai_test_harness --features "full,p2p" -- --category=p2p_nat`
+
+**Tareas**:
+- [x] Categoría `p2p_nat` (5 tests)
+- [x] Categoría `p2p_reputation` (5 tests)
+- [x] Categoría `p2p_manager` (6 tests)
+- [x] Compilación condicional con `#[cfg(feature = "p2p")]`
+- [x] Refactorización de `all_categories()` para pushes condicionales
+
+**Prioridad**: MEDIA | **Esfuerzo**: S | **Impacto**: Medio | **Estado**: HECHO
+
+---
+
+### 5.4 Documentación de Testing
+
+**Tareas**:
+- [x] Actualizar TESTING.md con conteos de tests y sección P2P
+- [x] Sección 38 en AGENT_SYSTEM_DESIGN.md (Infraestructura de Testing)
+- [x] Actualizar IMPROVEMENTS.md con Fase 5
+
+**Prioridad**: MEDIA | **Esfuerzo**: S | **Impacto**: Medio | **Estado**: HECHO
 
 ---
 
 ## Resumen de Prioridades
 
-| # | Mejora | Prioridad | Dificultad | Impacto | Estado |
-|---|--------|-----------|------------|---------|--------|
-| 1 | Failover entre proveedores | ALTA | Media | Alto | HECHO |
-| 2 | Auto-compactación de contexto | ALTA | Media | Alto | HECHO |
-| 3 | Redacción en logs | ALTA | Baja | Alto (seguridad) | HECHO |
-| 4 | Async/await (tokio) | ALTA | Alta | Alto (largo plazo) | HECHO |
-| 5 | Sistema de herramientas ejecutable | MEDIA | Alta | Alto | HECHO |
-| 6 | Sesiones JSONL (event log) | MEDIA | Media | Medio | HECHO |
-| 7 | Detección dinámica de contexto | MEDIA | Baja | Medio | HECHO |
-| 8 | Cola de peticiones | MEDIA | Media | Medio | HECHO |
-| 9 | Tests con mocks | MEDIA-BAJA | Media | Medio | HECHO |
-| 10 | Retry con backoff | MEDIA-BAJA | Baja | Medio | HECHO |
-| 11 | Logging estructurado | MEDIA-BAJA | Baja | Medio-Bajo | HECHO |
-| 12 | Cifrado de sesiones | MEDIA-BAJA | Baja | Medio | HECHO |
-| 13 | Proveedores cloud nativos | BAJA | Alta | Bajo (ahora) | HECHO |
-| 14 | Sistema de hooks/eventos | BAJA | Media | Bajo | HECHO |
-| 15 | Servidor embebido | BAJA | Alta | Bajo | HECHO |
+| # | Mejora | Fase | Prioridad | Esfuerzo | Impacto | Estado |
+|---|--------|------|-----------|----------|---------|--------|
+| 1.1 | MCP upgrade (rmcp) | 1 | CRÍTICA | M | Muy Alto | PENDIENTE |
+| 1.2 | EmbeddingProvider trait + APIs | 1 | CRÍTICA | M | Muy Alto | PENDIENTE |
+| 1.3 | Adaptador genérico OpenAI-compatible | 1 | CRÍTICA | S | Muy Alto | PENDIENTE |
+| 1.4 | Google Gemini provider | 1 | ALTA | M | Alto | PENDIENTE |
+| 1.5 | Mistral AI provider | 1 | ALTA | S | Alto | PENDIENTE |
+| 2.1 | Vector DB backends | 2 | ALTA | L | Alto | PENDIENTE |
+| 2.2 | Async parity completa | 2 | ALTA | L | Alto | PENDIENTE |
+| 2.3 | Formatos de documento | 2 | MEDIA-ALTA | M | Medio-Alto | PENDIENTE |
+| 2.4 | Structured Output / JSON mode | 2 | MEDIA | M | Alto | PENDIENTE |
+| 3.1 | Observabilidad / tracing | 3 | MEDIA | M | Medio | PENDIENTE |
+| 3.2 | LLM-as-judge | 3 | MEDIA | M | Medio | PENDIENTE |
+| 3.3 | Tool calling unificado | 3 | MEDIA | M | Alto | PENDIENTE |
+| 3.4 | Prompt templates | 3 | MEDIA-BAJA | S | Medio | PENDIENTE |
+| 3.5 | Guardrails v2 pipeline | 3 | MEDIA-BAJA | S-M | Medio | PENDIENTE |
+| 4.1 | crates.io publication | 4 | BAJA | M | Alto (LP) | PENDIENTE |
+| 4.2 | Documentación | 4 | BAJA | L | Alto (LP) | PENDIENTE |
+| 4.3 | Ejemplos | 4 | BAJA | S | Medio | PENDIENTE |
+| 4.4 | CI/CD | 4 | BAJA | M | Alto (LP) | PENDIENTE |
+| 5.1 | Tests P2P completos | 5 | ALTA | S | Alto | HECHO |
+| 5.2 | Tests Failure Detector | 5 | ALTA | S | Medio | HECHO |
+| 5.3 | Test Harness P2P | 5 | MEDIA | S | Medio | HECHO |
+| 5.4 | Testing docs | 5 | MEDIA | S | Medio | HECHO |
+
+**Leyenda**: S = Small (1-2 días), M = Medium (3-5 días), L = Large (1-2 semanas), LP = largo plazo
 
 ---
 
-## Lo que ai_assistant ya hace MEJOR que OpenClaw
+## Orden de Ejecución Recomendado
 
-No todo son mejoras necesarias. Hay cosas donde `ai_assistant` destaca:
+```
+Fase 1 (fundamentos):
+  1.3 → 1.5 → 1.4 → 1.2 → 1.1
+  (providers primero porque son rápidos y desbloquean embeddings/MCP)
 
-1. **Knowledge Graph con Graph RAG**: OpenClaw tiene memoria vectorial básica;
-   nosotros tenemos un grafo de conocimiento completo con SQLite + FTS5 + traversal
-   multi-hop + extracción de entidades.
+Fase 2 (infraestructura):
+  2.2 → 2.1 → 2.4 → 2.3
+  (async primero porque los nuevos VectorDBs se diseñan async-first)
 
-2. **Document Parsing robusto**: EPUB, DOCX, ODT, HTML, PDF, tablas...
-   OpenClaw depende de herramientas externas para esto.
+Fase 3 (avanzado):
+  3.3 → 3.1 → 3.2 → 3.4 → 3.5
+  (tool calling primero por su alto impacto)
 
-3. **Encrypted Knowledge Packages (KPKG)**: Sistema propio de paquetes cifrados
-   con AES-256-GCM. OpenClaw no tiene equivalente.
+Fase 4 (ecosistema):
+  4.4 → 4.1 → 4.3 → 4.2
+  (CI/CD primero para que todo lo demás sea verificable)
 
-4. **Decision Trees + Task Planning**: Módulos de lógica y planificación que
-   OpenClaw no tiene (su agente depende del modelo para planificar).
-
-5. **Crawl Policy + Feed Monitor**: Infraestructura de crawling con respeto a
-   robots.txt que OpenClaw no implementa.
-
-6. **Content Versioning con diffs**: Seguimiento de cambios en contenido con
-   algoritmo LCS. OpenClaw solo tiene snapshots.
-
-7. **Entity Enrichment con dedup fuzzy**: Jaccard index sobre bigrams para
-   deduplicación de entidades. Más sofisticado que lo que OpenClaw ofrece.
-
-8. **Rendimiento**: Rust vs Node.js. Para operaciones CPU-bound (parsing,
-   chunking, búsqueda vectorial), ai_assistant será significativamente más rápido.
+Fase 5 (testing): ✅ COMPLETADA
+  5.1 → 5.2 → 5.3 → 5.4
+  (tests unitarios primero, luego harness, luego docs)
+```
 
 ---
 
-## Plan de Implementación Sugerido
+## Dependencias Entre Tareas
 
-**Fase 1 (inmediata, 1-2 semanas)**:
-- [x] #3 Redacción en logs — `log_redaction.rs` con macro `safe_log!`, 8 tests
-- [x] #10 Retry con backoff — `RetryExecutor` integrado en `providers.rs`, clasificación de errores
-- [x] #11 Logging estructurado — Migración a `log` crate (0.4), reemplazo de `println!`/`eprintln!` con `log::info!`/`log::debug!`/etc.
+```
+1.2 (EmbeddingProvider) ←── depende de ──→ 2.1 (Vector DBs consumen embeddings)
+1.1 (MCP rmcp)         ←── requiere  ──→ async-runtime feature
+2.2 (Async parity)     ←── habilita  ──→ 2.1, 1.1 (backends async-first)
+1.3 (OpenAI-compat)    ←── base de   ──→ 1.5 (Mistral como preset)
+3.3 (Tool calling)     ←── consume   ──→ 1.4, 1.5 (providers con tool support)
+3.2 (LLM-as-judge)     ←── consume   ──→ 1.2, 1.3 (necesita providers funcionales)
+```
 
-**Fase 2 (corto plazo, 2-4 semanas)**:
-- [x] #1 Failover entre proveedores — `FallbackChain` integrada en `assistant.rs`, fallback automático en `send_message`
-- [x] #2 Auto-compactación de contexto — `ConversationCompactor` integrada en `assistant.rs`, compactación pre-envío
-- [x] #7 Detección dinámica de contexto — Cache global en `context.rs` con `get_model_context_size_cached()`, 5 tests
+---
 
-**Fase 3 (medio plazo, 1-2 meses)**:
-- [x] #5 Sistema de herramientas unificado — `unified_tools.rs` fusiona 4 módulos (tools, tool_use, tool_calling, function_calling), builder pattern, multi-format parsing, 39 tests
-- [x] #6 Sesiones JSONL — `JournalSession` con append-only, compactación atómica, migración desde `ChatSession`, 7 tests
-- [x] #9 Tests con mocks — `HttpClient` trait + `MockHttpClient` en `http_client.rs`, funciones `_with_client()` en providers, 4 tests
-- [x] #12 Cifrado de sesiones — `save_encrypted()`/`load_encrypted()` con AES-256-GCM en `session.rs`, 3 tests
+## Historial — Plan v1 (OpenClaw, 2026-02-13) — COMPLETADO
 
-**Fase 4 (largo plazo)**:
-- [x] #4 Async/await — `async_providers.rs` con `reqwest` + `tokio` detrás de feature `async-runtime`, `AsyncHttpClient` trait, `ReqwestClient`, modelo/generación async, bridge blocking, 11 tests
-- [x] #8 Cola de peticiones — `request_queue.rs` con cola thread-safe con prioridad (Low/Normal/High), Condvar para blocking, session removal, 13 tests
-- [x] #13 Proveedores cloud nativos — `cloud_providers.rs` con soporte OpenAI y Anthropic, resolución de API keys (config + env vars), 9 tests
-- [x] #14 Sistema de hooks/eventos — `events.rs` con `EventBus`, `AiEvent` enum (20+ variantes), `EventHandler` trait, handlers filtered/logging/collecting, 12 tests
-- [x] #15 Servidor HTTP embebido — `server.rs` con `TcpListener`, endpoints REST (/health, /models, /chat, /config), CORS, background server, 9 tests
+Todas las 15 mejoras del plan original han sido implementadas:
 
-**Adicional (no en plan original)**:
-- [x] Binary storage — `internal_storage.rs` con bincode+gzip, auto-detección, herramientas de debug, 8 tests
-- [x] Migración de session.rs a internal_storage — `save_to_file()`/`load_to_file()` usan bincode, backward-compatible con JSON
-- [x] Migración de módulos restantes — `conversation_snapshot`, `multi_layer_graph`, `content_versioning`, `feed_monitor`, `memory`, `metrics`, `entities` con alternativas bincode
-- [x] API Key Rotation — `ApiKeyManager` integrado en `assistant.rs`, rotación en HTTP 429
+| # | Mejora | Estado |
+|---|--------|--------|
+| 1 | Failover entre proveedores | HECHO |
+| 2 | Auto-compactación de contexto | HECHO |
+| 3 | Redacción en logs | HECHO |
+| 4 | Async/await (tokio) | HECHO |
+| 5 | Sistema de herramientas ejecutable | HECHO |
+| 6 | Sesiones JSONL (event log) | HECHO |
+| 7 | Detección dinámica de contexto | HECHO |
+| 8 | Cola de peticiones | HECHO |
+| 9 | Tests con mocks | HECHO |
+| 10 | Retry con backoff | HECHO |
+| 11 | Logging estructurado | HECHO |
+| 12 | Cifrado de sesiones | HECHO |
+| 13 | Proveedores cloud nativos (OpenAI + Anthropic) | HECHO |
+| 14 | Sistema de hooks/eventos | HECHO |
+| 15 | Servidor HTTP embebido | HECHO |
+| +  | Binary storage (bincode+gzip) | HECHO |
+| +  | API Key Rotation | HECHO |

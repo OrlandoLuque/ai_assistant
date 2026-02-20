@@ -25,18 +25,11 @@ pub enum TriggerCondition {
         pattern: Option<String>,
     },
     /// Fire when an RSS/Atom feed has new entries.
-    FeedUpdate {
-        feed_url: String,
-    },
+    FeedUpdate { feed_url: String },
     /// Fire when a specific AI event is emitted.
-    AiEventMatch {
-        event_name: String,
-    },
+    AiEventMatch { event_name: String },
     /// Fire on an HTTP webhook (method, path).
-    WebhookReceived {
-        method: String,
-        path: String,
-    },
+    WebhookReceived { method: String, path: String },
     /// Only fire manually via `fire_trigger()`.
     Manual,
 }
@@ -338,7 +331,8 @@ impl TriggerManager {
                 }
                 match &t.condition {
                     TriggerCondition::FileChanged { path, pattern } => {
-                        let path_matches = changed_path.starts_with(&path.to_string_lossy().as_ref().to_string());
+                        let path_matches =
+                            changed_path.starts_with(&path.to_string_lossy().as_ref().to_string());
                         if let Some(pat) = pattern {
                             path_matches && changed_path.contains(pat)
                         } else {
@@ -477,6 +471,410 @@ fn now_millis() -> u64 {
 }
 
 // ============================================================================
+// CronField (trigger-system-local cron parsing)
+// ============================================================================
+
+/// Cron field representation for the trigger-system scheduler runner.
+///
+/// This is the trigger-system's own cron field enum, parallel to
+/// `scheduler::CronField` but with variant names aligned to the scheduler
+/// runner API.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TsCronField {
+    /// Wildcard `*` — matches any value.
+    Any,
+    /// A specific numeric value.
+    Exact(u32),
+    /// An inclusive range (start-end).
+    Range(u32, u32),
+    /// A step value (`*/N`).
+    Step(u32),
+    /// A list of values (comma-separated).
+    List(Vec<u32>),
+}
+
+impl TsCronField {
+    /// Check whether the given value matches this field.
+    pub fn matches(&self, value: u32) -> bool {
+        match self {
+            TsCronField::Any => true,
+            TsCronField::Exact(v) => value == *v,
+            TsCronField::Range(lo, hi) => value >= *lo && value <= *hi,
+            TsCronField::Step(s) => {
+                if *s == 0 {
+                    return false;
+                }
+                value % s == 0
+            }
+            TsCronField::List(vs) => vs.contains(&value),
+        }
+    }
+
+    /// Parse a single cron field token.
+    pub fn parse(s: &str) -> Result<Self, String> {
+        let s = s.trim();
+
+        if s == "*" {
+            return Ok(TsCronField::Any);
+        }
+
+        // Step: */N
+        if let Some(rest) = s.strip_prefix("*/") {
+            let step: u32 = rest
+                .parse()
+                .map_err(|_| format!("invalid step value: {}", rest))?;
+            if step == 0 {
+                return Err("step value must be > 0".to_string());
+            }
+            return Ok(TsCronField::Step(step));
+        }
+
+        // List: contains comma
+        if s.contains(',') {
+            let values: Result<Vec<u32>, _> = s
+                .split(',')
+                .map(|v| {
+                    v.trim()
+                        .parse::<u32>()
+                        .map_err(|_| format!("invalid list value: {}", v.trim()))
+                })
+                .collect();
+            return Ok(TsCronField::List(values?));
+        }
+
+        // Range: contains dash
+        if s.contains('-') {
+            let parts: Vec<&str> = s.splitn(2, '-').collect();
+            if parts.len() != 2 {
+                return Err(format!("invalid range: {}", s));
+            }
+            let lo: u32 = parts[0]
+                .trim()
+                .parse()
+                .map_err(|_| format!("invalid range start: {}", parts[0].trim()))?;
+            let hi: u32 = parts[1]
+                .trim()
+                .parse()
+                .map_err(|_| format!("invalid range end: {}", parts[1].trim()))?;
+            return Ok(TsCronField::Range(lo, hi));
+        }
+
+        // Single value
+        let v: u32 = s
+            .parse()
+            .map_err(|_| format!("invalid cron field: {}", s))?;
+        Ok(TsCronField::Exact(v))
+    }
+}
+
+// ============================================================================
+// CronExpression
+// ============================================================================
+
+/// A parsed five-field cron expression for the scheduler runner.
+#[derive(Debug, Clone)]
+pub struct CronExpression {
+    pub minute: TsCronField,
+    pub hour: TsCronField,
+    pub day_of_month: TsCronField,
+    pub month: TsCronField,
+    pub day_of_week: TsCronField,
+}
+
+impl CronExpression {
+    /// Parse a standard five-field cron expression (`"* * * * *"`).
+    pub fn parse(expr: &str) -> Result<Self, String> {
+        let fields: Vec<&str> = expr.split_whitespace().collect();
+        if fields.len() != 5 {
+            return Err(format!(
+                "expected 5 cron fields, got {} in '{}'",
+                fields.len(),
+                expr
+            ));
+        }
+        Ok(CronExpression {
+            minute: TsCronField::parse(fields[0])?,
+            hour: TsCronField::parse(fields[1])?,
+            day_of_month: TsCronField::parse(fields[2])?,
+            month: TsCronField::parse(fields[3])?,
+            day_of_week: TsCronField::parse(fields[4])?,
+        })
+    }
+
+    /// Check whether the given time components match this expression.
+    pub fn matches(&self, minute: u32, hour: u32, dom: u32, month: u32, dow: u32) -> bool {
+        self.minute.matches(minute)
+            && self.hour.matches(hour)
+            && self.day_of_month.matches(dom)
+            && self.month.matches(month)
+            && self.day_of_week.matches(dow)
+    }
+}
+
+// ============================================================================
+// SchedulerError
+// ============================================================================
+
+/// An error recorded during scheduler execution.
+#[derive(Debug, Clone)]
+pub struct SchedulerError {
+    pub trigger_id: String,
+    pub message: String,
+    pub timestamp_ms: u64,
+}
+
+// ============================================================================
+// SchedulerConfig
+// ============================================================================
+
+/// Configuration for the scheduler runner.
+#[derive(Debug, Clone)]
+pub struct SchedulerConfig {
+    pub poll_interval_ms: u64,
+    pub max_concurrent: usize,
+    pub enable_cron: bool,
+    pub enable_events: bool,
+    pub enable_file_watch: bool,
+    pub enable_feed: bool,
+}
+
+impl Default for SchedulerConfig {
+    fn default() -> Self {
+        Self {
+            poll_interval_ms: 1000,
+            max_concurrent: 4,
+            enable_cron: true,
+            enable_events: true,
+            enable_file_watch: true,
+            enable_feed: true,
+        }
+    }
+}
+
+// ============================================================================
+// SchedulerState
+// ============================================================================
+
+/// Runtime state of the scheduler runner.
+#[derive(Debug, Clone)]
+pub struct SchedulerState {
+    pub running: bool,
+    pub tick_count: u64,
+    pub last_tick_ms: u64,
+    pub fired_history: Vec<FiredTrigger>,
+    pub active_actions: Vec<String>,
+    pub errors: Vec<SchedulerError>,
+}
+
+impl SchedulerState {
+    /// Create a new default state (all zeros / empty).
+    pub fn new() -> Self {
+        Self {
+            running: false,
+            tick_count: 0,
+            last_tick_ms: 0,
+            fired_history: Vec::new(),
+            active_actions: Vec::new(),
+            errors: Vec::new(),
+        }
+    }
+}
+
+impl Default for SchedulerState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ============================================================================
+// SchedulerRunner
+// ============================================================================
+
+/// Drives the trigger system by periodically ticking through registered
+/// triggers and collecting fired results.
+pub struct SchedulerRunner {
+    config: SchedulerConfig,
+    manager: TriggerManager,
+    state: SchedulerState,
+}
+
+impl SchedulerRunner {
+    /// Create a new scheduler runner.
+    pub fn new(config: SchedulerConfig, manager: TriggerManager) -> Self {
+        Self {
+            config,
+            manager,
+            state: SchedulerState::new(),
+        }
+    }
+
+    /// Perform a full tick: check all enabled trigger types.
+    ///
+    /// For cron triggers, `current_time_ms` is decomposed into
+    /// minute / hour / day / month / weekday and checked against each
+    /// trigger's cron schedule.
+    pub fn tick(&mut self, current_time_ms: u64) -> Vec<FiredTrigger> {
+        let mut all_fired = Vec::new();
+
+        if self.config.enable_cron {
+            let cron_fired = self.tick_cron_inner(current_time_ms);
+            all_fired.extend(cron_fired);
+        }
+
+        self.state.tick_count += 1;
+        self.state.last_tick_ms = current_time_ms;
+        self.state.fired_history.extend(all_fired.clone());
+        all_fired
+    }
+
+    /// Tick only cron triggers.
+    pub fn tick_cron(&mut self, current_time_ms: u64) -> Vec<FiredTrigger> {
+        let fired = self.tick_cron_inner(current_time_ms);
+        self.state.tick_count += 1;
+        self.state.last_tick_ms = current_time_ms;
+        self.state.fired_history.extend(fired.clone());
+        fired
+    }
+
+    /// Internal: check cron triggers by decomposing timestamp into time fields.
+    fn tick_cron_inner(&mut self, current_time_ms: u64) -> Vec<FiredTrigger> {
+        // Convert ms timestamp to broken-down time components.
+        // Using simple arithmetic (UTC):
+        let total_secs = current_time_ms / 1000;
+        let minute = ((total_secs / 60) % 60) as u32;
+        let hour = ((total_secs / 3600) % 24) as u32;
+
+        // Day-of-month, month, day-of-week from days since epoch
+        let days_since_epoch = (total_secs / 86400) as i64;
+        let (year, month, day) = days_to_ymd(days_since_epoch);
+        let dow = ((days_since_epoch + 4) % 7) as u32; // 1970-01-01 was Thursday (4)
+
+        let _ = year; // not used in cron matching
+        self.manager.fire_cron(minute, hour, day, month, dow)
+    }
+
+    /// Tick event triggers matching the given event name.
+    ///
+    /// Fires all enabled triggers whose condition is `AiEventMatch` with a
+    /// matching `event_name`.
+    pub fn tick_events(&mut self, event_name: &str) -> Vec<FiredTrigger> {
+        let matching_ids: Vec<String> = self
+            .manager
+            .list()
+            .iter()
+            .filter(|t| {
+                if !t.can_fire() {
+                    return false;
+                }
+                matches!(
+                    &t.condition,
+                    TriggerCondition::AiEventMatch { event_name: en } if en == event_name
+                )
+            })
+            .map(|t| t.id.clone())
+            .collect();
+
+        let mut fired = Vec::new();
+        for id in matching_ids {
+            if let Ok(f) = self.manager.fire_trigger(&id) {
+                fired.push(f);
+            }
+        }
+        self.state.fired_history.extend(fired.clone());
+        fired
+    }
+
+    /// Tick file-change triggers for the given path.
+    pub fn tick_file_changes(&mut self, path: &str, _modified_ms: u64) -> Vec<FiredTrigger> {
+        let fired = self.manager.fire_for_file_change(path);
+        self.state.fired_history.extend(fired.clone());
+        fired
+    }
+
+    /// Tick feed-update triggers for the given feed name/URL.
+    pub fn tick_feed(&mut self, feed_name: &str, _new_entry_count: usize) -> Vec<FiredTrigger> {
+        let fired = self.manager.fire_for_feed_update(feed_name);
+        self.state.fired_history.extend(fired.clone());
+        fired
+    }
+
+    /// Run `n` ticks starting at `start_time_ms`, advancing by
+    /// `config.poll_interval_ms` each iteration.
+    pub fn run_n_ticks(&mut self, n: u64, start_time_ms: u64) -> Vec<FiredTrigger> {
+        let mut all_fired = Vec::new();
+        for i in 0..n {
+            let time = start_time_ms + i * self.config.poll_interval_ms;
+            let fired = self.tick(time);
+            all_fired.extend(fired);
+        }
+        all_fired
+    }
+
+    /// Read-only access to the scheduler state.
+    pub fn state(&self) -> &SchedulerState {
+        &self.state
+    }
+
+    /// Reset state: clear history, errors, and tick count.
+    pub fn reset_state(&mut self) {
+        self.state.fired_history.clear();
+        self.state.errors.clear();
+        self.state.tick_count = 0;
+        self.state.last_tick_ms = 0;
+        self.state.active_actions.clear();
+    }
+
+    /// Export scheduler status as JSON.
+    pub fn export_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "config": {
+                "poll_interval_ms": self.config.poll_interval_ms,
+                "max_concurrent": self.config.max_concurrent,
+                "enable_cron": self.config.enable_cron,
+                "enable_events": self.config.enable_events,
+                "enable_file_watch": self.config.enable_file_watch,
+                "enable_feed": self.config.enable_feed,
+            },
+            "state": {
+                "running": self.state.running,
+                "tick_count": self.state.tick_count,
+                "last_tick_ms": self.state.last_tick_ms,
+                "active_actions": self.state.active_actions.len(),
+            },
+            "fired_history_count": self.state.fired_history.len(),
+            "errors_count": self.state.errors.len(),
+            "trigger_count": self.manager.trigger_count(),
+        })
+    }
+
+    /// Read-only access to the inner trigger manager.
+    pub fn manager(&self) -> &TriggerManager {
+        &self.manager
+    }
+
+    /// Mutable access to the inner trigger manager.
+    pub fn manager_mut(&mut self) -> &mut TriggerManager {
+        &mut self.manager
+    }
+}
+
+/// Convert days since Unix epoch to (year, month 1-12, day 1-31).
+fn days_to_ymd(days: i64) -> (i32, u32, u32) {
+    // Algorithm from Howard Hinnant's `civil_from_days`
+    let z = days + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u32; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365; // [0, 399]
+    let y = (yoe as i64 + era * 400) as i32;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -522,7 +920,11 @@ mod tests {
     #[test]
     fn test_fire_manual_trigger() {
         let mut mgr = TriggerManager::new();
-        let id = mgr.register(Trigger::new("manual", TriggerCondition::Manual, make_action()));
+        let id = mgr.register(Trigger::new(
+            "manual",
+            TriggerCondition::Manual,
+            make_action(),
+        ));
 
         let fired = mgr.fire_trigger(&id).unwrap();
         assert_eq!(fired.trigger_name, "manual");
@@ -534,8 +936,8 @@ mod tests {
     #[test]
     fn test_fire_exhausted() {
         let mut mgr = TriggerManager::new();
-        let trigger = Trigger::new("once", TriggerCondition::Manual, make_action())
-            .with_max_fires(1);
+        let trigger =
+            Trigger::new("once", TriggerCondition::Manual, make_action()).with_max_fires(1);
         let id = mgr.register(trigger);
 
         assert!(mgr.fire_trigger(&id).is_ok());
@@ -547,8 +949,8 @@ mod tests {
     #[test]
     fn test_fire_cooldown() {
         let mut mgr = TriggerManager::new();
-        let trigger = Trigger::new("cool", TriggerCondition::Manual, make_action())
-            .with_cooldown_ms(60_000); // 60 seconds cooldown
+        let trigger =
+            Trigger::new("cool", TriggerCondition::Manual, make_action()).with_cooldown_ms(60_000); // 60 seconds cooldown
         let id = mgr.register(trigger);
 
         assert!(mgr.fire_trigger(&id).is_ok());
@@ -802,7 +1204,11 @@ mod tests {
     #[test]
     fn test_get_trigger_mut() {
         let mut mgr = TriggerManager::new();
-        let id = mgr.register(Trigger::new("mutable", TriggerCondition::Manual, make_action()));
+        let id = mgr.register(Trigger::new(
+            "mutable",
+            TriggerCondition::Manual,
+            make_action(),
+        ));
 
         // Mutate the trigger's name via get_mut
         {
@@ -818,7 +1224,11 @@ mod tests {
     #[test]
     fn test_disable_trigger() {
         let mut mgr = TriggerManager::new();
-        let id = mgr.register(Trigger::new("disable-me", TriggerCondition::Manual, make_action()));
+        let id = mgr.register(Trigger::new(
+            "disable-me",
+            TriggerCondition::Manual,
+            make_action(),
+        ));
 
         // Disable the trigger
         mgr.set_enabled(&id, false);
@@ -828,5 +1238,126 @@ mod tests {
         let err = mgr.fire_trigger(&id).unwrap_err();
         assert!(err.contains("disabled"));
         assert_eq!(mgr.get(&id).unwrap().fire_count, 0);
+    }
+
+    // ========================================================================
+    // CronExpression & SchedulerRunner tests
+    // ========================================================================
+
+    // 21. test_cron_parse_every_minute
+    #[test]
+    fn test_cron_parse_every_minute() {
+        let expr = CronExpression::parse("* * * * *").unwrap();
+        assert_eq!(expr.minute, TsCronField::Any);
+        assert_eq!(expr.hour, TsCronField::Any);
+        assert_eq!(expr.day_of_month, TsCronField::Any);
+        assert_eq!(expr.month, TsCronField::Any);
+        assert_eq!(expr.day_of_week, TsCronField::Any);
+    }
+
+    // 22. test_cron_parse_specific
+    #[test]
+    fn test_cron_parse_specific() {
+        let expr = CronExpression::parse("30 14 * * 1").unwrap();
+        assert_eq!(expr.minute, TsCronField::Exact(30));
+        assert_eq!(expr.hour, TsCronField::Exact(14));
+        assert_eq!(expr.day_of_month, TsCronField::Any);
+        assert_eq!(expr.month, TsCronField::Any);
+        assert_eq!(expr.day_of_week, TsCronField::Exact(1));
+    }
+
+    // 23. test_cron_parse_range_and_step
+    #[test]
+    fn test_cron_parse_range_and_step() {
+        let expr = CronExpression::parse("*/15 9-17 * * *").unwrap();
+        assert_eq!(expr.minute, TsCronField::Step(15));
+        assert_eq!(expr.hour, TsCronField::Range(9, 17));
+        assert_eq!(expr.day_of_month, TsCronField::Any);
+        assert_eq!(expr.month, TsCronField::Any);
+        assert_eq!(expr.day_of_week, TsCronField::Any);
+    }
+
+    // 24. test_cron_parse_list
+    #[test]
+    fn test_cron_parse_list() {
+        let expr = CronExpression::parse("0,15,30,45 * * * *").unwrap();
+        assert_eq!(expr.minute, TsCronField::List(vec![0, 15, 30, 45]));
+        assert_eq!(expr.hour, TsCronField::Any);
+    }
+
+    // 25. test_cron_matching
+    #[test]
+    fn test_cron_matching() {
+        let expr = CronExpression::parse("30 14 * * 1").unwrap();
+        // Should match: minute=30, hour=14, dom=15, month=6, dow=1
+        assert!(expr.matches(30, 14, 15, 6, 1));
+        // Should NOT match: minute=0 (wrong minute)
+        assert!(!expr.matches(0, 14, 15, 6, 1));
+    }
+
+    // 26. test_scheduler_tick
+    #[test]
+    fn test_scheduler_tick() {
+        let mut mgr = TriggerManager::new();
+        // Register a cron trigger that matches minute=0 (*/5 fires at 0,5,10...)
+        let sched = CronSchedule::parse("*/5 * * * *").unwrap();
+        mgr.register(Trigger::new(
+            "every-5",
+            TriggerCondition::Cron(sched),
+            make_action(),
+        ));
+
+        let config = SchedulerConfig::default();
+        let mut runner = SchedulerRunner::new(config, mgr);
+
+        // Tick at time 0 — minute=0 matches */5
+        let fired = runner.tick(0);
+        assert!(!fired.is_empty(), "cron trigger should fire at minute 0");
+        assert_eq!(runner.state().tick_count, 1);
+        assert_eq!(runner.state().fired_history.len(), fired.len());
+    }
+
+    // 27. test_scheduler_run_n_ticks
+    #[test]
+    fn test_scheduler_run_n_ticks() {
+        let mut mgr = TriggerManager::new();
+        // Manual trigger (won't auto-fire on cron tick, but tick_count still increments)
+        mgr.register(Trigger::new(
+            "manual-t",
+            TriggerCondition::Manual,
+            make_action(),
+        ));
+
+        let config = SchedulerConfig {
+            poll_interval_ms: 1000,
+            ..SchedulerConfig::default()
+        };
+        let mut runner = SchedulerRunner::new(config, mgr);
+
+        let _fired = runner.run_n_ticks(5, 0);
+        assert_eq!(runner.state().tick_count, 5);
+        // last_tick_ms should be start + 4 * interval = 4000
+        assert_eq!(runner.state().last_tick_ms, 4000);
+    }
+
+    // 28. test_scheduler_export_json
+    #[test]
+    fn test_scheduler_export_json() {
+        let mgr = TriggerManager::new();
+        let config = SchedulerConfig::default();
+        let runner = SchedulerRunner::new(config, mgr);
+
+        let json = runner.export_json();
+        assert!(json.get("config").is_some());
+        assert!(json.get("state").is_some());
+        assert!(json.get("fired_history_count").is_some());
+        assert!(json.get("errors_count").is_some());
+        assert!(json.get("trigger_count").is_some());
+
+        // Verify config values
+        assert_eq!(json["config"]["poll_interval_ms"], 1000);
+        assert_eq!(json["config"]["max_concurrent"], 4);
+        assert_eq!(json["state"]["tick_count"], 0);
+        assert_eq!(json["trigger_count"], 0);
     }
 }

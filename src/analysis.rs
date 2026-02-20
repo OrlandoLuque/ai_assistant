@@ -1,8 +1,8 @@
 //! Conversation analysis: sentiment, topics, auto-summarization
 
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
 use crate::messages::ChatMessage;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 // ============================================================================
 // Sentiment Analysis
@@ -107,53 +107,142 @@ impl SentimentAnalyzer {
 
         // Positive words with weights
         for (word, weight) in [
-            ("great", 0.8), ("excellent", 0.9), ("amazing", 0.9), ("wonderful", 0.85),
-            ("fantastic", 0.9), ("perfect", 1.0), ("good", 0.6), ("nice", 0.5),
-            ("helpful", 0.7), ("thanks", 0.6), ("thank", 0.6), ("love", 0.85),
-            ("awesome", 0.85), ("brilliant", 0.9), ("outstanding", 0.9),
-            ("happy", 0.7), ("pleased", 0.7), ("satisfied", 0.7), ("enjoy", 0.7),
-            ("beautiful", 0.75), ("impressive", 0.8), ("useful", 0.65),
-            ("clear", 0.5), ("easy", 0.5), ("fast", 0.5), ("efficient", 0.6),
-            ("works", 0.4), ("working", 0.4), ("solved", 0.7), ("fixed", 0.7),
-            ("genial", 0.8), ("excelente", 0.9), ("perfecto", 1.0), ("gracias", 0.6),
-            ("bueno", 0.6), ("bien", 0.5), ("increíble", 0.9), ("maravilloso", 0.85),
+            ("great", 0.8),
+            ("excellent", 0.9),
+            ("amazing", 0.9),
+            ("wonderful", 0.85),
+            ("fantastic", 0.9),
+            ("perfect", 1.0),
+            ("good", 0.6),
+            ("nice", 0.5),
+            ("helpful", 0.7),
+            ("thanks", 0.6),
+            ("thank", 0.6),
+            ("love", 0.85),
+            ("awesome", 0.85),
+            ("brilliant", 0.9),
+            ("outstanding", 0.9),
+            ("happy", 0.7),
+            ("pleased", 0.7),
+            ("satisfied", 0.7),
+            ("enjoy", 0.7),
+            ("beautiful", 0.75),
+            ("impressive", 0.8),
+            ("useful", 0.65),
+            ("clear", 0.5),
+            ("easy", 0.5),
+            ("fast", 0.5),
+            ("efficient", 0.6),
+            ("works", 0.4),
+            ("working", 0.4),
+            ("solved", 0.7),
+            ("fixed", 0.7),
+            ("genial", 0.8),
+            ("excelente", 0.9),
+            ("perfecto", 1.0),
+            ("gracias", 0.6),
+            ("bueno", 0.6),
+            ("bien", 0.5),
+            ("increíble", 0.9),
+            ("maravilloso", 0.85),
         ] {
             positive.insert(word, weight);
         }
 
         // Negative words with weights
         for (word, weight) in [
-            ("bad", -0.7), ("terrible", -0.9), ("awful", -0.9), ("horrible", -0.9),
-            ("poor", -0.6), ("wrong", -0.6), ("error", -0.5), ("fail", -0.7),
-            ("failed", -0.7), ("broken", -0.8), ("bug", -0.5), ("issue", -0.4),
-            ("problem", -0.5), ("difficult", -0.4), ("hard", -0.3), ("confusing", -0.5),
-            ("confused", -0.4), ("frustrated", -0.7), ("annoying", -0.6), ("annoyed", -0.6),
-            ("disappointing", -0.7), ("disappointed", -0.7), ("useless", -0.8),
-            ("slow", -0.4), ("crash", -0.8), ("crashes", -0.8), ("stuck", -0.5),
-            ("hate", -0.9), ("worst", -1.0), ("never", -0.3), ("can't", -0.3),
-            ("cannot", -0.3), ("doesn't", -0.3), ("doesn't work", -0.7),
-            ("malo", -0.7), ("terrible", -0.9), ("error", -0.5), ("falla", -0.7),
-            ("problema", -0.5), ("difícil", -0.4), ("confuso", -0.5),
+            ("bad", -0.7),
+            ("terrible", -0.9),
+            ("awful", -0.9),
+            ("horrible", -0.9),
+            ("poor", -0.6),
+            ("wrong", -0.6),
+            ("error", -0.5),
+            ("fail", -0.7),
+            ("failed", -0.7),
+            ("broken", -0.8),
+            ("bug", -0.5),
+            ("issue", -0.4),
+            ("problem", -0.5),
+            ("difficult", -0.4),
+            ("hard", -0.3),
+            ("confusing", -0.5),
+            ("confused", -0.4),
+            ("frustrated", -0.7),
+            ("annoying", -0.6),
+            ("annoyed", -0.6),
+            ("disappointing", -0.7),
+            ("disappointed", -0.7),
+            ("useless", -0.8),
+            ("slow", -0.4),
+            ("crash", -0.8),
+            ("crashes", -0.8),
+            ("stuck", -0.5),
+            ("hate", -0.9),
+            ("worst", -1.0),
+            ("never", -0.3),
+            ("can't", -0.3),
+            ("cannot", -0.3),
+            ("doesn't", -0.3),
+            ("doesn't work", -0.7),
+            ("malo", -0.7),
+            ("terrible", -0.9),
+            ("error", -0.5),
+            ("falla", -0.7),
+            ("problema", -0.5),
+            ("difícil", -0.4),
+            ("confuso", -0.5),
         ] {
             negative.insert(word, weight);
         }
 
         let mut intensifiers = HashMap::new();
         for (word, mult) in [
-            ("very", 1.5), ("really", 1.4), ("extremely", 1.8), ("incredibly", 1.7),
-            ("absolutely", 1.6), ("completely", 1.5), ("totally", 1.5),
-            ("quite", 1.2), ("fairly", 1.1), ("somewhat", 0.8), ("slightly", 0.6),
-            ("much", 1.3), ("so", 1.4), ("too", 1.3),
-            ("muy", 1.5), ("realmente", 1.4), ("extremadamente", 1.8),
+            ("very", 1.5),
+            ("really", 1.4),
+            ("extremely", 1.8),
+            ("incredibly", 1.7),
+            ("absolutely", 1.6),
+            ("completely", 1.5),
+            ("totally", 1.5),
+            ("quite", 1.2),
+            ("fairly", 1.1),
+            ("somewhat", 0.8),
+            ("slightly", 0.6),
+            ("much", 1.3),
+            ("so", 1.4),
+            ("too", 1.3),
+            ("muy", 1.5),
+            ("realmente", 1.4),
+            ("extremadamente", 1.8),
         ] {
             intensifiers.insert(word, mult);
         }
 
         let negators = vec![
-            "not", "no", "never", "neither", "nobody", "nothing", "nowhere",
-            "don't", "doesn't", "didn't", "won't", "wouldn't", "couldn't",
-            "shouldn't", "isn't", "aren't", "wasn't", "weren't",
-            "no", "nunca", "ni", "nadie", "nada",
+            "not",
+            "no",
+            "never",
+            "neither",
+            "nobody",
+            "nothing",
+            "nowhere",
+            "don't",
+            "doesn't",
+            "didn't",
+            "won't",
+            "wouldn't",
+            "couldn't",
+            "shouldn't",
+            "isn't",
+            "aren't",
+            "wasn't",
+            "weren't",
+            "no",
+            "nunca",
+            "ni",
+            "nadie",
+            "nada",
         ];
 
         Self {
@@ -186,9 +275,7 @@ impl SentimentAnalyzer {
 
             // Check for negation in previous words
             let negated = if i > 0 {
-                (1..=3).any(|j| {
-                    i >= j && self.negators.contains(&words[i - j])
-                })
+                (1..=3).any(|j| i >= j && self.negators.contains(&words[i - j]))
             } else {
                 false
             };
@@ -317,10 +404,10 @@ impl SentimentAnalyzer {
 
         // Determine trend
         let trend = if user_scores.len() >= 2 {
-            let first_half: f32 = user_scores[..user_scores.len()/2].iter().sum::<f32>()
-                / (user_scores.len()/2) as f32;
-            let second_half: f32 = user_scores[user_scores.len()/2..].iter().sum::<f32>()
-                / (user_scores.len() - user_scores.len()/2) as f32;
+            let first_half: f32 = user_scores[..user_scores.len() / 2].iter().sum::<f32>()
+                / (user_scores.len() / 2) as f32;
+            let second_half: f32 = user_scores[user_scores.len() / 2..].iter().sum::<f32>()
+                / (user_scores.len() - user_scores.len() / 2) as f32;
 
             let diff = second_half - first_half;
             if diff > 0.2 {
@@ -420,57 +507,189 @@ impl TopicDetector {
         let mut topics = HashMap::new();
 
         // General technical topics
-        topics.insert("programming".to_string(), vec![
-            "code", "function", "variable", "bug", "error", "compile", "runtime",
-            "debug", "test", "class", "method", "api", "library", "framework",
-            "código", "función", "variable", "error", "compilar",
-        ]);
+        topics.insert(
+            "programming".to_string(),
+            vec![
+                "code",
+                "function",
+                "variable",
+                "bug",
+                "error",
+                "compile",
+                "runtime",
+                "debug",
+                "test",
+                "class",
+                "method",
+                "api",
+                "library",
+                "framework",
+                "código",
+                "función",
+                "variable",
+                "error",
+                "compilar",
+            ],
+        );
 
-        topics.insert("help_request".to_string(), vec![
-            "help", "how", "why", "what", "can you", "could you", "please",
-            "explain", "show", "tell", "ayuda", "cómo", "por qué", "qué",
-        ]);
+        topics.insert(
+            "help_request".to_string(),
+            vec![
+                "help",
+                "how",
+                "why",
+                "what",
+                "can you",
+                "could you",
+                "please",
+                "explain",
+                "show",
+                "tell",
+                "ayuda",
+                "cómo",
+                "por qué",
+                "qué",
+            ],
+        );
 
-        topics.insert("error_troubleshooting".to_string(), vec![
-            "error", "crash", "fail", "broken", "issue", "problem", "bug",
-            "not working", "doesn't work", "won't", "can't",
-            "error", "falla", "problema", "no funciona",
-        ]);
+        topics.insert(
+            "error_troubleshooting".to_string(),
+            vec![
+                "error",
+                "crash",
+                "fail",
+                "broken",
+                "issue",
+                "problem",
+                "bug",
+                "not working",
+                "doesn't work",
+                "won't",
+                "can't",
+                "error",
+                "falla",
+                "problema",
+                "no funciona",
+            ],
+        );
 
-        topics.insert("configuration".to_string(), vec![
-            "config", "setting", "setup", "install", "configure", "option",
-            "preference", "enable", "disable", "path", "file",
-            "configuración", "ajuste", "instalar", "opción",
-        ]);
+        topics.insert(
+            "configuration".to_string(),
+            vec![
+                "config",
+                "setting",
+                "setup",
+                "install",
+                "configure",
+                "option",
+                "preference",
+                "enable",
+                "disable",
+                "path",
+                "file",
+                "configuración",
+                "ajuste",
+                "instalar",
+                "opción",
+            ],
+        );
 
-        topics.insert("performance".to_string(), vec![
-            "slow", "fast", "speed", "performance", "optimize", "memory",
-            "cpu", "lag", "freeze", "efficient",
-            "lento", "rápido", "rendimiento", "optimizar", "memoria",
-        ]);
+        topics.insert(
+            "performance".to_string(),
+            vec![
+                "slow",
+                "fast",
+                "speed",
+                "performance",
+                "optimize",
+                "memory",
+                "cpu",
+                "lag",
+                "freeze",
+                "efficient",
+                "lento",
+                "rápido",
+                "rendimiento",
+                "optimizar",
+                "memoria",
+            ],
+        );
 
-        topics.insert("feature_request".to_string(), vec![
-            "would be nice", "could you add", "feature", "suggestion", "idea",
-            "want", "need", "wish", "hope", "request",
-            "sería bueno", "podrías añadir", "característica", "sugerencia",
-        ]);
+        topics.insert(
+            "feature_request".to_string(),
+            vec![
+                "would be nice",
+                "could you add",
+                "feature",
+                "suggestion",
+                "idea",
+                "want",
+                "need",
+                "wish",
+                "hope",
+                "request",
+                "sería bueno",
+                "podrías añadir",
+                "característica",
+                "sugerencia",
+            ],
+        );
 
-        topics.insert("gratitude".to_string(), vec![
-            "thank", "thanks", "appreciate", "helpful", "great", "awesome",
-            "perfect", "exactly", "solved",
-            "gracias", "agradezco", "útil", "genial", "perfecto",
-        ]);
+        topics.insert(
+            "gratitude".to_string(),
+            vec![
+                "thank",
+                "thanks",
+                "appreciate",
+                "helpful",
+                "great",
+                "awesome",
+                "perfect",
+                "exactly",
+                "solved",
+                "gracias",
+                "agradezco",
+                "útil",
+                "genial",
+                "perfecto",
+            ],
+        );
 
         // Star Citizen specific topics
-        topics.insert("ships".to_string(), vec![
-            "ship", "vehicle", "fighter", "bomber", "cargo", "mining", "exploration",
-            "nave", "vehículo", "caza", "bombardero", "carga", "minería",
-        ]);
+        topics.insert(
+            "ships".to_string(),
+            vec![
+                "ship",
+                "vehicle",
+                "fighter",
+                "bomber",
+                "cargo",
+                "mining",
+                "exploration",
+                "nave",
+                "vehículo",
+                "caza",
+                "bombardero",
+                "carga",
+                "minería",
+            ],
+        );
 
-        topics.insert("localization".to_string(), vec![
-            "translation", "translate", "language", "localization", "text",
-            "traducción", "traducir", "idioma", "localización", "texto",
-        ]);
+        topics.insert(
+            "localization".to_string(),
+            vec![
+                "translation",
+                "translate",
+                "language",
+                "localization",
+                "text",
+                "traducción",
+                "traducir",
+                "idioma",
+                "localización",
+                "texto",
+            ],
+        );
 
         Self {
             topic_keywords: topics,
@@ -510,8 +729,11 @@ impl TopicDetector {
                 }
 
                 if !matched_keywords.is_empty() {
-                    let entry = topic_matches.entry(topic_name.clone())
-                        .or_insert((0, Vec::new(), Vec::new()));
+                    let entry = topic_matches.entry(topic_name.clone()).or_insert((
+                        0,
+                        Vec::new(),
+                        Vec::new(),
+                    ));
                     entry.0 += matched_keywords.len();
                     for kw in matched_keywords {
                         if !entry.1.contains(&kw) {
@@ -526,7 +748,8 @@ impl TopicDetector {
         }
 
         // Convert to Topic structs
-        let mut topics: Vec<Topic> = topic_matches.into_iter()
+        let mut topics: Vec<Topic> = topic_matches
+            .into_iter()
             .filter(|(_, (count, _, _))| *count >= self.min_matches)
             .map(|(name, (count, keywords, indices))| {
                 let relevance = (count as f32 / (messages.len() as f32 * 2.0)).min(1.0);
@@ -540,7 +763,11 @@ impl TopicDetector {
             .collect();
 
         // Sort by relevance
-        topics.sort_by(|a, b| b.relevance.partial_cmp(&a.relevance).unwrap_or(std::cmp::Ordering::Equal));
+        topics.sort_by(|a, b| {
+            b.relevance
+                .partial_cmp(&a.relevance)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         topics
     }
@@ -556,23 +783,24 @@ impl TopicDetector {
 
         // Common stop words to ignore
         let stop_words: std::collections::HashSet<&str> = [
-            "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
-            "have", "has", "had", "do", "does", "did", "will", "would", "could",
-            "should", "may", "might", "must", "shall", "can", "need", "dare",
-            "to", "of", "in", "for", "on", "with", "at", "by", "from", "as",
-            "into", "through", "during", "before", "after", "above", "below",
-            "between", "under", "again", "further", "then", "once", "here",
-            "there", "when", "where", "why", "how", "all", "each", "few",
-            "more", "most", "other", "some", "such", "no", "nor", "not",
-            "only", "own", "same", "so", "than", "too", "very", "just",
-            "and", "but", "if", "or", "because", "until", "while",
-            "el", "la", "los", "las", "un", "una", "de", "en", "con", "por",
-            "para", "que", "es", "son", "está", "están", "como", "más", "pero",
-            "this", "that", "these", "those", "it", "its", "i", "you", "he",
-            "she", "we", "they", "my", "your", "his", "her", "our", "their",
-        ].iter().copied().collect();
+            "the", "a", "an", "is", "are", "was", "were", "be", "been", "being", "have", "has",
+            "had", "do", "does", "did", "will", "would", "could", "should", "may", "might", "must",
+            "shall", "can", "need", "dare", "to", "of", "in", "for", "on", "with", "at", "by",
+            "from", "as", "into", "through", "during", "before", "after", "above", "below",
+            "between", "under", "again", "further", "then", "once", "here", "there", "when",
+            "where", "why", "how", "all", "each", "few", "more", "most", "other", "some", "such",
+            "no", "nor", "not", "only", "own", "same", "so", "than", "too", "very", "just", "and",
+            "but", "if", "or", "because", "until", "while", "el", "la", "los", "las", "un", "una",
+            "de", "en", "con", "por", "para", "que", "es", "son", "está", "están", "como", "más",
+            "pero", "this", "that", "these", "those", "it", "its", "i", "you", "he", "she", "we",
+            "they", "my", "your", "his", "her", "our", "their",
+        ]
+        .iter()
+        .copied()
+        .collect();
 
-        for word in text.to_lowercase()
+        for word in text
+            .to_lowercase()
             .split(|c: char| !c.is_alphanumeric())
             .filter(|w| w.len() > 2 && !stop_words.contains(w))
         {
@@ -670,18 +898,23 @@ impl SessionSummarizer {
         }
 
         // Extract user questions
-        let user_questions: Vec<String> = messages.iter()
+        let user_questions: Vec<String> = messages
+            .iter()
             .filter(|m| m.role == "user")
-            .filter(|m| m.content.contains('?') || m.content.to_lowercase().starts_with("how")
-                || m.content.to_lowercase().starts_with("what")
-                || m.content.to_lowercase().starts_with("why")
-                || m.content.to_lowercase().starts_with("cómo")
-                || m.content.to_lowercase().starts_with("qué")
-                || m.content.to_lowercase().starts_with("por qué"))
+            .filter(|m| {
+                m.content.contains('?')
+                    || m.content.to_lowercase().starts_with("how")
+                    || m.content.to_lowercase().starts_with("what")
+                    || m.content.to_lowercase().starts_with("why")
+                    || m.content.to_lowercase().starts_with("cómo")
+                    || m.content.to_lowercase().starts_with("qué")
+                    || m.content.to_lowercase().starts_with("por qué")
+            })
             .map(|m| {
                 // Take first sentence or first 100 chars
                 let content = &m.content;
-                content.split(|c| c == '?' || c == '.')
+                content
+                    .split(|c| c == '?' || c == '.')
                     .next()
                     .map(|s| {
                         if s.len() > 100 {
@@ -697,21 +930,20 @@ impl SessionSummarizer {
 
         // Detect topics
         let topics = self.topic_detector.detect_topics(messages);
-        let topic_names: Vec<String> = topics.iter()
-            .take(3)
-            .map(|t| t.name.clone())
-            .collect();
+        let topic_names: Vec<String> = topics.iter().take(3).map(|t| t.name.clone()).collect();
 
         // Analyze sentiment
         let sentiment_analysis = self.sentiment_analyzer.analyze_conversation(messages);
 
         // Extract key terms for key points
-        let all_text: String = messages.iter()
+        let all_text: String = messages
+            .iter()
             .map(|m| m.content.as_str())
             .collect::<Vec<_>>()
             .join(" ");
         let key_terms = self.topic_detector.extract_key_terms(&all_text, 10);
-        let key_points: Vec<String> = key_terms.iter()
+        let key_points: Vec<String> = key_terms
+            .iter()
             .take(5)
             .map(|(term, count)| format!("{} (mentioned {} times)", term, count))
             .collect();
@@ -720,13 +952,17 @@ impl SessionSummarizer {
         let summary = self.generate_summary_text(messages, &topic_names, &sentiment_analysis);
 
         // Extract solutions (assistant messages that seem conclusive)
-        let solutions: Vec<String> = messages.iter()
+        let solutions: Vec<String> = messages
+            .iter()
             .filter(|m| m.role == "assistant")
             .filter(|m| {
                 let lower = m.content.to_lowercase();
-                lower.contains("you can") || lower.contains("to do this")
-                    || lower.contains("the solution") || lower.contains("here's how")
-                    || lower.contains("puedes") || lower.contains("la solución")
+                lower.contains("you can")
+                    || lower.contains("to do this")
+                    || lower.contains("the solution")
+                    || lower.contains("here's how")
+                    || lower.contains("puedes")
+                    || lower.contains("la solución")
             })
             .map(|m| m.content.chars().take(150).collect::<String>())
             .take(3)
@@ -799,12 +1035,18 @@ mod tests {
         // Positive message
         let result = analyzer.analyze_message("This is great! Thank you so much for the help!");
         assert!(result.score > 0.0);
-        assert!(matches!(result.sentiment, Sentiment::Positive | Sentiment::VeryPositive));
+        assert!(matches!(
+            result.sentiment,
+            Sentiment::Positive | Sentiment::VeryPositive
+        ));
 
         // Negative message
         let result = analyzer.analyze_message("This is terrible and broken. Nothing works.");
         assert!(result.score < 0.0);
-        assert!(matches!(result.sentiment, Sentiment::Negative | Sentiment::VeryNegative));
+        assert!(matches!(
+            result.sentiment,
+            Sentiment::Negative | Sentiment::VeryNegative
+        ));
 
         // Neutral message
         let result = analyzer.analyze_message("What time is it?");
@@ -823,7 +1065,9 @@ mod tests {
 
         let topics = detector.detect_topics(&messages);
         assert!(!topics.is_empty());
-        assert!(topics.iter().any(|t| t.name == "programming" || t.name == "error_troubleshooting"));
+        assert!(topics
+            .iter()
+            .any(|t| t.name == "programming" || t.name == "error_troubleshooting"));
     }
 
     #[test]
@@ -839,5 +1083,94 @@ mod tests {
         let summary = summarizer.summarize(&messages);
         assert!(!summary.summary.is_empty());
         assert_eq!(summary.message_count, 3);
+    }
+
+    #[test]
+    fn test_sentiment_negation() {
+        let analyzer = SentimentAnalyzer::new();
+
+        let good_result = analyzer.analyze_message("good");
+        let not_good_result = analyzer.analyze_message("not good");
+
+        // "not good" should score lower than "good" due to negation
+        assert!(
+            not_good_result.score < good_result.score,
+            "\"not good\" score ({}) should be lower than \"good\" score ({})",
+            not_good_result.score,
+            good_result.score,
+        );
+
+        // "not good" should be negative or at most neutral (score <= 0)
+        assert!(
+            not_good_result.score <= 0.0,
+            "\"not good\" score ({}) should be <= 0.0",
+            not_good_result.score,
+        );
+    }
+
+    #[test]
+    fn test_sentiment_intensifiers() {
+        let analyzer = SentimentAnalyzer::new();
+
+        // The analyzer assigns different weights to different positive words.
+        // "excellent" (0.9) should score higher than "good" (0.6), reflecting intensity.
+        let good_result = analyzer.analyze_message("good");
+        let excellent_result = analyzer.analyze_message("excellent");
+
+        assert!(
+            excellent_result.score > good_result.score,
+            "\"excellent\" score ({}) should be higher than \"good\" score ({})",
+            excellent_result.score,
+            good_result.score,
+        );
+
+        // "perfect" (1.0) should score even higher
+        let perfect_result = analyzer.analyze_message("perfect");
+        assert!(
+            perfect_result.score > excellent_result.score,
+            "\"perfect\" score ({}) should be higher than \"excellent\" score ({})",
+            perfect_result.score,
+            excellent_result.score,
+        );
+
+        // Verify that the intensifier map is populated (smoke test)
+        assert!(
+            analyzer.intensifiers.contains_key("very"),
+            "Intensifier map should contain 'very'",
+        );
+        assert!(
+            analyzer.intensifiers.contains_key("extremely"),
+            "Intensifier map should contain 'extremely'",
+        );
+    }
+
+    #[test]
+    fn test_topic_frequency_threshold() {
+        let detector = TopicDetector::new();
+
+        // A message with only one keyword match should NOT trigger topic detection
+        // because the default min_matches is 2
+        let messages = vec![ChatMessage::user("I like the ship.")];
+
+        let topics = detector.detect_topics(&messages);
+        // "ships" topic requires at least 2 keyword matches; "ship" alone is 1 match
+        let ships_topic = topics.iter().find(|t| t.name == "ships");
+        assert!(
+            ships_topic.is_none(),
+            "Topic 'ships' should not be detected with only 1 keyword match (min_matches=2), but got: {:?}",
+            ships_topic,
+        );
+
+        // Now provide enough matches to cross the threshold
+        let messages_with_enough = vec![ChatMessage::user(
+            "I like the ship and this vehicle is great.",
+        )];
+
+        let topics_enough = detector.detect_topics(&messages_with_enough);
+        let ships_topic_found = topics_enough.iter().find(|t| t.name == "ships");
+        assert!(
+            ships_topic_found.is_some(),
+            "Topic 'ships' should be detected with 2+ keyword matches",
+        );
     }
 }

@@ -3,9 +3,9 @@
 //! This module provides retry functionality for network operations with configurable
 //! backoff strategies, jitter, and circuit breaker patterns.
 
-use std::time::{Duration, Instant};
+use anyhow::{anyhow, Result};
 use std::thread;
-use anyhow::{Result, anyhow};
+use std::time::{Duration, Instant};
 
 /// Retry strategy configuration
 #[derive(Debug, Clone)]
@@ -59,10 +59,7 @@ impl RetryConfig {
             add_jitter: true,
             jitter_factor: 0.1,
             attempt_timeout: Some(Duration::from_secs(5)),
-            retryable_errors: vec![
-                RetryableError::ConnectionRefused,
-                RetryableError::Timeout,
-            ],
+            retryable_errors: vec![RetryableError::ConnectionRefused, RetryableError::Timeout],
         }
     }
 
@@ -96,8 +93,8 @@ impl RetryConfig {
 
     /// Calculate delay for a specific retry attempt
     pub fn calculate_delay(&self, attempt: u32) -> Duration {
-        let base_delay = self.initial_delay.as_secs_f64()
-            * self.backoff_multiplier.powi(attempt as i32);
+        let base_delay =
+            self.initial_delay.as_secs_f64() * self.backoff_multiplier.powi(attempt as i32);
 
         let capped_delay = base_delay.min(self.max_delay.as_secs_f64());
 
@@ -254,7 +251,10 @@ impl RetryExecutor {
                     let attempt_duration = attempt_start.elapsed();
 
                     // Check if this error is retryable
-                    let is_retryable = self.config.retryable_errors.iter()
+                    let is_retryable = self
+                        .config
+                        .retryable_errors
+                        .iter()
                         .any(|re| re.matches(&error_str));
 
                     let can_retry = attempt < self.config.max_retries && is_retryable;
@@ -293,7 +293,11 @@ impl RetryExecutor {
     }
 
     /// Execute with a callback for each attempt
-    pub fn execute_with_callback<T, F, C>(&self, mut operation: F, mut on_retry: C) -> RetryResult<T>
+    pub fn execute_with_callback<T, F, C>(
+        &self,
+        mut operation: F,
+        mut on_retry: C,
+    ) -> RetryResult<T>
     where
         F: FnMut() -> Result<T>,
         C: FnMut(u32, &str, Duration),
@@ -319,7 +323,10 @@ impl RetryExecutor {
                     let error_str = e.to_string();
                     let attempt_duration = attempt_start.elapsed();
 
-                    let is_retryable = self.config.retryable_errors.iter()
+                    let is_retryable = self
+                        .config
+                        .retryable_errors
+                        .iter()
                         .any(|re| re.matches(&error_str));
 
                     let can_retry = attempt < self.config.max_retries && is_retryable;
@@ -513,7 +520,11 @@ pub struct ResilientExecutor {
 
 impl ResilientExecutor {
     /// Create a new resilient executor
-    pub fn new(retry_config: RetryConfig, failure_threshold: u32, recovery_timeout: Duration) -> Self {
+    pub fn new(
+        retry_config: RetryConfig,
+        failure_threshold: u32,
+        recovery_timeout: Duration,
+    ) -> Self {
         Self {
             retry: RetryExecutor::new(retry_config),
             circuit_breaker: CircuitBreaker::new(failure_threshold, recovery_timeout),
@@ -526,7 +537,9 @@ impl ResilientExecutor {
         F: FnMut() -> Result<T>,
     {
         if !self.circuit_breaker.should_allow() {
-            return Err(anyhow!("Circuit breaker is open, service appears unavailable"));
+            return Err(anyhow!(
+                "Circuit breaker is open, service appears unavailable"
+            ));
         }
 
         let result = self.retry.execute(&mut operation);
@@ -536,11 +549,16 @@ impl ResilientExecutor {
             Ok(result.value.expect("value must be present on success"))
         } else {
             self.circuit_breaker.record_failure();
-            let last_error = result.error_history
+            let last_error = result
+                .error_history
                 .last()
                 .and_then(|a| a.error.clone())
                 .unwrap_or_else(|| "Unknown error".to_string());
-            Err(anyhow!("Operation failed after {} attempts: {}", result.attempts, last_error))
+            Err(anyhow!(
+                "Operation failed after {} attempts: {}",
+                result.attempts,
+                last_error
+            ))
         }
     }
 
@@ -575,7 +593,8 @@ where
     if result.success {
         Ok(result.value.expect("value must be present on success"))
     } else {
-        let last_error = result.error_history
+        let last_error = result
+            .error_history
             .last()
             .and_then(|a| a.error.clone())
             .unwrap_or_else(|| "Unknown error".to_string());
@@ -593,7 +612,8 @@ where
     if result.success {
         Ok(result.value.expect("value must be present on success"))
     } else {
-        let last_error = result.error_history
+        let last_error = result
+            .error_history
             .last()
             .and_then(|a| a.error.clone())
             .unwrap_or_else(|| "Unknown error".to_string());
@@ -651,9 +671,7 @@ mod tests {
             ..RetryConfig::default()
         });
 
-        let result: RetryResult<i32> = executor.execute(|| {
-            Err(anyhow!("Connection refused"))
-        });
+        let result: RetryResult<i32> = executor.execute(|| Err(anyhow!("Connection refused")));
 
         assert!(!result.success);
         assert_eq!(result.value, None);
@@ -664,9 +682,7 @@ mod tests {
     fn test_non_retryable_error() {
         let executor = RetryExecutor::new(RetryConfig::default());
 
-        let result: RetryResult<i32> = executor.execute(|| {
-            Err(anyhow!("Invalid API key"))
-        });
+        let result: RetryResult<i32> = executor.execute(|| Err(anyhow!("Invalid API key")));
 
         assert!(!result.success);
         assert_eq!(result.attempts, 1); // No retries for non-retryable errors

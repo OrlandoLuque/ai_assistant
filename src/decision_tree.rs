@@ -99,12 +99,8 @@ impl Condition {
                 var_str.ends_with(&val_str)
             }
 
-            ConditionOperator::GreaterThan => {
-                compare_as_f64(&var_value, &self.value, |a, b| a > b)
-            }
-            ConditionOperator::LessThan => {
-                compare_as_f64(&var_value, &self.value, |a, b| a < b)
-            }
+            ConditionOperator::GreaterThan => compare_as_f64(&var_value, &self.value, |a, b| a > b),
+            ConditionOperator::LessThan => compare_as_f64(&var_value, &self.value, |a, b| a < b),
             ConditionOperator::GreaterOrEqual => {
                 compare_as_f64(&var_value, &self.value, |a, b| a >= b)
             }
@@ -240,13 +236,9 @@ pub enum DecisionNodeType {
     },
     /// Execute children in order; stop on first failure.
     /// All children must reach a Terminal with a non-error result.
-    Sequence {
-        children: Vec<String>,
-    },
+    Sequence { children: Vec<String> },
     /// Try children in order; return first successful result.
-    Selector {
-        children: Vec<String>,
-    },
+    Selector { children: Vec<String> },
     /// Execute children concurrently, collect results.
     Parallel {
         children: Vec<String>,
@@ -320,11 +312,7 @@ impl DecisionNode {
     }
 
     /// Create a new terminal node.
-    pub fn new_terminal(
-        id: impl Into<String>,
-        result: Value,
-        label: Option<String>,
-    ) -> Self {
+    pub fn new_terminal(id: impl Into<String>, result: Value, label: Option<String>) -> Self {
         Self {
             id: id.into(),
             node_type: DecisionNodeType::Terminal { result, label },
@@ -419,7 +407,10 @@ impl DecisionNode {
     pub fn new_parallel(id: impl Into<String>, children: Vec<String>, require_all: bool) -> Self {
         Self {
             id: id.into(),
-            node_type: DecisionNodeType::Parallel { children, require_all },
+            node_type: DecisionNodeType::Parallel {
+                children,
+                require_all,
+            },
             description: None,
             metadata: HashMap::new(),
         }
@@ -679,7 +670,10 @@ impl DecisionTree {
                     break;
                 }
 
-                DecisionNodeType::Parallel { children, require_all } => {
+                DecisionNodeType::Parallel {
+                    children,
+                    require_all,
+                } => {
                     // Execute all children, collect results
                     let mut results = Vec::new();
                     let mut all_complete = true;
@@ -739,7 +733,10 @@ impl DecisionTree {
             path.nodes_visited.push(current_id.clone());
 
             match &node.node_type {
-                DecisionNodeType::Condition { branches, default_branch } => {
+                DecisionNodeType::Condition {
+                    branches,
+                    default_branch,
+                } => {
                     let mut next = None;
                     for branch in branches {
                         if branch.condition.evaluate(context) {
@@ -755,8 +752,13 @@ impl DecisionTree {
                         None => break,
                     }
                 }
-                DecisionNodeType::Action { action_type, parameters, next_node } => {
-                    path.actions_taken.push((action_type.clone(), parameters.clone()));
+                DecisionNodeType::Action {
+                    action_type,
+                    parameters,
+                    next_node,
+                } => {
+                    path.actions_taken
+                        .push((action_type.clone(), parameters.clone()));
                     match next_node {
                         Some(next_id) => current_id = next_id.clone(),
                         None => break,
@@ -767,12 +769,18 @@ impl DecisionTree {
                     path.complete = true;
                     break;
                 }
-                DecisionNodeType::Function { function_name, arguments, next_node, .. } => {
+                DecisionNodeType::Function {
+                    function_name,
+                    arguments,
+                    next_node,
+                    ..
+                } => {
                     let resolved_args: HashMap<String, Value> = arguments
                         .iter()
                         .map(|(k, v)| (k.clone(), substitute_value(v, context)))
                         .collect();
-                    path.actions_taken.push((function_name.clone(), resolved_args));
+                    path.actions_taken
+                        .push((function_name.clone(), resolved_args));
                     match next_node {
                         Some(next_id) => current_id = next_id.clone(),
                         None => break,
@@ -789,11 +797,7 @@ impl DecisionTree {
     }
 
     /// Evaluate a single step from the given node, returning the next node ID if any.
-    pub fn evaluate_step(
-        &self,
-        node_id: &str,
-        context: &HashMap<String, Value>,
-    ) -> Option<String> {
+    pub fn evaluate_step(&self, node_id: &str, context: &HashMap<String, Value>) -> Option<String> {
         let node = self.nodes.get(node_id)?;
 
         match &node.node_type {
@@ -906,7 +910,11 @@ impl DecisionTree {
                         }
                     }
                 }
-                DecisionNodeType::LlmCondition { branches, default_branch, .. } => {
+                DecisionNodeType::LlmCondition {
+                    branches,
+                    default_branch,
+                    ..
+                } => {
                     for target in branches.values() {
                         referenced_ids.insert(target.clone());
                         if !self.nodes.contains_key(target) {
@@ -931,10 +939,8 @@ impl DecisionTree {
         }
 
         // Find reachable nodes via BFS from root
-        let mut reachable: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
-        let mut queue: std::collections::VecDeque<String> =
-            std::collections::VecDeque::new();
+        let mut reachable: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut queue: std::collections::VecDeque<String> = std::collections::VecDeque::new();
 
         if self.nodes.contains_key(&self.root_node_id) {
             queue.push_back(self.root_node_id.clone());
@@ -989,7 +995,11 @@ impl DecisionTree {
                             }
                         }
                     }
-                    DecisionNodeType::LlmCondition { branches, default_branch, .. } => {
+                    DecisionNodeType::LlmCondition {
+                        branches,
+                        default_branch,
+                        ..
+                    } => {
                         for target in branches.values() {
                             if !reachable.contains(target) {
                                 queue.push_back(target.clone());
@@ -1070,19 +1080,16 @@ impl DecisionTree {
 
             // Node shape depends on type
             let node_def = match &node.node_type {
-                DecisionNodeType::Condition { .. }
-                | DecisionNodeType::LlmCondition { .. } => {
+                DecisionNodeType::Condition { .. } | DecisionNodeType::LlmCondition { .. } => {
                     format!("    {}{{{{{}}}}}", node_id, escape_mermaid(label))
                 }
                 DecisionNodeType::Terminal { .. } => {
                     format!("    {}([{}])", node_id, escape_mermaid(label))
                 }
-                DecisionNodeType::Question { .. }
-                | DecisionNodeType::Prompt { .. } => {
+                DecisionNodeType::Question { .. } | DecisionNodeType::Prompt { .. } => {
                     format!("    {}[/{}\\]", node_id, escape_mermaid(label))
                 }
-                DecisionNodeType::Action { .. }
-                | DecisionNodeType::Function { .. } => {
+                DecisionNodeType::Action { .. } | DecisionNodeType::Function { .. } => {
                     format!("    {}[{}]", node_id, escape_mermaid(label))
                 }
                 DecisionNodeType::Sequence { .. }
@@ -1091,7 +1098,11 @@ impl DecisionTree {
                     format!("    {}[[{}]]", node_id, escape_mermaid(label))
                 }
                 DecisionNodeType::SubTree { .. } => {
-                    format!("    {}[[\"{}\n(subtree)\"]]", node_id, escape_mermaid(label))
+                    format!(
+                        "    {}[[\"{}\n(subtree)\"]]",
+                        node_id,
+                        escape_mermaid(label)
+                    )
                 }
             };
             lines.push(node_def);
@@ -1119,10 +1130,7 @@ impl DecisionTree {
                         ));
                     }
                     if let Some(default) = default_branch {
-                        lines.push(format!(
-                            "    {} -->|default| {}",
-                            node_id, default
-                        ));
+                        lines.push(format!("    {} -->|default| {}", node_id, default));
                     }
                 }
                 DecisionNodeType::Action { next_node, .. }
@@ -1141,7 +1149,11 @@ impl DecisionTree {
                         lines.push(format!("    {} -->|{}| {}", node_id, i + 1, child_id));
                     }
                 }
-                DecisionNodeType::LlmCondition { branches, default_branch, .. } => {
+                DecisionNodeType::LlmCondition {
+                    branches,
+                    default_branch,
+                    ..
+                } => {
                     for (label, target) in branches {
                         lines.push(format!(
                             "    {} -->|{}| {}",
@@ -1181,7 +1193,9 @@ pub fn substitute_template(template: &str, context: &HashMap<String, Value>) -> 
 fn substitute_value(value: &Value, context: &HashMap<String, Value>) -> Value {
     match value {
         Value::String(s) => Value::String(substitute_template(s, context)),
-        Value::Array(arr) => Value::Array(arr.iter().map(|v| substitute_value(v, context)).collect()),
+        Value::Array(arr) => {
+            Value::Array(arr.iter().map(|v| substitute_value(v, context)).collect())
+        }
         Value::Object(obj) => {
             let mut new_obj = serde_json::Map::new();
             for (k, v) in obj {
@@ -1210,13 +1224,30 @@ pub enum TreeEvent {
     /// A node was entered during traversal.
     NodeEntered { node_id: String },
     /// An action node was executed.
-    ActionExecuted { node_id: String, action_type: String, result: Value },
+    ActionExecuted {
+        node_id: String,
+        action_type: String,
+        result: Value,
+    },
     /// A prompt node needs LLM response.
-    PromptNeeded { node_id: String, system_prompt: Option<String>, user_prompt: String, output_variable: String },
+    PromptNeeded {
+        node_id: String,
+        system_prompt: Option<String>,
+        user_prompt: String,
+        output_variable: String,
+    },
     /// An LLM condition node needs LLM response to decide branching.
-    LlmConditionNeeded { node_id: String, prompt: String, options: Vec<String> },
+    LlmConditionNeeded {
+        node_id: String,
+        prompt: String,
+        options: Vec<String>,
+    },
     /// A function was executed.
-    FunctionExecuted { node_id: String, function_name: String, result: Result<Value, String> },
+    FunctionExecuted {
+        node_id: String,
+        function_name: String,
+        result: Result<Value, String>,
+    },
     /// A subtree execution has started.
     SubTreeStarted { node_id: String, tree_id: String },
     /// Tree execution completed with a result.
@@ -1328,7 +1359,8 @@ impl TreeExecutor {
 
             // Cycle detection
             if self.visited.contains(&current_id) {
-                self.state = ExecutorState::Error(format!("Cycle detected at node '{}'", current_id));
+                self.state =
+                    ExecutorState::Error(format!("Cycle detected at node '{}'", current_id));
                 let _ = self.event_sender.send(TreeEvent::TreeError {
                     node_id: current_id,
                     error: "Cycle detected".to_string(),
@@ -1346,10 +1378,15 @@ impl TreeExecutor {
             };
 
             self.path.nodes_visited.push(current_id.clone());
-            let _ = self.event_sender.send(TreeEvent::NodeEntered { node_id: current_id.clone() });
+            let _ = self.event_sender.send(TreeEvent::NodeEntered {
+                node_id: current_id.clone(),
+            });
 
             match &node.node_type {
-                DecisionNodeType::Condition { branches, default_branch } => {
+                DecisionNodeType::Condition {
+                    branches,
+                    default_branch,
+                } => {
                     let mut next = None;
                     for branch in branches {
                         if branch.condition.evaluate(&self.context) {
@@ -1369,12 +1406,18 @@ impl TreeExecutor {
                     }
                 }
 
-                DecisionNodeType::Action { action_type, parameters, next_node } => {
+                DecisionNodeType::Action {
+                    action_type,
+                    parameters,
+                    next_node,
+                } => {
                     let resolved_params: HashMap<String, Value> = parameters
                         .iter()
                         .map(|(k, v)| (k.clone(), substitute_value(v, &self.context)))
                         .collect();
-                    self.path.actions_taken.push((action_type.clone(), resolved_params.clone()));
+                    self.path
+                        .actions_taken
+                        .push((action_type.clone(), resolved_params.clone()));
                     let _ = self.event_sender.send(TreeEvent::ActionExecuted {
                         node_id: current_id,
                         action_type: action_type.clone(),
@@ -1400,13 +1443,21 @@ impl TreeExecutor {
 
                 DecisionNodeType::Question { .. } => {
                     // Question nodes pause execution like prompts
-                    self.state = ExecutorState::WaitingForLlm { node_id: current_id };
+                    self.state = ExecutorState::WaitingForLlm {
+                        node_id: current_id,
+                    };
                     break;
                 }
 
-                DecisionNodeType::Prompt { system_prompt, user_prompt, output_variable, next_node: _ } => {
+                DecisionNodeType::Prompt {
+                    system_prompt,
+                    user_prompt,
+                    output_variable,
+                    next_node: _,
+                } => {
                     let resolved_prompt = substitute_template(user_prompt, &self.context);
-                    let resolved_system = system_prompt.as_ref()
+                    let resolved_system = system_prompt
+                        .as_ref()
                         .map(|s| substitute_template(s, &self.context));
                     let _ = self.event_sender.send(TreeEvent::PromptNeeded {
                         node_id: current_id.clone(),
@@ -1414,11 +1465,17 @@ impl TreeExecutor {
                         user_prompt: resolved_prompt,
                         output_variable: output_variable.clone(),
                     });
-                    self.state = ExecutorState::WaitingForLlm { node_id: current_id };
+                    self.state = ExecutorState::WaitingForLlm {
+                        node_id: current_id,
+                    };
                     break;
                 }
 
-                DecisionNodeType::LlmCondition { prompt, branches, default_branch: _ } => {
+                DecisionNodeType::LlmCondition {
+                    prompt,
+                    branches,
+                    default_branch: _,
+                } => {
                     let resolved_prompt = substitute_template(prompt, &self.context);
                     let options: Vec<String> = branches.keys().cloned().collect();
                     let _ = self.event_sender.send(TreeEvent::LlmConditionNeeded {
@@ -1426,15 +1483,23 @@ impl TreeExecutor {
                         prompt: resolved_prompt,
                         options,
                     });
-                    self.state = ExecutorState::WaitingForLlm { node_id: current_id };
+                    self.state = ExecutorState::WaitingForLlm {
+                        node_id: current_id,
+                    };
                     break;
                 }
 
-                DecisionNodeType::Function { function_name, arguments, output_variable, next_node } => {
+                DecisionNodeType::Function {
+                    function_name,
+                    arguments,
+                    output_variable,
+                    next_node,
+                } => {
                     let resolved_args = Value::Object(
-                        arguments.iter()
+                        arguments
+                            .iter()
                             .map(|(k, v)| (k.clone(), substitute_value(v, &self.context)))
-                            .collect()
+                            .collect(),
                     );
 
                     let result = if let Some(handler) = self.functions.get(function_name) {
@@ -1467,7 +1532,12 @@ impl TreeExecutor {
                     }
                 }
 
-                DecisionNodeType::SubTree { tree_id, input_mapping, output_variable, next_node } => {
+                DecisionNodeType::SubTree {
+                    tree_id,
+                    input_mapping,
+                    output_variable,
+                    next_node,
+                } => {
                     let _ = self.event_sender.send(TreeEvent::SubTreeStarted {
                         node_id: current_id.clone(),
                         tree_id: tree_id.clone(),
@@ -1499,7 +1569,8 @@ impl TreeExecutor {
                             break;
                         }
                     } else {
-                        self.state = ExecutorState::Error(format!("SubTree '{}' not found", tree_id));
+                        self.state =
+                            ExecutorState::Error(format!("SubTree '{}' not found", tree_id));
                         break;
                     }
                 }
@@ -1551,12 +1622,16 @@ impl TreeExecutor {
                         }
                     }
                     if !found {
-                        self.state = ExecutorState::Error("No selector child succeeded".to_string());
+                        self.state =
+                            ExecutorState::Error("No selector child succeeded".to_string());
                     }
                     break;
                 }
 
-                DecisionNodeType::Parallel { children, require_all } => {
+                DecisionNodeType::Parallel {
+                    children,
+                    require_all,
+                } => {
                     let mut results = Vec::new();
                     let mut all_complete = true;
                     for child_id in children {
@@ -1615,11 +1690,20 @@ impl TreeExecutor {
         };
 
         match &node.node_type {
-            DecisionNodeType::Prompt { output_variable, next_node, .. } => {
-                self.context.insert(output_variable.clone(), Value::String(response.to_string()));
+            DecisionNodeType::Prompt {
+                output_variable,
+                next_node,
+                ..
+            } => {
+                self.context
+                    .insert(output_variable.clone(), Value::String(response.to_string()));
                 self.current_node = next_node.clone();
             }
-            DecisionNodeType::LlmCondition { branches, default_branch, .. } => {
+            DecisionNodeType::LlmCondition {
+                branches,
+                default_branch,
+                ..
+            } => {
                 let response_lower = response.to_lowercase().trim().to_string();
                 let mut target = None;
                 for (label, node_id) in branches {
@@ -1633,8 +1717,13 @@ impl TreeExecutor {
                 }
                 self.current_node = target;
             }
-            DecisionNodeType::Question { variable, next_node, .. } => {
-                self.context.insert(variable.clone(), Value::String(response.to_string()));
+            DecisionNodeType::Question {
+                variable,
+                next_node,
+                ..
+            } => {
+                self.context
+                    .insert(variable.clone(), Value::String(response.to_string()));
                 self.current_node = next_node.clone();
             }
             _ => {
@@ -1731,7 +1820,12 @@ impl DecisionTreeBuilder {
         output_variable: impl Into<String>,
         next: Option<String>,
     ) -> Self {
-        self.node(DecisionNode::new_prompt(id, user_prompt, output_variable, next))
+        self.node(DecisionNode::new_prompt(
+            id,
+            user_prompt,
+            output_variable,
+            next,
+        ))
     }
 
     /// Add a function call node.
@@ -1743,7 +1837,13 @@ impl DecisionTreeBuilder {
         output_variable: Option<String>,
         next: Option<String>,
     ) -> Self {
-        self.node(DecisionNode::new_function(id, function_name, arguments, output_variable, next))
+        self.node(DecisionNode::new_function(
+            id,
+            function_name,
+            arguments,
+            output_variable,
+            next,
+        ))
     }
 
     /// Add a sequence node.
@@ -1757,7 +1857,12 @@ impl DecisionTreeBuilder {
     }
 
     /// Add a parallel node.
-    pub fn parallel_node(self, id: impl Into<String>, children: Vec<String>, require_all: bool) -> Self {
+    pub fn parallel_node(
+        self,
+        id: impl Into<String>,
+        children: Vec<String>,
+        require_all: bool,
+    ) -> Self {
         self.node(DecisionNode::new_parallel(id, children, require_all))
     }
 
@@ -1770,7 +1875,13 @@ impl DecisionTreeBuilder {
         output_variable: Option<String>,
         next: Option<String>,
     ) -> Self {
-        self.node(DecisionNode::new_subtree(id, tree_id, input_mapping, output_variable, next))
+        self.node(DecisionNode::new_subtree(
+            id,
+            tree_id,
+            input_mapping,
+            output_variable,
+            next,
+        ))
     }
 
     /// Add an LLM condition node.
@@ -1781,7 +1892,12 @@ impl DecisionTreeBuilder {
         branches: HashMap<String, String>,
         default_branch: Option<String>,
     ) -> Self {
-        self.node(DecisionNode::new_llm_condition(id, prompt, branches, default_branch))
+        self.node(DecisionNode::new_llm_condition(
+            id,
+            prompt,
+            branches,
+            default_branch,
+        ))
     }
 
     /// Build the decision tree.
@@ -1812,20 +1928,15 @@ mod tests {
 
     /// Helper to build a simple age-based decision tree.
     fn build_age_tree() -> DecisionTree {
-        let branches = vec![
-            DecisionBranch {
-                condition: Condition::new(
-                    "age",
-                    ConditionOperator::GreaterOrEqual,
-                    json!(18),
-                ),
-                target_node_id: "adult".to_string(),
-                label: Some(">=18".to_string()),
-            },
-        ];
+        let branches = vec![DecisionBranch {
+            condition: Condition::new("age", ConditionOperator::GreaterOrEqual, json!(18)),
+            target_node_id: "adult".to_string(),
+            label: Some(">=18".to_string()),
+        }];
 
         let root = DecisionNode::new_condition("check_age", branches, Some("minor".to_string()));
-        let adult = DecisionNode::new_terminal("adult", json!("allowed"), Some("Adult".to_string()));
+        let adult =
+            DecisionNode::new_terminal("adult", json!("allowed"), Some("Adult".to_string()));
         let minor = DecisionNode::new_terminal("minor", json!("denied"), Some("Minor".to_string()));
 
         DecisionTreeBuilder::new("age_tree", "Age Check")
@@ -1893,7 +2004,11 @@ mod tests {
 
     #[test]
     fn test_condition_regex_matches() {
-        let cond = Condition::new("email", ConditionOperator::Matches, json!(r"^[\w.]+@[\w.]+$"));
+        let cond = Condition::new(
+            "email",
+            ConditionOperator::Matches,
+            json!(r"^[\w.]+@[\w.]+$"),
+        );
         let mut ctx = HashMap::new();
 
         ctx.insert("email".to_string(), json!("user@example.com"));
@@ -2125,9 +2240,7 @@ mod tests {
     #[test]
     fn test_builder_default_root() {
         let node = DecisionNode::new_terminal("only_node", json!("result"), None);
-        let tree = DecisionTreeBuilder::new("t", "T")
-            .node(node)
-            .build();
+        let tree = DecisionTreeBuilder::new("t", "T").node(node).build();
 
         // Without explicit root, uses first node
         assert_eq!(tree.root_node_id, "only_node");
@@ -2193,25 +2306,14 @@ mod tests {
     #[test]
     fn test_sequence_node() {
         // Sequence of two terminal-reaching subtrees
-        let action1 = DecisionNode::new_action(
-            "step1",
-            "log",
-            HashMap::new(),
-            Some("result1".to_string()),
-        );
+        let action1 =
+            DecisionNode::new_action("step1", "log", HashMap::new(), Some("result1".to_string()));
         let result1 = DecisionNode::new_terminal("result1", json!("first"), None);
-        let action2 = DecisionNode::new_action(
-            "step2",
-            "log2",
-            HashMap::new(),
-            Some("result2".to_string()),
-        );
+        let action2 =
+            DecisionNode::new_action("step2", "log2", HashMap::new(), Some("result2".to_string()));
         let result2 = DecisionNode::new_terminal("result2", json!("second"), None);
 
-        let seq = DecisionNode::new_sequence(
-            "seq",
-            vec!["step1".to_string(), "step2".to_string()],
-        );
+        let seq = DecisionNode::new_sequence("seq", vec!["step1".to_string(), "step2".to_string()]);
 
         let tree = DecisionTreeBuilder::new("seq_tree", "Sequence Test")
             .root("seq")
@@ -2271,11 +2373,7 @@ mod tests {
         let t1 = DecisionNode::new_terminal("t1", json!("a"), None);
         let t2 = DecisionNode::new_terminal("t2", json!("b"), None);
 
-        let par = DecisionNode::new_parallel(
-            "par",
-            vec!["t1".to_string(), "t2".to_string()],
-            true,
-        );
+        let par = DecisionNode::new_parallel("par", vec!["t1".to_string(), "t2".to_string()], true);
 
         let tree = DecisionTreeBuilder::new("par_tree", "Parallel Test")
             .root("par")
@@ -2395,7 +2493,9 @@ mod tests {
         assert_eq!(executor.context().get("result"), Some(&json!(42)));
 
         let events: Vec<_> = rx.try_iter().collect();
-        assert!(events.iter().any(|e| matches!(e, TreeEvent::FunctionExecuted { .. })));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, TreeEvent::FunctionExecuted { .. })));
     }
 
     #[test]
@@ -2421,7 +2521,10 @@ mod tests {
         executor.run();
 
         // Should be waiting for LLM
-        assert!(matches!(executor.state(), ExecutorState::WaitingForLlm { .. }));
+        assert!(matches!(
+            executor.state(),
+            ExecutorState::WaitingForLlm { .. }
+        ));
 
         // Resume with response
         executor.resume_with_response("Alice");
@@ -2457,7 +2560,10 @@ mod tests {
         let mut executor = TreeExecutor::new(tree, tx);
         executor.run();
 
-        assert!(matches!(executor.state(), ExecutorState::WaitingForLlm { .. }));
+        assert!(matches!(
+            executor.state(),
+            ExecutorState::WaitingForLlm { .. }
+        ));
 
         // Resume with "yes" → should go to "good" terminal
         executor.resume_with_response("yes");
@@ -2497,7 +2603,10 @@ mod tests {
         executor.run();
 
         assert_eq!(*executor.state(), ExecutorState::Completed);
-        assert_eq!(executor.context().get("sub_output"), Some(&json!("sub_result")));
+        assert_eq!(
+            executor.context().get("sub_output"),
+            Some(&json!("sub_result"))
+        );
     }
 
     #[test]
@@ -2557,7 +2666,13 @@ mod tests {
     fn test_json_roundtrip_new_types() {
         let tree = DecisionTreeBuilder::new("json_tree", "JSON Test")
             .root("fn")
-            .function_node("fn", "test_fn", HashMap::new(), Some("out".to_string()), Some("end".to_string()))
+            .function_node(
+                "fn",
+                "test_fn",
+                HashMap::new(),
+                Some("out".to_string()),
+                Some("end".to_string()),
+            )
             .terminal_node("end", json!("ok"), None)
             .build();
 
@@ -2567,6 +2682,9 @@ mod tests {
 
         // Verify function node preserved
         let fn_node = restored.get_node("fn").unwrap();
-        assert!(matches!(fn_node.node_type, DecisionNodeType::Function { .. }));
+        assert!(matches!(
+            fn_node.node_type,
+            DecisionNodeType::Function { .. }
+        ));
     }
 }

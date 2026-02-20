@@ -4,10 +4,10 @@
 //! conversations through periodic summarization and semantic recall.
 
 use crate::ChatMessage;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Instant;
-use chrono::{DateTime, Utc};
 
 /// A memory entry in the long-term memory store
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -210,7 +210,8 @@ impl MemoryStore {
         let query_lower = query.to_lowercase();
         let query_words: Vec<&str> = query_lower.split_whitespace().collect();
 
-        let mut results: Vec<(f32, &str)> = self.memories
+        let mut results: Vec<(f32, &str)> = self
+            .memories
             .iter()
             .filter_map(|(id, memory)| {
                 let content_lower = memory.content.to_lowercase();
@@ -242,9 +243,7 @@ impl MemoryStore {
             }
         }
 
-        ids.iter()
-            .filter_map(|id| self.memories.get(id))
-            .collect()
+        ids.iter().filter_map(|id| self.memories.get(id)).collect()
     }
 
     /// Get memories by type
@@ -269,7 +268,9 @@ impl MemoryStore {
         memories.sort_by(|a, b| {
             let a_imp = a.effective_importance(self.config.decay_half_life_days);
             let b_imp = b.effective_importance(self.config.decay_half_life_days);
-            b_imp.partial_cmp(&a_imp).unwrap_or(std::cmp::Ordering::Equal)
+            b_imp
+                .partial_cmp(&a_imp)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
         memories.truncate(count);
         memories
@@ -297,8 +298,8 @@ impl MemoryStore {
 
     /// Create a summary memory from pending messages
     pub fn create_summary(&mut self, summary_text: &str, importance: f32) -> String {
-        let memory = MemoryEntry::new(summary_text, MemoryType::Summary)
-            .with_importance(importance);
+        let memory =
+            MemoryEntry::new(summary_text, MemoryType::Summary).with_importance(importance);
         let id = self.add(memory);
         self.clear_pending();
         id
@@ -310,13 +311,13 @@ impl MemoryStore {
         let half_life = self.config.decay_half_life_days;
 
         // Remove memories below importance threshold
-        self.memories.retain(|_, m| {
-            m.effective_importance(half_life) >= min_importance
-        });
+        self.memories
+            .retain(|_, m| m.effective_importance(half_life) >= min_importance);
 
         // If still over limit, remove least important
         if self.memories.len() > self.config.max_memories {
-            let mut sorted: Vec<_> = self.memories
+            let mut sorted: Vec<_> = self
+                .memories
                 .iter()
                 .map(|(id, m)| (id.clone(), m.effective_importance(half_life)))
                 .collect();
@@ -571,22 +572,19 @@ impl MemoryManager {
 
     /// Store a fact in long-term memory
     pub fn remember_fact(&mut self, fact: &str, importance: f32) -> String {
-        let memory = MemoryEntry::new(fact, MemoryType::Fact)
-            .with_importance(importance);
+        let memory = MemoryEntry::new(fact, MemoryType::Fact).with_importance(importance);
         self.long_term.add(memory)
     }
 
     /// Store a preference
     pub fn remember_preference(&mut self, preference: &str) -> String {
-        let memory = MemoryEntry::new(preference, MemoryType::Preference)
-            .with_importance(0.7);
+        let memory = MemoryEntry::new(preference, MemoryType::Preference).with_importance(0.7);
         self.long_term.add(memory)
     }
 
     /// Store a goal
     pub fn remember_goal(&mut self, goal: &str) -> String {
-        let memory = MemoryEntry::new(goal, MemoryType::Goal)
-            .with_importance(0.8);
+        let memory = MemoryEntry::new(goal, MemoryType::Goal).with_importance(0.8);
         self.long_term.add(memory)
     }
 
@@ -662,9 +660,18 @@ mod tests {
     fn test_memory_search() {
         let mut store = MemoryStore::new(MemoryConfig::default());
 
-        store.add(MemoryEntry::new("User likes Rust programming", MemoryType::Preference));
-        store.add(MemoryEntry::new("User dislikes Python", MemoryType::Preference));
-        store.add(MemoryEntry::new("Goal is to learn systems programming", MemoryType::Goal));
+        store.add(MemoryEntry::new(
+            "User likes Rust programming",
+            MemoryType::Preference,
+        ));
+        store.add(MemoryEntry::new(
+            "User dislikes Python",
+            MemoryType::Preference,
+        ));
+        store.add(MemoryEntry::new(
+            "Goal is to learn systems programming",
+            MemoryType::Goal,
+        ));
 
         let results = store.search("Rust");
         assert!(!results.is_empty());
@@ -673,8 +680,7 @@ mod tests {
 
     #[test]
     fn test_memory_decay() {
-        let memory = MemoryEntry::new("Test", MemoryType::Fact)
-            .with_importance(1.0);
+        let memory = MemoryEntry::new("Test", MemoryType::Fact).with_importance(1.0);
 
         // Fresh memory should have high effective importance
         let effective = memory.effective_importance(30.0);

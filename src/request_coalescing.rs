@@ -12,7 +12,7 @@
 
 use std::collections::HashMap;
 use std::hash::{BuildHasher, Hash, Hasher};
-use std::sync::{Arc, RwLock, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 /// Configuration for request coalescing
@@ -199,12 +199,10 @@ impl RequestCoalescer {
 
         {
             let mut pending = self.pending.write().unwrap_or_else(|e| e.into_inner());
-            let group = pending.entry(key.clone()).or_insert_with(|| {
-                PendingGroup {
-                    requests: Vec::new(),
-                    created_at: Instant::now(),
-                    result_sender: None,
-                }
+            let group = pending.entry(key.clone()).or_insert_with(|| PendingGroup {
+                requests: Vec::new(),
+                created_at: Instant::now(),
+                result_sender: None,
             });
 
             group.requests.push(request);
@@ -259,8 +257,9 @@ impl RequestCoalescer {
 
                     // Update average batch size
                     let total_batches = stats.api_calls as f64;
-                    stats.avg_batch_size =
-                        (stats.avg_batch_size * (total_batches - 1.0) + group.requests.len() as f64) / total_batches;
+                    stats.avg_batch_size = (stats.avg_batch_size * (total_batches - 1.0)
+                        + group.requests.len() as f64)
+                        / total_batches;
                 }
 
                 // Generate response
@@ -338,10 +337,13 @@ impl RequestCoalescer {
 
     fn cache_result(&self, key: &CoalescingKey, response: &str) {
         if let Ok(mut cache) = self.cache.write() {
-            cache.insert(key.clone(), CachedResult {
-                response: response.to_string(),
-                created_at: Instant::now(),
-            });
+            cache.insert(
+                key.clone(),
+                CachedResult {
+                    response: response.to_string(),
+                    created_at: Instant::now(),
+                },
+            );
         }
     }
 }

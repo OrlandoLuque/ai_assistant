@@ -307,7 +307,9 @@ impl TableExtractor {
         for cap in table_re.captures_iter(html) {
             let full_match = cap.get(0).expect("capture group 0");
             let table_content = &cap[1];
-            if let Some(table) = self.parse_html_table(table_content, full_match.start(), full_match.end()) {
+            if let Some(table) =
+                self.parse_html_table(table_content, full_match.start(), full_match.end())
+            {
                 if table.column_count >= self.config.min_columns
                     && table.rows.len() >= self.config.min_rows
                 {
@@ -352,7 +354,8 @@ impl TableExtractor {
                 }
 
                 // Skip if surrounded by ASCII borders (belongs to an ASCII table)
-                let has_border_before = start_line > 0 && self.is_ascii_border_row(lines[start_line - 1]);
+                let has_border_before =
+                    start_line > 0 && self.is_ascii_border_row(lines[start_line - 1]);
                 let has_border_after = i < lines.len() && self.is_ascii_border_row(lines[i]);
 
                 // Need at least 2 lines (header + separator, or header + data)
@@ -384,7 +387,11 @@ impl TableExtractor {
     }
 
     /// Parse a Markdown table starting at a given byte offset.
-    fn parse_markdown_table_at(&self, table_text: &str, start_offset: usize) -> Option<ExtractedTable> {
+    fn parse_markdown_table_at(
+        &self,
+        table_text: &str,
+        start_offset: usize,
+    ) -> Option<ExtractedTable> {
         let lines: Vec<&str> = table_text.lines().collect();
         if lines.len() < 2 {
             return None;
@@ -468,7 +475,9 @@ impl TableExtractor {
                         // If we've seen data rows between borders, check if next line continues the table
                         if last_border_idx >= 2 {
                             // Peek: if next line is neither a border nor a pipe row, stop
-                            if i >= lines.len() || (!self.is_ascii_border_row(lines[i]) && !lines[i].contains('|')) {
+                            if i >= lines.len()
+                                || (!self.is_ascii_border_row(lines[i]) && !lines[i].contains('|'))
+                            {
                                 break;
                             }
                         }
@@ -491,7 +500,9 @@ impl TableExtractor {
                     let table_text = table_lines.join("\n");
                     let end_offset = start_offset + table_text.len();
 
-                    if let Some(table) = self.parse_ascii_table(&table_lines, start_offset, end_offset) {
+                    if let Some(table) =
+                        self.parse_ascii_table(&table_lines, start_offset, end_offset)
+                    {
                         if table.column_count >= self.config.min_columns
                             && table.rows.len() >= self.config.min_rows
                         {
@@ -713,10 +724,8 @@ impl TableExtractor {
             if i == 0 && self.config.first_row_is_header {
                 headers = fields;
             } else {
-                let cells: Vec<TableCell> = fields
-                    .into_iter()
-                    .map(|f| TableCell::new(&f))
-                    .collect();
+                let cells: Vec<TableCell> =
+                    fields.into_iter().map(|f| TableCell::new(&f)).collect();
                 if !cells.is_empty() {
                     rows.push(cells);
                 }
@@ -809,7 +818,10 @@ impl TableExtractor {
         }
 
         // Check for Unicode box-drawing borders
-        let box_chars = ['╔', '╗', '╚', '╝', '═', '╤', '╧', '╟', '╢', '║', '─', '┌', '┐', '└', '┘', '├', '┤', '┬', '┴', '┼', '╠', '╣', '╦', '╩', '╬'];
+        let box_chars = [
+            '╔', '╗', '╚', '╝', '═', '╤', '╧', '╟', '╢', '║', '─', '┌', '┐', '└', '┘', '├', '┤',
+            '┬', '┴', '┼', '╠', '╣', '╦', '╩', '╬',
+        ];
         let first_char = trimmed.chars().next().unwrap_or(' ');
         if box_chars.contains(&first_char) {
             return true;

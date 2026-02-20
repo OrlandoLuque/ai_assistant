@@ -799,10 +799,7 @@ mod tests {
         assert_eq!(policy.max_cost_usd, 5.0);
         assert!(policy.can_use_tool("read_file"));
         assert!(!policy.can_use_tool("delete_file"));
-        assert_eq!(
-            policy.env_vars.get("RUST_LOG"),
-            Some(&"debug".to_string())
-        );
+        assert_eq!(policy.env_vars.get("RUST_LOG"), Some(&"debug".to_string()));
     }
 
     #[test]

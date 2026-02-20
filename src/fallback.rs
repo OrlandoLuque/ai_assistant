@@ -192,7 +192,10 @@ impl FallbackChain {
         self.providers.push(provider);
         self.providers.sort_by(|a, b| b.priority.cmp(&a.priority));
 
-        self.states.write().unwrap_or_else(|e| e.into_inner()).insert(name, ProviderState::default());
+        self.states
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(name, ProviderState::default());
 
         self
     }
@@ -293,10 +296,14 @@ impl FallbackChain {
 
                     // Call fallback callback
                     if let Some(ref callback) = self.on_fallback {
-                        callback(&provider.name, &error_msg,
-                            tried.get(tried.len().saturating_sub(2))
+                        callback(
+                            &provider.name,
+                            &error_msg,
+                            tried
+                                .get(tried.len().saturating_sub(2))
                                 .map(|s| s.as_str())
-                                .unwrap_or("none"));
+                                .unwrap_or("none"),
+                        );
                     }
 
                     if should_open_circuit {
@@ -314,17 +321,29 @@ impl FallbackChain {
 
     /// Get provider state
     pub fn get_state(&self, name: &str) -> Option<ProviderState> {
-        self.states.read().unwrap_or_else(|e| e.into_inner()).get(name).cloned()
+        self.states
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(name)
+            .cloned()
     }
 
     /// Get all provider states
     pub fn all_states(&self) -> HashMap<String, ProviderState> {
-        self.states.read().unwrap_or_else(|e| e.into_inner()).clone()
+        self.states
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Reset provider state
     pub fn reset_provider(&self, name: &str) {
-        if let Some(state) = self.states.write().unwrap_or_else(|e| e.into_inner()).get_mut(name) {
+        if let Some(state) = self
+            .states
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(name)
+        {
             *state = ProviderState::default();
         }
     }
@@ -340,11 +359,14 @@ impl FallbackChain {
     /// Get available providers
     pub fn available_providers(&self) -> Vec<&FallbackProvider> {
         let states = self.states.read().unwrap_or_else(|e| e.into_inner());
-        self.providers.iter()
+        self.providers
+            .iter()
             .filter(|p| {
-                p.enabled && states.get(&p.name)
-                    .map(|s| s.status != ProviderStatus::CircuitOpen)
-                    .unwrap_or(true)
+                p.enabled
+                    && states
+                        .get(&p.name)
+                        .map(|s| s.status != ProviderStatus::CircuitOpen)
+                        .unwrap_or(true)
             })
             .collect()
     }
@@ -428,7 +450,12 @@ impl HealthChecker {
 
             let healthy = checker(provider);
 
-            if let Some(state) = chain.states.write().unwrap_or_else(|e| e.into_inner()).get_mut(&provider.name) {
+            if let Some(state) = chain
+                .states
+                .write()
+                .unwrap_or_else(|e| e.into_inner())
+                .get_mut(&provider.name)
+            {
                 if healthy {
                     state.status = ProviderStatus::Available;
                     state.failure_count = 0;
@@ -454,9 +481,8 @@ mod tests {
             .add_provider(FallbackProvider::new("primary", "http://localhost:1"))
             .add_provider(FallbackProvider::new("secondary", "http://localhost:2"));
 
-        let result = chain.try_with(|p| -> Result<String, &str> {
-            Ok(format!("Response from {}", p.name))
-        });
+        let result =
+            chain.try_with(|p| -> Result<String, &str> { Ok(format!("Response from {}", p.name)) });
 
         assert!(result.is_ok());
         let result = result.unwrap();
@@ -491,9 +517,7 @@ mod tests {
             .add_provider(FallbackProvider::new("p1", "http://localhost:1"))
             .add_provider(FallbackProvider::new("p2", "http://localhost:2"));
 
-        let result = chain.try_with(|_| -> Result<String, &str> {
-            Err("Failed")
-        });
+        let result = chain.try_with(|_| -> Result<String, &str> { Err("Failed") });
 
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -503,16 +527,11 @@ mod tests {
     #[test]
     fn test_circuit_breaker() {
         let chain = FallbackChain::new()
-            .add_provider(
-                FallbackProvider::new("test", "http://localhost:1")
-                    .with_max_failures(2)
-            );
+            .add_provider(FallbackProvider::new("test", "http://localhost:1").with_max_failures(2));
 
         // Fail twice to open circuit
         for _ in 0..2 {
-            let _ = chain.try_with(|_| -> Result<(), &str> {
-                Err("Failed")
-            });
+            let _ = chain.try_with(|_| -> Result<(), &str> { Err("Failed") });
         }
 
         let state = chain.get_state("test").unwrap();
@@ -532,13 +551,11 @@ mod tests {
 
     #[test]
     fn test_reset_provider() {
-        let chain = FallbackChain::new()
-            .add_provider(FallbackProvider::new("test", "http://localhost:1"));
+        let chain =
+            FallbackChain::new().add_provider(FallbackProvider::new("test", "http://localhost:1"));
 
         // Fail to change state
-        let _ = chain.try_with(|_| -> Result<(), &str> {
-            Err("Failed")
-        });
+        let _ = chain.try_with(|_| -> Result<(), &str> { Err("Failed") });
 
         let state = chain.get_state("test").unwrap();
         assert!(state.failure_count > 0);

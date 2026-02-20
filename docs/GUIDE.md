@@ -79,6 +79,10 @@ This guide covers every feature in the `ai_assistant` crate. Each section explai
 71. [Quantization](#71-quantization)
 72. [WASM Support](#72-wasm-support)
 73. [OpenAPI Export](#73-openapi-export)
+74. [Model Capability Registry](#74-model-capability-registry)
+75. [Examples](#75-examples)
+76. [REPL/CLI, Neural Reranking & A/B Testing](#76-replcli-neural-reranking--ab-testing)
+77. [Cost Tracking & Multi-Modal RAG](#77-cost-tracking--multi-modal-rag)
 
 ---
 
@@ -1096,6 +1100,38 @@ let sentiment_schema = SchemaBuilder::sentiment_analysis();
 let entity_schema = SchemaBuilder::entity_extraction();
 ```
 
+### Structured Output Enforcer
+
+For cases where you need guaranteed valid JSON output with retry logic:
+
+```rust
+use ai_assistant::{
+    StructuredOutputEnforcer, StructuredOutputGenerator, EnforcementConfig,
+    JsonSchema, SchemaProperty,
+};
+
+let mut generator = StructuredOutputGenerator::new();
+generator.add_schema(
+    "sentiment",
+    JsonSchema::new("sentiment")
+        .with_property("sentiment", SchemaProperty::string()
+            .with_enum(vec!["positive", "negative", "neutral"]))
+        .with_property("confidence", SchemaProperty::number()),
+);
+
+let enforcer = StructuredOutputEnforcer::new(generator, EnforcementConfig::default());
+
+// Build a constrained prompt that instructs the LLM to output valid JSON
+let prompt = enforcer.build_constrained_prompt("sentiment", "How do you feel about Rust?");
+
+// Validate and extract JSON from a response (handles markdown fences, extra text)
+let result = enforcer.validate_and_extract("sentiment", &llm_response);
+match result {
+    Ok(json) => println!("Valid: {}", json),
+    Err(errors) => println!("Errors: {:?}", errors),
+}
+```
+
 ---
 
 ## 21. Model Profiles
@@ -1433,6 +1469,27 @@ println!("Regression: {}", comparison.has_regression);
 ```
 
 Built-in benchmarks: token estimation, entity extraction, quality analysis, language detection, sentiment, topic detection.
+
+### Criterion Benchmark Suite
+
+The project also includes a Criterion-based benchmark suite for CI-reproducible performance measurement:
+
+```bash
+cargo bench --bench core_benchmarks --features full
+```
+
+Six benchmarks are included:
+
+| Benchmark | Description |
+|-----------|-------------|
+| `intent_classification` | IntentClassifier over 8 representative sentences |
+| `conversation_compaction_100_msgs` | ConversationCompactor over 100 messages |
+| `prompt_shortener` | PromptShortener with a 500-word text |
+| `sentiment_analysis` | SentimentAnalyzer over multiple sentences |
+| `request_signing_hmac_sha256` | HMAC-SHA256 request signature generation |
+| `template_rendering` | TemplateCategory rendering with variable substitution |
+
+Results are written to `target/criterion/` as HTML reports with statistical analysis.
 
 ---
 
@@ -2598,6 +2655,29 @@ let mut manager = DistributedAgentManager::new(node_id);
 let task_id = manager.submit_task("Process dataset", "data-worker", 5);
 ```
 
+### Browser & Distributed Agents on AiAssistant
+
+Both browser tools and distributed agents are wired directly into `AiAssistant` for convenient access:
+
+```rust
+use ai_assistant::AiAssistant;
+
+let mut assistant = AiAssistant::default();
+
+// Browser tools (requires `browser` feature)
+assistant.init_browser();
+if let Some(session) = assistant.browser_session_mut() {
+    session.launch(9222).ok();
+}
+
+// Distributed agents (requires `distributed-agents` feature)
+use ai_assistant::distributed::NodeId;
+assistant.init_distributed_agents(NodeId::random());
+if let Some(manager) = assistant.distributed_agents_mut() {
+    let task_id = manager.submit_task("Analyze logs", "data-worker", 3);
+}
+```
+
 ---
 
 ## 54. Knowledge Graphs
@@ -3451,3 +3531,505 @@ let json = export_to_json(&spec).expect("serialization failed");
 let yaml = export_to_yaml(&spec).expect("serialization failed");
 println!("Exported {} paths", spec.paths.len());
 ```
+
+---
+
+## 74. Model Capability Registry
+
+**What**: A registry of known models with their capabilities (context size, vision, tool use, streaming, etc.), enabling informed model selection at runtime.
+
+```rust
+use ai_assistant::{ModelRegistry, ModelCapabilityInfo, AiProvider};
+
+let registry = ModelRegistry::with_known_models();
+
+// Look up a model's capabilities
+if let Some(model) = registry.get("gpt-4o") {
+    let caps = model.capabilities.as_ref().unwrap();
+    println!("Context: {} tokens", caps.context_window);
+    println!("Vision: {}", caps.supports_vision);
+    println!("Tools: {}", caps.supports_tools);
+    println!("Streaming: {}", caps.supports_streaming);
+}
+
+// Register a custom model
+let mut registry = ModelRegistry::new();
+registry.register(
+    ai_assistant::ModelInfo::new("my-model", AiProvider::Ollama)
+        .with_capabilities(ModelCapabilityInfo {
+            context_window: 8192,
+            supports_vision: false,
+            supports_tools: true,
+            supports_streaming: true,
+            ..Default::default()
+        }),
+);
+```
+
+Pre-registered models include GPT-4o, GPT-4o-mini, Claude 3.5 Sonnet, Claude 3 Haiku, Gemini 1.5 Pro, Llama 3, and Mistral with accurate capability metadata.
+
+---
+
+## 75. Examples
+
+The crate ships 15 runnable examples in the `examples/` directory. Each declares `required-features` in `Cargo.toml` so they are automatically skipped when features are missing.
+
+| Example | Features Required | Description |
+|---------|-------------------|-------------|
+| `basic_chat` | (none) | Basic chat interaction with a provider |
+| `streaming` | (none) | Streaming response demonstration |
+| `quality_tests` | (none) | Quality analysis and scoring |
+| `multi_agent` | `multi-agent` | Multi-agent session orchestration |
+| `vector_search` | `embeddings` | Local embeddings and vector search |
+| `mcp_server` | `tools` | MCP protocol server example |
+| `rag_pipeline` | `rag` | Complete RAG pipeline with chunking, embedding, retrieval |
+| `knowledge_graph` | `rag` | Knowledge graph construction and graph-enhanced RAG |
+| `encrypted_knowledge` | `rag` | KPKG encrypted knowledge package creation and reading |
+| `dag_workflow` | (none) | DAG-based workflow orchestration |
+| `autonomous_agent` | `autonomous` | Autonomous agent with policies and tool execution |
+| `scheduler_agent` | `scheduler` | Cron-scheduled agent with triggers |
+| `p2p_network` | `p2p` | P2P networking with NAT traversal and knowledge sharing |
+| `repl_demo` | (none) | Interactive REPL engine demonstration |
+| `ab_testing_demo` | `eval` | A/B testing framework demonstration |
+
+Run an example:
+
+```bash
+# Basic example (no extra features needed)
+cargo run --example basic_chat
+
+# Example requiring feature flags
+cargo run --example rag_pipeline --features rag
+cargo run --example autonomous_agent --features autonomous
+cargo run --example p2p_network --features p2p
+cargo run --example ab_testing_demo --features eval
+```
+
+---
+
+## 76. REPL/CLI, Neural Reranking & A/B Testing
+
+**Phase 9** adds three modules: an interactive REPL engine, a neural reranking pipeline for RAG results, and a complete A/B testing framework.
+
+### REPL/CLI (`repl.rs` + `bin/ai_assistant_cli.rs`)
+
+**What**: An interactive Read-Eval-Print Loop (REPL) engine that provides a terminal-based interface for conversing with the AI assistant without requiring a graphical UI.
+
+**Why**: Enables headless usage, scripting integration, and rapid testing without external dependencies.
+
+**How**:
+
+```rust
+use ai_assistant::repl::ReplEngine;
+
+// Create and configure the REPL
+let mut repl = ReplEngine::new();
+
+// Built-in commands:
+//   /help    - Show available commands
+//   /clear   - Clear conversation history
+//   /session - Session management (create, list, switch)
+//   /model   - Change or view the current model
+//   /config  - View or modify configuration
+//   /export  - Export conversation
+//   /quit    - Exit the REPL
+```
+
+The `ai_assistant_cli` binary provides a ready-to-run CLI:
+
+```bash
+cargo run --bin ai_assistant_cli --features full
+```
+
+Features: tab completion for commands and arguments, persistent command history, configurable color themes, multi-session management.
+
+### Neural Reranking (`reranker.rs`)
+
+**What**: A pipeline of reranking strategies that improve the precision of RAG retrieval and vector search results by re-scoring and reordering candidates after initial retrieval.
+
+**Why**: Initial vector similarity search returns approximate results. Reranking applies more sophisticated scoring to the top candidates, significantly improving the quality of the final results presented to the user or fed into the LLM context.
+
+**How**:
+
+```rust
+use ai_assistant::reranker::{
+    CrossEncoderReranker, ReciprocalRankFusion,
+    DiversityReranker, CascadeReranker, RerankerPipeline,
+};
+
+// Cross-encoder: score each (query, document) pair
+let cross_encoder = CrossEncoderReranker::new();
+let reranked = cross_encoder.rerank("my query", &candidates, 10);
+
+// Reciprocal Rank Fusion: merge multiple ranked lists
+let rrf = ReciprocalRankFusion::new(60); // k=60
+let fused = rrf.fuse(&[ranking_a, ranking_b]);
+
+// Diversity reranker: Maximum Marginal Relevance (MMR)
+let diversity = DiversityReranker::new(0.7); // lambda=0.7
+let diverse = diversity.rerank("query", &candidates, 10);
+
+// Cascade: chain rerankers with progressively smaller top-k
+let cascade = CascadeReranker::new(vec![
+    (Box::new(cross_encoder), 50),
+    (Box::new(diversity), 10),
+]);
+
+// Full pipeline combining multiple strategies
+let pipeline = RerankerPipeline::new()
+    .add_stage(Box::new(cross_encoder))
+    .add_stage(Box::new(diversity));
+let final_results = pipeline.rerank("query", &candidates, 10);
+```
+
+| Reranker | Strategy | Use Case |
+|----------|----------|----------|
+| `CrossEncoderReranker` | Query-document relevance scoring | Precision-focused retrieval |
+| `ReciprocalRankFusion` | Merge multiple rankings (RRF) | Combining diverse search methods |
+| `DiversityReranker` | Maximum Marginal Relevance (MMR) | Reducing redundancy in results |
+| `CascadeReranker` | Progressive top-k filtering | Efficient multi-stage reranking |
+| `RerankerPipeline` | Configurable stage composition | Production reranking workflows |
+
+### A/B Testing (`ab_testing.rs`)
+
+**What**: A framework for running controlled experiments on prompts, model configurations, and other parameters, with statistical significance testing to determine which variant performs better.
+
+**Why**: Making data-driven decisions about prompt engineering and model selection requires systematic experimentation, not guesswork. This module provides deterministic variant assignment, metric tracking, and significance testing.
+
+**How**:
+
+```rust
+use ai_assistant::ab_testing::{
+    ExperimentManager, Experiment, Variant,
+};
+
+// Create an experiment manager
+let mut manager = ExperimentManager::new();
+
+// Define an experiment with variants
+let experiment = Experiment::new("prompt_style")
+    .add_variant(Variant::new("formal", "You are a formal assistant."))
+    .add_variant(Variant::new("casual", "Hey! I'm your casual helper."));
+
+manager.add_experiment(experiment);
+manager.start_experiment("prompt_style");
+
+// Assign a user to a variant (deterministic by user ID via FNV-1a)
+let variant = manager.assign_variant("prompt_style", "user_123");
+
+// Record metrics
+manager.record_metric("prompt_style", "user_123", 4.5); // e.g., satisfaction score
+
+// Check statistical significance (Welch's t-test for continuous, chi-square for proportions)
+let result = manager.check_significance("prompt_style");
+// result.is_significant, result.p_value, result.winning_variant
+
+// Early stopping: automatically conclude when significance is reached
+manager.enable_early_stopping("prompt_style", 0.05); // alpha=0.05
+```
+
+**AiAssistant integration**:
+
+```rust
+let mut assistant = AiAssistant::default();
+assistant.init_experiment_manager();
+
+// Access the manager
+let manager = assistant.experiment_manager_mut().unwrap();
+manager.add_experiment(experiment);
+```
+
+**Statistical methods**:
+- **Welch's t-test**: For continuous metrics (e.g., response quality scores). Handles unequal variances and sample sizes.
+- **Chi-square test**: For binary/categorical outcomes (e.g., conversion rates).
+- **Early stopping**: Monitors running experiments and auto-completes when statistical significance is reached at the configured alpha level.
+
+---
+
+## 77. Cost Tracking & Multi-Modal RAG
+
+**Phase 10** adds three modules: a pure-Rust BPE token counter, a real-time cost tracking dashboard with middleware, and a multi-modal RAG pipeline for handling text, images, and other modalities.
+
+### BPE Token Counter (`token_counter.rs`)
+
+**What**: Accurate token counting using Byte Pair Encoding (BPE), the same algorithm used by GPT tokenizers, implemented entirely in pure Rust with no external dependencies.
+
+**Why**: Accurate token counting is essential for cost estimation, context window management, and budget allocation. Approximate word-based counting can be off by 20-40%; BPE counting matches the actual tokenizer used by LLM providers.
+
+**How**:
+
+```rust
+use ai_assistant::token_counter::{
+    TokenCounter, BpeTokenCounter, ApproximateCounter,
+    ProviderTokenCounter, TokenBudget, TokenAllocation,
+};
+
+// Pure Rust BPE tokenizer (most accurate)
+let bpe = BpeTokenCounter::default();
+let count = bpe.count_tokens("Hello, world!");
+
+// Fast approximate counter (word-based heuristic)
+let approx = ApproximateCounter::new();
+let count = approx.count_tokens("Hello, world!");
+
+// Provider-specific counter (uses provider's token ratio)
+let provider = ProviderTokenCounter::for_openai();
+let count = provider.count_tokens("Hello, world!");
+
+// Token budget management
+let budget = TokenBudget::new(4096);
+let allocation = budget.allocate("system prompt", "user message", 512);
+// allocation.system_tokens, allocation.user_tokens, allocation.response_tokens
+```
+
+| Counter | Speed | Accuracy | Use Case |
+|---------|-------|----------|----------|
+| `BpeTokenCounter` | Medium | High (matches GPT tokenizers) | Cost estimation, billing |
+| `ApproximateCounter` | Fast | Approximate (~75% accuracy) | Quick checks, UI display |
+| `ProviderTokenCounter` | Fast | Provider-specific ratio | Provider-aware estimation |
+
+### Cost Integration (`cost_integration.rs`)
+
+**What**: A real-time cost tracking dashboard with request-level cost recording, provider-level aggregation, budget alerts, and middleware for intercepting requests before they are sent.
+
+**Why**: Without visibility into costs, LLM usage can spiral unexpectedly. This module provides per-request tracking, daily/monthly budget limits, and a middleware layer that can warn or block requests that would exceed the budget.
+
+**How**:
+
+```rust
+use ai_assistant::cost_integration::{
+    CostDashboard, CostMiddleware, DefaultCostMiddleware,
+    CostAwareConfig, RequestCostEntry, RequestType, CostDecision,
+};
+
+// Create a cost dashboard
+let mut dashboard = CostDashboard::new();
+
+// Record a request cost
+dashboard.record(RequestCostEntry {
+    provider: "openai".to_string(),
+    model: "gpt-4".to_string(),
+    request_type: RequestType::Chat,
+    input_tokens: 500,
+    output_tokens: 200,
+    cost_usd: 0.025,
+    timestamp: chrono::Utc::now(),
+});
+
+// Get cost report
+let report = dashboard.report();
+// report.total_cost, report.by_provider, report.by_model, report.request_count
+
+// Middleware: intercept requests and decide allow/warn/block
+let config = CostAwareConfig::new()
+    .daily_limit_usd(10.0)
+    .monthly_limit_usd(100.0);
+let middleware = DefaultCostMiddleware::new(config);
+
+let decision = middleware.check_request(&dashboard, 0.05);
+match decision {
+    CostDecision::Allow => { /* proceed */ },
+    CostDecision::Warn(msg) => { /* proceed with warning */ },
+    CostDecision::Block(msg) => { /* reject request */ },
+}
+```
+
+**REPL integration**: The `/cost` command displays the current cost dashboard in the REPL.
+
+**AiAssistant integration**:
+
+```rust
+let mut assistant = AiAssistant::default();
+assistant.init_cost_tracking();
+
+// Access the dashboard
+let dashboard = assistant.cost_dashboard().unwrap();
+let report = assistant.cost_report();
+
+// Mutable access for recording
+let dashboard_mut = assistant.cost_dashboard_mut().unwrap();
+```
+
+### Multi-Modal RAG (`multimodal_rag.rs`)
+
+**What**: A retrieval-augmented generation pipeline that handles multiple content modalities (text, images, audio, tables) rather than only plain text. Documents can contain mixed modalities, and retrieval considers all of them.
+
+**Why**: Real-world documents contain images, tables, code blocks, and other non-text content. A text-only RAG pipeline misses important information. Multi-modal RAG indexes and retrieves across all modalities for more complete answers.
+
+**How**:
+
+```rust
+use ai_assistant::multimodal_rag::{
+    ModalityType, MultiModalChunk, MultiModalDocument,
+    MultiModalRetriever, MultiModalPipeline, MultiModalResult,
+    ImageCaptionExtractor,
+};
+
+// Create a multi-modal document with mixed content
+let doc = MultiModalDocument::new("architecture_guide")
+    .add_text_chunk("The system uses a microservices architecture...")
+    .add_image_chunk("diagram.png", "Architecture diagram showing 3 services")
+    .add_table_chunk("| Service | Port |\n|---------|------|\n| API | 8080 |");
+
+// Index into the retriever
+let mut retriever = MultiModalRetriever::new();
+retriever.index_document(doc);
+
+// Search across all modalities
+let results = retriever.search("microservices architecture", 5);
+for result in &results {
+    match result.modality {
+        ModalityType::Text => println!("Text: {}", result.content),
+        ModalityType::Image => println!("Image: {}", result.caption.as_deref().unwrap_or("")),
+        ModalityType::Table => println!("Table: {}", result.content),
+        _ => {}
+    }
+}
+
+// Full pipeline: retrieve + synthesize
+let pipeline = MultiModalPipeline::new(retriever);
+let result: MultiModalResult = pipeline.query("How is the system architected?", 5);
+// result.chunks, result.modalities_used, result.query
+```
+
+| Type | `ModalityType` | What it stores |
+|------|----------------|----------------|
+| Text | `Text` | Plain text content |
+| Image | `Image` | Image path + optional caption |
+| Audio | `Audio` | Audio transcript or description |
+| Table | `Table` | Structured tabular data |
+| Code | `Code` | Code snippets with language info |
+
+### New Examples
+
+| Example | Description |
+|---------|-------------|
+| `cost_tracking` | Demonstrates cost dashboard, middleware, and budget alerts |
+| `multimodal` | Demonstrates multi-modal document indexing and retrieval |
+
+---
+
+## 78. UI Framework Hooks
+
+Frontend frameworks (React, Vue, Svelte) need typed event streams. The `ui_hooks` module provides Rust-side callback infrastructure for this.
+
+### ChatStreamEvent
+
+Eight event variants for real-time UI updates:
+
+```rust
+use ai_assistant::{ChatHooks, ChatStreamEvent, ChatStatus, StreamAdapter, UsageInfo};
+
+// Subscribe to events
+let mut hooks = ChatHooks::new();
+hooks.on_event(Box::new(|event| {
+    println!("{}: {}", event.event_type(), event.to_json());
+}));
+
+// Emit events
+hooks.emit(ChatStreamEvent::StatusChange { status: ChatStatus::Thinking });
+hooks.emit(ChatStreamEvent::MessageStart { id: "msg-1".into(), role: "assistant".into() });
+hooks.emit(ChatStreamEvent::MessageDelta { id: "msg-1".into(), content_chunk: "Hello!".into() });
+hooks.emit(ChatStreamEvent::MessageEnd { id: "msg-1".into(), finish_reason: "stop".into(), usage: Some(UsageInfo::new(100, 50)) });
+```
+
+### StreamAdapter
+
+Convert raw chunks to typed events:
+
+```rust
+let events = StreamAdapter::from_chunks(&["Hello", " world"]);
+// Produces: MessageStart + 2x MessageDelta + MessageEnd
+
+let tool_events = StreamAdapter::from_tool_call("search", "{\"q\":\"rust\"}", "{\"results\":[]}");
+// Produces: ToolCallStart + ToolCallDelta + ToolCallEnd
+```
+
+### ChatSession
+
+Lightweight session state for UI binding:
+
+```rust
+use ai_assistant::ui_hooks::ChatSession;
+
+let mut session = ChatSession::new();
+session.add_message("user", "What is Rust?");
+session.add_message("assistant", "A systems language.");
+session.set_status(ChatStatus::Idle);
+let json = session.to_json(); // Serialize for frontend consumption
+```
+
+| Type | Purpose |
+|------|---------|
+| `ChatStreamEvent` | 8-variant typed event enum |
+| `ChatHooks` | Subscriber-based event broadcasting |
+| `StreamAdapter` | Raw chunks to typed events |
+| `ChatSession` | Session state with JSON export |
+| `ChatStatus` | Idle/Thinking/Streaming/ToolCalling/Error |
+| `UsageInfo` | Token usage + cost tracking |
+
+**Example:** `cargo run --example ui_hooks_demo`
+
+---
+
+## 79. Agent Graph Visualization
+
+Export agent workflows as graphs and record execution traces for analysis.
+
+### Building Graphs
+
+```rust
+use ai_assistant::agent_graph::{AgentGraph, AgentNode, AgentEdge, EdgeType};
+
+let mut graph = AgentGraph::new();
+graph.add_node(AgentNode::new("a1", "Researcher", "research").with_capability("web_search"));
+graph.add_node(AgentNode::new("a2", "Writer", "writing"));
+graph.add_edge(AgentEdge::new("a1", "a2", EdgeType::DataFlow).with_label("results"));
+```
+
+### Export Formats
+
+```rust
+println!("{}", graph.export_dot());     // Graphviz DOT
+println!("{}", graph.export_mermaid()); // Mermaid flowchart
+println!("{}", graph.export_json());    // JSON for D3.js
+```
+
+### From DAG
+
+```rust
+use ai_assistant::{DagDefinition, DagNode, DagEdge};
+
+let mut dag = DagDefinition::new();
+dag.add_node(DagNode::new("fetch", "Fetch", "http"));
+dag.add_node(DagNode::new("process", "Process", "transform"));
+dag.add_edge(DagEdge::new("fetch", "process"));
+
+let graph = AgentGraph::from_dag(&dag);
+```
+
+### Execution Traces
+
+```rust
+use ai_assistant::agent_graph::{ExecutionTrace, TraceStep, StepStatus, GraphAnalytics};
+
+let mut trace = ExecutionTrace::new();
+trace.record(TraceStep::new("a1", "search").with_duration(1200).with_status(StepStatus::Completed));
+trace.record(TraceStep::new("a2", "draft").with_duration(3500).with_status(StepStatus::Completed));
+
+// Analytics
+let bottlenecks = GraphAnalytics::bottlenecks(&trace, 2000);
+let utilization = GraphAnalytics::agent_utilization(&trace);
+let critical = GraphAnalytics::critical_path(&graph, &trace);
+```
+
+| Type | Purpose |
+|------|---------|
+| `AgentGraph` | Node/edge graph with export |
+| `AgentNode` | Agent with capabilities + metadata |
+| `AgentEdge` | Typed edge (DataFlow/Control/Delegation/Communication/Dependency) |
+| `ExecutionTrace` | Step-by-step execution recording |
+| `TraceStep` | Individual execution step with timing |
+| `GraphAnalytics` | Critical path, bottlenecks, utilization |
+
+**Example:** `cargo run --example agent_graph_demo`

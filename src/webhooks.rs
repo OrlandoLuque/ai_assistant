@@ -5,6 +5,8 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+use crate::request_signing::sha256;
+
 /// Webhook event types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WebhookEvent {
@@ -86,7 +88,8 @@ impl WebhookPayload {
             "event": format!("{:?}", self.event),
             "timestamp": self.timestamp,
             "data": self.data,
-        }).to_string()
+        })
+        .to_string()
     }
 }
 
@@ -127,7 +130,9 @@ impl WebhookManager {
     /// Send webhook for an event
     pub fn send(&mut self, payload: WebhookPayload) -> Vec<DeliveryResult> {
         // Clone webhooks to avoid borrow issues
-        let webhooks_to_call: Vec<WebhookConfig> = self.webhooks.iter()
+        let webhooks_to_call: Vec<WebhookConfig> = self
+            .webhooks
+            .iter()
             .filter(|w| w.events.is_empty() || w.events.contains(&payload.event))
             .cloned()
             .collect();
@@ -156,8 +161,8 @@ impl WebhookManager {
             }
 
             if let Some(secret) = &webhook.secret {
-                // Simple signature
-                let sig = format!("{:x}", json.len().wrapping_mul(secret.len()));
+                let sig =
+                    sha256::hex_encode(&sha256::hmac_sha256(secret.as_bytes(), json.as_bytes()));
                 request = request.set("X-Webhook-Signature", &sig);
             }
 
@@ -204,16 +209,41 @@ impl WebhookManager {
 
     pub fn stats(&self) -> WebhookStats {
         let total = self.delivery_history.len();
-        let successful = self.delivery_history.iter().filter(|(_, r)| r.success).count();
+        let successful = self
+            .delivery_history
+            .iter()
+            .filter(|(_, r)| r.success)
+            .count();
 
         WebhookStats {
             total_deliveries: total,
             successful_deliveries: successful,
             failed_deliveries: total - successful,
-            success_rate: if total > 0 { successful as f64 / total as f64 } else { 0.0 },
+            success_rate: if total > 0 {
+                successful as f64 / total as f64
+            } else {
+                0.0
+            },
             registered_webhooks: self.webhooks.len(),
         }
     }
+}
+
+/// Verify a webhook signature using constant-time comparison.
+///
+/// Computes HMAC-SHA256 of `payload` with `secret` and compares against
+/// the provided `signature` (hex-encoded).
+pub fn verify_webhook_signature(payload: &str, secret: &str, signature: &str) -> bool {
+    let expected = sha256::hex_encode(&sha256::hmac_sha256(secret.as_bytes(), payload.as_bytes()));
+    // Constant-time comparison to prevent timing attacks
+    if expected.len() != signature.len() {
+        return false;
+    }
+    let mut result = 0u8;
+    for (x, y) in expected.bytes().zip(signature.bytes()) {
+        result |= x ^ y;
+    }
+    result == 0
 }
 
 impl Default for WebhookManager {
@@ -251,9 +281,95 @@ mod tests {
     fn test_manager() {
         let mut manager = WebhookManager::new();
 
-        manager.register(WebhookConfig::new("http://example.com/webhook")
-            .with_events(vec![WebhookEvent::MessageReceived]));
+        manager.register(
+            WebhookConfig::new("http://example.com/webhook")
+                .with_events(vec![WebhookEvent::MessageReceived]),
+        );
 
         assert_eq!(manager.webhooks.len(), 1);
+    }
+
+    #[test]
+    fn test_webhook_signature_format() {
+        // Build a payload and compute signature the same way deliver() does
+        let payload = WebhookPayload::new(
+            WebhookEvent::MessageReceived,
+            serde_json::json!({"message": "hello"}),
+        );
+        let json = payload.to_json();
+        let secret = "my_webhook_secret";
+        let sig = sha256::hex_encode(&sha256::hmac_sha256(secret.as_bytes(), json.as_bytes()));
+
+        // HMAC-SHA256 hex-encoded is always 64 hex characters
+        assert_eq!(sig.len(), 64, "signature must be 64 hex chars");
+        // Every character must be a valid hex digit
+        assert!(
+            sig.chars().all(|c| c.is_ascii_hexdigit()),
+            "signature must be all hex"
+        );
+        // Must NOT match the old length-based format
+        let old_sig = format!("{:x}", json.len().wrapping_mul(secret.len()));
+        assert_ne!(
+            sig, old_sig,
+            "signature must not match old length-based format"
+        );
+    }
+
+    #[test]
+    fn test_webhook_signature_consistency() {
+        let secret = "consistent_secret";
+        let payload_json = r#"{"event":"MessageReceived","data":{"k":"v"}}"#;
+
+        let sig1 = sha256::hex_encode(&sha256::hmac_sha256(
+            secret.as_bytes(),
+            payload_json.as_bytes(),
+        ));
+        let sig2 = sha256::hex_encode(&sha256::hmac_sha256(
+            secret.as_bytes(),
+            payload_json.as_bytes(),
+        ));
+
+        assert_eq!(
+            sig1, sig2,
+            "same payload + secret must produce identical signatures"
+        );
+
+        // Different secret produces different signature
+        let sig3 = sha256::hex_encode(&sha256::hmac_sha256(
+            b"other_secret",
+            payload_json.as_bytes(),
+        ));
+        assert_ne!(
+            sig1, sig3,
+            "different secrets must produce different signatures"
+        );
+    }
+
+    #[test]
+    fn test_verify_webhook_signature() {
+        let secret = "verify_test_secret";
+        let payload = r#"{"event":"SessionStarted","timestamp":1234567890}"#;
+
+        // Compute the expected signature
+        let sig = sha256::hex_encode(&sha256::hmac_sha256(secret.as_bytes(), payload.as_bytes()));
+
+        // Valid verification
+        assert!(verify_webhook_signature(payload, secret, &sig));
+
+        // Wrong signature
+        assert!(!verify_webhook_signature(
+            payload,
+            secret,
+            "0000000000000000000000000000000000000000000000000000000000000000"
+        ));
+
+        // Wrong secret
+        assert!(!verify_webhook_signature(payload, "wrong_secret", &sig));
+
+        // Wrong payload
+        assert!(!verify_webhook_signature("tampered payload", secret, &sig));
+
+        // Wrong length signature
+        assert!(!verify_webhook_signature(payload, secret, "tooshort"));
     }
 }

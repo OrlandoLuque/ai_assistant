@@ -29,7 +29,7 @@
 //! ```
 
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex, Condvar};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 /// Configuration for streaming behavior
@@ -52,9 +52,9 @@ pub struct StreamingConfig {
 impl Default for StreamingConfig {
     fn default() -> Self {
         Self {
-            buffer_size: 64 * 1024,      // 64KB
-            high_water_mark: 48 * 1024,  // 75%
-            low_water_mark: 16 * 1024,   // 25%
+            buffer_size: 64 * 1024,     // 64KB
+            high_water_mark: 48 * 1024, // 75%
+            low_water_mark: 16 * 1024,  // 25%
             backpressure_timeout: Duration::from_secs(30),
             chunk_size: 4096,
             auto_chunk: true,
@@ -131,7 +131,11 @@ impl StreamBuffer {
                 return Err(StreamError::Timeout);
             }
 
-            let result = self.inner.not_full.wait_timeout(data, remaining).unwrap_or_else(|e| e.into_inner());
+            let result = self
+                .inner
+                .not_full
+                .wait_timeout(data, remaining)
+                .unwrap_or_else(|e| e.into_inner());
             data = result.0;
 
             if result.1.timed_out() {
@@ -193,7 +197,11 @@ impl StreamBuffer {
                 return None;
             }
 
-            let result = self.inner.not_empty.wait_timeout(data, remaining).unwrap_or_else(|e| e.into_inner());
+            let result = self
+                .inner
+                .not_empty
+                .wait_timeout(data, remaining)
+                .unwrap_or_else(|e| e.into_inner());
             data = result.0;
 
             if result.1.timed_out() {
@@ -238,12 +246,20 @@ impl StreamBuffer {
 
     /// Check if buffer is closed
     pub fn is_closed(&self) -> bool {
-        self.inner.data.lock().unwrap_or_else(|e| e.into_inner()).closed
+        self.inner
+            .data
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .closed
     }
 
     /// Get current buffer size
     pub fn len(&self) -> usize {
-        self.inner.data.lock().unwrap_or_else(|e| e.into_inner()).current_size
+        self.inner
+            .data
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .current_size
     }
 
     /// Check if buffer is empty
@@ -259,7 +275,12 @@ impl StreamBuffer {
 
     /// Get streaming metrics
     pub fn metrics(&self) -> StreamMetrics {
-        self.inner.data.lock().unwrap_or_else(|e| e.into_inner()).metrics.clone()
+        self.inner
+            .data
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .metrics
+            .clone()
     }
 
     /// Get fill percentage

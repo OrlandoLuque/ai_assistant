@@ -185,9 +185,7 @@ impl Ensemble {
 
             let response = match result {
                 Ok(text) => {
-                    let confidence = self.scorer.as_ref()
-                        .map(|s| s(&text))
-                        .unwrap_or(0.8);
+                    let confidence = self.scorer.as_ref().map(|s| s(&text)).unwrap_or(0.8);
 
                     ModelResponse {
                         model_id: model.id.clone(),
@@ -248,17 +246,21 @@ impl Ensemble {
 
         for resp in &successful {
             let normalized = resp.response.trim().to_lowercase();
-            let entry = response_counts.entry(normalized).or_insert((0, resp.model_id.clone()));
+            let entry = response_counts
+                .entry(normalized)
+                .or_insert((0, resp.model_id.clone()));
             entry.0 += 1;
         }
 
         // Find most common
-        let winner = response_counts.into_iter()
+        let winner = response_counts
+            .into_iter()
             .max_by_key(|(_, (count, _))| *count);
 
         match winner {
             Some((_, (_, model_id))) => {
-                let winning_resp = successful.iter()
+                let winning_resp = successful
+                    .iter()
                     .find(|r| r.model_id == model_id)
                     .map(|r| r.response.clone())
                     .unwrap_or_default();
@@ -280,23 +282,32 @@ impl Ensemble {
         let mut response_weights: HashMap<String, (f64, String)> = HashMap::new();
 
         for resp in &successful {
-            let weight = self.config.models.iter()
+            let weight = self
+                .config
+                .models
+                .iter()
                 .find(|m| m.id == resp.model_id)
                 .map(|m| m.weight)
                 .unwrap_or(1.0);
 
             let normalized = resp.response.trim().to_lowercase();
-            let entry = response_weights.entry(normalized).or_insert((0.0, resp.model_id.clone()));
+            let entry = response_weights
+                .entry(normalized)
+                .or_insert((0.0, resp.model_id.clone()));
             entry.0 += weight;
         }
 
         // Find highest weighted
-        let winner = response_weights.into_iter()
-            .max_by(|(_, (w1, _)), (_, (w2, _))| w1.partial_cmp(w2).unwrap_or(std::cmp::Ordering::Equal));
+        let winner = response_weights
+            .into_iter()
+            .max_by(|(_, (w1, _)), (_, (w2, _))| {
+                w1.partial_cmp(w2).unwrap_or(std::cmp::Ordering::Equal)
+            });
 
         match winner {
             Some((_, (_, model_id))) => {
-                let winning_resp = successful.iter()
+                let winning_resp = successful
+                    .iter()
                     .find(|r| r.model_id == model_id)
                     .map(|r| r.response.clone())
                     .unwrap_or_default();
@@ -308,9 +319,11 @@ impl Ensemble {
 
     /// Best of N by confidence
     fn best_of_n(&self, responses: &[ModelResponse]) -> (String, Option<String>) {
-        let best = responses.iter()
-            .filter(|r| r.success)
-            .max_by(|a, b| a.confidence.partial_cmp(&b.confidence).unwrap_or(std::cmp::Ordering::Equal));
+        let best = responses.iter().filter(|r| r.success).max_by(|a, b| {
+            a.confidence
+                .partial_cmp(&b.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         match best {
             Some(r) => (r.response.clone(), Some(r.model_id.clone())),
@@ -344,7 +357,10 @@ impl Ensemble {
         for model in &self.config.models {
             for spec in &model.specializations {
                 if lower.contains(&spec.to_lowercase()) {
-                    if let Some(resp) = responses.iter().find(|r| r.model_id == model.id && r.success) {
+                    if let Some(resp) = responses
+                        .iter()
+                        .find(|r| r.model_id == model.id && r.success)
+                    {
                         return (resp.response.clone(), Some(model.id.clone()));
                     }
                 }
@@ -369,7 +385,8 @@ impl Ensemble {
 
         for i in 0..successful.len() {
             for j in (i + 1)..successful.len() {
-                similarity_sum += self.text_similarity(&successful[i].response, &successful[j].response);
+                similarity_sum +=
+                    self.text_similarity(&successful[i].response, &successful[j].response);
                 pairs += 1;
             }
         }
@@ -412,7 +429,9 @@ pub struct EnsembleConfigBuilder {
 
 impl EnsembleConfigBuilder {
     pub fn new() -> Self {
-        Self { config: EnsembleConfig::default() }
+        Self {
+            config: EnsembleConfig::default(),
+        }
     }
 
     pub fn strategy(mut self, strategy: EnsembleStrategy) -> Self {

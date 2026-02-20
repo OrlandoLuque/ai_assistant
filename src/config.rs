@@ -23,6 +23,10 @@ pub enum AiProvider {
     OpenAI,
     /// Anthropic cloud API (requires API key)
     Anthropic,
+    /// Google Gemini API (requires API key)
+    Gemini,
+    /// AWS Bedrock (requires AWS credentials)
+    Bedrock { region: String },
 }
 
 impl Default for AiProvider {
@@ -43,6 +47,8 @@ impl AiProvider {
             AiProvider::OpenAICompatible { .. } => "OpenAI Compatible",
             AiProvider::OpenAI => "OpenAI",
             AiProvider::Anthropic => "Anthropic",
+            AiProvider::Gemini => "Google Gemini",
+            AiProvider::Bedrock { .. } => "AWS Bedrock",
         }
     }
 
@@ -57,6 +63,8 @@ impl AiProvider {
             AiProvider::OpenAICompatible { .. } => "🔌",
             AiProvider::OpenAI => "🧠",
             AiProvider::Anthropic => "🏛️",
+            AiProvider::Gemini => "💎",
+            AiProvider::Bedrock { .. } => "☁️",
         }
     }
 
@@ -74,7 +82,13 @@ impl AiProvider {
 
     /// Check if this is a cloud provider requiring an API key.
     pub fn is_cloud(&self) -> bool {
-        matches!(self, AiProvider::OpenAI | AiProvider::Anthropic)
+        matches!(
+            self,
+            AiProvider::OpenAI
+                | AiProvider::Anthropic
+                | AiProvider::Gemini
+                | AiProvider::Bedrock { .. }
+        )
     }
 }
 
@@ -147,6 +161,10 @@ impl AiConfig {
             AiProvider::OpenAICompatible { base_url } => base_url.clone(),
             AiProvider::OpenAI => "https://api.openai.com".to_string(),
             AiProvider::Anthropic => "https://api.anthropic.com".to_string(),
+            AiProvider::Gemini => "https://generativelanguage.googleapis.com".to_string(),
+            AiProvider::Bedrock { ref region } => {
+                format!("https://bedrock-runtime.{}.amazonaws.com", region)
+            }
         }
     }
 
@@ -165,6 +183,14 @@ impl AiConfig {
         match &self.provider {
             AiProvider::OpenAI => std::env::var("OPENAI_API_KEY").ok(),
             AiProvider::Anthropic => std::env::var("ANTHROPIC_API_KEY").ok(),
+            AiProvider::Gemini => std::env::var("GOOGLE_API_KEY")
+                .or_else(|_| std::env::var("GEMINI_API_KEY"))
+                .ok(),
+            AiProvider::Bedrock { .. } => {
+                // AWS Bedrock uses AWS credentials (access key + secret), not a single API key.
+                // Return access key if available.
+                std::env::var("AWS_ACCESS_KEY_ID").ok()
+            }
             _ => None,
         }
     }
@@ -184,10 +210,15 @@ mod tests {
     fn test_ai_provider_display_names() {
         assert_eq!(AiProvider::Ollama.display_name(), "Ollama");
         assert_eq!(AiProvider::LMStudio.display_name(), "LM Studio");
-        assert_eq!(AiProvider::TextGenWebUI.display_name(), "text-generation-webui");
+        assert_eq!(
+            AiProvider::TextGenWebUI.display_name(),
+            "text-generation-webui"
+        );
         assert_eq!(AiProvider::KoboldCpp.display_name(), "Kobold.cpp");
         assert_eq!(AiProvider::LocalAI.display_name(), "LocalAI");
-        let custom = AiProvider::OpenAICompatible { base_url: "http://custom".to_string() };
+        let custom = AiProvider::OpenAICompatible {
+            base_url: "http://custom".to_string(),
+        };
         assert_eq!(custom.display_name(), "OpenAI Compatible");
     }
 
@@ -198,7 +229,9 @@ mod tests {
         assert!(AiProvider::TextGenWebUI.is_openai_compatible());
         assert!(!AiProvider::KoboldCpp.is_openai_compatible());
         assert!(AiProvider::LocalAI.is_openai_compatible());
-        let custom = AiProvider::OpenAICompatible { base_url: "http://x".to_string() };
+        let custom = AiProvider::OpenAICompatible {
+            base_url: "http://x".to_string(),
+        };
         assert!(custom.is_openai_compatible());
     }
 
@@ -230,7 +263,9 @@ mod tests {
         assert_eq!(config2.get_base_url(), "http://localhost:1234");
 
         let mut config3 = AiConfig::default();
-        config3.provider = AiProvider::OpenAICompatible { base_url: "http://my-api:9000".to_string() };
+        config3.provider = AiProvider::OpenAICompatible {
+            base_url: "http://my-api:9000".to_string(),
+        };
         assert_eq!(config3.get_base_url(), "http://my-api:9000");
     }
 }

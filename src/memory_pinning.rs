@@ -144,8 +144,10 @@ impl PinManager {
 
         // Auto-pin referenced items
         if !self.is_pinned(to_id) {
-            self.pin(PinnedItem::new(to_id, PinType::Reference)
-                .with_reason(&format!("Referenced by {}", from_id)));
+            self.pin(
+                PinnedItem::new(to_id, PinType::Reference)
+                    .with_reason(&format!("Referenced by {}", from_id)),
+            );
         }
     }
 
@@ -168,7 +170,8 @@ impl PinManager {
 
     /// Get all pinned IDs
     pub fn pinned_ids(&self) -> Vec<&str> {
-        self.pins.iter()
+        self.pins
+            .iter()
             .filter(|(_, p)| !p.is_expired())
             .map(|(id, _)| id.as_str())
             .collect()
@@ -176,14 +179,17 @@ impl PinManager {
 
     /// Get pins by type
     pub fn pins_by_type(&self, pin_type: PinType) -> Vec<&PinnedItem> {
-        self.pins.values()
+        self.pins
+            .values()
             .filter(|p| p.pin_type == pin_type && !p.is_expired())
             .collect()
     }
 
     /// Cleanup expired pins
     pub fn cleanup_expired(&mut self) {
-        let expired: Vec<_> = self.pins.iter()
+        let expired: Vec<_> = self
+            .pins
+            .iter()
             .filter(|(_, p)| p.is_expired())
             .map(|(id, _)| id.clone())
             .collect();
@@ -195,7 +201,9 @@ impl PinManager {
 
     fn evict_lowest_priority(&mut self) {
         // Find lowest priority non-user pin
-        let to_remove = self.pins.iter()
+        let to_remove = self
+            .pins
+            .iter()
             .filter(|(_, p)| p.pin_type != PinType::User)
             .min_by_key(|(_, p)| p.priority)
             .map(|(id, _)| id.clone());
@@ -265,11 +273,7 @@ impl AutoPinner {
                 "critical".to_string(),
             ],
             importance_threshold: 0.8,
-            entity_types: vec![
-                "name".to_string(),
-                "date".to_string(),
-                "number".to_string(),
-            ],
+            entity_types: vec!["name".to_string(), "date".to_string(), "number".to_string()],
         }
     }
 
@@ -347,8 +351,8 @@ mod tests {
     fn test_temporary_pin() {
         let mut manager = PinManager::new();
 
-        let pin = PinnedItem::new("msg1", PinType::Temporary)
-            .with_expiry(Duration::from_millis(10));
+        let pin =
+            PinnedItem::new("msg1", PinType::Temporary).with_expiry(Duration::from_millis(10));
 
         manager.pin(pin);
         assert!(manager.is_pinned("msg1"));

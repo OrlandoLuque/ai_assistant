@@ -207,7 +207,9 @@ impl AgentOrchestrator {
     pub fn assign_task(&mut self, task_id: &str, agent_id: &str) -> Result<(), OrchestrationError> {
         // First check if agent exists and is idle
         {
-            let agent = self.agents.get(agent_id)
+            let agent = self
+                .agents
+                .get(agent_id)
                 .ok_or(OrchestrationError::AgentNotFound)?;
             if agent.status != AgentStatus::Idle {
                 return Err(OrchestrationError::AgentBusy);
@@ -216,7 +218,9 @@ impl AgentOrchestrator {
 
         // Check if task exists and get dependencies
         let dependencies = {
-            let task = self.tasks.get(task_id)
+            let task = self
+                .tasks
+                .get(task_id)
                 .ok_or(OrchestrationError::TaskNotFound)?;
             task.dependencies.clone()
         };
@@ -246,10 +250,14 @@ impl AgentOrchestrator {
     }
 
     pub fn complete_task(&mut self, task_id: &str, result: &str) -> Result<(), OrchestrationError> {
-        let task = self.tasks.get_mut(task_id)
+        let task = self
+            .tasks
+            .get_mut(task_id)
             .ok_or(OrchestrationError::TaskNotFound)?;
 
-        let agent_id = task.assigned_to.clone()
+        let agent_id = task
+            .assigned_to
+            .clone()
             .ok_or(OrchestrationError::TaskNotAssigned)?;
 
         task.status = TaskStatus::Completed;
@@ -264,7 +272,9 @@ impl AgentOrchestrator {
     }
 
     pub fn fail_task(&mut self, task_id: &str, error: &str) -> Result<(), OrchestrationError> {
-        let task = self.tasks.get_mut(task_id)
+        let task = self
+            .tasks
+            .get_mut(task_id)
             .ok_or(OrchestrationError::TaskNotFound)?;
 
         let agent_id = task.assigned_to.clone();
@@ -287,27 +297,30 @@ impl AgentOrchestrator {
     }
 
     pub fn get_messages_for(&self, agent_id: &str) -> Vec<&AgentMessage> {
-        self.messages.iter()
-            .filter(|m| m.to == agent_id)
-            .collect()
+        self.messages.iter().filter(|m| m.to == agent_id).collect()
     }
 
     pub fn auto_assign_tasks(&mut self) -> Vec<(String, String)> {
         let mut assignments = Vec::new();
 
         // Get pending tasks sorted by priority
-        let mut pending_tasks: Vec<_> = self.tasks.iter()
+        let mut pending_tasks: Vec<_> = self
+            .tasks
+            .iter()
             .filter(|(_, t)| t.status == TaskStatus::Pending && t.assigned_to.is_none())
             .map(|(id, t)| (id.clone(), t.priority))
             .collect();
 
         pending_tasks.sort_by(|a, b| b.1.cmp(&a.1));
 
-        // Get idle agents
-        let idle_agents: Vec<_> = self.agents.iter()
+        // Get idle agents (sorted for deterministic assignment)
+        let mut idle_agents: Vec<_> = self
+            .agents
+            .iter()
             .filter(|(_, a)| a.status == AgentStatus::Idle)
             .map(|(id, _)| id.clone())
             .collect();
+        idle_agents.sort();
 
         match self.strategy {
             OrchestrationStrategy::RoundRobin => {
@@ -323,21 +336,32 @@ impl AgentOrchestrator {
                 for (task_id, _) in pending_tasks {
                     if let Some(task) = self.tasks.get(&task_id) {
                         // Find best agent based on capabilities
-                        let best_agent = idle_agents.iter()
+                        let best_agent = idle_agents
+                            .iter()
                             .filter(|id| {
-                                self.agents.get(*id)
+                                self.agents
+                                    .get(*id)
                                     .map(|a| a.status == AgentStatus::Idle)
                                     .unwrap_or(false)
                             })
-                            .max_by_key(|id| {
-                                self.agents.get(*id)
-                                    .map(|a| {
-                                        let desc_lower = task.description.to_lowercase();
-                                        a.capabilities.iter()
-                                            .filter(|c| desc_lower.contains(&c.to_lowercase()))
-                                            .count()
-                                    })
-                                    .unwrap_or(0)
+                            .max_by(|a_id, b_id| {
+                                let score = |id: &String| {
+                                    self.agents
+                                        .get(id)
+                                        .map(|a| {
+                                            let desc_lower = task.description.to_lowercase();
+                                            a.capabilities
+                                                .iter()
+                                                .filter(|c| {
+                                                    desc_lower.contains(&c.to_lowercase())
+                                                })
+                                                .count()
+                                        })
+                                        .unwrap_or(0)
+                                };
+                                let sa = score(a_id);
+                                let sb = score(b_id);
+                                sa.cmp(&sb).then_with(|| b_id.cmp(a_id))
                             });
 
                         if let Some(agent_id) = best_agent {
@@ -366,12 +390,32 @@ impl AgentOrchestrator {
 
     pub fn get_status(&self) -> OrchestrationStatus {
         let total_tasks = self.tasks.len();
-        let completed = self.tasks.values().filter(|t| t.status == TaskStatus::Completed).count();
-        let in_progress = self.tasks.values().filter(|t| t.status == TaskStatus::InProgress).count();
-        let failed = self.tasks.values().filter(|t| t.status == TaskStatus::Failed).count();
+        let completed = self
+            .tasks
+            .values()
+            .filter(|t| t.status == TaskStatus::Completed)
+            .count();
+        let in_progress = self
+            .tasks
+            .values()
+            .filter(|t| t.status == TaskStatus::InProgress)
+            .count();
+        let failed = self
+            .tasks
+            .values()
+            .filter(|t| t.status == TaskStatus::Failed)
+            .count();
 
-        let idle_agents = self.agents.values().filter(|a| a.status == AgentStatus::Idle).count();
-        let working_agents = self.agents.values().filter(|a| a.status == AgentStatus::Working).count();
+        let idle_agents = self
+            .agents
+            .values()
+            .filter(|a| a.status == AgentStatus::Idle)
+            .count();
+        let working_agents = self
+            .agents
+            .values()
+            .filter(|a| a.status == AgentStatus::Working)
+            .count();
 
         OrchestrationStatus {
             total_agents: self.agents.len(),
@@ -391,6 +435,49 @@ impl AgentOrchestrator {
 
     pub fn get_task(&self, task_id: &str) -> Option<&AgentTask> {
         self.tasks.get(task_id)
+    }
+
+    pub fn export_json(&self) -> serde_json::Value {
+        let status = self.get_status();
+        serde_json::json!({
+            "strategy": format!("{:?}", self.strategy),
+            "coordinator_id": self.coordinator_id,
+            "agents": self.agents.values().map(|a| serde_json::json!({
+                "id": a.id,
+                "name": a.name,
+                "role": format!("{:?}", a.role),
+                "capabilities": a.capabilities,
+                "status": format!("{:?}", a.status),
+                "current_task": a.current_task,
+                "model": a.model,
+            })).collect::<Vec<_>>(),
+            "tasks": self.tasks.values().map(|t| serde_json::json!({
+                "id": t.id,
+                "description": t.description,
+                "assigned_to": t.assigned_to,
+                "dependencies": t.dependencies,
+                "status": format!("{:?}", t.status),
+                "result": t.result,
+                "priority": t.priority,
+            })).collect::<Vec<_>>(),
+            "messages": self.messages.iter().map(|m| serde_json::json!({
+                "id": m.id,
+                "from": m.from,
+                "to": m.to,
+                "content": m.content,
+                "message_type": format!("{:?}", m.message_type),
+            })).collect::<Vec<_>>(),
+            "status": serde_json::json!({
+                "total_agents": status.total_agents,
+                "idle_agents": status.idle_agents,
+                "working_agents": status.working_agents,
+                "total_tasks": status.total_tasks,
+                "pending_tasks": status.pending_tasks,
+                "in_progress_tasks": status.in_progress_tasks,
+                "completed_tasks": status.completed_tasks,
+                "failed_tasks": status.failed_tasks,
+            }),
+        })
     }
 }
 
@@ -449,13 +536,13 @@ use std::sync::{Arc, RwLock};
 #[cfg(feature = "autonomous")]
 use crate::autonomous_loop::AutonomousAgent;
 #[cfg(feature = "autonomous")]
-use crate::task_board::{TaskBoard, BoardCommand};
+use crate::interactive_commands::{CommandProcessor, CommandResult, UserIntent};
+#[cfg(feature = "autonomous")]
+use crate::task_board::{BoardCommand, TaskBoard};
 #[cfg(feature = "autonomous")]
 use crate::task_planning::StepPriority;
 #[cfg(feature = "autonomous")]
-use crate::user_interaction::{InteractionManager, AutoApproveHandler, UserInteractionHandler};
-#[cfg(feature = "autonomous")]
-use crate::interactive_commands::{CommandProcessor, CommandResult, UserIntent};
+use crate::user_interaction::{AutoApproveHandler, InteractionManager, UserInteractionHandler};
 
 /// A live multi-agent execution session combining:
 /// - An `AgentOrchestrator` for task/agent management
@@ -544,7 +631,11 @@ impl MultiAgentSession {
     }
 
     /// Run a specific agent on its assigned task. Returns the agent's result.
-    pub fn run_agent(&mut self, agent_name: &str, task_description: &str) -> Result<String, String> {
+    pub fn run_agent(
+        &mut self,
+        agent_name: &str,
+        task_description: &str,
+    ) -> Result<String, String> {
         // Update board progress
         if let Ok(mut board) = self.task_board.write() {
             let _ = board.execute_command(BoardCommand::AddTask {
@@ -554,7 +645,9 @@ impl MultiAgentSession {
             });
         }
 
-        let agent = self.agents.get_mut(agent_name)
+        let agent = self
+            .agents
+            .get_mut(agent_name)
             .ok_or_else(|| format!("Agent '{}' not found", agent_name))?;
 
         let result = agent.run(task_description)?;
@@ -620,13 +713,18 @@ impl MultiAgentSession {
 
     /// Get a snapshot of the task board display.
     pub fn board_display(&self) -> String {
-        self.task_board.read().unwrap_or_else(|e| e.into_inner()).to_display()
+        self.task_board
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .to_display()
     }
 
     /// Get session summary.
     pub fn summary(&self) -> SessionSummary {
         let status = self.orchestrator.get_status();
-        let agent_states: Vec<(String, String)> = self.agents.iter()
+        let agent_states: Vec<(String, String)> = self
+            .agents
+            .iter()
             .map(|(name, agent)| (name.clone(), format!("{:?}", agent.state())))
             .collect();
         let board = self.task_board.read().unwrap_or_else(|e| e.into_inner());
@@ -668,6 +766,463 @@ fn format_orchestration_status(status: &OrchestrationStatus) -> String {
     )
 }
 
+// =============================================================================
+// Multi-Agent Collaboration Types (MessageBus, SharedContext, TaskDispatcher)
+// =============================================================================
+
+/// A message on the collaboration bus.
+#[derive(Debug, Clone)]
+pub struct BusMessage {
+    pub id: String,
+    pub topic: String,
+    pub sender: String,
+    pub payload: serde_json::Value,
+    pub timestamp_ms: u64,
+}
+
+/// A pub/sub message bus for inter-agent communication.
+///
+/// Agents subscribe to topics and can publish messages. The bus retains a
+/// configurable history of messages and supports polling by subscriber.
+pub struct MessageBus {
+    subscriptions: HashMap<String, Vec<String>>,
+    messages: Vec<BusMessage>,
+    history_limit: usize,
+    next_id: u64,
+}
+
+impl MessageBus {
+    /// Create a new message bus with the given history limit.
+    pub fn new(history_limit: usize) -> Self {
+        Self {
+            subscriptions: HashMap::new(),
+            messages: Vec::new(),
+            history_limit,
+            next_id: 0,
+        }
+    }
+
+    /// Subscribe an agent to a topic. Avoids duplicates.
+    pub fn subscribe(&mut self, agent_id: &str, topic: &str) {
+        let subs = self.subscriptions.entry(topic.to_string()).or_default();
+        if !subs.contains(&agent_id.to_string()) {
+            subs.push(agent_id.to_string());
+        }
+    }
+
+    /// Unsubscribe an agent from a topic.
+    pub fn unsubscribe(&mut self, agent_id: &str, topic: &str) {
+        if let Some(subs) = self.subscriptions.get_mut(topic) {
+            subs.retain(|id| id != agent_id);
+        }
+    }
+
+    /// Publish a message to a topic. Returns the auto-generated message id.
+    pub fn publish(&mut self, sender: &str, topic: &str, payload: serde_json::Value) -> String {
+        let msg_id = format!("msg-{}", self.next_id);
+        self.next_id += 1;
+
+        let message = BusMessage {
+            id: msg_id.clone(),
+            topic: topic.to_string(),
+            sender: sender.to_string(),
+            payload,
+            timestamp_ms: self.next_id, // simplified monotonic timestamp
+        };
+
+        self.messages.push(message);
+
+        // Evict oldest messages if over history limit
+        while self.messages.len() > self.history_limit {
+            self.messages.remove(0);
+        }
+
+        msg_id
+    }
+
+    /// Poll messages for an agent. Returns all messages whose topic the agent
+    /// is subscribed to, in chronological order.
+    pub fn poll(&self, agent_id: &str) -> Vec<&BusMessage> {
+        // Collect all topics this agent is subscribed to
+        let subscribed_topics: Vec<&String> = self
+            .subscriptions
+            .iter()
+            .filter(|(_, subs)| subs.contains(&agent_id.to_string()))
+            .map(|(topic, _)| topic)
+            .collect();
+
+        self.messages
+            .iter()
+            .filter(|m| subscribed_topics.contains(&&m.topic))
+            .collect()
+    }
+
+    /// List subscribers for a topic. Returns empty vec if topic not found.
+    pub fn topic_subscribers(&self, topic: &str) -> Vec<String> {
+        self.subscriptions.get(topic).cloned().unwrap_or_default()
+    }
+
+    /// Number of messages currently in the bus.
+    pub fn message_count(&self) -> usize {
+        self.messages.len()
+    }
+
+    /// Clear all messages but keep subscriptions.
+    pub fn clear(&mut self) {
+        self.messages.clear();
+    }
+}
+
+/// An entry in the shared context store.
+#[derive(Debug, Clone)]
+pub struct ContextEntry {
+    pub value: serde_json::Value,
+    pub last_writer: String,
+    pub version: u64,
+    pub timestamp_ms: u64,
+}
+
+/// A shared key-value context that multiple agents can read and write.
+///
+/// Supports versioned entries, merge from another context (last-writer-wins
+/// by version), snapshot export, and diff detection.
+pub struct SharedContext {
+    data: HashMap<String, ContextEntry>,
+    version: u64,
+}
+
+impl SharedContext {
+    /// Create an empty shared context.
+    pub fn new() -> Self {
+        Self {
+            data: HashMap::new(),
+            version: 0,
+        }
+    }
+
+    /// Set a key in the context. Increments the global version.
+    pub fn set(&mut self, key: &str, value: serde_json::Value, writer: &str) {
+        self.version += 1;
+        let entry = ContextEntry {
+            value,
+            last_writer: writer.to_string(),
+            version: self.version,
+            timestamp_ms: self.version, // simplified
+        };
+        self.data.insert(key.to_string(), entry);
+    }
+
+    /// Get an entry by key.
+    pub fn get(&self, key: &str) -> Option<&ContextEntry> {
+        self.data.get(key)
+    }
+
+    /// Get just the value for a key.
+    pub fn get_value(&self, key: &str) -> Option<&serde_json::Value> {
+        self.data.get(key).map(|e| &e.value)
+    }
+
+    /// Remove an entry, returning it if it existed.
+    pub fn remove(&mut self, key: &str) -> Option<ContextEntry> {
+        self.data.remove(key)
+    }
+
+    /// List all keys.
+    pub fn keys(&self) -> Vec<&String> {
+        self.data.keys().collect()
+    }
+
+    /// Number of entries.
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    /// Whether the context is empty.
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
+
+    /// Merge another context into this one. For each key in `other`, if
+    /// `other`'s entry version is higher (or the key doesn't exist in self),
+    /// copy it. Updates self.version to the max of both.
+    pub fn merge(&mut self, other: &SharedContext) {
+        for (key, other_entry) in &other.data {
+            let dominated = match self.data.get(key) {
+                Some(self_entry) => other_entry.version > self_entry.version,
+                None => true,
+            };
+            if dominated {
+                self.data.insert(key.clone(), other_entry.clone());
+            }
+        }
+        if other.version > self.version {
+            self.version = other.version;
+        }
+    }
+
+    /// Export the context as a JSON object mapping keys to their values.
+    pub fn snapshot(&self) -> serde_json::Value {
+        let mut map = serde_json::Map::new();
+        for (key, entry) in &self.data {
+            map.insert(key.clone(), entry.value.clone());
+        }
+        serde_json::Value::Object(map)
+    }
+
+    /// Return keys that differ between self and other (different values, or
+    /// present in one but not the other).
+    pub fn diff(&self, other: &SharedContext) -> Vec<String> {
+        let mut diff_keys = Vec::new();
+
+        // Keys in self
+        for key in self.data.keys() {
+            match other.data.get(key) {
+                Some(other_entry) => {
+                    if self.data[key].value != other_entry.value {
+                        diff_keys.push(key.clone());
+                    }
+                }
+                None => diff_keys.push(key.clone()),
+            }
+        }
+
+        // Keys only in other
+        for key in other.data.keys() {
+            if !self.data.contains_key(key) {
+                diff_keys.push(key.clone());
+            }
+        }
+
+        diff_keys.sort();
+        diff_keys
+    }
+}
+
+impl Default for SharedContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Dispatches tasks to agents based on capabilities and current load.
+pub struct TaskDispatcher {
+    agents: Vec<String>,
+    capabilities: HashMap<String, Vec<String>>,
+    load: HashMap<String, usize>,
+}
+
+impl TaskDispatcher {
+    /// Create an empty dispatcher.
+    pub fn new() -> Self {
+        Self {
+            agents: Vec::new(),
+            capabilities: HashMap::new(),
+            load: HashMap::new(),
+        }
+    }
+
+    /// Register an agent with given capabilities. Initializes load to 0.
+    pub fn register_agent(&mut self, agent_id: &str, capabilities: Vec<String>) {
+        if !self.agents.contains(&agent_id.to_string()) {
+            self.agents.push(agent_id.to_string());
+        }
+        self.capabilities.insert(agent_id.to_string(), capabilities);
+        self.load.insert(agent_id.to_string(), 0);
+    }
+
+    /// Remove an agent entirely.
+    pub fn remove_agent(&mut self, agent_id: &str) {
+        self.agents.retain(|id| id != agent_id);
+        self.capabilities.remove(agent_id);
+        self.load.remove(agent_id);
+    }
+
+    /// Dispatch a task requiring the given capability. Picks the agent with
+    /// the lowest current load among those possessing the capability. Ties
+    /// are broken alphabetically. Returns the chosen agent id and increments
+    /// their load.
+    pub fn dispatch(&mut self, required_capability: &str) -> Option<String> {
+        let mut candidates: Vec<String> = self
+            .agents
+            .iter()
+            .filter(|id| {
+                self.capabilities
+                    .get(*id)
+                    .map(|caps| caps.contains(&required_capability.to_string()))
+                    .unwrap_or(false)
+            })
+            .cloned()
+            .collect();
+
+        if candidates.is_empty() {
+            return None;
+        }
+
+        // Sort by (load, name) to get deterministic least-loaded + alphabetical tie-break
+        candidates.sort_by(|a, b| {
+            let load_a = self.load.get(a).copied().unwrap_or(0);
+            let load_b = self.load.get(b).copied().unwrap_or(0);
+            load_a.cmp(&load_b).then_with(|| a.cmp(b))
+        });
+
+        let chosen = candidates[0].clone();
+        *self.load.entry(chosen.clone()).or_insert(0) += 1;
+        Some(chosen)
+    }
+
+    /// Mark a task complete for an agent, decrementing their load (min 0).
+    pub fn complete(&mut self, agent_id: &str) {
+        if let Some(count) = self.load.get_mut(agent_id) {
+            *count = count.saturating_sub(1);
+        }
+    }
+
+    /// Current load for an agent (0 if unknown).
+    pub fn agent_load(&self, agent_id: &str) -> usize {
+        self.load.get(agent_id).copied().unwrap_or(0)
+    }
+
+    /// Agents that have the given capability.
+    pub fn available_agents(&self, capability: &str) -> Vec<String> {
+        self.agents
+            .iter()
+            .filter(|id| {
+                self.capabilities
+                    .get(*id)
+                    .map(|caps| caps.contains(&capability.to_string()))
+                    .unwrap_or(false)
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Total number of registered agents.
+    pub fn agent_count(&self) -> usize {
+        self.agents.len()
+    }
+}
+
+impl Default for TaskDispatcher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A high-level collaboration session combining a message bus, shared context,
+/// and task dispatcher into a single coordinated workspace.
+pub struct CollaborationSession {
+    /// The pub/sub message bus.
+    pub bus: MessageBus,
+    /// The shared key-value context.
+    pub context: SharedContext,
+    /// The capability-aware task dispatcher.
+    pub dispatcher: TaskDispatcher,
+}
+
+impl CollaborationSession {
+    /// Create a new session with default settings (history_limit=1000).
+    pub fn new() -> Self {
+        Self {
+            bus: MessageBus::new(1000),
+            context: SharedContext::new(),
+            dispatcher: TaskDispatcher::new(),
+        }
+    }
+
+    /// Builder method to set the message bus history limit.
+    pub fn with_history_limit(mut self, limit: usize) -> Self {
+        self.bus = MessageBus::new(limit);
+        self
+    }
+
+    /// Register an agent with capabilities.
+    pub fn add_agent(&mut self, agent_id: &str, capabilities: Vec<String>) {
+        self.dispatcher.register_agent(agent_id, capabilities);
+    }
+
+    /// Dispatch a task by required capability.
+    pub fn assign_task(&mut self, capability: &str) -> Option<String> {
+        self.dispatcher.dispatch(capability)
+    }
+
+    /// Mark a task complete for an agent.
+    pub fn complete_task(&mut self, agent_id: &str) {
+        self.dispatcher.complete(agent_id);
+    }
+
+    /// Write a value into the shared context.
+    pub fn share(&mut self, key: &str, value: serde_json::Value, writer: &str) {
+        self.context.set(key, value, writer);
+    }
+
+    /// Read a value from the shared context.
+    pub fn read(&self, key: &str) -> Option<&serde_json::Value> {
+        self.context.get_value(key)
+    }
+
+    /// Broadcast a message on the bus.
+    pub fn broadcast(&mut self, sender: &str, topic: &str, payload: serde_json::Value) -> String {
+        self.bus.publish(sender, topic, payload)
+    }
+
+    /// Receive messages for an agent (based on subscriptions).
+    pub fn receive(&self, agent_id: &str) -> Vec<&BusMessage> {
+        self.bus.poll(agent_id)
+    }
+
+    /// Export the session state as JSON.
+    pub fn export_json(&self) -> serde_json::Value {
+        let subs: serde_json::Value = self
+            .bus
+            .subscriptions
+            .iter()
+            .map(|(topic, agents)| {
+                (
+                    topic.clone(),
+                    serde_json::Value::Array(
+                        agents
+                            .iter()
+                            .map(|a| serde_json::Value::String(a.clone()))
+                            .collect(),
+                    ),
+                )
+            })
+            .collect::<serde_json::Map<String, serde_json::Value>>()
+            .into();
+
+        let loads: serde_json::Value = self
+            .dispatcher
+            .load
+            .iter()
+            .map(|(agent, count)| {
+                (
+                    agent.clone(),
+                    serde_json::Value::Number((*count as u64).into()),
+                )
+            })
+            .collect::<serde_json::Map<String, serde_json::Value>>()
+            .into();
+
+        serde_json::json!({
+            "bus": {
+                "message_count": self.bus.message_count(),
+                "subscriptions": subs,
+            },
+            "context": self.context.snapshot(),
+            "dispatcher": {
+                "agent_count": self.dispatcher.agent_count(),
+                "loads": loads,
+            },
+        })
+    }
+}
+
+impl Default for CollaborationSession {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -679,7 +1234,7 @@ mod tests {
         orchestrator.register_agent(
             Agent::new("agent1", "Researcher", AgentRole::Researcher)
                 .with_capability("search")
-                .with_capability("analyze")
+                .with_capability("analyze"),
         );
 
         assert!(orchestrator.get_agent("agent1").is_some());
@@ -757,7 +1312,9 @@ mod tests {
         orchestrator.add_task(AgentTask::new("task1", "Do something"));
         orchestrator.assign_task("task1", "agent1").unwrap();
 
-        orchestrator.fail_task("task1", "Something went wrong").unwrap();
+        orchestrator
+            .fail_task("task1", "Something went wrong")
+            .unwrap();
 
         let task = orchestrator.get_task("task1").unwrap();
         assert_eq!(task.status, TaskStatus::Failed);
@@ -923,16 +1480,19 @@ mod tests {
         orchestrator.register_agent(
             Agent::new("researcher", "Researcher", AgentRole::Researcher)
                 .with_capability("search")
-                .with_capability("analyze")
+                .with_capability("analyze"),
         );
         orchestrator.register_agent(
             Agent::new("writer", "Writer", AgentRole::Writer)
                 .with_capability("write")
-                .with_capability("edit")
+                .with_capability("edit"),
         );
 
         // Task with "search" keyword should go to researcher
-        orchestrator.add_task(AgentTask::new("task1", "Search for information and analyze data"));
+        orchestrator.add_task(AgentTask::new(
+            "task1",
+            "Search for information and analyze data",
+        ));
         // Task with "write" keyword should go to writer
         orchestrator.add_task(AgentTask::new("task2", "Write a report and edit it"));
 
@@ -969,8 +1529,7 @@ mod tests {
 
     #[test]
     fn test_agent_with_model() {
-        let agent = Agent::new("agent1", "Worker", AgentRole::Executor)
-            .with_model("gpt-4");
+        let agent = Agent::new("agent1", "Worker", AgentRole::Executor).with_model("gpt-4");
 
         assert_eq!(agent.model.as_ref().unwrap(), "gpt-4");
     }
@@ -1036,12 +1595,30 @@ mod tests {
 
     #[test]
     fn test_error_display() {
-        assert_eq!(format!("{}", OrchestrationError::AgentNotFound), "Agent not found");
-        assert_eq!(format!("{}", OrchestrationError::TaskNotFound), "Task not found");
-        assert_eq!(format!("{}", OrchestrationError::AgentBusy), "Agent is busy");
-        assert_eq!(format!("{}", OrchestrationError::DependencyNotMet), "Task dependency not met");
-        assert_eq!(format!("{}", OrchestrationError::TaskNotAssigned), "Task not assigned to any agent");
-        assert_eq!(format!("{}", OrchestrationError::InvalidState), "Invalid state");
+        assert_eq!(
+            format!("{}", OrchestrationError::AgentNotFound),
+            "Agent not found"
+        );
+        assert_eq!(
+            format!("{}", OrchestrationError::TaskNotFound),
+            "Task not found"
+        );
+        assert_eq!(
+            format!("{}", OrchestrationError::AgentBusy),
+            "Agent is busy"
+        );
+        assert_eq!(
+            format!("{}", OrchestrationError::DependencyNotMet),
+            "Task dependency not met"
+        );
+        assert_eq!(
+            format!("{}", OrchestrationError::TaskNotAssigned),
+            "Task not assigned to any agent"
+        );
+        assert_eq!(
+            format!("{}", OrchestrationError::InvalidState),
+            "Invalid state"
+        );
     }
 
     #[test]
@@ -1055,7 +1632,7 @@ mod tests {
         orchestrator.add_task(
             AgentTask::new("task3", "Third")
                 .depends_on("task1")
-                .depends_on("task2")
+                .depends_on("task2"),
         );
 
         // task3 cannot be assigned until both task1 and task2 are complete
@@ -1127,6 +1704,258 @@ mod tests {
         assert_eq!(status_after.working_agents, 1);
     }
 
+    #[test]
+    fn test_orchestrator_export_json() {
+        let mut orch = AgentOrchestrator::new(OrchestrationStrategy::Parallel);
+        orch.register_agent(Agent::new("a1", "Tester", AgentRole::Researcher));
+        orch.add_task(AgentTask::new("t1", "Test task").with_priority(5));
+        let json = orch.export_json();
+        assert!(json["agents"].as_array().unwrap().len() == 1);
+        assert!(json["tasks"].as_array().unwrap().len() == 1);
+        assert_eq!(json["strategy"], "Parallel");
+        assert!(json["status"]["total_agents"].as_u64().unwrap() == 1);
+    }
+
+    // =========================================================================
+    // Collaboration types tests (MessageBus, SharedContext, TaskDispatcher, etc.)
+    // =========================================================================
+
+    #[test]
+    fn test_message_bus_subscribe_publish_poll() {
+        let mut bus = MessageBus::new(100);
+        bus.subscribe("agent-a", "events");
+        let msg_id = bus.publish("sender-1", "events", serde_json::json!({"data": "hello"}));
+        assert!(msg_id.starts_with("msg-"));
+
+        let polled = bus.poll("agent-a");
+        assert_eq!(polled.len(), 1);
+        assert_eq!(polled[0].topic, "events");
+        assert_eq!(polled[0].sender, "sender-1");
+        assert_eq!(polled[0].payload, serde_json::json!({"data": "hello"}));
+    }
+
+    #[test]
+    fn test_message_bus_filters_by_subscription() {
+        let mut bus = MessageBus::new(100);
+        bus.subscribe("agent-a", "topic-a");
+        // agent-a is NOT subscribed to topic-b
+        bus.publish("sender-1", "topic-a", serde_json::json!("msg-a"));
+        bus.publish("sender-2", "topic-b", serde_json::json!("msg-b"));
+
+        let polled = bus.poll("agent-a");
+        assert_eq!(polled.len(), 1);
+        assert_eq!(polled[0].topic, "topic-a");
+    }
+
+    #[test]
+    fn test_message_bus_history_limit() {
+        let mut bus = MessageBus::new(3);
+        for i in 0..5 {
+            bus.publish("sender", "topic", serde_json::json!(i));
+        }
+        assert_eq!(bus.message_count(), 3);
+        // The oldest two (0, 1) should have been evicted; remaining are 2, 3, 4
+        bus.subscribe("reader", "topic");
+        let polled = bus.poll("reader");
+        assert_eq!(polled.len(), 3);
+        assert_eq!(polled[0].payload, serde_json::json!(2));
+        assert_eq!(polled[1].payload, serde_json::json!(3));
+        assert_eq!(polled[2].payload, serde_json::json!(4));
+    }
+
+    #[test]
+    fn test_shared_context_set_get() {
+        let mut ctx = SharedContext::new();
+        ctx.set("key1", serde_json::json!("value1"), "writer-a");
+
+        let entry = ctx.get("key1").unwrap();
+        assert_eq!(entry.value, serde_json::json!("value1"));
+        assert_eq!(entry.last_writer, "writer-a");
+        assert_eq!(entry.version, 1);
+
+        // get_value shortcut
+        assert_eq!(ctx.get_value("key1"), Some(&serde_json::json!("value1")));
+    }
+
+    #[test]
+    fn test_shared_context_merge() {
+        let mut ctx_a = SharedContext::new();
+        ctx_a.set("shared", serde_json::json!("old"), "writer-a"); // version 1
+        ctx_a.set("only_a", serde_json::json!("a-val"), "writer-a"); // version 2
+
+        let mut ctx_b = SharedContext::new();
+        ctx_b.set("b-filler1", serde_json::json!("x"), "writer-b"); // version 1
+        ctx_b.set("b-filler2", serde_json::json!("x"), "writer-b"); // version 2
+        ctx_b.set("shared", serde_json::json!("new"), "writer-b"); // version 3 > ctx_a's version 1
+        ctx_b.set("only_b", serde_json::json!("b-val"), "writer-b"); // version 4
+
+        ctx_a.merge(&ctx_b);
+
+        // "shared" should take ctx_b's value (higher version)
+        assert_eq!(ctx_a.get_value("shared"), Some(&serde_json::json!("new")));
+        // "only_a" should remain
+        assert_eq!(ctx_a.get_value("only_a"), Some(&serde_json::json!("a-val")));
+        // "only_b" should be merged in
+        assert_eq!(ctx_a.get_value("only_b"), Some(&serde_json::json!("b-val")));
+    }
+
+    #[test]
+    fn test_shared_context_diff() {
+        let mut ctx_a = SharedContext::new();
+        ctx_a.set("same", serde_json::json!(42), "w");
+        ctx_a.set("different", serde_json::json!("a"), "w");
+        ctx_a.set("only_a", serde_json::json!(true), "w");
+
+        let mut ctx_b = SharedContext::new();
+        ctx_b.set("same", serde_json::json!(42), "w");
+        ctx_b.set("different", serde_json::json!("b"), "w");
+        ctx_b.set("only_b", serde_json::json!(false), "w");
+
+        let diff = ctx_a.diff(&ctx_b);
+        // "different" differs in value, "only_a" only in a, "only_b" only in b
+        assert!(diff.contains(&"different".to_string()));
+        assert!(diff.contains(&"only_a".to_string()));
+        assert!(diff.contains(&"only_b".to_string()));
+        // "same" should NOT appear
+        assert!(!diff.contains(&"same".to_string()));
+        assert_eq!(diff.len(), 3);
+    }
+
+    #[test]
+    fn test_task_dispatcher_least_loaded() {
+        let mut disp = TaskDispatcher::new();
+        disp.register_agent("alice", vec!["code".to_string()]);
+        disp.register_agent("bob", vec!["code".to_string()]);
+
+        // Dispatch 2 tasks to raise alice's load
+        let first = disp.dispatch("code").unwrap();
+        let second = disp.dispatch("code").unwrap();
+
+        // With alphabetical tie-break, first goes to alice, second to bob
+        // (both start at load=0, alice < bob alphabetically -> alice first)
+        assert_eq!(first, "alice");
+        assert_eq!(second, "bob"); // now both at load=1
+
+        // Third task: both at load=1, alphabetical tie-break -> alice again
+        // Actually alice=1, bob=1, alice < bob alphabetically
+        let third = disp.dispatch("code").unwrap();
+        assert_eq!(third, "alice");
+        // Now alice=2, bob=1 -> next should go to bob (least loaded)
+        let fourth = disp.dispatch("code").unwrap();
+        assert_eq!(fourth, "bob");
+    }
+
+    #[test]
+    fn test_task_dispatcher_no_capable_agent() {
+        let mut disp = TaskDispatcher::new();
+        disp.register_agent("alice", vec!["code".to_string()]);
+        assert_eq!(disp.dispatch("design"), None);
+    }
+
+    #[test]
+    fn test_task_dispatcher_complete_decrements() {
+        let mut disp = TaskDispatcher::new();
+        disp.register_agent("alice", vec!["code".to_string()]);
+
+        disp.dispatch("code"); // load = 1
+        assert_eq!(disp.agent_load("alice"), 1);
+
+        disp.complete("alice"); // load = 0
+        assert_eq!(disp.agent_load("alice"), 0);
+
+        // Completing again should not go below 0
+        disp.complete("alice");
+        assert_eq!(disp.agent_load("alice"), 0);
+    }
+
+    #[test]
+    fn test_collaboration_session_end_to_end() {
+        let mut session = CollaborationSession::new();
+
+        // Register 3 agents
+        session.add_agent("coder", vec!["code".to_string(), "review".to_string()]);
+        session.add_agent("designer", vec!["design".to_string()]);
+        session.add_agent("tester", vec!["test".to_string(), "review".to_string()]);
+
+        // Assign tasks
+        let a1 = session.assign_task("code").unwrap();
+        assert_eq!(a1, "coder");
+        let a2 = session.assign_task("design").unwrap();
+        assert_eq!(a2, "designer");
+        let a3 = session.assign_task("test").unwrap();
+        assert_eq!(a3, "tester");
+
+        // Share context
+        session.share("project", serde_json::json!({"name": "collab"}), "coder");
+        assert_eq!(
+            session.read("project"),
+            Some(&serde_json::json!({"name": "collab"}))
+        );
+
+        // Broadcast messages
+        session.bus.subscribe("tester", "builds");
+        session.bus.subscribe("designer", "builds");
+        session.broadcast("coder", "builds", serde_json::json!("build-ok"));
+
+        let tester_msgs = session.receive("tester");
+        assert_eq!(tester_msgs.len(), 1);
+        assert_eq!(tester_msgs[0].payload, serde_json::json!("build-ok"));
+
+        let designer_msgs = session.receive("designer");
+        assert_eq!(designer_msgs.len(), 1);
+
+        // Coder is not subscribed to "builds"
+        let coder_msgs = session.receive("coder");
+        assert_eq!(coder_msgs.len(), 0);
+
+        // Complete a task
+        session.complete_task("coder");
+        assert_eq!(session.dispatcher.agent_load("coder"), 0);
+    }
+
+    #[test]
+    fn test_collaboration_export_json() {
+        let mut session = CollaborationSession::new();
+        session.add_agent("alice", vec!["code".to_string()]);
+        session.share("key", serde_json::json!("val"), "alice");
+        session.assign_task("code");
+
+        let json = session.export_json();
+
+        // Check bus section
+        assert!(json["bus"].is_object());
+        assert!(json["bus"]["message_count"].is_number());
+        assert!(json["bus"]["subscriptions"].is_object());
+
+        // Check context section
+        assert!(json["context"].is_object());
+        assert_eq!(json["context"]["key"], serde_json::json!("val"));
+
+        // Check dispatcher section
+        assert!(json["dispatcher"].is_object());
+        assert_eq!(json["dispatcher"]["agent_count"].as_u64().unwrap(), 1);
+        assert!(json["dispatcher"]["loads"].is_object());
+    }
+
+    #[test]
+    fn test_message_bus_unsubscribe() {
+        let mut bus = MessageBus::new(100);
+        bus.subscribe("agent-a", "events");
+
+        // Publish before unsubscribe
+        bus.publish("sender", "events", serde_json::json!("before"));
+        let polled = bus.poll("agent-a");
+        assert_eq!(polled.len(), 1);
+
+        // Unsubscribe and publish another
+        bus.unsubscribe("agent-a", "events");
+        bus.publish("sender", "events", serde_json::json!("after"));
+
+        // agent-a should no longer receive anything (including old messages)
+        let polled_after = bus.poll("agent-a");
+        assert_eq!(polled_after.len(), 0);
+    }
+
     // =========================================================================
     // MultiAgentSession tests (requires autonomous feature)
     // =========================================================================
@@ -1134,26 +1963,26 @@ mod tests {
     #[cfg(feature = "autonomous")]
     mod session_tests {
         use super::super::*;
-        use std::sync::Arc;
-        use crate::autonomous_loop::AutonomousAgentBuilder;
         use crate::agentic_loop::AgentMessage;
+        use crate::autonomous_loop::AutonomousAgentBuilder;
+        use std::sync::Arc;
 
         fn dummy_generator() -> Arc<dyn Fn(&[AgentMessage]) -> String + Send + Sync> {
-            Arc::new(|_msgs: &[AgentMessage]| -> String {
-                "Done.".to_string()
-            })
+            Arc::new(|_msgs: &[AgentMessage]| -> String { "Done.".to_string() })
         }
 
         #[test]
         fn test_session_creation() {
-            let session = MultiAgentSession::new("test-session", OrchestrationStrategy::Sequential, None);
+            let session =
+                MultiAgentSession::new("test-session", OrchestrationStrategy::Sequential, None);
             assert_eq!(session.name, "test-session");
             assert!(session.agent_names().is_empty());
         }
 
         #[test]
         fn test_session_add_agent() {
-            let mut session = MultiAgentSession::new("test", OrchestrationStrategy::Sequential, None);
+            let mut session =
+                MultiAgentSession::new("test", OrchestrationStrategy::Sequential, None);
             let agent = AutonomousAgentBuilder::new("agent-1", dummy_generator())
                 .system_prompt("You are a test agent.")
                 .max_iterations(5)
@@ -1165,7 +1994,8 @@ mod tests {
 
         #[test]
         fn test_session_add_task() {
-            let mut session = MultiAgentSession::new("test", OrchestrationStrategy::Sequential, None);
+            let mut session =
+                MultiAgentSession::new("test", OrchestrationStrategy::Sequential, None);
             session.add_task(AgentTask::new("task-1", "Do something"));
             let status = session.orchestrator.get_status();
             assert_eq!(status.total_tasks, 1);
@@ -1173,7 +2003,8 @@ mod tests {
 
         #[test]
         fn test_session_auto_assign() {
-            let mut session = MultiAgentSession::new("test", OrchestrationStrategy::RoundRobin, None);
+            let mut session =
+                MultiAgentSession::new("test", OrchestrationStrategy::RoundRobin, None);
             let agent = AutonomousAgentBuilder::new("worker", dummy_generator())
                 .system_prompt("Test")
                 .build();
@@ -1195,7 +2026,8 @@ mod tests {
 
         #[test]
         fn test_session_summary() {
-            let mut session = MultiAgentSession::new("my-session", OrchestrationStrategy::Sequential, None);
+            let mut session =
+                MultiAgentSession::new("my-session", OrchestrationStrategy::Sequential, None);
             let agent = AutonomousAgentBuilder::new("a1", dummy_generator())
                 .system_prompt("Test")
                 .build();

@@ -94,7 +94,8 @@ impl HtmlSelector {
         }
 
         // Check for attribute selector: tag[attr=value]
-        let attr_re = Regex::new(r"^([a-zA-Z0-9-]*)?\[([a-zA-Z0-9-]+)=([^\]]*)\]$").expect("valid regex");
+        let attr_re =
+            Regex::new(r"^([a-zA-Z0-9-]*)?\[([a-zA-Z0-9-]+)=([^\]]*)\]$").expect("valid regex");
         if let Some(caps) = attr_re.captures(selector) {
             let tag_part = caps.get(1).map(|m| m.as_str()).unwrap_or("");
             if !tag_part.is_empty() {
@@ -433,12 +434,14 @@ impl HtmlExtractor {
         }
 
         // Canonical URL
-        let canonical_re =
-            Regex::new(r#"(?is)<link[^>]*\s+rel=["']canonical["'][^>]*\s+href=["']([^"']*)["'][^>]*/?\s*>"#)
-                .expect("valid regex");
-        let canonical_rev_re =
-            Regex::new(r#"(?is)<link[^>]*\s+href=["']([^"']*)["'][^>]*\s+rel=["']canonical["'][^>]*/?\s*>"#)
-                .expect("valid regex");
+        let canonical_re = Regex::new(
+            r#"(?is)<link[^>]*\s+rel=["']canonical["'][^>]*\s+href=["']([^"']*)["'][^>]*/?\s*>"#,
+        )
+        .expect("valid regex");
+        let canonical_rev_re = Regex::new(
+            r#"(?is)<link[^>]*\s+href=["']([^"']*)["'][^>]*\s+rel=["']canonical["'][^>]*/?\s*>"#,
+        )
+        .expect("valid regex");
         if let Some(caps) = canonical_re.captures(html) {
             meta.canonical_url = Some(caps[1].to_string());
         } else if let Some(caps) = canonical_rev_re.captures(html) {
@@ -446,7 +449,8 @@ impl HtmlExtractor {
         }
 
         // Language
-        let lang_re = Regex::new(r#"(?is)<html[^>]*\s+lang=["']([^"']*)["']"#).expect("valid regex");
+        let lang_re =
+            Regex::new(r#"(?is)<html[^>]*\s+lang=["']([^"']*)["']"#).expect("valid regex");
         if let Some(caps) = lang_re.captures(html) {
             meta.language = Some(caps[1].to_string());
         }
@@ -682,15 +686,8 @@ impl HtmlExtractor {
     }
 
     /// Find elements matching a selector, returning (start, end, content) tuples.
-    fn match_elements(
-        &self,
-        html: &str,
-        selector: &HtmlSelector,
-    ) -> Vec<(usize, usize, String)> {
-        let tag_pattern = selector
-            .tag
-            .as_deref()
-            .unwrap_or("[a-zA-Z][a-zA-Z0-9]*");
+    fn match_elements(&self, html: &str, selector: &HtmlSelector) -> Vec<(usize, usize, String)> {
+        let tag_pattern = selector.tag.as_deref().unwrap_or("[a-zA-Z][a-zA-Z0-9]*");
 
         // Build attribute constraints
         let mut attr_patterns = Vec::new();
@@ -703,10 +700,7 @@ impl HtmlExtractor {
         }
 
         if let Some(ref id) = selector.id {
-            attr_patterns.push(format!(
-                r#"[^>]*\s+id=["']{}["']"#,
-                regex::escape(id)
-            ));
+            attr_patterns.push(format!(r#"[^>]*\s+id=["']{}["']"#, regex::escape(id)));
         }
 
         if let Some((ref attr_name, ref attr_value)) = selector.attribute {
@@ -771,7 +765,8 @@ impl HtmlExtractor {
         let attrs_str = &caps[2];
 
         // Parse attributes
-        let attr_re = Regex::new(r#"([a-zA-Z][a-zA-Z0-9_-]*)=["']([^"']*)["']"#).expect("valid regex");
+        let attr_re =
+            Regex::new(r#"([a-zA-Z][a-zA-Z0-9_-]*)=["']([^"']*)["']"#).expect("valid regex");
         let mut attributes = HashMap::new();
         for attr_caps in attr_re.captures_iter(attrs_str) {
             attributes.insert(attr_caps[1].to_lowercase(), attr_caps[2].to_string());
@@ -794,9 +789,11 @@ impl HtmlExtractor {
         for child_match in child_re.captures_iter(&inner_html) {
             let child_tag = child_match[1].to_lowercase();
             let child_start = child_match.get(0).expect("capture group 0").start();
-            if let Some(child_end) =
-                find_closing_tag(&inner_html, child_match.get(0).expect("capture group 0").end(), &child_tag)
-            {
+            if let Some(child_end) = find_closing_tag(
+                &inner_html,
+                child_match.get(0).expect("capture group 0").end(),
+                &child_tag,
+            ) {
                 let child_html = &inner_html[child_start..child_end];
                 if let Some(child_elem) = self.parse_element(child_html) {
                     children.push(child_elem);
@@ -820,10 +817,7 @@ impl HtmlExtractor {
 
 /// Extract an attribute value from an HTML attributes string.
 fn extract_attribute(attrs: &str, attr_name: &str) -> Option<String> {
-    let pattern = format!(
-        r#"(?i){}=["']([^"']*)["']"#,
-        regex::escape(attr_name)
-    );
+    let pattern = format!(r#"(?i){}=["']([^"']*)["']"#, regex::escape(attr_name));
     let re = Regex::new(&pattern).ok()?;
     re.captures(attrs).map(|c| c[1].to_string())
 }
@@ -995,7 +989,10 @@ mod tests {
     fn test_selector_parse_attribute() {
         let sel = HtmlSelector::parse("input[type=text]");
         assert_eq!(sel.tag, Some("input".to_string()));
-        assert_eq!(sel.attribute, Some(("type".to_string(), "text".to_string())));
+        assert_eq!(
+            sel.attribute,
+            Some(("type".to_string(), "text".to_string()))
+        );
 
         let sel2 = HtmlSelector::parse("[data-role=nav]");
         assert_eq!(sel2.tag, None);
@@ -1049,10 +1046,7 @@ mod tests {
         "#;
         let extractor = HtmlExtractor::new(HtmlExtractionConfig::default());
         let meta = extractor.extract_metadata(html);
-        assert_eq!(
-            meta.opengraph.get("title"),
-            Some(&"OG Title".to_string())
-        );
+        assert_eq!(meta.opengraph.get("title"), Some(&"OG Title".to_string()));
         assert_eq!(
             meta.opengraph.get("description"),
             Some(&"OG Description".to_string())
@@ -1204,7 +1198,10 @@ mod tests {
         assert_eq!(result.links.len(), 1);
         assert!(result.links[0].is_external);
         assert_eq!(result.tables.len(), 1);
-        assert_eq!(result.tables[0].headers, vec!["Name".to_string(), "Value".to_string()]);
+        assert_eq!(
+            result.tables[0].headers,
+            vec!["Name".to_string(), "Value".to_string()]
+        );
     }
 
     #[test]
@@ -1232,10 +1229,7 @@ mod tests {
         assert_eq!(strip_tags("<p>Hello</p>"), "Hello");
         assert_eq!(strip_tags("<a href='x'>link</a> text"), "link text");
         assert_eq!(strip_tags("no tags here"), "no tags here");
-        assert_eq!(
-            strip_tags("<div><span>nested</span></div>"),
-            "nested"
-        );
+        assert_eq!(strip_tags("<div><span>nested</span></div>"), "nested");
     }
 
     #[test]
@@ -1303,7 +1297,10 @@ mod tests {
 
         assert_eq!(result.tables.len(), 1);
         assert_eq!(result.tables[0].caption, Some("Test Table".to_string()));
-        assert_eq!(result.tables[0].headers, vec!["Col1".to_string(), "Col2".to_string()]);
+        assert_eq!(
+            result.tables[0].headers,
+            vec!["Col1".to_string(), "Col2".to_string()]
+        );
         assert_eq!(result.tables[0].rows.len(), 2);
         assert_eq!(result.tables[0].cell(0, 0), Some("A"));
         assert_eq!(result.tables[0].cell(0, 1), Some("B"));
@@ -1376,10 +1373,7 @@ mod tests {
             meta.twitter_card.get("card"),
             Some(&"summary_large_image".to_string())
         );
-        assert_eq!(
-            meta.twitter_card.get("site"),
-            Some(&"@example".to_string())
-        );
+        assert_eq!(meta.twitter_card.get("site"), Some(&"@example".to_string()));
         assert_eq!(
             meta.twitter_card.get("title"),
             Some(&"Twitter Title".to_string())

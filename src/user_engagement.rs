@@ -80,12 +80,19 @@ impl EngagementTracker {
         self.record_event_with_metadata(event, HashMap::new());
     }
 
-    pub fn record_event_with_metadata(&mut self, event: EngagementEvent, metadata: HashMap<String, String>) {
+    pub fn record_event_with_metadata(
+        &mut self,
+        event: EngagementEvent,
+        metadata: HashMap<String, String>,
+    ) {
         let now = Instant::now();
         let time_since_last = now.duration_since(self.last_activity);
 
         // Track response times
-        if matches!(event, EngagementEvent::MessageSent | EngagementEvent::MessageReceived) {
+        if matches!(
+            event,
+            EngagementEvent::MessageSent | EngagementEvent::MessageReceived
+        ) {
             self.message_times.push(time_since_last);
         }
 
@@ -96,7 +103,8 @@ impl EngagementTracker {
                 timestamp: now,
                 metadata: HashMap::new(),
             });
-        } else if time_since_last < Duration::from_secs(5) && event == EngagementEvent::MessageSent {
+        } else if time_since_last < Duration::from_secs(5) && event == EngagementEvent::MessageSent
+        {
             self.events.push(EngagementRecord {
                 event: EngagementEvent::QuickResponse,
                 timestamp: now,
@@ -132,8 +140,15 @@ impl EngagementTracker {
     pub fn calculate_metrics(&self) -> EngagementMetrics {
         let session_duration = self.last_activity.duration_since(self.session_start);
 
-        let message_count = self.events.iter()
-            .filter(|e| matches!(e.event, EngagementEvent::MessageSent | EngagementEvent::MessageReceived))
+        let message_count = self
+            .events
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e.event,
+                    EngagementEvent::MessageSent | EngagementEvent::MessageReceived
+                )
+            })
             .count();
 
         let avg_response_time = if self.message_times.is_empty() {
@@ -324,7 +339,8 @@ impl EngagementManager {
             session_duration_delta: recent.session_duration.as_secs_f64()
                 - previous.session_duration.as_secs_f64(),
             message_count_delta: recent.message_count as i32 - previous.message_count as i32,
-            avg_engagement: history.iter().map(|m| m.engagement_score).sum::<f64>() / history.len() as f64,
+            avg_engagement: history.iter().map(|m| m.engagement_score).sum::<f64>()
+                / history.len() as f64,
             total_sessions: history.len(),
         })
     }

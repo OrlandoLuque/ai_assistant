@@ -417,8 +417,8 @@ impl ContentVersionStore {
 
     /// Imports store data from a JSON string, merging with existing data.
     pub fn import(&mut self, json: &str) -> Result<()> {
-        let imported: ContentVersionStore =
-            serde_json::from_str(json).map_err(|e| anyhow::anyhow!("Failed to parse JSON: {}", e))?;
+        let imported: ContentVersionStore = serde_json::from_str(json)
+            .map_err(|e| anyhow::anyhow!("Failed to parse JSON: {}", e))?;
 
         for (content_id, history) in imported.histories {
             self.histories.insert(content_id, history);
@@ -696,9 +696,18 @@ pub mod sqlite_store {
             let changes = compute_diff(&old_content, &new_content);
             let similarity = calculate_similarity(&old_content, &new_content);
 
-            let lines_added = changes.iter().filter(|c| c.change_type == ChangeType::Added).count();
-            let lines_removed = changes.iter().filter(|c| c.change_type == ChangeType::Removed).count();
-            let lines_modified = changes.iter().filter(|c| c.change_type == ChangeType::Modified).count();
+            let lines_added = changes
+                .iter()
+                .filter(|c| c.change_type == ChangeType::Added)
+                .count();
+            let lines_removed = changes
+                .iter()
+                .filter(|c| c.change_type == ChangeType::Removed)
+                .count();
+            let lines_modified = changes
+                .iter()
+                .filter(|c| c.change_type == ChangeType::Modified)
+                .count();
             let identical = changes.is_empty();
 
             Ok(VersionDiff {

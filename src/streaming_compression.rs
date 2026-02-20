@@ -25,10 +25,10 @@
 //! let decompressed = compressor.decompress_chunk(&compressed)?;
 //! ```
 
-use std::io::{Read, Write};
+use flate2::read::{DeflateDecoder, GzDecoder};
+use flate2::write::{DeflateEncoder, GzEncoder};
 use flate2::Compression;
-use flate2::read::{GzDecoder, DeflateDecoder};
-use flate2::write::{GzEncoder, DeflateEncoder};
+use std::io::{Read, Write};
 
 /// Compression algorithm
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -244,7 +244,11 @@ impl StreamCompressor {
     }
 
     /// Decompress a chunk
-    pub fn decompress_chunk(&self, data: &[u8], algorithm: Algorithm) -> Result<Vec<u8>, CompressionError> {
+    pub fn decompress_chunk(
+        &self,
+        data: &[u8],
+        algorithm: Algorithm,
+    ) -> Result<Vec<u8>, CompressionError> {
         match algorithm {
             Algorithm::None => Ok(data.to_vec()),
             Algorithm::Gzip => self.decompress_gzip(data),
@@ -272,7 +276,8 @@ impl StreamCompressor {
     fn decompress_gzip(&self, data: &[u8]) -> Result<Vec<u8>, CompressionError> {
         let mut decoder = GzDecoder::new(data);
         let mut result = Vec::new();
-        decoder.read_to_end(&mut result)
+        decoder
+            .read_to_end(&mut result)
             .map_err(|e| CompressionError::DecompressionFailed(e.to_string()))?;
         Ok(result)
     }
@@ -280,7 +285,8 @@ impl StreamCompressor {
     fn decompress_deflate(&self, data: &[u8]) -> Result<Vec<u8>, CompressionError> {
         let mut decoder = DeflateDecoder::new(data);
         let mut result = Vec::new();
-        decoder.read_to_end(&mut result)
+        decoder
+            .read_to_end(&mut result)
             .map_err(|e| CompressionError::DecompressionFailed(e.to_string()))?;
         Ok(result)
     }
@@ -411,8 +417,7 @@ pub fn compress_string(s: &str) -> Vec<u8> {
 pub fn decompress_string(data: &[u8]) -> Result<String, CompressionError> {
     let compressor = StreamCompressor::default();
     let bytes = compressor.decompress(data)?;
-    String::from_utf8(bytes)
-        .map_err(|e| CompressionError::InvalidData(e.to_string()))
+    String::from_utf8(bytes).map_err(|e| CompressionError::InvalidData(e.to_string()))
 }
 
 /// Estimate compression ratio for content type
@@ -439,7 +444,8 @@ mod tests {
     #[test]
     fn test_compress_decompress() {
         let compressor = StreamCompressor::default();
-        let original = b"Hello, this is a test message that should compress well when repeated. ".repeat(10);
+        let original =
+            b"Hello, this is a test message that should compress well when repeated. ".repeat(10);
 
         let compressed = compressor.compress_chunk(&original);
         let decompressed = compressor.decompress(&compressed).unwrap();

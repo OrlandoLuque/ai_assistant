@@ -271,9 +271,7 @@ pub struct ComparisonResponse {
 /// Extract all number-like tokens (integers, decimals, percentages) from text.
 fn extract_numbers(text: &str) -> Vec<String> {
     let re = Regex::new(r"\d+(?:\.\d+)?%?").expect("valid regex");
-    re.find_iter(text)
-        .map(|m| m.as_str().to_string())
-        .collect()
+    re.find_iter(text).map(|m| m.as_str().to_string()).collect()
 }
 
 /// Calculate an alignment confidence score based on length ratio similarity.
@@ -516,7 +514,10 @@ impl TranslationAnalyzer {
                     source_segment: Some(segment.source.clone()),
                     target_segment: Some(segment.target.clone()),
                     segment_index: segment.index,
-                    suggestion: Some("Ensure all numbers from the source appear in the target translation.".to_string()),
+                    suggestion: Some(
+                        "Ensure all numbers from the source appear in the target translation."
+                            .to_string(),
+                    ),
                 });
             }
         }
@@ -540,7 +541,8 @@ impl TranslationAnalyzer {
                 issues.push(TranslationIssue {
                     issue_type: TranslationIssueType::AddedContent,
                     severity: 0.6,
-                    description: "Target segment has content with no corresponding source.".to_string(),
+                    description: "Target segment has content with no corresponding source."
+                        .to_string(),
                     source_segment: None,
                     target_segment: Some(segment.target.clone()),
                     segment_index: segment.index,
@@ -601,12 +603,17 @@ impl TranslationAnalyzer {
     }
 
     /// Generate LLM comparison prompts for semantic analysis of aligned segments.
-    pub fn generate_comparison_prompts(&self, alignments: &[AlignedSegment]) -> Vec<ComparisonPrompt> {
-        let system = "You are a translation quality expert. Analyze the following source and target \
+    pub fn generate_comparison_prompts(
+        &self,
+        alignments: &[AlignedSegment],
+    ) -> Vec<ComparisonPrompt> {
+        let system =
+            "You are a translation quality expert. Analyze the following source and target \
             text segments for translation accuracy. Identify any semantic differences, omissions, \
             additions, or mistranslations. Respond in JSON format with fields: \
             \"score\" (0.0-1.0), \"issues\" (array of {\"type\", \"description\", \"severity\"}), \
-            \"explanation\" (string).".to_string();
+            \"explanation\" (string)."
+                .to_string();
 
         alignments
             .iter()
@@ -630,7 +637,11 @@ impl TranslationAnalyzer {
     }
 
     /// Parse a JSON response from an LLM comparison into a structured result.
-    pub fn parse_comparison_response(&self, response: &str, segment_index: usize) -> ComparisonResponse {
+    pub fn parse_comparison_response(
+        &self,
+        response: &str,
+        segment_index: usize,
+    ) -> ComparisonResponse {
         // Attempt to parse as JSON
         #[derive(Deserialize)]
         struct RawResponse {
@@ -659,11 +670,15 @@ impl TranslationAnalyzer {
                         let issue_type = match ri.issue_type.as_deref() {
                             Some("MissingContent") => TranslationIssueType::MissingContent,
                             Some("AddedContent") => TranslationIssueType::AddedContent,
-                            Some("InconsistentTerminology") => TranslationIssueType::InconsistentTerminology,
+                            Some("InconsistentTerminology") => {
+                                TranslationIssueType::InconsistentTerminology
+                            }
                             Some("NumberMismatch") => TranslationIssueType::NumberMismatch,
                             Some("RegisterMismatch") => TranslationIssueType::RegisterMismatch,
                             Some("Untranslated") => TranslationIssueType::Untranslated,
-                            Some("FormattingDifference") => TranslationIssueType::FormattingDifference,
+                            Some("FormattingDifference") => {
+                                TranslationIssueType::FormattingDifference
+                            }
                             _ => TranslationIssueType::PotentialMistranslation,
                         };
 
@@ -682,7 +697,9 @@ impl TranslationAnalyzer {
                 ComparisonResponse {
                     score: raw.score.unwrap_or(0.5),
                     issues,
-                    explanation: raw.explanation.unwrap_or_else(|| "No explanation provided.".to_string()),
+                    explanation: raw
+                        .explanation
+                        .unwrap_or_else(|| "No explanation provided.".to_string()),
                 }
             }
             None => ComparisonResponse {
@@ -766,17 +783,11 @@ impl TranslationAnalyzer {
 
         // French indicators
         let french_markers = ["les", "des", "une", "est", "pas", "que", "dans", "pour"];
-        let french_score: usize = french_markers
-            .iter()
-            .filter(|m| lower.contains(*m))
-            .count();
+        let french_score: usize = french_markers.iter().filter(|m| lower.contains(*m)).count();
 
         // German indicators
         let german_markers = ["der", "die", "das", "und", "ist", "ein", "nicht", "auf"];
-        let german_score: usize = german_markers
-            .iter()
-            .filter(|m| lower.contains(*m))
-            .count();
+        let german_score: usize = german_markers.iter().filter(|m| lower.contains(*m)).count();
 
         // Portuguese indicators
         let portuguese_markers = ["que", "nao", "uma", "para", "com", "mais", "como", "dos"];
@@ -802,12 +813,17 @@ impl TranslationAnalyzer {
         // Check for accented characters common in specific languages
         let has_tilde_n = lower.contains('\u{00f1}'); // n with tilde (Spanish)
         let has_cedilla = lower.contains('\u{00e7}'); // c with cedilla (French/Portuguese)
-        let has_umlaut = lower.contains('\u{00fc}') || lower.contains('\u{00f6}') || lower.contains('\u{00e4}');
-        let has_circumflex = lower.contains('\u{00ea}') || lower.contains('\u{00ee}') || lower.contains('\u{00f4}');
+        let has_umlaut =
+            lower.contains('\u{00fc}') || lower.contains('\u{00f6}') || lower.contains('\u{00e4}');
+        let has_circumflex =
+            lower.contains('\u{00ea}') || lower.contains('\u{00ee}') || lower.contains('\u{00f4}');
 
         let mut scores: Vec<(&str, usize)> = vec![
             ("es", spanish_score + if has_tilde_n { 3 } else { 0 }),
-            ("fr", french_score + if has_cedilla || has_circumflex { 2 } else { 0 }),
+            (
+                "fr",
+                french_score + if has_cedilla || has_circumflex { 2 } else { 0 },
+            ),
             ("de", german_score + if has_umlaut { 3 } else { 0 }),
             ("pt", portuguese_score + if has_cedilla { 1 } else { 0 }),
             ("it", italian_score),
@@ -883,7 +899,7 @@ fn classify_char(ch: char) -> &'static str {
         // Hangul
         0xAC00..=0xD7AF | 0x1100..=0x11FF | 0x3130..=0x318F => "hangul",
         // Cyrillic
-        0x0400..=0x04FF | 0x0500..=0x052F => "cyrillic",
+        0x0400..=0x052F => "cyrillic",
         // Arabic
         0x0600..=0x06FF | 0x0750..=0x077F | 0x08A0..=0x08FF => "arabic",
         // Devanagari
@@ -1091,7 +1107,10 @@ mod tests {
 
         assert_eq!(parsed.score, 0.85);
         assert_eq!(parsed.issues.len(), 1);
-        assert_eq!(parsed.issues[0].issue_type, TranslationIssueType::FormattingDifference);
+        assert_eq!(
+            parsed.issues[0].issue_type,
+            TranslationIssueType::FormattingDifference
+        );
         assert!(parsed.explanation.contains("Good translation"));
 
         // Test invalid JSON fallback

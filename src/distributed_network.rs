@@ -207,9 +207,18 @@ enum NetworkCommand {
     /// Send a message to a peer (fire-and-forget).
     SendMessage(NodeId, NodeMessage),
     /// Send a message and wait for a reply.
-    Request(NodeId, NodeMessage, oneshot::Sender<Result<NodeMessage, String>>),
+    Request(
+        NodeId,
+        NodeMessage,
+        oneshot::Sender<Result<NodeMessage, String>>,
+    ),
     /// Store a key-value pair with replication.
-    Store(String, Vec<u8>, Option<Duration>, oneshot::Sender<Result<(), String>>),
+    Store(
+        String,
+        Vec<u8>,
+        Option<Duration>,
+        oneshot::Sender<Result<(), String>>,
+    ),
     /// Get a value by key.
     Get(String, oneshot::Sender<Result<Option<Vec<u8>>, String>>),
     /// Delete a key.
@@ -352,8 +361,7 @@ impl NetworkNode {
         let node_id = identity.node_id;
 
         // Create tokio runtime
-        let rt = Runtime::new()
-            .map_err(|e| format!("Failed to create tokio runtime: {}", e))?;
+        let rt = Runtime::new().map_err(|e| format!("Failed to create tokio runtime: {}", e))?;
 
         // Create QUIC endpoint
         let server_config = CertificateManager::make_server_config(&identity)
@@ -362,7 +370,8 @@ impl NetworkNode {
         let local_addr = rt.block_on(async {
             let endpoint = quinn::Endpoint::server(server_config, config.listen_addr)
                 .map_err(|e| format!("Failed to bind QUIC endpoint: {}", e))?;
-            let addr = endpoint.local_addr()
+            let addr = endpoint
+                .local_addr()
                 .map_err(|e| format!("Failed to get local address: {}", e))?;
             Ok::<(quinn::Endpoint, SocketAddr), String>((endpoint, addr))
         });
@@ -370,8 +379,7 @@ impl NetworkNode {
         let (endpoint, local_addr) = local_addr?;
 
         // Create shared state
-        let peers: Arc<RwLock<HashMap<NodeId, PeerState>>> =
-            Arc::new(RwLock::new(HashMap::new()));
+        let peers: Arc<RwLock<HashMap<NodeId, PeerState>>> = Arc::new(RwLock::new(HashMap::new()));
         let ring = Arc::new(RwLock::new(ConsistentHashRing::new(
             config.replication.vnodes_per_node,
             config.replication.max_copies,
@@ -392,12 +400,22 @@ impl NetworkNode {
             // Treat the config token as a raw token string for simple matching
             let token = JoinToken {
                 token: token_str.clone(),
-                created_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
-                expires_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() + 365 * 24 * 3600,
+                created_at: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+                expires_at: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs()
+                    + 365 * 24 * 3600,
                 max_uses: None,
                 uses: 0,
             };
-            join_tokens.write().unwrap_or_else(|e| e.into_inner()).push(token);
+            join_tokens
+                .write()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(token);
         }
 
         let messages_sent = Arc::new(std::sync::atomic::AtomicU64::new(0));
@@ -586,16 +604,25 @@ impl NetworkNode {
             uptime: self.started_at.elapsed(),
             peers_connected: self.peer_count(),
             peers_dead: dead_count,
-            messages_sent: self.messages_sent.load(std::sync::atomic::Ordering::Relaxed),
-            messages_received: self.messages_received.load(std::sync::atomic::Ordering::Relaxed),
+            messages_sent: self
+                .messages_sent
+                .load(std::sync::atomic::Ordering::Relaxed),
+            messages_received: self
+                .messages_received
+                .load(std::sync::atomic::Ordering::Relaxed),
             keys_stored: self.storage.read().unwrap_or_else(|e| e.into_inner()).len(),
-            replication_pending: self.replication_pending.load(std::sync::atomic::Ordering::Relaxed),
+            replication_pending: self
+                .replication_pending
+                .load(std::sync::atomic::Ordering::Relaxed),
         }
     }
 
     /// Gracefully shut down the node.
     pub fn shutdown(&self) {
-        if self.shutdown.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        if self
+            .shutdown
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
             return; // Already shut down
         }
         let _ = self.command_tx.blocking_send(NetworkCommand::Shutdown);
@@ -639,7 +666,10 @@ impl NetworkNode {
 
     /// Check the health status of a peer.
     pub fn check_peer(&self, peer: &NodeId) -> NodeStatus {
-        self.heartbeat_mgr.read().unwrap_or_else(|e| e.into_inner()).check_node(peer)
+        self.heartbeat_mgr
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .check_node(peer)
     }
 
     /// Get the node's cryptographic identity.
@@ -653,18 +683,29 @@ impl NetworkNode {
     /// Share the encoded token string with new nodes via out-of-band channels.
     pub fn generate_join_token(&self, validity_hours: u64, max_uses: Option<usize>) -> JoinToken {
         let token = JoinToken::generate(validity_hours, max_uses);
-        self.join_tokens.write().unwrap_or_else(|e| e.into_inner()).push(token.clone());
+        self.join_tokens
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(token.clone());
         token
     }
 
     /// Get the reputation of a specific peer (0.0 to 1.0).
     pub fn peer_reputation(&self, peer: &NodeId) -> Option<f32> {
-        self.peers.read().unwrap_or_else(|e| e.into_inner()).get(peer).map(|p| p.reputation)
+        self.peers
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(peer)
+            .map(|p| p.reputation)
     }
 
     /// Check if a peer is still in probation period.
     pub fn peer_in_probation(&self, peer: &NodeId) -> Option<bool> {
-        self.peers.read().unwrap_or_else(|e| e.into_inner()).get(peer).map(|p| p.probation)
+        self.peers
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(peer)
+            .map(|p| p.probation)
     }
 
     /// Trigger an immediate anti-entropy sync check.
@@ -726,10 +767,8 @@ impl EventLoop {
         mut command_rx: mpsc::Receiver<NetworkCommand>,
         event_tx: mpsc::Sender<NetworkEvent>,
     ) {
-        let mut heartbeat_interval =
-            tokio::time::interval(self.config.heartbeat_interval);
-        let mut cleanup_interval =
-            tokio::time::interval(Duration::from_secs(30));
+        let mut heartbeat_interval = tokio::time::interval(self.config.heartbeat_interval);
+        let mut cleanup_interval = tokio::time::interval(Duration::from_secs(30));
 
         // Spawn LAN discovery task if enabled
         let discovery_command_tx = if self.config.discovery.enable_broadcast {
@@ -737,7 +776,10 @@ impl EventLoop {
             let broadcast_port = self.config.discovery.broadcast_port;
             let broadcast_interval = self.config.discovery.broadcast_interval;
             let node_id = self.node_id;
-            let local_addr = self.endpoint.local_addr().unwrap_or(self.config.listen_addr);
+            let local_addr = self
+                .endpoint
+                .local_addr()
+                .unwrap_or(self.config.listen_addr);
             let shutdown_flag = self.shutdown_flag.clone();
 
             // Spawn UDP broadcast listener + sender
@@ -749,7 +791,8 @@ impl EventLoop {
                     broadcast_interval,
                     shutdown_flag,
                     disc_tx,
-                ).await;
+                )
+                .await;
             });
 
             // Spawn task to process discovered peers by connecting to them
@@ -774,7 +817,8 @@ impl EventLoop {
                         continue;
                     }
                     // Try to connect
-                    let client_config = match CertificateManager::make_client_config(&identity_ref) {
+                    let client_config = match CertificateManager::make_client_config(&identity_ref)
+                    {
                         Ok(cfg) => cfg,
                         Err(_) => continue,
                     };
@@ -784,10 +828,12 @@ impl EventLoop {
                             if let Ok(conn) = connecting.await {
                                 // We connected — but full registration happens via the main event loop
                                 // For simplicity, emit PeerConnected event
-                                let _ = cmd_tx.send(NetworkEvent::PeerConnected(
-                                    NodeId::from_string(&addr.to_string()),
-                                    addr,
-                                )).await;
+                                let _ = cmd_tx
+                                    .send(NetworkEvent::PeerConnected(
+                                        NodeId::from_string(&addr.to_string()),
+                                        addr,
+                                    ))
+                                    .await;
                                 let _ = conn;
                             }
                         }
@@ -841,18 +887,17 @@ impl EventLoop {
                 }
             }
 
-            if self.shutdown_flag.load(std::sync::atomic::Ordering::Relaxed) {
+            if self
+                .shutdown_flag
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
                 break;
             }
         }
     }
 
     /// Handle a command from the sync API.
-    async fn handle_command(
-        &mut self,
-        cmd: NetworkCommand,
-        event_tx: &mpsc::Sender<NetworkEvent>,
-    ) {
+    async fn handle_command(&mut self, cmd: NetworkCommand, event_tx: &mpsc::Sender<NetworkEvent>) {
         match cmd {
             NetworkCommand::Connect(addr, reply) => {
                 let result = self.connect_to_peer(addr, event_tx).await;
@@ -1063,13 +1108,10 @@ impl EventLoop {
             .await
             .map_err(|e| format!("Failed to accept join stream: {}", e))?;
 
-        let msg = tokio::time::timeout(
-            self.config.message_timeout,
-            Self::read_message(&mut recv),
-        )
-        .await
-        .map_err(|_| "Join token exchange timed out".to_string())?
-        .map_err(|e| format!("Failed to read join request: {}", e))?;
+        let msg = tokio::time::timeout(self.config.message_timeout, Self::read_message(&mut recv))
+            .await
+            .map_err(|_| "Join token exchange timed out".to_string())?
+            .map_err(|e| format!("Failed to read join request: {}", e))?;
 
         match msg {
             NodeMessage::JoinRequest { token, .. } => {
@@ -1078,20 +1120,27 @@ impl EventLoop {
                     let mut tokens = self.join_tokens.write().unwrap_or_else(|e| e.into_inner());
                     let valid = tokens.iter_mut().any(|t| t.token == token && t.consume());
                     if valid {
-                        let peer_list: Vec<(Vec<u8>, String)> = self.peers
+                        let peer_list: Vec<(Vec<u8>, String)> = self
+                            .peers
                             .read()
                             .unwrap_or_else(|e| e.into_inner())
                             .values()
                             .map(|p| (p.node_id.0.to_vec(), p.addr.to_string()))
                             .collect();
-                        (true, NodeMessage::JoinAccepted {
-                            node_id: self.node_id.0.to_vec(),
-                            peers: peer_list,
-                        })
+                        (
+                            true,
+                            NodeMessage::JoinAccepted {
+                                node_id: self.node_id.0.to_vec(),
+                                peers: peer_list,
+                            },
+                        )
                     } else {
-                        (false, NodeMessage::JoinRejected {
-                            reason: "Invalid or expired join token".to_string(),
-                        })
+                        (
+                            false,
+                            NodeMessage::JoinRejected {
+                                reason: "Invalid or expired join token".to_string(),
+                            },
+                        )
                     }
                 }; // Lock dropped here
 
@@ -1170,9 +1219,7 @@ impl EventLoop {
         }
 
         // Peer disconnected
-        let _ = event_tx
-            .send(NetworkEvent::PeerDisconnected(peer_id))
-            .await;
+        let _ = event_tx.send(NetworkEvent::PeerDisconnected(peer_id)).await;
     }
 
     /// Process an incoming message and optionally return a response.
@@ -1221,7 +1268,11 @@ impl EventLoop {
                 })
             }
             NodeMessage::GetResponse { .. } => None, // Response type, no reply needed
-            NodeMessage::Put { key, value, ttl_secs } => {
+            NodeMessage::Put {
+                key,
+                value,
+                ttl_secs,
+            } => {
                 let ttl = ttl_secs.map(Duration::from_secs);
                 let mut storage_w = storage.write().unwrap_or_else(|e| e.into_inner());
                 storage_w.insert(key.clone(), StoredValue::new(value.clone(), ttl));
@@ -1242,7 +1293,11 @@ impl EventLoop {
                 })
             }
             NodeMessage::DeleteAck { .. } => None,
-            NodeMessage::Replicate { key, value, version } => {
+            NodeMessage::Replicate {
+                key,
+                value,
+                version,
+            } => {
                 let mut storage_w = storage.write().unwrap_or_else(|e| e.into_inner());
                 let should_update = storage_w
                     .get(key)
@@ -1270,18 +1325,23 @@ impl EventLoop {
                 // Build our Merkle tree from local storage and compare roots
                 let local_data = Self::storage_to_btree(storage);
                 let local_tree = MerkleTree::from_data(&local_data);
-                let our_root = local_tree.root_hash()
+                let our_root = local_tree
+                    .root_hash()
                     .map(|h| h.to_vec())
                     .unwrap_or_default();
 
                 if our_root == *merkle_root {
                     // Trees match — no sync needed
-                    Some(NodeMessage::SyncResponse { diff_keys: Vec::new() })
+                    Some(NodeMessage::SyncResponse {
+                        diff_keys: Vec::new(),
+                    })
                 } else {
                     // Trees differ — compute keys that the remote is missing
                     // We send our keys so the remote can request what it needs
                     let our_keys: Vec<String> = local_data.keys().cloned().collect();
-                    Some(NodeMessage::SyncResponse { diff_keys: our_keys })
+                    Some(NodeMessage::SyncResponse {
+                        diff_keys: our_keys,
+                    })
                 }
             }
             NodeMessage::SyncResponse { diff_keys } => {
@@ -1308,9 +1368,9 @@ impl EventLoop {
                 // Store received entries (only if we don't have a newer version)
                 let mut storage_w = storage.write().unwrap_or_else(|e| e.into_inner());
                 for (key, data) in entries {
-                    storage_w.entry(key.clone()).or_insert_with(|| {
-                        StoredValue::new(data.clone(), None)
-                    });
+                    storage_w
+                        .entry(key.clone())
+                        .or_insert_with(|| StoredValue::new(data.clone(), None));
                 }
                 None
             }
@@ -1318,12 +1378,10 @@ impl EventLoop {
             // --- Cluster Management ---
             NodeMessage::JoinRequest { token, cert_der } => {
                 let _ = cert_der; // Certificate already verified at TLS layer
-                // Validate join token if the cluster requires one
+                                  // Validate join token if the cluster requires one
                 if config_join_token.is_some() {
                     let mut tokens = join_tokens.write().unwrap_or_else(|e| e.into_inner());
-                    let valid = tokens.iter_mut().any(|t| {
-                        t.token == *token && t.consume()
-                    });
+                    let valid = tokens.iter_mut().any(|t| t.token == *token && t.consume());
                     if !valid {
                         return Some(NodeMessage::JoinRejected {
                             reason: "Invalid or expired join token".to_string(),
@@ -1371,13 +1429,11 @@ impl EventLoop {
                 })
             }
             NodeMessage::MapResult { .. } => None,
-            NodeMessage::ReduceTask { job_id, key, .. } => {
-                Some(NodeMessage::ReduceResult {
-                    job_id: job_id.clone(),
-                    key: key.clone(),
-                    value: Vec::new(),
-                })
-            }
+            NodeMessage::ReduceTask { job_id, key, .. } => Some(NodeMessage::ReduceResult {
+                job_id: job_id.clone(),
+                key: key.clone(),
+                value: Vec::new(),
+            }),
             NodeMessage::ReduceResult { .. } => None,
 
             // --- Vector DB ---
@@ -1409,10 +1465,7 @@ impl EventLoop {
     }
 
     /// Exchange identity with a peer (client side).
-    async fn exchange_identity(
-        &self,
-        connection: &quinn::Connection,
-    ) -> Result<NodeId, String> {
+    async fn exchange_identity(&self, connection: &quinn::Connection) -> Result<NodeId, String> {
         let (mut send, mut recv) = connection
             .open_bi()
             .await
@@ -1467,12 +1520,10 @@ impl EventLoop {
     }
 
     /// Send a message to a specific peer.
-    async fn send_to_peer(
-        &mut self,
-        peer_id: &NodeId,
-        msg: &NodeMessage,
-    ) -> Result<(), String> {
-        let connection = self.connections.get(peer_id)
+    async fn send_to_peer(&mut self, peer_id: &NodeId, msg: &NodeMessage) -> Result<(), String> {
+        let connection = self
+            .connections
+            .get(peer_id)
             .ok_or_else(|| format!("Not connected to peer {}", peer_id))?;
 
         let (mut send, _recv) = connection
@@ -1481,7 +1532,8 @@ impl EventLoop {
             .map_err(|e| format!("Failed to open stream to {}: {}", peer_id, e))?;
 
         Self::write_message(&mut send, msg).await?;
-        self.messages_sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.messages_sent
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         // Update peer stats
         {
@@ -1500,7 +1552,9 @@ impl EventLoop {
         peer_id: &NodeId,
         msg: NodeMessage,
     ) -> Result<NodeMessage, String> {
-        let connection = self.connections.get(peer_id)
+        let connection = self
+            .connections
+            .get(peer_id)
             .ok_or_else(|| format!("Not connected to peer {}", peer_id))?
             .clone();
 
@@ -1510,14 +1564,16 @@ impl EventLoop {
             .map_err(|e| format!("Failed to open stream to {}: {}", peer_id, e))?;
 
         Self::write_message(&mut send, &msg).await?;
-        self.messages_sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.messages_sent
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         let timeout = self.config.message_timeout;
         let response = tokio::time::timeout(timeout, Self::read_message(&mut recv))
             .await
             .map_err(|_| format!("Request to {} timed out", peer_id))?;
 
-        self.messages_received.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.messages_received
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         response
     }
 
@@ -1563,7 +1619,7 @@ impl EventLoop {
                         Ok(NodeMessage::ReplicateAck { success: true, .. }) => {
                             replicated_count += 1;
                         }
-                        Ok(_) => {} // Unexpected response, skip
+                        Ok(_) => {}  // Unexpected response, skip
                         Err(_) => {} // Failed, skip
                     }
                 }
@@ -1708,16 +1764,21 @@ impl EventLoop {
             match self.send_to_peer(&peer_id, &msg).await {
                 Ok(_) => {
                     // Record heartbeat receipt (we assume success means the peer is alive)
-                    let mut hb = self.heartbeat_mgr.write().unwrap_or_else(|e| e.into_inner());
+                    let mut hb = self
+                        .heartbeat_mgr
+                        .write()
+                        .unwrap_or_else(|e| e.into_inner());
                     hb.record_heartbeat(&peer_id);
                 }
                 Err(_) => {
                     // Check if the peer should be considered dead
-                    let status = self.heartbeat_mgr.read().unwrap_or_else(|e| e.into_inner()).check_node(&peer_id);
+                    let status = self
+                        .heartbeat_mgr
+                        .read()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .check_node(&peer_id);
                     if let NodeStatus::Dead(phi) = status {
-                        let _ = event_tx
-                            .send(NetworkEvent::PeerFailed(peer_id, phi))
-                            .await;
+                        let _ = event_tx.send(NetworkEvent::PeerFailed(peer_id, phi)).await;
                     }
                 }
             }
@@ -1726,7 +1787,11 @@ impl EventLoop {
 
     /// Check for dead peers and emit events.
     async fn check_dead_peers(&self, event_tx: &mpsc::Sender<NetworkEvent>) {
-        let dead_nodes = self.heartbeat_mgr.read().unwrap_or_else(|e| e.into_inner()).get_dead_nodes();
+        let dead_nodes = self
+            .heartbeat_mgr
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_dead_nodes();
         for node_id in dead_nodes {
             let _ = event_tx
                 .send(NetworkEvent::PeerFailed(node_id, f64::MAX))
@@ -1754,7 +1819,9 @@ impl EventLoop {
         discovered_tx: mpsc::Sender<SocketAddr>,
     ) {
         // Bind to the broadcast port for receiving
-        let recv_addr: SocketAddr = format!("0.0.0.0:{}", broadcast_port).parse().expect("valid address");
+        let recv_addr: SocketAddr = format!("0.0.0.0:{}", broadcast_port)
+            .parse()
+            .expect("valid address");
         let socket = match tokio::net::UdpSocket::bind(recv_addr).await {
             Ok(s) => s,
             Err(_) => {
@@ -1878,7 +1945,10 @@ impl EventLoop {
                         }
                     }
                     // Record sync
-                    self.merkle.write().unwrap_or_else(|e| e.into_inner()).record_sync(&peer_id);
+                    self.merkle
+                        .write()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .record_sync(&peer_id);
                 }
                 _ => {} // Sync failed, try next time
             }
@@ -1984,7 +2054,8 @@ impl EventLoop {
             }
 
             if pending > 0 {
-                self.replication_pending.fetch_add(pending, std::sync::atomic::Ordering::Relaxed);
+                self.replication_pending
+                    .fetch_add(pending, std::sync::atomic::Ordering::Relaxed);
                 let _ = event_tx
                     .send(NetworkEvent::ReplicationComplete(key, pending + 1))
                     .await;
@@ -2002,12 +2073,9 @@ impl EventLoop {
     }
 
     /// Write a length-prefixed bincode message to a QUIC send stream.
-    async fn write_message(
-        send: &mut quinn::SendStream,
-        msg: &NodeMessage,
-    ) -> Result<(), String> {
-        let data = bincode::serialize(msg)
-            .map_err(|e| format!("Failed to serialize message: {}", e))?;
+    async fn write_message(send: &mut quinn::SendStream, msg: &NodeMessage) -> Result<(), String> {
+        let data =
+            bincode::serialize(msg).map_err(|e| format!("Failed to serialize message: {}", e))?;
 
         let len = (data.len() as u32).to_be_bytes();
         send.write_all(&len)
@@ -2023,9 +2091,7 @@ impl EventLoop {
     }
 
     /// Read a length-prefixed bincode message from a QUIC receive stream.
-    async fn read_message(
-        recv: &mut quinn::RecvStream,
-    ) -> Result<NodeMessage, String> {
+    async fn read_message(recv: &mut quinn::RecvStream) -> Result<NodeMessage, String> {
         let mut len_buf = [0u8; 4];
         recv.read_exact(&mut len_buf)
             .await
@@ -2041,8 +2107,7 @@ impl EventLoop {
             .await
             .map_err(|e| format!("Failed to read data: {}", e))?;
 
-        bincode::deserialize(&data)
-            .map_err(|e| format!("Failed to deserialize message: {}", e))
+        bincode::deserialize(&data).map_err(|e| format!("Failed to deserialize message: {}", e))
     }
 }
 
@@ -2168,7 +2233,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let config = test_config(dir.path());
         let result = NetworkNode::new(config);
-        assert!(result.is_ok(), "Node creation should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Node creation should succeed: {:?}",
+            result.err()
+        );
         let node = result.unwrap();
         assert_eq!(node.peer_count(), 0);
         assert_eq!(node.local_key_count(), 0);
@@ -2268,7 +2337,11 @@ mod tests {
 
         // Connect node2 to node1
         let result = node2.connect(node1.local_addr());
-        assert!(result.is_ok(), "Connection should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Connection should succeed: {:?}",
+            result.err()
+        );
 
         // Give some time for the connection to be established
         std::thread::sleep(Duration::from_millis(100));
@@ -2364,7 +2437,11 @@ mod tests {
         let encoded = bincode::serialize(&msg).unwrap();
         let decoded: NodeMessage = bincode::deserialize(&encoded).unwrap();
         match decoded {
-            NodeMessage::Put { key, value, ttl_secs } => {
+            NodeMessage::Put {
+                key,
+                value,
+                ttl_secs,
+            } => {
                 assert_eq!(key, "test_key");
                 assert_eq!(value, vec![1, 2, 3, 4]);
                 assert_eq!(ttl_secs, Some(3600));
@@ -2383,7 +2460,11 @@ mod tests {
         let encoded = bincode::serialize(&msg).unwrap();
         let decoded: NodeMessage = bincode::deserialize(&encoded).unwrap();
         match decoded {
-            NodeMessage::Replicate { key, value, version } => {
+            NodeMessage::Replicate {
+                key,
+                value,
+                version,
+            } => {
                 assert_eq!(key, "replicated");
                 assert_eq!(value, vec![10, 20, 30]);
                 assert_eq!(version, 42);
@@ -2419,7 +2500,11 @@ mod tests {
         let encoded = bincode::serialize(&msg).unwrap();
         let decoded: NodeMessage = bincode::deserialize(&encoded).unwrap();
         match decoded {
-            NodeMessage::VectorSearch { query, limit, request_id } => {
+            NodeMessage::VectorSearch {
+                query,
+                limit,
+                request_id,
+            } => {
                 assert_eq!(query, vec![1.0, 2.0, 3.0]);
                 assert_eq!(limit, 10);
                 assert_eq!(request_id, 99);
@@ -2434,7 +2519,10 @@ mod tests {
         let peers = Arc::new(RwLock::new(HashMap::new()));
         let tokens = Arc::new(RwLock::new(Vec::new()));
         let node_id = NodeId::from_string("server");
-        let msg = NodeMessage::Ping { sender: NodeId::from_string("client"), timestamp: 42 };
+        let msg = NodeMessage::Ping {
+            sender: NodeId::from_string("client"),
+            timestamp: 42,
+        };
         let resp = EventLoop::process_message(&msg, node_id, &storage, &peers, &tokens, &None);
         match resp {
             Some(NodeMessage::Pong { sender, timestamp }) => {
@@ -2468,10 +2556,17 @@ mod tests {
         }
 
         // Get the value back
-        let get_msg = NodeMessage::Get { key: "hello".to_string(), request_id: 1 };
+        let get_msg = NodeMessage::Get {
+            key: "hello".to_string(),
+            request_id: 1,
+        };
         let resp = EventLoop::process_message(&get_msg, node_id, &storage, &peers, &tokens, &None);
         match resp {
-            Some(NodeMessage::GetResponse { key, value, request_id }) => {
+            Some(NodeMessage::GetResponse {
+                key,
+                value,
+                request_id,
+            }) => {
                 assert_eq!(key, "hello");
                 assert_eq!(value, Some(b"world".to_vec()));
                 assert_eq!(request_id, 1);
@@ -2488,15 +2583,22 @@ mod tests {
         let node_id = NodeId::from_string("server");
 
         // Store something first
-        storage.write().unwrap().insert(
-            "key".to_string(),
-            StoredValue::new(b"val".to_vec(), None),
-        );
+        storage
+            .write()
+            .unwrap()
+            .insert("key".to_string(), StoredValue::new(b"val".to_vec(), None));
 
-        let del_msg = NodeMessage::Delete { key: "key".to_string(), request_id: 5 };
+        let del_msg = NodeMessage::Delete {
+            key: "key".to_string(),
+            request_id: 5,
+        };
         let resp = EventLoop::process_message(&del_msg, node_id, &storage, &peers, &tokens, &None);
         match resp {
-            Some(NodeMessage::DeleteAck { key, success, request_id }) => {
+            Some(NodeMessage::DeleteAck {
+                key,
+                success,
+                request_id,
+            }) => {
                 assert_eq!(key, "key");
                 assert!(success);
                 assert_eq!(request_id, 5);
@@ -2522,7 +2624,11 @@ mod tests {
         };
         let resp = EventLoop::process_message(&msg, node_id, &storage, &peers, &tokens, &None);
         match resp {
-            Some(NodeMessage::ReplicateAck { key, version, success }) => {
+            Some(NodeMessage::ReplicateAck {
+                key,
+                version,
+                success,
+            }) => {
                 assert_eq!(key, "rep_key");
                 assert_eq!(version, 100);
                 assert!(success);
@@ -2547,7 +2653,11 @@ mod tests {
         // Store with high version
         storage.write().unwrap().insert(
             "key".to_string(),
-            StoredValue { data: b"new".to_vec(), version: 200, expires_at: None },
+            StoredValue {
+                data: b"new".to_vec(),
+                version: 200,
+                expires_at: None,
+            },
         );
 
         // Try to replicate with lower version — should not overwrite
@@ -2594,7 +2704,8 @@ mod tests {
             cert_der: vec![],
         };
         let config_token = Some("required".to_string());
-        let resp = EventLoop::process_message(&msg, node_id, &storage, &peers, &tokens, &config_token);
+        let resp =
+            EventLoop::process_message(&msg, node_id, &storage, &peers, &tokens, &config_token);
         match resp {
             Some(NodeMessage::JoinAccepted { .. }) => {} // Expected
             _ => panic!("Expected JoinAccepted with valid token"),
@@ -2613,7 +2724,8 @@ mod tests {
             cert_der: vec![],
         };
         let config_token = Some("required".to_string());
-        let resp = EventLoop::process_message(&msg, node_id, &storage, &peers, &tokens, &config_token);
+        let resp =
+            EventLoop::process_message(&msg, node_id, &storage, &peers, &tokens, &config_token);
         match resp {
             Some(NodeMessage::JoinRejected { reason }) => {
                 assert!(reason.contains("Invalid"));
@@ -2631,7 +2743,10 @@ mod tests {
 
         // Empty storage — merkle root should match empty tree
         let empty_tree = MerkleTree::from_data(&std::collections::BTreeMap::new());
-        let root = empty_tree.root_hash().map(|h| h.to_vec()).unwrap_or_default();
+        let root = empty_tree
+            .root_hash()
+            .map(|h| h.to_vec())
+            .unwrap_or_default();
 
         let msg = NodeMessage::SyncRequest { merkle_root: root };
         let resp = EventLoop::process_message(&msg, node_id, &storage, &peers, &tokens, &None);
@@ -2657,7 +2772,9 @@ mod tests {
         );
 
         // Send a different merkle root
-        let msg = NodeMessage::SyncRequest { merkle_root: vec![0u8; 32] };
+        let msg = NodeMessage::SyncRequest {
+            merkle_root: vec![0u8; 32],
+        };
         let resp = EventLoop::process_message(&msg, node_id, &storage, &peers, &tokens, &None);
         match resp {
             Some(NodeMessage::SyncResponse { diff_keys }) => {
@@ -2675,9 +2792,7 @@ mod tests {
         let node_id = NodeId::from_string("server");
 
         let msg = NodeMessage::SyncData {
-            entries: vec![
-                ("synced_key".to_string(), b"synced_val".to_vec()),
-            ],
+            entries: vec![("synced_key".to_string(), b"synced_val".to_vec())],
         };
         EventLoop::process_message(&msg, node_id, &storage, &peers, &tokens, &None);
 
@@ -2697,9 +2812,14 @@ mod tests {
         // Add a peer to the peers map
         let peer_id = NodeId::from_string("peer1");
         let peer_addr: SocketAddr = "192.168.1.100:5000".parse().unwrap();
-        peers.write().unwrap().insert(peer_id, PeerState::new(peer_id, peer_addr));
+        peers
+            .write()
+            .unwrap()
+            .insert(peer_id, PeerState::new(peer_id, peer_addr));
 
-        let msg = NodeMessage::PeerExchangeRequest { sender: vec![1, 2, 3] };
+        let msg = NodeMessage::PeerExchangeRequest {
+            sender: vec![1, 2, 3],
+        };
         let resp = EventLoop::process_message(&msg, node_id, &storage, &peers, &tokens, &None);
         match resp {
             Some(NodeMessage::PeerExchangeResponse { peers: peer_list }) => {
@@ -2724,7 +2844,10 @@ mod tests {
         };
         let resp = EventLoop::process_message(&msg, node_id, &storage, &peers, &tokens, &None);
         match resp {
-            Some(NodeMessage::VectorSearchResponse { results, request_id }) => {
+            Some(NodeMessage::VectorSearchResponse {
+                results,
+                request_id,
+            }) => {
                 assert!(results.is_empty()); // No VectorDb at this layer
                 assert_eq!(request_id, 42);
             }
@@ -2801,14 +2924,14 @@ mod tests {
     #[test]
     fn test_storage_to_btree() {
         let storage = Arc::new(RwLock::new(HashMap::new()));
-        storage.write().unwrap().insert(
-            "b".to_string(),
-            StoredValue::new(b"val_b".to_vec(), None),
-        );
-        storage.write().unwrap().insert(
-            "a".to_string(),
-            StoredValue::new(b"val_a".to_vec(), None),
-        );
+        storage
+            .write()
+            .unwrap()
+            .insert("b".to_string(), StoredValue::new(b"val_b".to_vec(), None));
+        storage
+            .write()
+            .unwrap()
+            .insert("a".to_string(), StoredValue::new(b"val_a".to_vec(), None));
         // Add an expired entry that should be excluded
         storage.write().unwrap().insert(
             "expired".to_string(),

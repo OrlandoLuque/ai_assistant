@@ -56,6 +56,8 @@ Read this for understanding, inspiration, and to demystify the magic.
 46. [Access Control: Who Can Do What](#46-access-control-who-can-do-what)
 47. [Event-Driven Architecture: Decoupling with Events](#47-event-driven-architecture-decoupling-with-events)
 48. [WASM: Running in the Browser](#48-wasm-running-in-the-browser)
+49. [UI Framework Hooks: Typed Event Streaming](#49-ui-framework-hooks-typed-event-streaming)
+50. [Agent Graphs: Visualizing Workflows](#50-agent-graphs-visualizing-workflows)
 
 ---
 
@@ -1915,3 +1917,188 @@ Running AI assistant logic in the browser means:
 - **Embedding**: Drop the assistant into any web app
 
 **Feature flag**: `wasm` (only meaningful on `target_arch = "wasm32"`)
+
+---
+
+## 49. UI Framework Hooks: Typed Event Streaming
+
+**The fundamental idea**: Frontend frameworks (React, Vue, Svelte) need to know what the AI is doing *as it happens* — not just the final result. Instead of polling for status or parsing raw text streams, the backend emits **typed events** that the frontend can subscribe to and render immediately.
+
+### The Problem with Raw Streams
+
+Traditional LLM integrations give you a stream of text chunks:
+
+```
+"The"  " capital"  " of"  " France"  " is"  " Paris"  "."
+```
+
+But a modern UI needs more:
+- When did the message start? (show a loading indicator)
+- Is the AI thinking, streaming, or calling a tool? (update status badge)
+- How many tokens were used? (display usage meter)
+- Did a tool call happen mid-response? (render tool result inline)
+- When is it done? (hide the loading indicator)
+
+### Typed Events
+
+Instead of raw text, emit structured events that carry semantic meaning:
+
+```
+StatusChange { status: Thinking }
+MessageStart { id: "msg-1", role: "assistant" }
+MessageDelta { id: "msg-1", content_chunk: "The capital" }
+MessageDelta { id: "msg-1", content_chunk: " of France" }
+ToolCallStart { id: "tc-1", name: "verify_fact" }
+ToolCallEnd { id: "tc-1", result: "confirmed" }
+MessageDelta { id: "msg-1", content_chunk: " is Paris." }
+MessageEnd { id: "msg-1", finish_reason: "stop", usage: {in: 50, out: 20} }
+StatusChange { status: Idle }
+```
+
+Each event has a `type` field and a `data` payload, matching the SSE (Server-Sent Events) convention. Frontends can pattern-match on event type and update their UI accordingly.
+
+### The Subscriber Pattern
+
+Rather than requiring frontends to poll, the hook system uses the **observer pattern**:
+
+```
+Backend                   ChatHooks                    Frontend
+  │                          │                            │
+  │── emit(MessageStart) ──>│──── notify subscriber 1 ──>│ (React hook)
+  │                          │──── notify subscriber 2 ──>│ (analytics)
+  │── emit(MessageDelta) ──>│──── notify subscriber 1 ──>│
+  │                          │──── notify subscriber 2 ──>│
+```
+
+Multiple subscribers can listen to the same event stream. One renders the UI, another tracks analytics, a third logs to a file. The emitter doesn't know or care who is listening — classic decoupling.
+
+### StreamAdapter: Bridging Old and New
+
+Existing code that produces raw text chunks can be adapted to emit typed events via `StreamAdapter`. It takes `["chunk1", "chunk2"]` and produces the full event sequence: `MessageStart` + N `MessageDelta` events + `MessageEnd`. This means you can adopt typed events incrementally without rewriting your entire streaming pipeline.
+
+### ChatSession: State for the UI
+
+Frontends need to track conversation state: messages, current status, loading indicators. `ChatSession` provides this as a lightweight struct that serializes to JSON — ready to be consumed by React's `useState`, Vue's `reactive()`, or Svelte's stores.
+
+### Why Not Just Use SSE Directly?
+
+SSE (Server-Sent Events) is a transport mechanism — it tells you *how* to send events. UI hooks tell you *what* events to send. The two are complementary: the hook system generates typed events, and SSE (or WebSocket, or direct function calls in WASM) delivers them.
+
+---
+
+## 50. Agent Graphs: Visualizing Workflows
+
+**The fundamental idea**: Multi-agent systems are hard to understand by reading logs. A graph visualization shows **who talks to whom**, **what data flows where**, and **where time is spent** — making complex workflows comprehensible at a glance.
+
+### Agents as Graphs
+
+Any multi-agent workflow is naturally a directed graph:
+
+```
+    ┌────────────┐     results     ┌──────────┐
+    │ Researcher │ ──────────────> │  Writer  │
+    └────────────┘                 └────┬─────┘
+                                       │ draft
+                                       v
+                                  ┌──────────┐
+                                  │ Reviewer │
+                                  └────┬─────┘
+                                       │ revision
+                                       v
+                                  ┌──────────┐
+                                  │  Writer  │ (again)
+                                  └──────────┘
+```
+
+**Nodes** are agents (with capabilities, types, metadata). **Edges** are relationships between them, typed by their nature:
+
+| Edge Type | Meaning | Example |
+|-----------|---------|---------|
+| DataFlow | Data moves from A to B | Research results → Writer |
+| Control | A controls B's execution | Orchestrator → Worker |
+| Delegation | A delegates a subtask to B | Manager → Specialist |
+| Communication | A and B exchange messages | Agent ↔ Agent |
+| Dependency | B cannot start until A finishes | Build → Deploy |
+
+### Export Formats
+
+A graph in code is useful for algorithms. A graph in a visual format is useful for humans. Three export formats serve different needs:
+
+**Graphviz DOT** — the universal graph language. Paste into any DOT viewer:
+```dot
+digraph AgentGraph {
+  rankdir=LR;
+  "researcher" [label="Researcher\n(research)"];
+  "writer" [label="Writer\n(writing)"];
+  "researcher" -> "writer" [label="data_flow"];
+}
+```
+
+**Mermaid** — renders in GitHub, GitLab, Notion, and many Markdown viewers:
+```
+graph LR
+  researcher["Researcher"]
+  writer["Writer"]
+  researcher --> |data_flow| writer
+```
+
+**JSON** — for programmatic consumption, D3.js visualizations, or the built-in `agent_visualization.html` dashboard:
+```json
+{
+  "nodes": [{"id": "researcher", "name": "Researcher", "type": "research"}],
+  "edges": [{"from": "researcher", "to": "writer", "type": "data_flow"}]
+}
+```
+
+### Topological Sort: Finding Execution Order
+
+Not all graphs have cycles. For DAG-style workflows (common in pipelines), **topological sort** determines the valid execution order — which agents must run before which others.
+
+Kahn's algorithm (used here) works by repeatedly removing nodes with no incoming edges:
+
+```
+1. Find all nodes with in-degree 0 (no dependencies)
+2. Remove them, add to result
+3. Decrease in-degree of their neighbors
+4. Repeat until empty
+5. If nodes remain, there's a cycle → error
+```
+
+This is the same algorithm used by `make`, `npm`, and CI/CD systems to resolve dependency order.
+
+### Execution Traces: What Actually Happened
+
+A graph shows the **structure** of a workflow. An execution trace shows **what happened at runtime**:
+
+```
+[0ms]    researcher / web_search   → 1200ms → Completed
+[1200ms] writer / draft            → 3500ms → Completed
+[4700ms] reviewer / critique       → 800ms  → Completed
+[5500ms] writer / revise           → 2000ms → Completed
+```
+
+Each trace step records: which agent, what action, input/output summaries, duration, and status. This is the data needed for performance debugging.
+
+### Analytics: Where Are the Problems?
+
+Raw traces are hard to interpret. Analytics extract actionable insights:
+
+- **Critical Path**: The longest chain of sequential steps. This is the minimum possible runtime — even with infinite parallelism, you can't go faster. Optimizing steps on the critical path has the biggest impact.
+
+- **Bottlenecks**: Steps that took longer than a threshold. If the writer takes 3.5 seconds while everything else takes under 1 second, the writer is the bottleneck.
+
+- **Agent Utilization**: What fraction of total time each agent was active. If the researcher is only active 15% of the time, it might be under-utilized — or it might be doing its job efficiently and letting others work.
+
+### From DAG to Graph
+
+The crate already has a `DagExecutor` for workflow execution. The `from_dag()` method converts an existing `DagDefinition` into an `AgentGraph`, bridging the gap between execution and visualization. You don't need to build the graph manually — just convert your existing workflows.
+
+### Why Visualization Matters
+
+Complex systems fail in complex ways. When a 5-agent pipeline produces wrong results, you need to see:
+1. Which agent received what input (data flow)
+2. How long each step took (performance)
+3. Whether the execution order was correct (topology)
+4. Where the chain broke (error tracing)
+
+Without visualization, you're reading log files. With it, you see the story at a glance.

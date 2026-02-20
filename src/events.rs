@@ -22,33 +22,19 @@ pub enum AiEvent {
         has_knowledge: bool,
     },
     /// A streaming chunk was received
-    ResponseChunk {
-        chunk_length: usize,
-    },
+    ResponseChunk { chunk_length: usize },
     /// The complete response was received
-    ResponseComplete {
-        response_length: usize,
-    },
+    ResponseComplete { response_length: usize },
     /// The response was cancelled by the user
-    ResponseCancelled {
-        partial_length: usize,
-    },
+    ResponseCancelled { partial_length: usize },
     /// An error occurred during generation
-    ResponseError {
-        error: String,
-    },
+    ResponseError { error: String },
 
     // --- Provider events ---
     /// A provider attempt was started
-    ProviderAttempt {
-        provider: String,
-        model: String,
-    },
+    ProviderAttempt { provider: String, model: String },
     /// A provider failed
-    ProviderFailed {
-        provider: String,
-        error: String,
-    },
+    ProviderFailed { provider: String, error: String },
     /// Fallback was triggered to an alternative provider
     FallbackTriggered {
         from_provider: String,
@@ -57,60 +43,38 @@ pub enum AiEvent {
 
     // --- Session events ---
     /// A new session was created
-    SessionCreated {
-        session_id: String,
-    },
+    SessionCreated { session_id: String },
     /// A session was loaded
-    SessionLoaded {
-        session_id: String,
-    },
+    SessionLoaded { session_id: String },
     /// A session was saved
     SessionSaved {
         session_id: String,
         message_count: usize,
     },
     /// A session was deleted
-    SessionDeleted {
-        session_id: String,
-    },
+    SessionDeleted { session_id: String },
 
     // --- Context events ---
     /// Context usage reached the warning threshold
-    ContextWarning {
-        usage_percent: f32,
-    },
+    ContextWarning { usage_percent: f32 },
     /// Context usage reached the critical threshold
-    ContextCritical {
-        usage_percent: f32,
-    },
+    ContextCritical { usage_percent: f32 },
     /// Conversation compaction started
-    CompactionStarted {
-        message_count: usize,
-    },
+    CompactionStarted { message_count: usize },
     /// Conversation compaction completed
-    CompactionCompleted {
-        removed_count: usize,
-    },
+    CompactionCompleted { removed_count: usize },
 
     // --- Model events ---
     /// Model discovery started
     ModelsDiscoveryStarted,
     /// Models were discovered
-    ModelsDiscovered {
-        count: usize,
-    },
+    ModelsDiscovered { count: usize },
     /// A model was selected
-    ModelSelected {
-        name: String,
-        provider: String,
-    },
+    ModelSelected { name: String, provider: String },
 
     // --- RAG events ---
     /// A document was indexed into the knowledge base
-    DocumentIndexed {
-        source: String,
-        chunks: usize,
-    },
+    DocumentIndexed { source: String, chunks: usize },
     /// Knowledge was retrieved for a query
     KnowledgeRetrieved {
         query_length: usize,
@@ -154,8 +118,7 @@ impl AiEvent {
             | AiEvent::ModelsDiscovered { .. }
             | AiEvent::ModelSelected { .. } => "model",
 
-            AiEvent::DocumentIndexed { .. }
-            | AiEvent::KnowledgeRetrieved { .. } => "rag",
+            AiEvent::DocumentIndexed { .. } | AiEvent::KnowledgeRetrieved { .. } => "rag",
 
             AiEvent::ToolExecuted { .. } => "tool",
         }
@@ -335,8 +298,7 @@ impl EventBus {
     where
         F: Fn(&AiEvent) + Send + Sync + 'static,
     {
-        self.handlers
-            .push(Arc::new(ClosureHandler { callback }));
+        self.handlers.push(Arc::new(ClosureHandler { callback }));
     }
 
     /// Register a handler that only receives events from specific categories.
@@ -391,12 +353,18 @@ impl EventBus {
 
     /// Get a snapshot of the event history.
     pub fn history(&self) -> Vec<TimestampedEvent> {
-        self.history.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.history
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Clear the event history.
     pub fn clear_history(&self) {
-        self.history.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        self.history
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
     }
 
     /// Count events of a specific category in history.
@@ -462,11 +430,7 @@ impl EventHandler for LoggingHandler {
                 from_provider,
                 to_provider,
             } => {
-                log::warn!(
-                    "[event:fallback] {} -> {}",
-                    from_provider,
-                    to_provider
-                );
+                log::warn!("[event:fallback] {} -> {}", from_provider, to_provider);
             }
             _ => {
                 if self.level == LogLevel::Debug {
@@ -497,7 +461,10 @@ impl CollectingHandler {
 
     /// Get a clone of all collected events.
     pub fn events(&self) -> Vec<AiEvent> {
-        self.events.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.events
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Count collected events.
@@ -507,12 +474,18 @@ impl CollectingHandler {
 
     /// Check if no events have been collected.
     pub fn is_empty(&self) -> bool {
-        self.events.lock().unwrap_or_else(|e| e.into_inner()).is_empty()
+        self.events
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_empty()
     }
 
     /// Clear all collected events.
     pub fn clear(&self) {
-        self.events.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        self.events
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
     }
 
     /// Get a shared reference for use with EventBus.
@@ -529,7 +502,10 @@ impl Default for CollectingHandler {
 
 impl EventHandler for CollectingHandler {
     fn on_event(&self, event: &AiEvent) {
-        self.events.lock().unwrap_or_else(|e| e.into_inner()).push(event.clone());
+        self.events
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(event.clone());
     }
 }
 

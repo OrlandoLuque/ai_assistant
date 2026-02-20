@@ -48,6 +48,9 @@
 35. [Escalabilidad de Busqueda Vectorial](#35-escalabilidad-de-busqueda-vectorial)
 36. [Sistema Distribuido Rediseñado](#36-sistema-distribuido-rediseñado--alta-disponibilidad-y-tolerancia-a-fallos)
 37. [Sistema Autonomo Completo — Implementacion](#37-sistema-autonomo-completo--implementacion)
+38. [Infraestructura de Testing](#38-infraestructura-de-testing)
+39. [Phase 9 — REPL/CLI, Neural Reranking, A/B Testing](#39-phase-9--replcli-neural-reranking-ab-testing)
+40. [Phase 10 — Token Counting, Cost Tracking, Multi-Modal RAG](#40-phase-10--token-counting-cost-tracking-multi-modal-rag)
 
 ---
 
@@ -6837,6 +6840,8 @@ La clase `MultiAgentSession` integra:
 - `create_agent_headless(profile, generator)` — agente headless para tests
 - `butler_scan()`, `auto_configure()` — deteccion y configuracion automatica
 - `scheduler()`, `scheduler_mut()`, `trigger_manager()`, `trigger_manager_mut()`
+- `init_browser()`, `browser_session()`, `browser_session_mut()` — acceso directo a BrowserSession (feature `browser`)
+- `init_distributed_agents(node_id)`, `distributed_agents()`, `distributed_agents_mut()` — acceso directo a DistributedAgentManager (feature `distributed-agents`)
 
 ### Tests
 
@@ -6859,4 +6864,322 @@ La clase `MultiAgentSession` integra:
 | multi_agent (session) | 13 |
 | **Total** | **~187** |
 
-Total de tests del crate con todos los features: **1719**
+Total de tests del crate con todos los features (al momento de Phase 5): **1719**
+
+> **Nota (Phase 9)**: El total actual es **2356 tests** (2318 lib + 38 integration). Ver Seccion 38 para el desglose actualizado.
+
+---
+
+## 38. Infraestructura de Testing
+
+> Seccion anadida: 2026-02-19
+
+### Capas de Testing
+
+El proyecto utiliza cuatro capas de testing complementarias:
+
+| Capa | Descripcion | Ubicacion |
+|------|-------------|-----------|
+| **Unit tests** (`#[test]`) | Tests en cada modulo, aislados | `src/*.rs` en bloques `#[cfg(test)]` |
+| **Integration tests** | Tests que prueban modulos combinados | `tests/integration_tests.rs` |
+| **Test harness** (CLI) | Binary independiente con menu interactivo | `src/bin/ai_test_harness.rs` |
+| **Feature-gated tests** | Tests condicionales por feature flag | `#[cfg(feature = "p2p")]` etc. |
+
+### Estrategia de Testing P2P
+
+El modulo P2P interactua con red (STUN, UPnP, NAT-PMP, TCP sockets). Los tests cubren este codigo sin infraestructura de red real:
+
+1. **Paths deshabilitados**: `enable_upnp: false` → verifica error handling
+2. **Configs vacias**: `stun_servers: vec![]` → manejo graceful de configuracion ausente
+3. **Direcciones inalcanzables**: RFC 5737 TEST-NET (`198.51.100.1:3478`) → paths de timeout
+4. **Datos sinteticos**: Construccion manual de `PeerReputation` → logica pura sin I/O
+5. **Aserciones de estado**: `manager.start()` + `manager.stats()` → lifecycle sin peers reales
+
+### Test Harness: Compilacion Condicional
+
+El harness soporta categorias condicionales mediante `#[cfg(feature)]`:
+
+```rust
+// Categorias base siempre disponibles
+let mut categories = vec![
+    ("core", tests_core as fn() -> CategoryResult),
+    // ... 108 categorias base ...
+];
+
+// Categorias P2P solo con feature "p2p"
+#[cfg(feature = "p2p")]
+{
+    categories.push(("p2p_nat", tests_p2p_nat as fn() -> CategoryResult));
+    categories.push(("p2p_reputation", tests_p2p_reputation as fn() -> CategoryResult));
+    categories.push(("p2p_manager", tests_p2p_manager as fn() -> CategoryResult));
+}
+```
+
+Esto permite compilar el harness sin features opcionales pesados, manteniendo las categorias base funcionales.
+
+### Patrones de Test para Codigo Network-Dependent
+
+Para tests que requieren timing (como Phi Accrual Failure Detector):
+- Usar thresholds generosos (`phi_threshold: 16.0`)
+- Sleep intervals largos (`20ms+`) para evitar flakiness en CI
+- Verificar consistencia relativa (`is_suspicious() == (phi > threshold * 0.5)`) en vez de valores absolutos
+
+### Resumen de Tests
+
+| Modulo / Grupo | Tests |
+|----------------|-------|
+| Core (features `full`) | 2360 |
+| Distributed networking | 115 |
+| P2P | 32 |
+| Autonomous agent system | 255 |
+| Integration tests | 38 |
+| Test harness (base) | ~436 |
+| Test harness (P2P) | 16 |
+| Benchmarks (Criterion) | 6 |
+| **Total lib + integration** | **2,398** |
+
+Nuevas areas de tests anadidas en Phase 9:
+- `repl` — REPL engine, command parsing, history, session management, completions (21 tests)
+- `reranker` — Cross-encoder, reciprocal rank fusion, diversity (MMR), cascade, pipeline (15 tests)
+- `ab_testing` — Experiment manager, variant assignment (FNV-1a), significance (Welch's t / chi-square), early stopping (20 tests)
+
+Nuevas areas de tests anadidas en Phases 7-8:
+- `providers` — configuracion de proveedores, model fetching, generacion
+- `security` — validacion de input, deteccion de inyeccion, sanitizacion
+- `persistence` — persistencia de sesiones, I/O de archivos
+- `metrics` — coleccion de metricas, contadores, histogramas
+- `error` — tipos de error, propagacion, Display/Debug
+- `analysis` — analisis de texto, extraccion de temas
+- `embeddings` — LocalEmbedder, similaridad coseno, embedding batch
+- `rate_limiting` — rate limit, sliding window, token bucket
+- `intent` — IntentClassifier, categorias, confianza
+- `templates` — PromptTemplate, renderizado, categorias
+- `response_effectiveness` — metricas de calidad de respuesta
+- `conversation_compaction` — estrategias de compactacion, scoring de importancia
+
+### Suite de Benchmarks
+
+```bash
+cargo bench --bench core_benchmarks --features full
+```
+
+6 benchmarks: intent_classification, conversation_compaction, prompt_shortener, sentiment_analysis, request_signing_hmac_sha256, template_rendering.
+
+### Determinismo y Ejemplos
+
+- **BestFit determinism fix**: La estrategia de asignacion `BestFit` en integration tests fue corregida para producir resultados deterministas independientemente de la plataforma o el orden de iteracion de HashMap.
+- **Required-features en Cargo.toml**: Todos los 17 ejemplos declaran `required-features` en sus secciones `[[example]]`, de modo que `cargo build --examples` omite correctamente los que no tienen features habilitados.
+
+### Cobertura
+
+Cobertura de funciones publicas:
+- P2P: **100%** (32 tests, 0 funciones sin cubrir)
+- Failure Detector: **100%** (15 tests, 0 funciones sin cubrir)
+- Todas las demas funciones publicas cubiertas via unit tests + harness
+
+---
+
+## 39. Phase 9 — REPL/CLI, Neural Reranking, A/B Testing
+
+> Fecha: 2026-02-20
+
+### Resumen
+
+Phase 9 anade tres modulos nuevos: un motor REPL/CLI interactivo, un pipeline de neural reranking para mejorar resultados RAG, y un framework completo de A/B testing para experimentos con prompts y configuraciones.
+
+### Modulos Nuevos
+
+#### REPL/CLI (`repl.rs` + `bin/ai_assistant_cli.rs`)
+
+Motor de REPL interactivo con CLI binary para uso headless del asistente.
+
+- `ReplEngine`: motor principal con event loop, command parsing, history
+- Comandos built-in: `/help`, `/clear`, `/session`, `/model`, `/config`, `/export`, `/quit`
+- Tab completion para comandos y argumentos
+- Historial de comandos persistible
+- Temas de color configurables
+- Gestion de sesiones (crear, listar, cambiar)
+- Binary `ai_assistant_cli` para ejecucion directa
+- Feature: `full` (no requiere feature adicional)
+- 21 tests unitarios
+
+#### Neural Reranking (`reranker.rs`)
+
+Pipeline de reranking para mejorar la precision de resultados RAG y busquedas vectoriales.
+
+- `CrossEncoderReranker`: reranking basado en scores de relevancia query-document
+- `ReciprocalRankFusion` (RRF): fusion de rankings multiples con factor k configurable
+- `DiversityReranker`: seleccion por Maximum Marginal Relevance (MMR) con lambda de diversidad
+- `CascadeReranker`: pipeline de rerankers en cascada con top-k progresivo
+- `RerankerPipeline`: combinacion configurable de multiples estrategias de reranking
+- Feature: `full` (no requiere feature adicional)
+- 15 tests unitarios
+
+#### A/B Testing (`ab_testing.rs`)
+
+Framework completo de experimentacion para prompts, modelos y configuraciones.
+
+- `ExperimentManager`: gestion del ciclo de vida de experimentos (draft, running, paused, completed)
+- `VariantAssigner`: asignacion determinista de variantes por user ID usando FNV-1a hashing
+- `SignificanceCalculator`: tests estadisticos — Welch's t-test para metricas continuas, chi-square para proporciones
+- `EarlyStopping`: finalizacion temprana cuando se alcanza significancia estadistica
+- Metricas por variante: count, mean, variance, min, max, conversion rate
+- Feature: `eval`
+- 20 tests unitarios
+
+### Nuevos Ejemplos
+
+| Ejemplo | Feature | Descripcion |
+|---------|---------|-------------|
+| `repl_demo` | (none) | Demostracion del motor REPL interactivo |
+| `ab_testing_demo` | `eval` | Demostracion del framework de A/B testing |
+
+### Integracion con AiAssistant
+
+Nuevos metodos en `AiAssistant`:
+- `init_experiment_manager()` — inicializa el ExperimentManager
+- `experiment_manager()` — acceso inmutable al ExperimentManager
+- `experiment_manager_mut()` — acceso mutable al ExperimentManager
+
+### Tests
+
+| Modulo | Tests |
+|--------|-------|
+| repl | 21 |
+| reranker | 15 |
+| ab_testing | 20 |
+| **Total nuevos Phase 9** | **56** |
+
+**Total acumulado**: 2,356 tests (2318 lib + 38 integration), 0 failures, 0 warnings, 6 benchmarks.
+
+---
+
+## 40. Phase 10 — Token Counting, Cost Tracking, Multi-Modal RAG
+
+> Fecha: 2026-02-20
+
+### Resumen
+
+Phase 10 anade tres modulos nuevos: un tokenizador BPE puro Rust para conteo preciso de tokens, un sistema de tracking de costes en tiempo real con dashboard y middleware, y un pipeline de RAG multi-modal para indexacion y busqueda sobre documentos con multiples modalidades (texto, imagenes, tablas, codigo, audio).
+
+### Modulos Nuevos
+
+#### BPE Token Counter (`token_counter.rs`)
+
+Tokenizador BPE (Byte Pair Encoding) implementado en Rust puro sin dependencias externas, compatible con tokenizadores GPT.
+
+- `TokenCounter` trait: interfaz comun para diferentes estrategias de conteo
+- `BpeTokenCounter`: tokenizador BPE completo con vocabulario base, merge rules y encoding/decoding
+- `ApproximateCounter`: estimacion rapida basada en heuristica de palabras (~75% precision)
+- `ProviderTokenCounter`: conteo ajustado por ratio especifico del proveedor (OpenAI, Anthropic, etc.)
+- `TokenBudget`: gestion de presupuesto de tokens por request
+- `TokenAllocation`: distribucion de tokens entre system prompt, user message y response
+- Feature: `full` (no requiere feature adicional)
+- 15 tests unitarios
+
+#### Cost Integration (`cost_integration.rs`)
+
+Dashboard de costes en tiempo real con middleware para intercepcion de requests.
+
+- `CostDashboard`: dashboard completo con historial de requests, totales por provider/modelo, alertas
+- `CostMiddleware` trait: interfaz para intercepcion de requests con decision allow/warn/block
+- `DefaultCostMiddleware`: implementacion por defecto con limites diarios y mensuales
+- `CostAwareConfig`: configuracion de limites de coste por provider y globales
+- `RequestCostEntry`: registro individual de coste por request (provider, modelo, tokens, coste USD)
+- `RequestType`: tipos de request (Chat, Completion, Embedding, ImageGeneration, etc.)
+- `CostDecision`: enum Allow/Warn/Block para decisiones de middleware
+- Feature: `full` (no requiere feature adicional)
+- 12 tests unitarios
+
+#### Multi-Modal RAG (`multimodal_rag.rs`)
+
+Pipeline de RAG que maneja multiples modalidades de contenido, no solo texto plano.
+
+- `ModalityType`: enum con variantes Text, Image, Audio, Table, Code
+- `MultiModalChunk`: chunk individual con modalidad, contenido, caption opcional, embedding
+- `MultiModalDocument`: documento con chunks de multiples modalidades
+- `MultiModalRetriever`: indexador y buscador que opera sobre todas las modalidades
+- `MultiModalPipeline`: pipeline completo retrieve + synthesize
+- `MultiModalResult`: resultado de query con chunks relevantes y modalidades usadas
+- `ImageCaptionExtractor`: extractor de captions para chunks de imagen
+- Feature: `full` (no requiere feature adicional)
+- 15 tests unitarios
+
+### Nuevos Ejemplos
+
+| Ejemplo | Feature | Descripcion |
+|---------|---------|-------------|
+| `cost_tracking` | `full` | Demostracion del dashboard de costes, middleware y alertas de presupuesto |
+| `multimodal` | `full` | Demostracion de indexacion y busqueda multi-modal |
+
+### REPL: Nuevo Comando `/cost`
+
+El REPL ahora incluye el comando `/cost` que muestra el dashboard de costes en tiempo real, incluyendo totales por provider, ultimos requests y alertas de presupuesto.
+
+### Integracion con AiAssistant
+
+Nuevos metodos en `AiAssistant`:
+- `init_cost_tracking()` — inicializa el CostDashboard y middleware de costes
+- `cost_dashboard()` — acceso inmutable al CostDashboard
+- `cost_dashboard_mut()` — acceso mutable al CostDashboard
+- `cost_report()` — genera un informe de costes actual
+
+### Tests
+
+| Modulo | Tests |
+|--------|-------|
+| token_counter | 15 |
+| cost_integration | 12 |
+| multimodal_rag | 15 |
+| **Total nuevos Phase 10** | **42** |
+
+**Total acumulado**: 2,398 tests (2360 lib + 38 integration), 0 failures, 0 warnings, 6 benchmarks, 17 examples.
+
+---
+
+## 41. Phase 11 — UI Framework Hooks & Agent Graph Visualization
+
+> Fecha: 2026-02-21
+
+### Resumen
+
+Phase 11 cierra los 2 ultimos items del roadmap (39/39 completados). Se anaden:
+1. **UI Framework Hooks** (`ui_hooks.rs`) — infraestructura de eventos tipados para frameworks frontend
+2. **Agent Graph Visualization** (`agent_graph.rs`) — exportacion programatica de grafos y trazas de ejecucion
+
+### Modulos Nuevos
+
+#### UI Framework Hooks (`ui_hooks.rs`)
+- `ChatStreamEvent` — 8 variantes: MessageStart/Delta/End, ToolCallStart/Delta/End, Error, StatusChange
+- `ChatHooks` — gestion de suscriptores con `on_event()`, `emit()`, broadcast
+- `StreamAdapter` — conversion de chunks crudos a eventos tipados
+- `ChatSession` — estado de sesion ligero con export JSON para frontend
+- `ChatStatus` — Idle/Thinking/Streaming/ToolCalling/Error
+- `UsageInfo` — tracking de tokens + costo
+- Integrado en AiAssistant: `init_chat_hooks()`, `chat_hooks()`, `emit_chat_event()`
+
+#### Agent Graph Visualization (`agent_graph.rs`)
+- `AgentGraph` — grafo con nodos y aristas, CRUD completo
+- `AgentNode` / `AgentEdge` — nodos con capacidades, aristas tipadas (5 tipos)
+- `topological_sort()` — algoritmo de Kahn con deteccion de ciclos
+- Export: `export_dot()`, `export_mermaid()`, `export_json()`
+- `from_dag()` — construccion desde DagDefinition existente
+- `ExecutionTrace` / `TraceStep` — registro paso a paso de ejecucion
+- `GraphAnalytics` — critical path, bottlenecks, agent utilization
+
+### Ejemplos Nuevos
+| Ejemplo | Descripcion |
+|---------|-------------|
+| `ui_hooks_demo` | Suscripcion a eventos, StreamAdapter, ChatSession |
+| `agent_graph_demo` | Grafo manual, export DOT/Mermaid/JSON, trazas, analytics |
+
+### Tests
+| Modulo | Tests |
+|--------|-------|
+| ui_hooks | 16 |
+| agent_graph | 17 |
+| **Total nuevos Phase 11** | **33** |
+
+**Total acumulado**: 2,431 tests (2393 lib + 38 integration), 0 failures, 0 warnings, 6 benchmarks, 19 examples.
+
+**ROADMAP COMPLETADO: 39/39 items implementados.**

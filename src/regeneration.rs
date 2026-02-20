@@ -98,16 +98,21 @@ impl RegenerationRequest {
         let mut parts = Vec::new();
 
         // Add issue-specific instruction
-        parts.push(match self.feedback.issue {
-            RegenerationIssue::TooLong => "Please provide a shorter, more concise response.",
-            RegenerationIssue::TooShort => "Please provide a more detailed response.",
-            RegenerationIssue::OffTopic => "Please focus directly on the question asked.",
-            RegenerationIssue::Incorrect => "Please verify the information and correct any errors.",
-            RegenerationIssue::TooTechnical => "Please explain in simpler terms.",
-            RegenerationIssue::TooSimple => "Please provide more technical depth.",
-            RegenerationIssue::WrongFormat => "Please use proper formatting.",
-            RegenerationIssue::Other => "",
-        }.to_string());
+        parts.push(
+            match self.feedback.issue {
+                RegenerationIssue::TooLong => "Please provide a shorter, more concise response.",
+                RegenerationIssue::TooShort => "Please provide a more detailed response.",
+                RegenerationIssue::OffTopic => "Please focus directly on the question asked.",
+                RegenerationIssue::Incorrect => {
+                    "Please verify the information and correct any errors."
+                }
+                RegenerationIssue::TooTechnical => "Please explain in simpler terms.",
+                RegenerationIssue::TooSimple => "Please provide more technical depth.",
+                RegenerationIssue::WrongFormat => "Please use proper formatting.",
+                RegenerationIssue::Other => "",
+            }
+            .to_string(),
+        );
 
         // Add length preference
         if let Some(length) = self.feedback.length {
@@ -116,14 +121,17 @@ impl RegenerationRequest {
 
         // Add style preference
         if let Some(style) = self.feedback.style {
-            parts.push(match style {
-                ResponseStyle::Formal => "Use a formal, professional tone.",
-                ResponseStyle::Casual => "Use a casual, friendly tone.",
-                ResponseStyle::Technical => "Use technical terminology.",
-                ResponseStyle::Simple => "Use simple, easy to understand language.",
-                ResponseStyle::Creative => "Be creative and engaging.",
-                ResponseStyle::Factual => "Focus on facts and be objective.",
-            }.to_string());
+            parts.push(
+                match style {
+                    ResponseStyle::Formal => "Use a formal, professional tone.",
+                    ResponseStyle::Casual => "Use a casual, friendly tone.",
+                    ResponseStyle::Technical => "Use technical terminology.",
+                    ResponseStyle::Simple => "Use simple, easy to understand language.",
+                    ResponseStyle::Creative => "Be creative and engaging.",
+                    ResponseStyle::Factual => "Focus on facts and be objective.",
+                }
+                .to_string(),
+            );
         }
 
         // Add custom instructions
@@ -132,12 +140,20 @@ impl RegenerationRequest {
         }
 
         // Combine
-        let instructions = parts.into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" ");
+        let instructions = parts
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
 
         format!(
             "{}\n\n[Instructions for improvement: {}]\n\nOriginal question: {}",
             instructions,
-            if instructions.is_empty() { "Please try again with a better response".to_string() } else { instructions.clone() },
+            if instructions.is_empty() {
+                "Please try again with a better response".to_string()
+            } else {
+                instructions.clone()
+            },
             self.original_prompt
         )
     }
@@ -179,7 +195,8 @@ impl RegenerationManager {
     }
 
     pub fn get_history(&self, conversation_id: &str) -> Vec<&RegenerationRequest> {
-        self.history.get(conversation_id)
+        self.history
+            .get(conversation_id)
             .map(|h| h.iter().collect())
             .unwrap_or_default()
     }

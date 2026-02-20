@@ -160,7 +160,11 @@ impl ConversationCompactor {
             let min_idx = preserved[mid_start..mid_end]
                 .iter()
                 .enumerate()
-                .min_by(|(_, a), (_, b)| a.importance.partial_cmp(&b.importance).unwrap_or(std::cmp::Ordering::Equal))
+                .min_by(|(_, a), (_, b)| {
+                    a.importance
+                        .partial_cmp(&b.importance)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
                 .map(|(i, _)| i + mid_start);
 
             if let Some(idx) = min_idx {
@@ -174,12 +178,14 @@ impl ConversationCompactor {
         let summary = self.generate_summary(&removed);
 
         // Collect preserved topics and entities
-        let preserved_topics: Vec<String> = all_topics.into_iter()
+        let preserved_topics: Vec<String> = all_topics
+            .into_iter()
             .filter(|(_, count)| *count > 1)
             .map(|(topic, _)| topic)
             .collect();
 
-        let preserved_entities: Vec<String> = all_entities.into_iter()
+        let preserved_entities: Vec<String> = all_entities
+            .into_iter()
             .filter(|(_, count)| *count > 1)
             .map(|(entity, _)| entity)
             .collect();
@@ -193,7 +199,11 @@ impl ConversationCompactor {
         }
     }
 
-    fn has_unique_important_topic(&self, msg: &CompactableMessage, all_topics: &HashMap<String, usize>) -> bool {
+    fn has_unique_important_topic(
+        &self,
+        msg: &CompactableMessage,
+        all_topics: &HashMap<String, usize>,
+    ) -> bool {
         // Check if message contains a topic that only appears once or twice
         for topic in &msg.topics {
             if let Some(&count) = all_topics.get(topic) {
@@ -224,7 +234,8 @@ impl ConversationCompactor {
         }
 
         // Collect unique topics
-        let topics: Vec<_> = removed.iter()
+        let topics: Vec<_> = removed
+            .iter()
             .flat_map(|m| m.topics.iter())
             .collect::<std::collections::HashSet<_>>()
             .into_iter()
@@ -232,7 +243,10 @@ impl ConversationCompactor {
             .collect();
 
         if !topics.is_empty() {
-            summary_parts.push(format!("discussing: {}", topics.into_iter().cloned().collect::<Vec<_>>().join(", ")));
+            summary_parts.push(format!(
+                "discussing: {}",
+                topics.into_iter().cloned().collect::<Vec<_>>().join(", ")
+            ));
         }
 
         format!("[Earlier conversation: {}]", summary_parts.join(", "))
@@ -240,10 +254,10 @@ impl ConversationCompactor {
 
     /// Create a summary message from compaction
     pub fn create_summary_message(&self, result: &CompactionResult) -> Option<CompactableMessage> {
-        result.summary.as_ref().map(|summary| {
-            CompactableMessage::new("system", summary)
-                .with_importance(0.7)
-        })
+        result
+            .summary
+            .as_ref()
+            .map(|summary| CompactableMessage::new("system", summary).with_importance(0.7))
     }
 }
 
@@ -358,5 +372,193 @@ mod tests {
 
         // Important message should be preserved
         assert!(result.messages.iter().any(|m| m.importance >= 0.8));
+    }
+
+    #[test]
+    fn test_needs_compaction_threshold() {
+        let config = CompactionConfig {
+            max_messages: 30,
+            target_messages: 15,
+            preserve_recent: 5,
+            preserve_first: 2,
+            min_importance: 0.8,
+        };
+        let compactor = ConversationCompactor::new(config);
+
+        // Exactly at threshold: should NOT need compaction (> not >=)
+        assert!(!compactor.needs_compaction(30));
+        // Below threshold
+        assert!(!compactor.needs_compaction(10));
+        // Above threshold
+        assert!(compactor.needs_compaction(31));
+        assert!(compactor.needs_compaction(100));
+    }
+
+    #[test]
+    fn test_preserve_first_and_last() {
+        let config = CompactionConfig {
+            max_messages: 5,
+            target_messages: 5,
+            preserve_recent: 2,
+            preserve_first: 2,
+            min_importance: 1.0, // very high so only position-based preservation kicks in
+        };
+        let compactor = ConversationCompactor::new(config);
+
+        let messages: Vec<_> = (0..15)
+            .map(|i| CompactableMessage::new("user", &format!("Message {}", i)))
+            .collect();
+
+        let first_content = messages[0].content.clone();
+        let second_content = messages[1].content.clone();
+        let second_to_last_content = messages[13].content.clone();
+        let last_content = messages[14].content.clone();
+
+        let result = compactor.compact(messages);
+
+        // First two messages must be preserved (preserve_first = 2)
+        assert!(
+            result.messages.iter().any(|m| m.content == first_content),
+            "First message should be preserved"
+        );
+        assert!(
+            result.messages.iter().any(|m| m.content == second_content),
+            "Second message should be preserved"
+        );
+        // Last two messages must be preserved (preserve_recent = 2)
+        assert!(
+            result
+                .messages
+                .iter()
+                .any(|m| m.content == second_to_last_content),
+            "Second-to-last message should be preserved"
+        );
+        assert!(
+            result.messages.iter().any(|m| m.content == last_content),
+            "Last message should be preserved"
+        );
+    }
+
+    #[test]
+    fn test_summary_message_format() {
+        let config = CompactionConfig {
+            max_messages: 5,
+            target_messages: 4,
+            preserve_recent: 1,
+            preserve_first: 1,
+            min_importance: 1.0,
+        };
+        let compactor = ConversationCompactor::new(config);
+
+        let mut messages = Vec::new();
+        for i in 0..10 {
+            let role = if i % 2 == 0 { "user" } else { "assistant" };
+            messages.push(CompactableMessage::new(role, &format!("Message {}", i)));
+        }
+
+        let result = compactor.compact(messages);
+
+        // There should be a summary since messages were removed
+        assert!(result.removed_count > 0);
+        let summary_msg = compactor
+            .create_summary_message(&result)
+            .expect("Should create a summary message");
+
+        // Summary message should have role "system"
+        assert_eq!(summary_msg.role, "system");
+        // Summary should have the bracket-wrapped format
+        assert!(
+            summary_msg.content.starts_with("[Earlier conversation:"),
+            "Summary should start with '[Earlier conversation:', got: {}",
+            summary_msg.content
+        );
+        assert!(
+            summary_msg.content.ends_with(']'),
+            "Summary should end with ']'"
+        );
+        // Summary message importance should be 0.7
+        assert!(
+            (summary_msg.importance - 0.7).abs() < f64::EPSILON,
+            "Summary message importance should be 0.7"
+        );
+    }
+
+    #[test]
+    fn test_compaction_reduces_count() {
+        let config = CompactionConfig {
+            max_messages: 5,
+            target_messages: 8,
+            preserve_recent: 2,
+            preserve_first: 2,
+            min_importance: 1.0,
+        };
+        let compactor = ConversationCompactor::new(config.clone());
+
+        let original_count = 25;
+        let messages: Vec<_> = (0..original_count)
+            .map(|i| CompactableMessage::new("user", &format!("Message {}", i)))
+            .collect();
+
+        let result = compactor.compact(messages);
+
+        assert!(
+            result.messages.len() < original_count,
+            "Compacted count ({}) should be less than original ({})",
+            result.messages.len(),
+            original_count
+        );
+        assert!(
+            result.messages.len() <= config.target_messages,
+            "Compacted count ({}) should be <= target ({})",
+            result.messages.len(),
+            config.target_messages
+        );
+        assert_eq!(
+            result.messages.len() + result.removed_count,
+            original_count,
+            "Preserved + removed should equal original count"
+        );
+    }
+
+    #[test]
+    fn test_empty_conversation() {
+        let compactor = ConversationCompactor::default();
+        let messages: Vec<CompactableMessage> = Vec::new();
+
+        let result = compactor.compact(messages);
+
+        assert!(result.messages.is_empty());
+        assert_eq!(result.removed_count, 0);
+        assert!(result.summary.is_none());
+        assert!(result.preserved_topics.is_empty());
+        assert!(result.preserved_entities.is_empty());
+    }
+
+    #[test]
+    fn test_config_builder() {
+        let compactor = CompactionConfigBuilder::new()
+            .max_messages(100)
+            .target_messages(40)
+            .preserve_recent(15)
+            .preserve_first(5)
+            .min_importance(0.6)
+            .build();
+
+        // Verify the builder correctly sets config values by testing behavior
+        // With max_messages=100, 99 messages should NOT need compaction
+        assert!(!compactor.needs_compaction(99));
+        assert!(!compactor.needs_compaction(100));
+        assert!(compactor.needs_compaction(101));
+
+        // Verify target_messages by compacting a large set
+        let messages: Vec<_> = (0..60)
+            .map(|i| CompactableMessage::new("user", &format!("Msg {}", i)))
+            .collect();
+        let result = compactor.compact(messages);
+        assert!(
+            result.messages.len() <= 40,
+            "Compacted to {} messages, expected <= 40",
+            result.messages.len()
+        );
     }
 }

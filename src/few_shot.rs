@@ -107,7 +107,11 @@ pub struct Example {
 
 impl Example {
     /// Create a new example
-    pub fn new(input: impl Into<String>, output: impl Into<String>, category: ExampleCategory) -> Self {
+    pub fn new(
+        input: impl Into<String>,
+        output: impl Into<String>,
+        category: ExampleCategory,
+    ) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             input: input.into(),
@@ -162,7 +166,10 @@ impl Example {
 
     /// Format as prompt text
     pub fn format(&self, input_prefix: &str, output_prefix: &str) -> String {
-        format!("{}{}\n{}{}", input_prefix, self.input, output_prefix, self.output)
+        format!(
+            "{}{}\n{}{}",
+            input_prefix, self.input, output_prefix, self.output
+        )
     }
 
     /// Format with default prefixes
@@ -300,14 +307,26 @@ impl FewShotManager {
     }
 
     /// Select examples with category filter
-    pub fn select_for_category(&self, query: &str, category: ExampleCategory, max: usize) -> Vec<&Example> {
+    pub fn select_for_category(
+        &self,
+        query: &str,
+        category: ExampleCategory,
+        max: usize,
+    ) -> Vec<&Example> {
         self.select_with_config(query, max, Some(category))
     }
 
     /// Select examples with full config control
-    pub fn select_with_config(&self, query: &str, max: usize, category: Option<ExampleCategory>) -> Vec<&Example> {
+    pub fn select_with_config(
+        &self,
+        query: &str,
+        max: usize,
+        category: Option<ExampleCategory>,
+    ) -> Vec<&Example> {
         // Filter candidates
-        let candidates: Vec<_> = self.examples.iter()
+        let candidates: Vec<_> = self
+            .examples
+            .iter()
             .filter(|e| e.quality_score >= self.config.min_quality)
             .filter(|e| category.map(|c| e.category == c).unwrap_or(true))
             .collect();
@@ -317,7 +336,8 @@ impl FewShotManager {
         }
 
         // Score each candidate
-        let mut scored: Vec<_> = candidates.iter()
+        let mut scored: Vec<_> = candidates
+            .iter()
             .map(|e| {
                 let similarity = self.compute_similarity(query, &e.input);
                 let score = similarity * self.config.similarity_weight
@@ -347,9 +367,9 @@ impl FewShotManager {
 
             // Diversity check
             if self.config.prefer_diversity && !selected.is_empty() {
-                let too_similar = selected.iter().any(|e: &&Example| {
-                    self.compute_similarity(&e.input, &example.input) > 0.8
-                });
+                let too_similar = selected
+                    .iter()
+                    .any(|e: &&Example| self.compute_similarity(&e.input, &example.input) > 0.8);
                 if too_similar {
                     continue;
                 }
@@ -380,8 +400,14 @@ impl FewShotManager {
     }
 
     /// Format examples as prompt
-    pub fn format_prompt(&self, examples: &[&Example], input_prefix: &str, output_prefix: &str) -> String {
-        examples.iter()
+    pub fn format_prompt(
+        &self,
+        examples: &[&Example],
+        input_prefix: &str,
+        output_prefix: &str,
+    ) -> String {
+        examples
+            .iter()
             .map(|e| e.format(input_prefix, output_prefix))
             .collect::<Vec<_>>()
             .join("\n\n")
@@ -442,7 +468,10 @@ impl FewShotManager {
         self.by_tag.clear();
 
         for (idx, example) in self.examples.iter().enumerate() {
-            self.by_category.entry(example.category).or_default().push(idx);
+            self.by_category
+                .entry(example.category)
+                .or_default()
+                .push(idx);
             for tag in &example.tags {
                 self.by_tag.entry(tag.clone()).or_default().push(idx);
             }
@@ -562,7 +591,9 @@ pub struct ExampleBuilder {
 impl ExampleBuilder {
     /// Create a new builder
     pub fn new() -> Self {
-        Self { examples: Vec::new() }
+        Self {
+            examples: Vec::new(),
+        }
     }
 
     /// Add an example
@@ -572,9 +603,15 @@ impl ExampleBuilder {
     }
 
     /// Add with tags
-    pub fn add_with_tags(mut self, input: &str, output: &str, category: ExampleCategory, tags: &[&str]) -> Self {
-        let example = Example::new(input, output, category)
-            .with_tags(tags.iter().map(|s| s.to_string()));
+    pub fn add_with_tags(
+        mut self,
+        input: &str,
+        output: &str,
+        category: ExampleCategory,
+        tags: &[&str],
+    ) -> Self {
+        let example =
+            Example::new(input, output, category).with_tags(tags.iter().map(|s| s.to_string()));
         self.examples.push(example);
         self
     }
@@ -618,16 +655,8 @@ mod tests {
     fn test_manager_add_select() {
         let mut manager = FewShotManager::new();
 
-        manager.add_example(Example::new(
-            "What is 2+2?",
-            "4",
-            ExampleCategory::Math,
-        ));
-        manager.add_example(Example::new(
-            "What is 3+3?",
-            "6",
-            ExampleCategory::Math,
-        ));
+        manager.add_example(Example::new("What is 2+2?", "4", ExampleCategory::Math));
+        manager.add_example(Example::new("What is 3+3?", "6", ExampleCategory::Math));
 
         let selected = manager.select_examples("What is 5+5?", 2);
         assert!(!selected.is_empty());

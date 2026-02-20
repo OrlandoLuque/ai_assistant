@@ -77,7 +77,11 @@ impl<T> ScoredItem<T> {
     }
 
     pub fn with_metadata(item: T, score: f32, metadata: HashMap<String, String>) -> Self {
-        Self { item, score, metadata }
+        Self {
+            item,
+            score,
+            metadata,
+        }
     }
 }
 
@@ -169,23 +173,31 @@ impl QueryExpander {
     ) -> Result<MethodResult<Vec<String>>, String> {
         let start = Instant::now();
 
-        let prompt = self.config.prompt_template.clone().unwrap_or_else(|| {
-            format!(
-                "Generate {} alternative ways to phrase this search query. \
+        let prompt = self
+            .config
+            .prompt_template
+            .clone()
+            .unwrap_or_else(|| {
+                format!(
+                    "Generate {} alternative ways to phrase this search query. \
                  Focus on different aspects and synonyms. \
                  Return ONLY the alternatives, one per line, no numbering or bullets:\n\n\
                  Query: {}\n\n\
                  Alternatives:",
-                self.config.max_expansions,
-                "{query}"
-            )
-        }).replace("{query}", query);
+                    self.config.max_expansions, "{query}"
+                )
+            })
+            .replace("{query}", query);
 
         let response = llm.generate(&prompt, 300)?;
 
         let expansions: Vec<String> = response
             .lines()
-            .map(|l| l.trim().trim_start_matches(|c: char| c.is_numeric() || c == '.' || c == '-' || c == '*'))
+            .map(|l| {
+                l.trim().trim_start_matches(|c: char| {
+                    c.is_numeric() || c == '.' || c == '-' || c == '*'
+                })
+            })
             .map(|l| l.trim())
             .filter(|l| !l.is_empty() && l.len() > 3)
             .take(self.config.max_expansions)
@@ -223,7 +235,9 @@ impl QueryExpander {
             ("size", &["dimensions", "length", "mass"][..]),
             ("buy", &["purchase", "acquire", "get"][..]),
             ("best", &["top", "optimal", "recommended"][..]),
-        ].into_iter().collect();
+        ]
+        .into_iter()
+        .collect();
 
         let lower = query.to_lowercase();
         let mut expanded = Vec::new();
@@ -335,23 +349,30 @@ impl MultiQueryDecomposer {
                 .with_details("complexity", format!("{:.2}", complexity)));
         }
 
-        let prompt = self.config.prompt_template.clone().unwrap_or_else(|| {
-            format!(
-                "Break down this complex question into {} simpler, independent sub-questions. \
+        let prompt = self
+            .config
+            .prompt_template
+            .clone()
+            .unwrap_or_else(|| {
+                format!(
+                    "Break down this complex question into {} simpler, independent sub-questions. \
                  Each sub-question should be answerable on its own.\n\
                  Return ONLY the sub-questions, one per line, no numbering:\n\n\
                  Question: {}\n\n\
                  Sub-questions:",
-                self.config.max_sub_queries,
-                "{query}"
-            )
-        }).replace("{query}", query);
+                    self.config.max_sub_queries, "{query}"
+                )
+            })
+            .replace("{query}", query);
 
         let response = llm.generate(&prompt, 400)?;
 
         let sub_queries: Vec<String> = response
             .lines()
-            .map(|l| l.trim().trim_start_matches(|c: char| c.is_numeric() || c == '.' || c == '-'))
+            .map(|l| {
+                l.trim()
+                    .trim_start_matches(|c: char| c.is_numeric() || c == '.' || c == '-')
+            })
             .map(|l| l.trim())
             .filter(|l| !l.is_empty() && l.len() > 5)
             .take(self.config.max_sub_queries)
@@ -425,13 +446,19 @@ impl HydeGenerator {
     ) -> Result<MethodResult<Vec<String>>, String> {
         let start = Instant::now();
 
-        let prompt = self.config.prompt_template.clone().unwrap_or_else(|| {
-            "Write a detailed paragraph that would answer this question. \
+        let prompt = self
+            .config
+            .prompt_template
+            .clone()
+            .unwrap_or_else(|| {
+                "Write a detailed paragraph that would answer this question. \
              Write as if you're an expert providing factual, specific information. \
              Include relevant details, numbers, and specifications if applicable.\n\n\
              Question: {query}\n\n\
-             Answer:".to_string()
-        }).replace("{query}", query);
+             Answer:"
+                    .to_string()
+            })
+            .replace("{query}", query);
 
         let mut hypotheticals = Vec::new();
 
@@ -454,7 +481,9 @@ impl HydeGenerator {
         let start = Instant::now();
 
         let doc_result = self.generate(query, llm)?;
-        let doc = doc_result.result.first()
+        let doc = doc_result
+            .result
+            .first()
             .ok_or_else(|| "No hypothetical document generated".to_string())?
             .clone();
 
@@ -600,7 +629,10 @@ pub trait CrossEncoderScore {
 
     /// Score multiple pairs at once
     fn score_pairs(&self, query: &str, documents: &[&str]) -> Result<Vec<f32>, String> {
-        documents.iter().map(|d| self.score_pair(query, d)).collect()
+        documents
+            .iter()
+            .map(|d| self.score_pair(query, d))
+            .collect()
     }
 }
 
@@ -642,7 +674,11 @@ impl CrossEncoderReranker {
             .collect();
 
         // Sort by score
-        reranked.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        reranked.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         // Take top-k
         reranked.truncate(self.top_k);
@@ -717,14 +753,21 @@ impl RrfFusion {
             })
             .collect();
 
-        fused.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        fused.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         fused.truncate(self.config.max_results);
 
         MethodResult::new(fused, start.elapsed())
     }
 
     /// Fuse string items (using content as ID)
-    pub fn fuse_strings(&self, ranked_lists: Vec<Vec<ScoredItem<String>>>) -> MethodResult<Vec<ScoredItem<String>>> {
+    pub fn fuse_strings(
+        &self,
+        ranked_lists: Vec<Vec<ScoredItem<String>>>,
+    ) -> MethodResult<Vec<ScoredItem<String>>> {
         self.fuse(ranked_lists, |s: &String| s.clone())
     }
 }
@@ -783,15 +826,20 @@ impl ContextualCompressor {
     ) -> Result<MethodResult<String>, String> {
         let start = Instant::now();
 
-        let prompt = self.config.prompt_template.clone().unwrap_or_else(|| {
-            "Extract only the parts relevant to answering this question.\n\
+        let prompt = self
+            .config
+            .prompt_template
+            .clone()
+            .unwrap_or_else(|| {
+                "Extract only the parts relevant to answering this question.\n\
              Keep specific facts, numbers, and details. Remove unrelated content.\n\n\
              Question: {query}\n\n\
              Text: {content}\n\n\
-             Relevant extract:".to_string()
-        })
-        .replace("{query}", query)
-        .replace("{content}", content);
+             Relevant extract:"
+                    .to_string()
+            })
+            .replace("{query}", query)
+            .replace("{content}", content);
 
         let compressed = llm.generate(&prompt, self.config.target_tokens)?;
         let compressed = compressed.trim().to_string();
@@ -913,11 +961,13 @@ impl SelfRagEvaluator {
         // Parse response
         let parts: Vec<&str> = response.split('|').collect();
 
-        let is_sufficient = parts.first()
+        let is_sufficient = parts
+            .first()
             .map(|s| s.trim().to_uppercase().starts_with("YES"))
             .unwrap_or(false);
 
-        let confidence = parts.get(1)
+        let confidence = parts
+            .get(1)
             .and_then(|s| s.trim().parse::<f32>().ok())
             .map(|c| c / 100.0)
             .unwrap_or(0.5);
@@ -1036,7 +1086,8 @@ impl CragEvaluator {
 
         let parts: Vec<&str> = response.split('|').collect();
 
-        let quality_score = parts.first()
+        let quality_score = parts
+            .first()
             .and_then(|s| s.trim().parse::<f32>().ok())
             .map(|s| s / 100.0)
             .unwrap_or(0.5);
@@ -1156,8 +1207,10 @@ impl AdaptiveStrategySelector {
         let start = Instant::now();
 
         if !self.config.use_llm {
-            return Ok(MethodResult::new(self.select_heuristic(query), start.elapsed())
-                .with_details("method", "heuristic"));
+            return Ok(
+                MethodResult::new(self.select_heuristic(query), start.elapsed())
+                    .with_details("method", "heuristic"),
+            );
         }
 
         let prompt = format!(
@@ -1188,8 +1241,7 @@ impl AdaptiveStrategySelector {
             RetrievalStrategy::HybridBalanced
         };
 
-        Ok(MethodResult::new(strategy, start.elapsed())
-            .with_details("method", "llm"))
+        Ok(MethodResult::new(strategy, start.elapsed()).with_details("method", "llm"))
     }
 }
 
@@ -1257,7 +1309,11 @@ pub trait GraphDatabase {
     fn find_entities(&self, text: &str) -> Result<Vec<Entity>, String>;
 
     /// Get relationships for an entity
-    fn get_relationships(&self, entity: &str, max_depth: usize) -> Result<Vec<Relationship>, String>;
+    fn get_relationships(
+        &self,
+        entity: &str,
+        max_depth: usize,
+    ) -> Result<Vec<Relationship>, String>;
 
     /// Get related entities
     fn get_related_entities(&self, entity: &str, max_depth: usize) -> Result<Vec<Entity>, String>;
@@ -1384,7 +1440,10 @@ impl RaptorRetriever {
 
         let summary = llm.generate(&prompt, self.config.summary_length)?;
 
-        Ok(MethodResult::new(summary.trim().to_string(), start.elapsed()))
+        Ok(MethodResult::new(
+            summary.trim().to_string(),
+            start.elapsed(),
+        ))
     }
 }
 
@@ -1414,7 +1473,9 @@ mod tests {
         fn generate(&self, _prompt: &str, _max_tokens: usize) -> Result<String, String> {
             Ok("Mock response".to_string())
         }
-        fn model_name(&self) -> &str { "mock" }
+        fn model_name(&self) -> &str {
+            "mock"
+        }
     }
 
     #[test]
@@ -1422,7 +1483,9 @@ mod tests {
         let expander = QueryExpander::new();
         let synonyms = expander.synonym_expand("What is the ship price?");
         assert!(!synonyms.is_empty());
-        assert!(synonyms.iter().any(|s| s.contains("cost") || s.contains("vessel")));
+        assert!(synonyms
+            .iter()
+            .any(|s| s.contains("cost") || s.contains("vessel")));
     }
 
     #[test]
@@ -1430,7 +1493,8 @@ mod tests {
         let decomposer = MultiQueryDecomposer::new();
 
         let simple = "What is the Aurora?";
-        let complex = "Compare the Aurora and the Mustang, and tell me which is better for cargo and combat?";
+        let complex =
+            "Compare the Aurora and the Mustang, and tell me which is better for cargo and combat?";
 
         assert!(decomposer.estimate_complexity(simple) < decomposer.estimate_complexity(complex));
     }
@@ -1489,6 +1553,9 @@ mod tests {
         let mut meta = HashMap::new();
         meta.insert("source".to_string(), "test.md".to_string());
         let item_with_meta = ScoredItem::with_metadata("test".to_string(), 0.5, meta);
-        assert_eq!(item_with_meta.metadata.get("source"), Some(&"test.md".to_string()));
+        assert_eq!(
+            item_with_meta.metadata.get("source"),
+            Some(&"test.md".to_string())
+        );
     }
 }

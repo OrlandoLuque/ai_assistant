@@ -2,8 +2,8 @@
 //!
 //! Anonymize personal and sensitive data.
 
-use std::collections::HashMap;
 use regex::Regex;
+use std::collections::HashMap;
 
 /// Anonymization strategy
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -147,11 +147,20 @@ impl DataAnonymizer {
         let mut mapping = HashMap::new();
 
         // Collect pattern matches first
-        let matches: Vec<_> = self.patterns.iter()
+        let matches: Vec<_> = self
+            .patterns
+            .iter()
             .flat_map(|(data_type, pattern)| {
                 let strategy = self.get_strategy(*data_type);
-                pattern.find_iter(text)
-                    .map(move |cap| (*data_type, strategy, cap.as_str().to_string(), cap.start(), cap.end()))
+                pattern.find_iter(text).map(move |cap| {
+                    (
+                        *data_type,
+                        strategy,
+                        cap.as_str().to_string(),
+                        cap.start(),
+                        cap.end(),
+                    )
+                })
             })
             .collect();
 
@@ -192,29 +201,27 @@ impl DataAnonymizer {
     }
 
     fn get_strategy(&self, data_type: DataType) -> AnonymizationStrategy {
-        self.rules.iter()
+        self.rules
+            .iter()
             .find(|r| r.data_type == data_type)
             .map(|r| r.strategy)
             .unwrap_or(AnonymizationStrategy::Redact)
     }
 
-    fn anonymize_value(&mut self, value: &str, data_type: DataType, strategy: AnonymizationStrategy) -> String {
+    fn anonymize_value(
+        &mut self,
+        value: &str,
+        data_type: DataType,
+        strategy: AnonymizationStrategy,
+    ) -> String {
         match strategy {
-            AnonymizationStrategy::Redact => {
-                self.get_redaction(data_type)
-            }
+            AnonymizationStrategy::Redact => self.get_redaction(data_type),
             AnonymizationStrategy::Hash => {
                 format!("HASH_{:08x}", self.simple_hash(value))
             }
-            AnonymizationStrategy::Pseudonymize => {
-                self.get_pseudonym(value, data_type)
-            }
-            AnonymizationStrategy::Generalize => {
-                self.generalize_value(value, data_type)
-            }
-            AnonymizationStrategy::Mask => {
-                self.mask_value(value)
-            }
+            AnonymizationStrategy::Pseudonymize => self.get_pseudonym(value, data_type),
+            AnonymizationStrategy::Generalize => self.generalize_value(value, data_type),
+            AnonymizationStrategy::Mask => self.mask_value(value),
         }
     }
 
@@ -254,7 +261,8 @@ impl DataAnonymizer {
             _ => format!("PSEUDO_{}", self.pseudonym_counter),
         };
 
-        self.pseudonym_mapping.insert(value.to_string(), pseudonym.clone());
+        self.pseudonym_mapping
+            .insert(value.to_string(), pseudonym.clone());
         pseudonym
     }
 
@@ -286,10 +294,12 @@ impl DataAnonymizer {
         if len <= 4 {
             "*".repeat(len)
         } else {
-            format!("{}{}{}",
+            format!(
+                "{}{}{}",
                 &value[..2],
                 "*".repeat(len - 4),
-                &value[len - 2..])
+                &value[len - 2..]
+            )
         }
     }
 
@@ -360,7 +370,10 @@ mod tests {
     #[test]
     fn test_pseudonymization() {
         let mut anonymizer = DataAnonymizer::new();
-        anonymizer.add_rule(AnonymizationRule::new(DataType::Email, AnonymizationStrategy::Pseudonymize));
+        anonymizer.add_rule(AnonymizationRule::new(
+            DataType::Email,
+            AnonymizationStrategy::Pseudonymize,
+        ));
 
         let result1 = anonymizer.anonymize("Email: john@test.com");
         let result2 = anonymizer.anonymize("Contact: john@test.com");

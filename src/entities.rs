@@ -3,9 +3,9 @@
 //! This module provides lightweight NER (Named Entity Recognition) and fact
 //! tracking for conversations without requiring external ML models.
 
-use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 // ============================================================================
 // Entity Types
@@ -86,7 +86,13 @@ pub struct Entity {
 }
 
 impl Entity {
-    pub fn new(text: &str, entity_type: EntityType, confidence: f32, start: usize, end: usize) -> Self {
+    pub fn new(
+        text: &str,
+        entity_type: EntityType,
+        confidence: f32,
+        start: usize,
+        end: usize,
+    ) -> Self {
         Self {
             text: text.to_string(),
             normalized: text.to_lowercase().trim().to_string(),
@@ -173,24 +179,81 @@ impl EntityExtractor {
         Self {
             config,
             programming_languages: vec![
-                "rust", "python", "javascript", "typescript", "java", "c++", "c#",
-                "go", "golang", "ruby", "php", "swift", "kotlin", "scala", "haskell",
-                "lua", "perl", "r", "julia", "dart", "elixir", "clojure", "sql",
-                "html", "css", "bash", "shell", "powershell",
+                "rust",
+                "python",
+                "javascript",
+                "typescript",
+                "java",
+                "c++",
+                "c#",
+                "go",
+                "golang",
+                "ruby",
+                "php",
+                "swift",
+                "kotlin",
+                "scala",
+                "haskell",
+                "lua",
+                "perl",
+                "r",
+                "julia",
+                "dart",
+                "elixir",
+                "clojure",
+                "sql",
+                "html",
+                "css",
+                "bash",
+                "shell",
+                "powershell",
             ],
             org_suffixes: vec![
-                "inc", "inc.", "corp", "corp.", "corporation", "llc", "ltd", "ltd.",
-                "gmbh", "co", "co.", "company", "group", "holdings", "enterprises",
-                "technologies", "tech", "software", "systems", "solutions",
+                "inc",
+                "inc.",
+                "corp",
+                "corp.",
+                "corporation",
+                "llc",
+                "ltd",
+                "ltd.",
+                "gmbh",
+                "co",
+                "co.",
+                "company",
+                "group",
+                "holdings",
+                "enterprises",
+                "technologies",
+                "tech",
+                "software",
+                "systems",
+                "solutions",
             ],
             location_indicators: vec![
-                "city", "town", "village", "country", "state", "province", "region",
-                "street", "avenue", "ave", "road", "rd", "boulevard", "blvd",
-                "north", "south", "east", "west", "central",
+                "city",
+                "town",
+                "village",
+                "country",
+                "state",
+                "province",
+                "region",
+                "street",
+                "avenue",
+                "ave",
+                "road",
+                "rd",
+                "boulevard",
+                "blvd",
+                "north",
+                "south",
+                "east",
+                "west",
+                "central",
             ],
             person_titles: vec![
-                "mr", "mr.", "mrs", "mrs.", "ms", "ms.", "dr", "dr.", "prof", "prof.",
-                "sir", "madam", "lord", "lady", "captain", "cpt", "general", "gen",
+                "mr", "mr.", "mrs", "mrs.", "ms", "ms.", "dr", "dr.", "prof", "prof.", "sir",
+                "madam", "lord", "lady", "captain", "cpt", "general", "gen",
             ],
         }
     }
@@ -246,9 +309,17 @@ impl EntityExtractor {
 
                 if at_pos > 0 && dot_pos > at_pos + 1 && dot_pos < word.len() - 1 {
                     // Clean up the word
-                    let clean = word.trim_matches(|c: char| !c.is_alphanumeric() && c != '@' && c != '.' && c != '_' && c != '-');
+                    let clean = word.trim_matches(|c: char| {
+                        !c.is_alphanumeric() && c != '@' && c != '.' && c != '_' && c != '-'
+                    });
                     if let Some(start) = text.find(clean) {
-                        entities.push(Entity::new(clean, EntityType::Email, 0.95, start, start + clean.len()));
+                        entities.push(Entity::new(
+                            clean,
+                            EntityType::Email,
+                            0.95,
+                            start,
+                            start + clean.len(),
+                        ));
                     }
                 }
             }
@@ -270,12 +341,25 @@ impl EntityExtractor {
                 // Find end of URL (whitespace or common punctuation at end)
                 let remaining = &text[abs_pos..];
                 let end = remaining
-                    .find(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == '>' || c == ')' || c == ']')
+                    .find(|c: char| {
+                        c.is_whitespace()
+                            || c == '"'
+                            || c == '\''
+                            || c == '>'
+                            || c == ')'
+                            || c == ']'
+                    })
                     .unwrap_or(remaining.len());
 
                 let url = &remaining[..end];
                 if url.len() > prefix.len() + 3 {
-                    entities.push(Entity::new(url, EntityType::Url, 0.95, abs_pos, abs_pos + end));
+                    entities.push(Entity::new(
+                        url,
+                        EntityType::Url,
+                        0.95,
+                        abs_pos,
+                        abs_pos + end,
+                    ));
                 }
 
                 search_start = abs_pos + end;
@@ -339,12 +423,28 @@ impl EntityExtractor {
             while let Some(pos) = text_lower[search_start..].find(lang) {
                 let abs_pos = search_start + pos;
                 // Check word boundaries
-                let before_ok = abs_pos == 0 || !text.chars().nth(abs_pos - 1).map(|c| c.is_alphanumeric()).unwrap_or(false);
-                let after_ok = abs_pos + lang.len() >= text.len() || !text.chars().nth(abs_pos + lang.len()).map(|c| c.is_alphanumeric()).unwrap_or(false);
+                let before_ok = abs_pos == 0
+                    || !text
+                        .chars()
+                        .nth(abs_pos - 1)
+                        .map(|c| c.is_alphanumeric())
+                        .unwrap_or(false);
+                let after_ok = abs_pos + lang.len() >= text.len()
+                    || !text
+                        .chars()
+                        .nth(abs_pos + lang.len())
+                        .map(|c| c.is_alphanumeric())
+                        .unwrap_or(false);
 
                 if before_ok && after_ok {
                     let original = &text[abs_pos..abs_pos + lang.len()];
-                    entities.push(Entity::new(original, EntityType::ProgrammingLanguage, 0.85, abs_pos, abs_pos + lang.len()));
+                    entities.push(Entity::new(
+                        original,
+                        EntityType::ProgrammingLanguage,
+                        0.85,
+                        abs_pos,
+                        abs_pos + lang.len(),
+                    ));
                 }
 
                 search_start = abs_pos + lang.len();
@@ -364,16 +464,33 @@ impl EntityExtractor {
 
         let words: Vec<&str> = text.split_whitespace().collect();
         for word in words {
-            let is_path = word.contains('/') && (word.starts_with('/') || word.starts_with("./") || word.starts_with("../"))
-                || (word.len() >= 3 && word.chars().nth(1) == Some(':') && word.chars().nth(2) == Some('\\'))
-                || word.ends_with(".rs") || word.ends_with(".py") || word.ends_with(".js")
-                || word.ends_with(".ts") || word.ends_with(".json") || word.ends_with(".toml")
-                || word.ends_with(".yaml") || word.ends_with(".yml") || word.ends_with(".md")
-                || word.ends_with(".txt") || word.ends_with(".html") || word.ends_with(".css");
+            let is_path = word.contains('/')
+                && (word.starts_with('/') || word.starts_with("./") || word.starts_with("../"))
+                || (word.len() >= 3
+                    && word.chars().nth(1) == Some(':')
+                    && word.chars().nth(2) == Some('\\'))
+                || word.ends_with(".rs")
+                || word.ends_with(".py")
+                || word.ends_with(".js")
+                || word.ends_with(".ts")
+                || word.ends_with(".json")
+                || word.ends_with(".toml")
+                || word.ends_with(".yaml")
+                || word.ends_with(".yml")
+                || word.ends_with(".md")
+                || word.ends_with(".txt")
+                || word.ends_with(".html")
+                || word.ends_with(".css");
 
             if is_path {
                 if let Some(start) = text.find(word) {
-                    entities.push(Entity::new(word, EntityType::FilePath, 0.85, start, start + word.len()));
+                    entities.push(Entity::new(
+                        word,
+                        EntityType::FilePath,
+                        0.85,
+                        start,
+                        start + word.len(),
+                    ));
                 }
             }
         }
@@ -407,7 +524,10 @@ impl EntityExtractor {
                     if chars[i].is_ascii_digit() {
                         digit_count += 1;
                         i += 1;
-                    } else if chars[i] == '.' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit() {
+                    } else if chars[i] == '.'
+                        && i + 1 < chars.len()
+                        && chars[i + 1].is_ascii_digit()
+                    {
                         has_dot = true;
                         i += 1;
                     } else {
@@ -419,7 +539,13 @@ impl EntityExtractor {
                 if has_dot && digit_count >= 2 {
                     let version: String = chars[start..i].iter().collect();
                     let confidence = if has_v { 0.9 } else { 0.7 };
-                    entities.push(Entity::new(&version, EntityType::Version, confidence, start, i));
+                    entities.push(Entity::new(
+                        &version,
+                        EntityType::Version,
+                        confidence,
+                        start,
+                        i,
+                    ));
                 }
             } else if !has_v {
                 i += 1;
@@ -449,7 +575,9 @@ impl EntityExtractor {
 
                 // Collect number
                 let mut has_digits = false;
-                while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == ',' || chars[i] == '.') {
+                while i < chars.len()
+                    && (chars[i].is_ascii_digit() || chars[i] == ',' || chars[i] == '.')
+                {
                     if chars[i].is_ascii_digit() {
                         has_digits = true;
                     }
@@ -511,10 +639,21 @@ impl EntityExtractor {
                 // Next word(s) might be a name
                 if i + 1 < words.len() {
                     let next = words[i + 1];
-                    if next.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                    if next
+                        .chars()
+                        .next()
+                        .map(|c| c.is_uppercase())
+                        .unwrap_or(false)
+                    {
                         let name = format!("{} {}", word, next);
                         if let Some(start) = text.find(&name) {
-                            entities.push(Entity::new(&name, EntityType::Person, 0.8, start, start + name.len()));
+                            entities.push(Entity::new(
+                                &name,
+                                EntityType::Person,
+                                0.8,
+                                start,
+                                start + name.len(),
+                            ));
                         }
                     }
                 }
@@ -541,10 +680,25 @@ impl EntityExtractor {
                 let words: Vec<&str> = before.split_whitespace().collect();
 
                 if let Some(last_word) = words.last() {
-                    if last_word.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
-                        let org_name = format!("{} {}", last_word, &text[abs_pos + 1..abs_pos + 1 + suffix.len()]);
+                    if last_word
+                        .chars()
+                        .next()
+                        .map(|c| c.is_uppercase())
+                        .unwrap_or(false)
+                    {
+                        let org_name = format!(
+                            "{} {}",
+                            last_word,
+                            &text[abs_pos + 1..abs_pos + 1 + suffix.len()]
+                        );
                         if let Some(start) = text.find(&org_name) {
-                            entities.push(Entity::new(&org_name, EntityType::Organization, 0.75, start, start + org_name.len()));
+                            entities.push(Entity::new(
+                                &org_name,
+                                EntityType::Organization,
+                                0.75,
+                                start,
+                                start + org_name.len(),
+                            ));
                         }
                     }
                 }
@@ -569,13 +723,16 @@ impl EntityExtractor {
                 let abs_pos = search_start + pos;
                 let original = &text[abs_pos..abs_pos + keyword.len()];
 
-                entities.push(Entity::new(
-                    original,
-                    pattern.entity_type,
-                    pattern.confidence,
-                    abs_pos,
-                    abs_pos + keyword.len(),
-                ).with_metadata("pattern", &pattern.name));
+                entities.push(
+                    Entity::new(
+                        original,
+                        pattern.entity_type,
+                        pattern.confidence,
+                        abs_pos,
+                        abs_pos + keyword.len(),
+                    )
+                    .with_metadata("pattern", &pattern.name),
+                );
 
                 search_start = abs_pos + keyword.len();
             }
@@ -588,8 +745,11 @@ impl EntityExtractor {
     fn deduplicate_entities(&self, mut entities: Vec<Entity>) -> Vec<Entity> {
         // Sort by start position and confidence
         entities.sort_by(|a, b| {
-            a.start_offset.cmp(&b.start_offset)
-                .then(b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal))
+            a.start_offset.cmp(&b.start_offset).then(
+                b.confidence
+                    .partial_cmp(&a.confidence)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
         });
 
         let mut result = Vec::new();
@@ -637,7 +797,13 @@ pub struct Fact {
 }
 
 impl Fact {
-    pub fn new(statement: &str, predicate: &str, object: &str, source: &str, confidence: f32) -> Self {
+    pub fn new(
+        statement: &str,
+        predicate: &str,
+        object: &str,
+        source: &str,
+        confidence: f32,
+    ) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             statement: statement.to_string(),
@@ -782,7 +948,9 @@ impl FactExtractor {
             if self.config.extract_preferences {
                 for (pattern, confidence) in &self.preference_patterns {
                     if sentence_lower.contains(pattern) {
-                        if let Some(fact) = self.extract_preference_fact(&sentence, pattern, *confidence, source) {
+                        if let Some(fact) =
+                            self.extract_preference_fact(sentence, pattern, *confidence, source)
+                        {
                             facts.push(fact);
                         }
                     }
@@ -793,7 +961,9 @@ impl FactExtractor {
             if self.config.extract_goals {
                 for (pattern, confidence) in &self.goal_patterns {
                     if sentence_lower.contains(pattern) {
-                        if let Some(fact) = self.extract_goal_fact(&sentence, pattern, *confidence, source) {
+                        if let Some(fact) =
+                            self.extract_goal_fact(sentence, pattern, *confidence, source)
+                        {
                             facts.push(fact);
                         }
                     }
@@ -804,7 +974,9 @@ impl FactExtractor {
             if self.config.extract_technical {
                 for (pattern, confidence) in &self.technical_patterns {
                     if sentence_lower.contains(pattern) {
-                        if let Some(fact) = self.extract_technical_fact(&sentence, pattern, *confidence, source) {
+                        if let Some(fact) =
+                            self.extract_technical_fact(sentence, pattern, *confidence, source)
+                        {
                             facts.push(fact);
                         }
                     }
@@ -825,40 +997,65 @@ impl FactExtractor {
             .collect()
     }
 
-    fn extract_preference_fact(&self, sentence: &str, pattern: &str, confidence: f32, source: &str) -> Option<Fact> {
+    fn extract_preference_fact(
+        &self,
+        sentence: &str,
+        pattern: &str,
+        confidence: f32,
+        source: &str,
+    ) -> Option<Fact> {
         let sentence_lower = sentence.to_lowercase();
         if let Some(pos) = sentence_lower.find(pattern) {
             let after = &sentence[pos + pattern.len()..].trim();
             if !after.is_empty() {
                 let object = self.extract_object(after);
                 if !object.is_empty() {
-                    let is_negative = pattern.contains("don't") || pattern.contains("hate") || pattern.contains("dislike") || pattern.contains("never");
+                    let is_negative = pattern.contains("don't")
+                        || pattern.contains("hate")
+                        || pattern.contains("dislike")
+                        || pattern.contains("never");
                     let predicate = if is_negative { "dislikes" } else { "likes" };
 
-                    return Some(Fact::new(sentence, predicate, &object, source, confidence)
-                        .with_subject("user"));
+                    return Some(
+                        Fact::new(sentence, predicate, &object, source, confidence)
+                            .with_subject("user"),
+                    );
                 }
             }
         }
         None
     }
 
-    fn extract_goal_fact(&self, sentence: &str, pattern: &str, confidence: f32, source: &str) -> Option<Fact> {
+    fn extract_goal_fact(
+        &self,
+        sentence: &str,
+        pattern: &str,
+        confidence: f32,
+        source: &str,
+    ) -> Option<Fact> {
         let sentence_lower = sentence.to_lowercase();
         if let Some(pos) = sentence_lower.find(pattern) {
             let after = &sentence[pos + pattern.len()..].trim();
             if !after.is_empty() {
                 let object = self.extract_object(after);
                 if !object.is_empty() {
-                    return Some(Fact::new(sentence, "wants to", &object, source, confidence)
-                        .with_subject("user"));
+                    return Some(
+                        Fact::new(sentence, "wants to", &object, source, confidence)
+                            .with_subject("user"),
+                    );
                 }
             }
         }
         None
     }
 
-    fn extract_technical_fact(&self, sentence: &str, pattern: &str, confidence: f32, source: &str) -> Option<Fact> {
+    fn extract_technical_fact(
+        &self,
+        sentence: &str,
+        pattern: &str,
+        confidence: f32,
+        source: &str,
+    ) -> Option<Fact> {
         let sentence_lower = sentence.to_lowercase();
         if let Some(pos) = sentence_lower.find(pattern) {
             let before = &sentence[..pos].trim();
@@ -870,8 +1067,10 @@ impl FactExtractor {
 
                 if !subject.is_empty() && !object.is_empty() {
                     let predicate = pattern.trim();
-                    return Some(Fact::new(sentence, predicate, &object, source, confidence)
-                        .with_subject(&subject));
+                    return Some(
+                        Fact::new(sentence, predicate, &object, source, confidence)
+                            .with_subject(&subject),
+                    );
                 }
             }
         }
@@ -880,7 +1079,9 @@ impl FactExtractor {
 
     fn extract_object(&self, text: &str) -> String {
         // Extract the first meaningful phrase (up to preposition or conjunction)
-        let stop_words = ["and", "or", "but", "because", "since", "when", "if", "which", "that"];
+        let stop_words = [
+            "and", "or", "but", "because", "since", "when", "if", "which", "that",
+        ];
 
         let words: Vec<&str> = text.split_whitespace().collect();
         let mut result = Vec::new();
@@ -899,7 +1100,10 @@ impl FactExtractor {
             }
         }
 
-        result.join(" ").trim_matches(|c: char| !c.is_alphanumeric()).to_string()
+        result
+            .join(" ")
+            .trim_matches(|c: char| !c.is_alphanumeric())
+            .to_string()
     }
 
     fn extract_last_noun_phrase(&self, text: &str) -> String {
@@ -942,9 +1146,15 @@ impl FactStore {
             let idx = self.facts.len();
 
             if let Some(ref subject) = fact.subject {
-                self.by_subject.entry(subject.to_lowercase()).or_default().push(idx);
+                self.by_subject
+                    .entry(subject.to_lowercase())
+                    .or_default()
+                    .push(idx);
             }
-            self.by_predicate.entry(fact.predicate.to_lowercase()).or_default().push(idx);
+            self.by_predicate
+                .entry(fact.predicate.to_lowercase())
+                .or_default()
+                .push(idx);
 
             self.facts.push(fact);
         }
@@ -1021,7 +1231,11 @@ impl FactStore {
     /// Get top facts by confidence
     pub fn top_facts(&self, n: usize) -> Vec<&Fact> {
         let mut sorted: Vec<&Fact> = self.facts.iter().collect();
-        sorted.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
+        sorted.sort_by(|a, b| {
+            b.confidence
+                .partial_cmp(&a.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         sorted.into_iter().take(n).collect()
     }
 
@@ -1074,15 +1288,22 @@ impl FactStore {
         }
 
         // Technical facts
-        let technical: Vec<&Fact> = self.facts.iter()
-            .filter(|f| f.predicate != "likes" && f.predicate != "dislikes" && f.predicate != "wants to")
+        let technical: Vec<&Fact> = self
+            .facts
+            .iter()
+            .filter(|f| {
+                f.predicate != "likes" && f.predicate != "dislikes" && f.predicate != "wants to"
+            })
             .collect();
 
         if !technical.is_empty() {
             summary.push_str("\nKnown facts:\n");
             for fact in technical.iter().take(max_facts / 3) {
                 if let Some(ref subject) = fact.subject {
-                    summary.push_str(&format!("- {} {} {}\n", subject, fact.predicate, fact.object));
+                    summary.push_str(&format!(
+                        "- {} {} {}\n",
+                        subject, fact.predicate, fact.object
+                    ));
                 }
             }
         }
@@ -1125,7 +1346,9 @@ mod tests {
         let extractor = EntityExtractor::new(EntityExtractorConfig::default());
         let entities = extractor.extract("Using v1.2.3 of the library.");
 
-        let version = entities.iter().find(|e| e.entity_type == EntityType::Version);
+        let version = entities
+            .iter()
+            .find(|e| e.entity_type == EntityType::Version);
         assert!(version.is_some());
         assert_eq!(version.unwrap().text, "v1.2.3");
     }
@@ -1155,7 +1378,8 @@ mod tests {
         let mut store = FactStore::new();
 
         let fact1 = Fact::new("I like Rust", "likes", "Rust", "msg1", 0.9).with_subject("user");
-        let fact2 = Fact::new("I like Python", "likes", "Python", "msg2", 0.85).with_subject("user");
+        let fact2 =
+            Fact::new("I like Python", "likes", "Python", "msg2", 0.85).with_subject("user");
 
         store.add_fact(fact1);
         store.add_fact(fact2);
@@ -1174,7 +1398,8 @@ mod tests {
         store.add_fact(fact1);
 
         // Add similar fact
-        let fact2 = Fact::new("I really like Rust", "likes", "Rust", "msg2", 0.85).with_subject("user");
+        let fact2 =
+            Fact::new("I really like Rust", "likes", "Rust", "msg2", 0.85).with_subject("user");
         store.add_fact(fact2);
 
         // Should reinforce, not add new

@@ -128,17 +128,22 @@ impl HfRequest {
     }
 
     pub fn conversational(messages: Vec<(&str, &str)>) -> Self {
-        let past_user_inputs: Vec<_> = messages.iter()
+        let past_user_inputs: Vec<_> = messages
+            .iter()
             .filter(|(role, _)| *role == "user")
             .map(|(_, content)| content.to_string())
             .collect();
 
-        let generated_responses: Vec<_> = messages.iter()
+        let generated_responses: Vec<_> = messages
+            .iter()
             .filter(|(role, _)| *role == "assistant")
             .map(|(_, content)| content.to_string())
             .collect();
 
-        let text = messages.last().map(|(_, c)| c.to_string()).unwrap_or_default();
+        let text = messages
+            .last()
+            .map(|(_, c)| c.to_string())
+            .unwrap_or_default();
 
         Self {
             inputs: serde_json::json!({
@@ -294,21 +299,25 @@ impl HfClient {
             req = req.set("Authorization", &format!("Bearer {}", token));
         }
 
-        let body = serde_json::to_string(&request)
-            .map_err(|e| HfError::Serialization(e.to_string()))?;
+        let body =
+            serde_json::to_string(&request).map_err(|e| HfError::Serialization(e.to_string()))?;
 
         let response = req.send_string(&body);
 
         match response {
             Ok(resp) => {
-                let text = resp.into_string()
+                let text = resp
+                    .into_string()
                     .map_err(|e| HfError::Network(e.to_string()))?;
 
                 self.parse_response(&text)
             }
             Err(ureq::Error::Status(code, resp)) => {
                 let text = resp.into_string().unwrap_or_default();
-                Err(HfError::Api { code, message: text })
+                Err(HfError::Api {
+                    code,
+                    message: text,
+                })
             }
             Err(e) => Err(HfError::Network(e.to_string())),
         }
@@ -333,12 +342,14 @@ impl HfClient {
         }
 
         if let Ok(results) = serde_json::from_str::<Vec<Vec<ClassificationResult>>>(text) {
-            return Ok(HfResponse::Classification(results.into_iter().flatten().collect()));
+            return Ok(HfResponse::Classification(
+                results.into_iter().flatten().collect(),
+            ));
         }
 
         // Fall back to raw JSON
-        let value: serde_json::Value = serde_json::from_str(text)
-            .map_err(|e| HfError::Deserialization(e.to_string()))?;
+        let value: serde_json::Value =
+            serde_json::from_str(text).map_err(|e| HfError::Deserialization(e.to_string()))?;
 
         Ok(HfResponse::Raw(value))
     }
@@ -349,9 +360,10 @@ impl HfClient {
         let response = self.infer(model, request)?;
 
         match response {
-            HfResponse::TextGeneration(results) => {
-                Ok(results.first().map(|r| r.generated_text.clone()).unwrap_or_default())
-            }
+            HfResponse::TextGeneration(results) => Ok(results
+                .first()
+                .map(|r| r.generated_text.clone())
+                .unwrap_or_default()),
             _ => Err(HfError::UnexpectedResponse),
         }
     }
@@ -384,9 +396,10 @@ impl HfClient {
         let response = self.infer(model, request)?;
 
         match response {
-            HfResponse::TextGeneration(results) => {
-                Ok(results.first().map(|r| r.generated_text.clone()).unwrap_or_default())
-            }
+            HfResponse::TextGeneration(results) => Ok(results
+                .first()
+                .map(|r| r.generated_text.clone())
+                .unwrap_or_default()),
             HfResponse::Raw(v) => {
                 // Handle summary_text format
                 if let Some(arr) = v.as_array() {
@@ -460,10 +473,8 @@ mod tests {
 
     #[test]
     fn test_qa_request() {
-        let req = HfRequest::question_answering(
-            "What is Python?",
-            "Python is a programming language."
-        );
+        let req =
+            HfRequest::question_answering("What is Python?", "Python is a programming language.");
         assert!(req.inputs.is_object());
     }
 
@@ -471,5 +482,113 @@ mod tests {
     fn test_config() {
         let config = HfConfig::new().with_token("hf_test");
         assert_eq!(config.api_token, Some("hf_test".to_string()));
+    }
+
+    #[test]
+    fn test_task_as_str() {
+        assert_eq!(HfTask::TextGeneration.as_str(), "text-generation");
+        assert_eq!(HfTask::Text2TextGeneration.as_str(), "text2text-generation");
+        assert_eq!(HfTask::Conversational.as_str(), "conversational");
+        assert_eq!(HfTask::Summarization.as_str(), "summarization");
+        assert_eq!(HfTask::Translation.as_str(), "translation");
+        assert_eq!(HfTask::QuestionAnswering.as_str(), "question-answering");
+        assert_eq!(HfTask::FeatureExtraction.as_str(), "feature-extraction");
+        assert_eq!(HfTask::FillMask.as_str(), "fill-mask");
+        assert_eq!(HfTask::TokenClassification.as_str(), "token-classification");
+        assert_eq!(HfTask::TextClassification.as_str(), "text-classification");
+        assert_eq!(HfTask::ZeroShotClassification.as_str(), "zero-shot-classification");
+        assert_eq!(HfTask::SentenceSimilarity.as_str(), "sentence-similarity");
+        assert_eq!(HfTask::ImageClassification.as_str(), "image-classification");
+        assert_eq!(HfTask::ObjectDetection.as_str(), "object-detection");
+        assert_eq!(HfTask::ImageSegmentation.as_str(), "image-segmentation");
+        assert_eq!(HfTask::ImageToText.as_str(), "image-to-text");
+        assert_eq!(HfTask::TextToImage.as_str(), "text-to-image");
+        assert_eq!(HfTask::AudioClassification.as_str(), "audio-classification");
+        assert_eq!(HfTask::AutomaticSpeechRecognition.as_str(), "automatic-speech-recognition");
+    }
+
+    #[test]
+    fn test_text_generation_request() {
+        let req = HfRequest::text_generation("Tell me a story");
+        assert_eq!(req.inputs, serde_json::Value::String("Tell me a story".to_string()));
+
+        let params = req.parameters.expect("should have parameters");
+        assert_eq!(params.max_new_tokens, Some(256));
+        assert_eq!(params.temperature, Some(0.7));
+        assert_eq!(params.top_p, Some(0.95));
+        assert_eq!(params.do_sample, Some(true));
+        assert_eq!(params.return_full_text, Some(false));
+
+        let opts = req.options.expect("should have options");
+        assert_eq!(opts.wait_for_model, Some(true));
+        assert_eq!(opts.use_cache, Some(true));
+    }
+
+    #[test]
+    fn test_summarization_request() {
+        let req = HfRequest::summarization("A long article about Rust programming.");
+        assert_eq!(
+            req.inputs,
+            serde_json::Value::String("A long article about Rust programming.".to_string())
+        );
+
+        let params = req.parameters.expect("should have parameters");
+        assert_eq!(params.max_new_tokens, Some(150));
+        // Inherited defaults from GenerationParams::default()
+        assert_eq!(params.temperature, Some(0.7));
+
+        // Summarization sets no options
+        assert!(req.options.is_none());
+    }
+
+    #[test]
+    fn test_generation_params_defaults() {
+        let params = GenerationParams::default();
+        assert_eq!(params.max_new_tokens, Some(256));
+        assert_eq!(params.temperature, Some(0.7));
+        assert_eq!(params.top_p, Some(0.95));
+        assert_eq!(params.top_k, Some(50));
+        assert_eq!(params.repetition_penalty, Some(1.1));
+        assert_eq!(params.do_sample, Some(true));
+        assert_eq!(params.return_full_text, Some(false));
+    }
+
+    #[test]
+    fn test_config_builder() {
+        // Default config
+        let config = HfConfig::new();
+        assert!(config.api_token.is_none());
+        assert_eq!(
+            config.base_url,
+            "https://api-inference.huggingface.co/models"
+        );
+        assert_eq!(config.timeout, Duration::from_secs(120));
+
+        // With token
+        let config = HfConfig::new().with_token("hf_abcdef");
+        assert_eq!(config.api_token, Some("hf_abcdef".to_string()));
+
+        // Local config
+        let local = HfConfig::local("http://localhost:8080");
+        assert!(local.api_token.is_none());
+        assert_eq!(local.base_url, "http://localhost:8080");
+        assert_eq!(local.timeout, Duration::from_secs(300));
+
+        // Default trait
+        let default_config = HfConfig::default();
+        assert!(default_config.api_token.is_none());
+    }
+
+    #[test]
+    fn test_qa_request_structure() {
+        let req = HfRequest::question_answering("What color is the sky?", "The sky is blue on a clear day.");
+
+        let inputs = req.inputs.as_object().expect("inputs should be an object");
+        assert_eq!(inputs["question"], "What color is the sky?");
+        assert_eq!(inputs["context"], "The sky is blue on a clear day.");
+
+        // QA requests have no generation parameters or options
+        assert!(req.parameters.is_none());
+        assert!(req.options.is_none());
     }
 }

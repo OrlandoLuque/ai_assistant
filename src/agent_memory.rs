@@ -103,10 +103,7 @@ impl SharedMemory {
         let shared = entry.shared_with.clone();
 
         // Track in owner's view
-        self.agent_views
-            .entry(owner)
-            .or_default()
-            .push(id.clone());
+        self.agent_views.entry(owner).or_default().push(id.clone());
 
         // Track in shared agents' views
         for agent_id in shared {
@@ -143,16 +140,19 @@ impl SharedMemory {
     }
 
     pub fn get_by_key(&mut self, key: &str, agent_id: &str) -> Option<&MemoryEntry> {
-        let id = self.entries.iter()
-            .find(|(_, e)| e.key == key && (e.can_access(agent_id) || self.global_entries.contains(&e.id)))
+        let id = self
+            .entries
+            .iter()
+            .find(|(_, e)| {
+                e.key == key && (e.can_access(agent_id) || self.global_entries.contains(&e.id))
+            })
             .map(|(id, _)| id.clone())?;
 
         self.get(&id, agent_id)
     }
 
     pub fn update(&mut self, id: &str, value: &str, agent_id: &str) -> Result<(), MemoryError> {
-        let entry = self.entries.get_mut(id)
-            .ok_or(MemoryError::NotFound)?;
+        let entry = self.entries.get_mut(id).ok_or(MemoryError::NotFound)?;
 
         if entry.owner != agent_id {
             return Err(MemoryError::AccessDenied);
@@ -165,8 +165,7 @@ impl SharedMemory {
     }
 
     pub fn delete(&mut self, id: &str, agent_id: &str) -> Result<(), MemoryError> {
-        let entry = self.entries.get(id)
-            .ok_or(MemoryError::NotFound)?;
+        let entry = self.entries.get(id).ok_or(MemoryError::NotFound)?;
 
         if entry.owner != agent_id {
             return Err(MemoryError::AccessDenied);
@@ -184,8 +183,7 @@ impl SharedMemory {
     }
 
     pub fn share(&mut self, id: &str, with_agent: &str, owner_id: &str) -> Result<(), MemoryError> {
-        let entry = self.entries.get_mut(id)
-            .ok_or(MemoryError::NotFound)?;
+        let entry = self.entries.get_mut(id).ok_or(MemoryError::NotFound)?;
 
         if entry.owner != owner_id {
             return Err(MemoryError::AccessDenied);
@@ -204,8 +202,7 @@ impl SharedMemory {
     }
 
     pub fn unshare(&mut self, id: &str, agent_id: &str, owner_id: &str) -> Result<(), MemoryError> {
-        let entry = self.entries.get_mut(id)
-            .ok_or(MemoryError::NotFound)?;
+        let entry = self.entries.get_mut(id).ok_or(MemoryError::NotFound)?;
 
         if entry.owner != owner_id {
             return Err(MemoryError::AccessDenied);
@@ -252,8 +249,8 @@ impl SharedMemory {
         self.get_agent_memories(agent_id)
             .into_iter()
             .filter(|e| {
-                e.key.to_lowercase().contains(&query_lower) ||
-                e.value.to_lowercase().contains(&query_lower)
+                e.key.to_lowercase().contains(&query_lower)
+                    || e.value.to_lowercase().contains(&query_lower)
             })
             .collect()
     }
@@ -266,7 +263,9 @@ impl SharedMemory {
     }
 
     pub fn cleanup_expired(&mut self) {
-        let expired: Vec<_> = self.entries.iter()
+        let expired: Vec<_> = self
+            .entries
+            .iter()
             .filter(|(_, e)| e.is_expired())
             .map(|(id, _)| id.clone())
             .collect();
@@ -282,8 +281,8 @@ impl SharedMemory {
 
     pub fn stats(&self) -> MemoryStats {
         let total = self.entries.len();
-        let by_type: HashMap<MemoryType, usize> = self.entries.values()
-            .fold(HashMap::new(), |mut acc, e| {
+        let by_type: HashMap<MemoryType, usize> =
+            self.entries.values().fold(HashMap::new(), |mut acc, e| {
                 *acc.entry(e.memory_type).or_insert(0) += 1;
                 acc
             });
@@ -366,7 +365,8 @@ impl ThreadSafeMemory {
     }
 
     pub fn update(&self, id: &str, value: &str, agent_id: &str) -> Result<(), MemoryError> {
-        self.inner.write()
+        self.inner
+            .write()
             .map_err(|_| MemoryError::InvalidOperation)?
             .update(id, value, agent_id)
     }
@@ -435,8 +435,18 @@ mod tests {
     fn test_search() {
         let mut memory = SharedMemory::new();
 
-        memory.store(MemoryEntry::new("python_info", "Python is a language", MemoryType::Fact, "agent1"));
-        memory.store(MemoryEntry::new("rust_info", "Rust is fast", MemoryType::Fact, "agent1"));
+        memory.store(MemoryEntry::new(
+            "python_info",
+            "Python is a language",
+            MemoryType::Fact,
+            "agent1",
+        ));
+        memory.store(MemoryEntry::new(
+            "rust_info",
+            "Rust is fast",
+            MemoryType::Fact,
+            "agent1",
+        ));
 
         let results = memory.search("python", "agent1");
         assert_eq!(results.len(), 1);
@@ -491,10 +501,30 @@ mod tests {
     fn test_get_by_type() {
         let mut memory = SharedMemory::new();
 
-        memory.store(MemoryEntry::new("fact1", "Fact 1", MemoryType::Fact, "agent1"));
-        memory.store(MemoryEntry::new("fact2", "Fact 2", MemoryType::Fact, "agent1"));
-        memory.store(MemoryEntry::new("context1", "Context 1", MemoryType::Context, "agent1"));
-        memory.store(MemoryEntry::new("task1", "Task 1", MemoryType::Task, "agent1"));
+        memory.store(MemoryEntry::new(
+            "fact1",
+            "Fact 1",
+            MemoryType::Fact,
+            "agent1",
+        ));
+        memory.store(MemoryEntry::new(
+            "fact2",
+            "Fact 2",
+            MemoryType::Fact,
+            "agent1",
+        ));
+        memory.store(MemoryEntry::new(
+            "context1",
+            "Context 1",
+            MemoryType::Context,
+            "agent1",
+        ));
+        memory.store(MemoryEntry::new(
+            "task1",
+            "Task 1",
+            MemoryType::Task,
+            "agent1",
+        ));
 
         let facts = memory.get_by_type(MemoryType::Fact, "agent1");
         assert_eq!(facts.len(), 2);
@@ -537,8 +567,18 @@ mod tests {
 
         memory.store(MemoryEntry::new("fact1", "v1", MemoryType::Fact, "agent1"));
         memory.store(MemoryEntry::new("fact2", "v2", MemoryType::Fact, "agent2"));
-        memory.store(MemoryEntry::new("context1", "v3", MemoryType::Context, "agent1"));
-        memory.store_global(MemoryEntry::new("global1", "v4", MemoryType::Result, "system"));
+        memory.store(MemoryEntry::new(
+            "context1",
+            "v3",
+            MemoryType::Context,
+            "agent1",
+        ));
+        memory.store_global(MemoryEntry::new(
+            "global1",
+            "v4",
+            MemoryType::Result,
+            "system",
+        ));
 
         let stats = memory.stats();
 
@@ -625,8 +665,8 @@ mod tests {
     fn test_unshare() {
         let mut memory = SharedMemory::new();
 
-        let entry = MemoryEntry::new("key", "value", MemoryType::Fact, "agent1")
-            .share_with("agent2");
+        let entry =
+            MemoryEntry::new("key", "value", MemoryType::Fact, "agent1").share_with("agent2");
         let id = memory.store(entry);
 
         // agent2 can access
@@ -643,8 +683,8 @@ mod tests {
     fn test_unshare_access_denied() {
         let mut memory = SharedMemory::new();
 
-        let entry = MemoryEntry::new("key", "value", MemoryType::Fact, "agent1")
-            .share_with("agent2");
+        let entry =
+            MemoryEntry::new("key", "value", MemoryType::Fact, "agent1").share_with("agent2");
         let id = memory.store(entry);
 
         // agent2 cannot unshare (not owner)
@@ -672,8 +712,18 @@ mod tests {
     fn test_get_by_key() {
         let mut memory = SharedMemory::new();
 
-        memory.store(MemoryEntry::new("unique_key", "the_value", MemoryType::Fact, "agent1"));
-        memory.store(MemoryEntry::new("another_key", "other", MemoryType::Fact, "agent1"));
+        memory.store(MemoryEntry::new(
+            "unique_key",
+            "the_value",
+            MemoryType::Fact,
+            "agent1",
+        ));
+        memory.store(MemoryEntry::new(
+            "another_key",
+            "other",
+            MemoryType::Fact,
+            "agent1",
+        ));
 
         let result = memory.get_by_key("unique_key", "agent1");
         assert!(result.is_some());
@@ -685,8 +735,8 @@ mod tests {
 
     #[test]
     fn test_can_access() {
-        let entry = MemoryEntry::new("key", "value", MemoryType::Fact, "agent1")
-            .share_with("agent2");
+        let entry =
+            MemoryEntry::new("key", "value", MemoryType::Fact, "agent1").share_with("agent2");
 
         assert!(entry.can_access("agent1")); // Owner
         assert!(entry.can_access("agent2")); // Shared
@@ -728,10 +778,19 @@ mod tests {
 
     #[test]
     fn test_error_display() {
-        assert_eq!(format!("{}", MemoryError::NotFound), "Memory entry not found");
+        assert_eq!(
+            format!("{}", MemoryError::NotFound),
+            "Memory entry not found"
+        );
         assert_eq!(format!("{}", MemoryError::AccessDenied), "Access denied");
-        assert_eq!(format!("{}", MemoryError::AlreadyExists), "Entry already exists");
-        assert_eq!(format!("{}", MemoryError::InvalidOperation), "Invalid operation");
+        assert_eq!(
+            format!("{}", MemoryError::AlreadyExists),
+            "Entry already exists"
+        );
+        assert_eq!(
+            format!("{}", MemoryError::InvalidOperation),
+            "Invalid operation"
+        );
     }
 
     #[test]
@@ -818,8 +877,18 @@ mod tests {
     fn test_search_in_key_and_value() {
         let mut memory = SharedMemory::new();
 
-        memory.store(MemoryEntry::new("python_facts", "Rust is not here", MemoryType::Fact, "agent1"));
-        memory.store(MemoryEntry::new("rust_facts", "This is about Rust", MemoryType::Fact, "agent1"));
+        memory.store(MemoryEntry::new(
+            "python_facts",
+            "Rust is not here",
+            MemoryType::Fact,
+            "agent1",
+        ));
+        memory.store(MemoryEntry::new(
+            "rust_facts",
+            "This is about Rust",
+            MemoryType::Fact,
+            "agent1",
+        ));
 
         // Search finds match in key
         let results = memory.search("python", "agent1");
@@ -835,7 +904,12 @@ mod tests {
         let mut memory = SharedMemory::new();
 
         // Add permanent entry
-        memory.store(MemoryEntry::new("permanent", "stays", MemoryType::Fact, "agent1"));
+        memory.store(MemoryEntry::new(
+            "permanent",
+            "stays",
+            MemoryType::Fact,
+            "agent1",
+        ));
 
         // Add expiring entry
         let temp = MemoryEntry::new("temp", "goes away", MemoryType::Temporary, "agent1")
@@ -854,10 +928,20 @@ mod tests {
         let mut memory = SharedMemory::new();
 
         // Add agent-specific memory
-        memory.store(MemoryEntry::new("agent_key", "agent_value", MemoryType::Fact, "agent1"));
+        memory.store(MemoryEntry::new(
+            "agent_key",
+            "agent_value",
+            MemoryType::Fact,
+            "agent1",
+        ));
 
         // Add global memory
-        memory.store_global(MemoryEntry::new("global_key", "global_value", MemoryType::Fact, "system"));
+        memory.store_global(MemoryEntry::new(
+            "global_key",
+            "global_value",
+            MemoryType::Fact,
+            "system",
+        ));
 
         // Agent should see both
         let memories = memory.get_agent_memories("agent1");
@@ -880,8 +964,8 @@ mod tests {
     fn test_delete_removes_from_views() {
         let mut memory = SharedMemory::new();
 
-        let entry = MemoryEntry::new("key", "value", MemoryType::Fact, "agent1")
-            .share_with("agent2");
+        let entry =
+            MemoryEntry::new("key", "value", MemoryType::Fact, "agent1").share_with("agent2");
         let id = memory.store(entry);
 
         // Both agents can see it

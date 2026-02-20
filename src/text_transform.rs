@@ -42,10 +42,7 @@ pub enum Transform {
     },
 
     /// Regex find and replace
-    RegexReplace {
-        pattern: String,
-        replace: String,
-    },
+    RegexReplace { pattern: String, replace: String },
 
     /// Replace all occurrences
     ReplaceAll {
@@ -156,8 +153,12 @@ impl Transform {
     pub fn description(&self) -> String {
         match self {
             Self::Replace { find, replace, .. } => format!("Replace '{}' with '{}'", find, replace),
-            Self::RegexReplace { pattern, replace } => format!("Regex replace '{}' with '{}'", pattern, replace),
-            Self::ReplaceAll { find, replace, .. } => format!("Replace all '{}' with '{}'", find, replace),
+            Self::RegexReplace { pattern, replace } => {
+                format!("Regex replace '{}' with '{}'", pattern, replace)
+            }
+            Self::ReplaceAll { find, replace, .. } => {
+                format!("Replace all '{}' with '{}'", find, replace)
+            }
             Self::ToUpperCase => "Convert to uppercase".to_string(),
             Self::ToLowerCase => "Convert to lowercase".to_string(),
             Self::ToTitleCase => "Convert to title case".to_string(),
@@ -182,7 +183,9 @@ impl Transform {
             Self::JoinLines(s) => format!("Join lines with '{}'", s),
             Self::SplitLines(s) => format!("Split by '{}'", s),
             Self::ReverseLines => "Reverse line order".to_string(),
-            Self::NumberLines { start, separator } => format!("Number lines from {} with '{}'", start, separator),
+            Self::NumberLines { start, separator } => {
+                format!("Number lines from {} with '{}'", start, separator)
+            }
             Self::RemoveLineNumbers => "Remove line numbers".to_string(),
             Self::TabsToSpaces(n) => format!("Convert tabs to {} spaces", n),
             Self::SpacesToTabs(n) => format!("Convert {} spaces to tabs", n),
@@ -236,15 +239,17 @@ impl TextTransformer {
         let original_len = self.text.len();
 
         match transform {
-            Transform::Replace { find, replace, case_sensitive } => {
-                self.replace_first(&find, &replace, case_sensitive)
-            }
-            Transform::RegexReplace { pattern, replace } => {
-                self.regex_replace(&pattern, &replace)
-            }
-            Transform::ReplaceAll { find, replace, case_sensitive } => {
-                self.replace_all(&find, &replace, case_sensitive)
-            }
+            Transform::Replace {
+                find,
+                replace,
+                case_sensitive,
+            } => self.replace_first(&find, &replace, case_sensitive),
+            Transform::RegexReplace { pattern, replace } => self.regex_replace(&pattern, &replace),
+            Transform::ReplaceAll {
+                find,
+                replace,
+                case_sensitive,
+            } => self.replace_all(&find, &replace, case_sensitive),
             Transform::ToUpperCase => {
                 self.text = self.text.to_uppercase();
                 TransformResult {
@@ -314,7 +319,9 @@ impl TextTransformer {
                 }
             }
             Transform::PrefixLines(prefix) => {
-                let lines: Vec<_> = self.text.lines()
+                let lines: Vec<_> = self
+                    .text
+                    .lines()
                     .map(|l| format!("{}{}", prefix, l))
                     .collect();
                 let count = lines.len();
@@ -326,7 +333,9 @@ impl TextTransformer {
                 }
             }
             Transform::SuffixLines(suffix) => {
-                let lines: Vec<_> = self.text.lines()
+                let lines: Vec<_> = self
+                    .text
+                    .lines()
                     .map(|l| format!("{}{}", l, suffix))
                     .collect();
                 let count = lines.len();
@@ -339,8 +348,16 @@ impl TextTransformer {
             }
             Transform::Indent(spaces) => {
                 let indent = " ".repeat(spaces);
-                let lines: Vec<_> = self.text.lines()
-                    .map(|l| if l.is_empty() { l.to_string() } else { format!("{}{}", indent, l) })
+                let lines: Vec<_> = self
+                    .text
+                    .lines()
+                    .map(|l| {
+                        if l.is_empty() {
+                            l.to_string()
+                        } else {
+                            format!("{}{}", indent, l)
+                        }
+                    })
                     .collect();
                 let count = lines.iter().filter(|l| !l.is_empty()).count();
                 self.text = lines.join("\n");
@@ -351,9 +368,14 @@ impl TextTransformer {
                 }
             }
             Transform::Dedent(spaces) => {
-                let lines: Vec<_> = self.text.lines()
+                let lines: Vec<_> = self
+                    .text
+                    .lines()
                     .map(|l| {
-                        let trimmed = l.chars().skip_while(|c| c.is_whitespace()).collect::<String>();
+                        let trimmed = l
+                            .chars()
+                            .skip_while(|c| c.is_whitespace())
+                            .collect::<String>();
                         let leading: String = l.chars().take_while(|c| c.is_whitespace()).collect();
                         let to_remove = leading.len().min(spaces);
                         format!("{}{}", &leading[to_remove..], trimmed)
@@ -389,9 +411,7 @@ impl TextTransformer {
             }
             Transform::DeduplicateLines => {
                 let mut seen = HashSet::new();
-                let lines: Vec<_> = self.text.lines()
-                    .filter(|l| seen.insert(*l))
-                    .collect();
+                let lines: Vec<_> = self.text.lines().filter(|l| seen.insert(*l)).collect();
                 let removed = self.text.lines().count() - lines.len();
                 self.text = lines.join("\n");
                 TransformResult {
@@ -402,9 +422,7 @@ impl TextTransformer {
             }
             Transform::FilterLines(pattern) => {
                 if let Ok(re) = Regex::new(&pattern) {
-                    let lines: Vec<_> = self.text.lines()
-                        .filter(|l| re.is_match(l))
-                        .collect();
+                    let lines: Vec<_> = self.text.lines().filter(|l| re.is_match(l)).collect();
                     let kept = lines.len();
                     self.text = lines.join("\n");
                     TransformResult {
@@ -423,9 +441,7 @@ impl TextTransformer {
             Transform::FilterLinesInvert(pattern) => {
                 if let Ok(re) = Regex::new(&pattern) {
                     let original_count = self.text.lines().count();
-                    let lines: Vec<_> = self.text.lines()
-                        .filter(|l| !re.is_match(l))
-                        .collect();
+                    let lines: Vec<_> = self.text.lines().filter(|l| !re.is_match(l)).collect();
                     let removed = original_count - lines.len();
                     self.text = lines.join("\n");
                     TransformResult {
@@ -443,9 +459,7 @@ impl TextTransformer {
             }
             Transform::RemoveEmptyLines => {
                 let original_count = self.text.lines().count();
-                let lines: Vec<_> = self.text.lines()
-                    .filter(|l| !l.trim().is_empty())
-                    .collect();
+                let lines: Vec<_> = self.text.lines().filter(|l| !l.trim().is_empty()).collect();
                 let removed = original_count - lines.len();
                 self.text = lines.join("\n");
                 TransformResult {
@@ -456,9 +470,7 @@ impl TextTransformer {
             }
             Transform::RemoveLinesContaining(needle) => {
                 let original_count = self.text.lines().count();
-                let lines: Vec<_> = self.text.lines()
-                    .filter(|l| !l.contains(&needle))
-                    .collect();
+                let lines: Vec<_> = self.text.lines().filter(|l| !l.contains(&needle)).collect();
                 let removed = original_count - lines.len();
                 self.text = lines.join("\n");
                 TransformResult {
@@ -468,9 +480,7 @@ impl TextTransformer {
                 }
             }
             Transform::KeepLinesContaining(needle) => {
-                let lines: Vec<_> = self.text.lines()
-                    .filter(|l| l.contains(&needle))
-                    .collect();
+                let lines: Vec<_> = self.text.lines().filter(|l| l.contains(&needle)).collect();
                 let kept = lines.len();
                 self.text = lines.join("\n");
                 TransformResult {
@@ -480,7 +490,9 @@ impl TextTransformer {
                 }
             }
             Transform::WrapLines(width) => {
-                let lines: Vec<_> = self.text.lines()
+                let lines: Vec<_> = self
+                    .text
+                    .lines()
                     .flat_map(|l| self.wrap_line(l, width))
                     .collect();
                 self.text = lines.join("\n");
@@ -516,7 +528,9 @@ impl TextTransformer {
                 }
             }
             Transform::NumberLines { start, separator } => {
-                let lines: Vec<_> = self.text.lines()
+                let lines: Vec<_> = self
+                    .text
+                    .lines()
                     .enumerate()
                     .map(|(i, l)| format!("{}{}{}", start + i, separator, l))
                     .collect();
@@ -529,7 +543,9 @@ impl TextTransformer {
             }
             Transform::RemoveLineNumbers => {
                 let re = Regex::new(r"^\s*\d+[.:\-)\]\s]+").expect("valid regex");
-                let lines: Vec<_> = self.text.lines()
+                let lines: Vec<_> = self
+                    .text
+                    .lines()
                     .map(|l| re.replace(l, "").to_string())
                     .collect();
                 self.text = lines.join("\n");
@@ -560,9 +576,7 @@ impl TextTransformer {
                 }
             }
             Transform::RemoveTrailingWhitespace => {
-                let lines: Vec<_> = self.text.lines()
-                    .map(|l| l.trim_end())
-                    .collect();
+                let lines: Vec<_> = self.text.lines().map(|l| l.trim_end()).collect();
                 self.text = lines.join("\n");
                 TransformResult {
                     text: self.text.clone(),
@@ -596,13 +610,11 @@ impl TextTransformer {
                     description: "Trimmed trailing blank lines".to_string(),
                 }
             }
-            Transform::Custom(desc) => {
-                TransformResult {
-                    text: self.text.clone(),
-                    changes: 0,
-                    description: format!("Custom: {}", desc),
-                }
-            }
+            Transform::Custom(desc) => TransformResult {
+                text: self.text.clone(),
+                changes: 0,
+                description: format!("Custom: {}", desc),
+            },
         }
     }
 
@@ -621,7 +633,12 @@ impl TextTransformer {
         }
     }
 
-    fn replace_first(&mut self, find: &str, replace: &str, case_sensitive: bool) -> TransformResult {
+    fn replace_first(
+        &mut self,
+        find: &str,
+        replace: &str,
+        case_sensitive: bool,
+    ) -> TransformResult {
         let (new_text, count) = if case_sensitive {
             if let Some(pos) = self.text.find(find) {
                 let mut new = self.text[..pos].to_string();
@@ -656,7 +673,10 @@ impl TextTransformer {
         let count = if case_sensitive {
             self.text.matches(find).count()
         } else {
-            self.text.to_lowercase().matches(&find.to_lowercase()).count()
+            self.text
+                .to_lowercase()
+                .matches(&find.to_lowercase())
+                .count()
         };
 
         self.text = if case_sensitive {
@@ -686,13 +706,11 @@ impl TextTransformer {
                     description: format!("Regex replaced {} match(es)", count),
                 }
             }
-            Err(e) => {
-                TransformResult {
-                    text: self.text.clone(),
-                    changes: 0,
-                    description: format!("Invalid regex: {}", e),
-                }
-            }
+            Err(e) => TransformResult {
+                text: self.text.clone(),
+                changes: 0,
+                description: format!("Invalid regex: {}", e),
+            },
         }
     }
 
@@ -702,7 +720,10 @@ impl TextTransformer {
                 let mut chars = word.chars();
                 match chars.next() {
                     None => String::new(),
-                    Some(first) => first.to_uppercase().chain(chars.flat_map(|c| c.to_lowercase())).collect(),
+                    Some(first) => first
+                        .to_uppercase()
+                        .chain(chars.flat_map(|c| c.to_lowercase()))
+                        .collect(),
                 }
             })
             .collect::<Vec<_>>()
@@ -901,7 +922,10 @@ mod tests {
     #[test]
     fn test_number_lines() {
         let mut t = TextTransformer::new("a\nb\nc");
-        t.apply(Transform::NumberLines { start: 1, separator: ": ".to_string() });
+        t.apply(Transform::NumberLines {
+            start: 1,
+            separator: ": ".to_string(),
+        });
         assert_eq!(t.text(), "1: a\n2: b\n3: c");
     }
 

@@ -135,7 +135,9 @@ pub struct ValidationResult {
 impl ValidationResult {
     /// Check if there are any errors
     pub fn has_errors(&self) -> bool {
-        self.issues.iter().any(|i| i.severity >= IssueSeverity::Error)
+        self.issues
+            .iter()
+            .any(|i| i.severity >= IssueSeverity::Error)
     }
 
     /// Get error messages
@@ -306,8 +308,10 @@ impl OutputValidator {
                 // Simple YAML validation (check for key: value patterns)
                 let has_yaml_pattern = output.lines().any(|line| {
                     let trimmed = line.trim();
-                    !trimmed.is_empty() &&
-                    (trimmed.contains(": ") || trimmed.starts_with("- ") || trimmed.starts_with("#"))
+                    !trimmed.is_empty()
+                        && (trimmed.contains(": ")
+                            || trimmed.starts_with("- ")
+                            || trimmed.starts_with("#"))
                 });
                 if !has_yaml_pattern {
                     return Some(ValidationIssue {
@@ -315,7 +319,9 @@ impl OutputValidator {
                         issue_type: IssueType::InvalidFormat,
                         message: "Output doesn't appear to be valid YAML".to_string(),
                         position: None,
-                        suggestion: Some("Ensure output is valid YAML with key: value pairs".to_string()),
+                        suggestion: Some(
+                            "Ensure output is valid YAML with key: value pairs".to_string(),
+                        ),
                     });
                 }
             }
@@ -342,10 +348,7 @@ impl OutputValidator {
                                 expected_lang
                             ),
                             position: None,
-                            suggestion: Some(format!(
-                                "Use ```{} for code blocks",
-                                expected_lang
-                            )),
+                            suggestion: Some(format!("Use ```{} for code blocks", expected_lang)),
                         });
                     }
                 }

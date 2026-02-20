@@ -454,8 +454,7 @@ impl DataSourceClient {
         for _ in 0..max_pages {
             let page_str = page.to_string();
             let size_str = page_size.to_string();
-            let params: Vec<(&str, &str)> =
-                vec![(page_param, &page_str), (size_param, &size_str)];
+            let params: Vec<(&str, &str)> = vec![(page_param, &page_str), (size_param, &size_str)];
             let response = self.get_with_params(path, &params)?;
             let items = self.extract_items(&response);
             let count = items.len();
@@ -636,17 +635,14 @@ impl DataSourceClient {
     fn apply_auth(&self, request: ureq::Request) -> ureq::Request {
         match &self.config.auth {
             AuthMethod::None => request,
-            AuthMethod::Bearer(token) => {
-                request.set("Authorization", &format!("Bearer {}", token))
-            }
+            AuthMethod::Bearer(token) => request.set("Authorization", &format!("Bearer {}", token)),
             AuthMethod::ApiKey { header, key } => request.set(header, key),
             AuthMethod::ApiKeyQuery { .. } => {
                 // Already handled in build_url
                 request
             }
             AuthMethod::Basic { username, password } => {
-                let credentials =
-                    base64_encode(&format!("{}:{}", username, password));
+                let credentials = base64_encode(&format!("{}:{}", username, password));
                 request.set("Authorization", &format!("Basic {}", credentials))
             }
         }
@@ -1152,8 +1148,7 @@ mod tests {
             window_ms: 5000,
             min_delay_ms: 200,
         };
-        let client =
-            DataSourceClient::from_url("https://api.example.com").with_rate_limit(policy);
+        let client = DataSourceClient::from_url("https://api.example.com").with_rate_limit(policy);
 
         assert_eq!(client.config.rate_limit.max_requests, 10);
         assert_eq!(client.config.rate_limit.window_ms, 5000);

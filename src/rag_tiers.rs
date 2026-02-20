@@ -172,52 +172,132 @@ impl RagFeatures {
     /// Count enabled features
     pub fn enabled_count(&self) -> usize {
         let mut count = 0;
-        if self.fts_search { count += 1; }
-        if self.semantic_search { count += 1; }
-        if self.hybrid_search { count += 1; }
-        if self.synonym_expansion { count += 1; }
-        if self.query_expansion { count += 1; }
-        if self.multi_query { count += 1; }
-        if self.hyde { count += 1; }
-        if self.reranking { count += 1; }
-        if self.cross_encoder_rerank { count += 1; }
-        if self.fusion_rrf { count += 1; }
-        if self.contextual_compression { count += 1; }
-        if self.sentence_window { count += 1; }
-        if self.parent_document { count += 1; }
-        if self.self_reflection { count += 1; }
-        if self.corrective_rag { count += 1; }
-        if self.adaptive_strategy { count += 1; }
-        if self.agentic_mode { count += 1; }
-        if self.graph_rag { count += 1; }
-        if self.raptor { count += 1; }
-        if self.multimodal { count += 1; }
+        if self.fts_search {
+            count += 1;
+        }
+        if self.semantic_search {
+            count += 1;
+        }
+        if self.hybrid_search {
+            count += 1;
+        }
+        if self.synonym_expansion {
+            count += 1;
+        }
+        if self.query_expansion {
+            count += 1;
+        }
+        if self.multi_query {
+            count += 1;
+        }
+        if self.hyde {
+            count += 1;
+        }
+        if self.reranking {
+            count += 1;
+        }
+        if self.cross_encoder_rerank {
+            count += 1;
+        }
+        if self.fusion_rrf {
+            count += 1;
+        }
+        if self.contextual_compression {
+            count += 1;
+        }
+        if self.sentence_window {
+            count += 1;
+        }
+        if self.parent_document {
+            count += 1;
+        }
+        if self.self_reflection {
+            count += 1;
+        }
+        if self.corrective_rag {
+            count += 1;
+        }
+        if self.adaptive_strategy {
+            count += 1;
+        }
+        if self.agentic_mode {
+            count += 1;
+        }
+        if self.graph_rag {
+            count += 1;
+        }
+        if self.raptor {
+            count += 1;
+        }
+        if self.multimodal {
+            count += 1;
+        }
         count
     }
 
     /// Get list of enabled feature names
     pub fn enabled_features(&self) -> Vec<&'static str> {
         let mut features = Vec::new();
-        if self.fts_search { features.push("fts_search"); }
-        if self.semantic_search { features.push("semantic_search"); }
-        if self.hybrid_search { features.push("hybrid_search"); }
-        if self.synonym_expansion { features.push("synonym_expansion"); }
-        if self.query_expansion { features.push("query_expansion"); }
-        if self.multi_query { features.push("multi_query"); }
-        if self.hyde { features.push("hyde"); }
-        if self.reranking { features.push("reranking"); }
-        if self.cross_encoder_rerank { features.push("cross_encoder_rerank"); }
-        if self.fusion_rrf { features.push("fusion_rrf"); }
-        if self.contextual_compression { features.push("contextual_compression"); }
-        if self.sentence_window { features.push("sentence_window"); }
-        if self.parent_document { features.push("parent_document"); }
-        if self.self_reflection { features.push("self_reflection"); }
-        if self.corrective_rag { features.push("corrective_rag"); }
-        if self.adaptive_strategy { features.push("adaptive_strategy"); }
-        if self.agentic_mode { features.push("agentic_mode"); }
-        if self.graph_rag { features.push("graph_rag"); }
-        if self.raptor { features.push("raptor"); }
-        if self.multimodal { features.push("multimodal"); }
+        if self.fts_search {
+            features.push("fts_search");
+        }
+        if self.semantic_search {
+            features.push("semantic_search");
+        }
+        if self.hybrid_search {
+            features.push("hybrid_search");
+        }
+        if self.synonym_expansion {
+            features.push("synonym_expansion");
+        }
+        if self.query_expansion {
+            features.push("query_expansion");
+        }
+        if self.multi_query {
+            features.push("multi_query");
+        }
+        if self.hyde {
+            features.push("hyde");
+        }
+        if self.reranking {
+            features.push("reranking");
+        }
+        if self.cross_encoder_rerank {
+            features.push("cross_encoder_rerank");
+        }
+        if self.fusion_rrf {
+            features.push("fusion_rrf");
+        }
+        if self.contextual_compression {
+            features.push("contextual_compression");
+        }
+        if self.sentence_window {
+            features.push("sentence_window");
+        }
+        if self.parent_document {
+            features.push("parent_document");
+        }
+        if self.self_reflection {
+            features.push("self_reflection");
+        }
+        if self.corrective_rag {
+            features.push("corrective_rag");
+        }
+        if self.adaptive_strategy {
+            features.push("adaptive_strategy");
+        }
+        if self.agentic_mode {
+            features.push("agentic_mode");
+        }
+        if self.graph_rag {
+            features.push("graph_rag");
+        }
+        if self.raptor {
+            features.push("raptor");
+        }
+        if self.multimodal {
+            features.push("multimodal");
+        }
         features
     }
 }
@@ -690,11 +770,11 @@ impl RagTier {
     /// This is a heuristic based on typical LLM response times.
     pub fn for_latency_budget(budget_ms: u64) -> Self {
         match budget_ms {
-            0..=500 => RagTier::Fast,           // Sub-second: keyword only
-            501..=1500 => RagTier::Semantic,    // 1-1.5s: add embeddings
-            1501..=3000 => RagTier::Enhanced,   // 1.5-3s: add 1-2 LLM calls
-            3001..=6000 => RagTier::Thorough,   // 3-6s: add more LLM calls
-            _ => RagTier::Agentic,              // 6s+: allow agentic
+            0..=500 => RagTier::Fast,         // Sub-second: keyword only
+            501..=1500 => RagTier::Semantic,  // 1-1.5s: add embeddings
+            1501..=3000 => RagTier::Enhanced, // 1.5-3s: add 1-2 LLM calls
+            3001..=6000 => RagTier::Thorough, // 3-6s: add more LLM calls
+            _ => RagTier::Agentic,            // 6s+: allow agentic
         }
     }
 
@@ -761,10 +841,16 @@ impl RagRequirement {
     /// Get description of what's needed
     pub fn description(&self) -> &'static str {
         match self {
-            RagRequirement::EmbeddingModel => "A model that converts text to vectors (e.g., text-embedding-ada-002, nomic-embed)",
-            RagRequirement::CrossEncoderModel => "A model that scores query-document pairs (e.g., ms-marco-MiniLM)",
+            RagRequirement::EmbeddingModel => {
+                "A model that converts text to vectors (e.g., text-embedding-ada-002, nomic-embed)"
+            }
+            RagRequirement::CrossEncoderModel => {
+                "A model that scores query-document pairs (e.g., ms-marco-MiniLM)"
+            }
             RagRequirement::GraphDatabase => "A graph database like Neo4j or in-memory petgraph",
-            RagRequirement::PreprocessedCorpus => "Run RAPTOR preprocessing to build summary hierarchy",
+            RagRequirement::PreprocessedCorpus => {
+                "Run RAPTOR preprocessing to build summary hierarchy"
+            }
             RagRequirement::VisionModel => "A vision-capable model like LLaVA or GPT-4V",
             RagRequirement::SynonymDictionary => "Built-in or custom synonym mappings",
             RagRequirement::DocumentHierarchy => "Store parent-child relationships during indexing",

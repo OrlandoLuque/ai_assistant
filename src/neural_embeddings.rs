@@ -9,8 +9,8 @@
 //! - Embedding pooling strategies
 //! - Cross-encoder reranking
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Embedding vector type
 pub type EmbeddingVec = Vec<f32>;
@@ -157,7 +157,10 @@ impl DenseEmbedder {
     /// Generate embedding for single text
     pub fn embed(&self, text: &str) -> Result<EmbeddingVec, EmbeddingError> {
         let embeddings = self.embed_batch(&[text.to_string()])?;
-        embeddings.into_iter().next().ok_or(EmbeddingError::EmptyResult)
+        embeddings
+            .into_iter()
+            .next()
+            .ok_or(EmbeddingError::EmptyResult)
     }
 
     /// Generate embeddings for batch of texts
@@ -174,7 +177,11 @@ impl DenseEmbedder {
         }
     }
 
-    fn embed_via_api(&self, url: &str, texts: &[String]) -> Result<Vec<EmbeddingVec>, EmbeddingError> {
+    fn embed_via_api(
+        &self,
+        url: &str,
+        texts: &[String],
+    ) -> Result<Vec<EmbeddingVec>, EmbeddingError> {
         let mut results = Vec::with_capacity(texts.len());
 
         // Process in batches
@@ -203,7 +210,8 @@ impl DenseEmbedder {
                 }))
                 .map_err(|e| EmbeddingError::ApiError(e.to_string()))?;
 
-            let result: serde_json::Value = response.into_json()
+            let result: serde_json::Value = response
+                .into_json()
                 .map_err(|e| EmbeddingError::ParseError(e.to_string()))?;
 
             let embedding: Vec<f32> = result["embedding"]
@@ -226,8 +234,9 @@ impl DenseEmbedder {
     }
 
     fn embed_openai(&self, texts: &[String]) -> Result<Vec<EmbeddingVec>, EmbeddingError> {
-        let api_key = self.api_key.as_ref()
-            .ok_or(EmbeddingError::ConfigError("OpenAI API key required".to_string()))?;
+        let api_key = self.api_key.as_ref().ok_or(EmbeddingError::ConfigError(
+            "OpenAI API key required".to_string(),
+        ))?;
 
         let response = ureq::post("https://api.openai.com/v1/embeddings")
             .set("Authorization", &format!("Bearer {}", api_key))
@@ -238,13 +247,16 @@ impl DenseEmbedder {
             }))
             .map_err(|e| EmbeddingError::ApiError(e.to_string()))?;
 
-        let result: serde_json::Value = response.into_json()
+        let result: serde_json::Value = response
+            .into_json()
             .map_err(|e| EmbeddingError::ParseError(e.to_string()))?;
 
-        let data = result["data"].as_array()
+        let data = result["data"]
+            .as_array()
             .ok_or(EmbeddingError::ParseError("No data field".to_string()))?;
 
-        let mut results: Vec<EmbeddingVec> = data.iter()
+        let mut results: Vec<EmbeddingVec> = data
+            .iter()
             .filter_map(|item| {
                 item["embedding"].as_array().map(|arr| {
                     arr.iter()
@@ -264,7 +276,11 @@ impl DenseEmbedder {
         Ok(results)
     }
 
-    fn embed_generic_api(&self, url: &str, texts: &[String]) -> Result<Vec<EmbeddingVec>, EmbeddingError> {
+    fn embed_generic_api(
+        &self,
+        url: &str,
+        texts: &[String],
+    ) -> Result<Vec<EmbeddingVec>, EmbeddingError> {
         let mut request = ureq::post(url);
 
         if let Some(ref key) = self.api_key {
@@ -279,7 +295,8 @@ impl DenseEmbedder {
             }))
             .map_err(|e| EmbeddingError::ApiError(e.to_string()))?;
 
-        let result: serde_json::Value = response.into_json()
+        let result: serde_json::Value = response
+            .into_json()
             .map_err(|e| EmbeddingError::ParseError(e.to_string()))?;
 
         // Try to parse various response formats
@@ -294,17 +311,24 @@ impl DenseEmbedder {
                 })
                 .collect()
         } else if let Some(emb) = result["embedding"].as_array() {
-            vec![emb.iter()
+            vec![emb
+                .iter()
                 .filter_map(|v| v.as_f64().map(|f| f as f32))
                 .collect()]
         } else if let Some(embs) = result["embeddings"].as_array() {
             embs.iter()
-                .filter_map(|arr| arr.as_array().map(|a| {
-                    a.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect()
-                }))
+                .filter_map(|arr| {
+                    arr.as_array().map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_f64().map(|f| f as f32))
+                            .collect()
+                    })
+                })
                 .collect()
         } else {
-            return Err(EmbeddingError::ParseError("Unknown response format".to_string()));
+            return Err(EmbeddingError::ParseError(
+                "Unknown response format".to_string(),
+            ));
         };
 
         Ok(embeddings)
@@ -480,7 +504,9 @@ impl SparseEmbedder {
         let mut term_freq: HashMap<String, u32> = HashMap::new();
 
         for word in &words {
-            let clean = word.trim_matches(|c: char| !c.is_alphanumeric()).to_string();
+            let clean = word
+                .trim_matches(|c: char| !c.is_alphanumeric())
+                .to_string();
             if !clean.is_empty() {
                 *term_freq.entry(clean).or_insert(0) += 1;
             }
@@ -515,7 +541,8 @@ impl SparseEmbedder {
     /// Compute sparse dot product
     pub fn dot_product(a: &SparseEmbedding, b: &SparseEmbedding) -> f32 {
         let (smaller, larger) = if a.len() < b.len() { (a, b) } else { (b, a) };
-        smaller.iter()
+        smaller
+            .iter()
             .filter_map(|(k, v)| larger.get(k).map(|w| v * w))
             .sum()
     }
@@ -589,7 +616,11 @@ pub enum QuantizationType {
 pub enum QuantizedEmbedding {
     Float32(Vec<f32>),
     Float16(Vec<u16>),
-    Int8 { data: Vec<i8>, scale: f32, offset: f32 },
+    Int8 {
+        data: Vec<i8>,
+        scale: f32,
+        offset: f32,
+    },
     Binary(Vec<u8>),
 }
 
@@ -599,9 +630,7 @@ impl QuantizedEmbedding {
         match quant_type {
             QuantizationType::Float32 => Self::Float32(embedding.to_vec()),
             QuantizationType::Float16 => {
-                let data: Vec<u16> = embedding.iter()
-                    .map(|&f| f32_to_f16_bits(f))
-                    .collect();
+                let data: Vec<u16> = embedding.iter().map(|&f| f32_to_f16_bits(f)).collect();
                 Self::Float16(data)
             }
             QuantizationType::Int8 => {
@@ -611,7 +640,8 @@ impl QuantizedEmbedding {
                 let scale = if range > 0.0 { range / 255.0 } else { 1.0 };
                 let offset = min;
 
-                let data: Vec<i8> = embedding.iter()
+                let data: Vec<i8> = embedding
+                    .iter()
                     .map(|&f| {
                         if range > 0.0 {
                             let normalized = (f - offset) / scale;
@@ -623,7 +653,11 @@ impl QuantizedEmbedding {
                     })
                     .collect();
 
-                Self::Int8 { data, scale, offset }
+                Self::Int8 {
+                    data,
+                    scale,
+                    offset,
+                }
             }
             QuantizationType::Binary => {
                 let bytes = (embedding.len() + 7) / 8;
@@ -648,12 +682,12 @@ impl QuantizedEmbedding {
     pub fn dequantize(&self) -> Vec<f32> {
         match self {
             Self::Float32(data) => data.clone(),
-            Self::Float16(data) => {
-                data.iter()
-                    .map(|&bits| f16_bits_to_f32(bits))
-                    .collect()
-            }
-            Self::Int8 { data, scale, offset } => {
+            Self::Float16(data) => data.iter().map(|&bits| f16_bits_to_f32(bits)).collect(),
+            Self::Int8 {
+                data,
+                scale,
+                offset,
+            } => {
                 data.iter()
                     .map(|&v| {
                         // Reverse: [-128, 127] to [0, 255], then scale back
@@ -690,7 +724,8 @@ impl QuantizedEmbedding {
         match (self, other) {
             (Self::Binary(a), Self::Binary(b)) => {
                 // Hamming distance based similarity
-                let matching_bits: u32 = a.iter()
+                let matching_bits: u32 = a
+                    .iter()
                     .zip(b.iter())
                     .map(|(&x, &y)| (!(x ^ y)).count_ones())
                     .sum();
@@ -733,7 +768,11 @@ impl DimensionalityReduction {
                         rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1);
                         let u = (rng_state >> 33) as f32 / (1u64 << 31) as f32;
                         // Approximate Gaussian via Box-Muller-like transform
-                        let sign = if (rng_state >> 32) & 1 == 0 { 1.0 } else { -1.0 };
+                        let sign = if (rng_state >> 32) & 1 == 0 {
+                            1.0
+                        } else {
+                            -1.0
+                        };
                         sign * scale * (1.0 + u)
                     })
                     .collect()
@@ -770,7 +809,8 @@ impl DimensionalityReduction {
         }
 
         // Center data
-        let centered: Vec<Vec<f32>> = data.iter()
+        let centered: Vec<Vec<f32>> = data
+            .iter()
             .map(|v| v.iter().zip(&mean).map(|(a, b)| a - b).collect())
             .collect();
 
@@ -813,23 +853,18 @@ impl DimensionalityReduction {
     /// Reduce dimensionality
     pub fn transform(&self, embedding: &[f32]) -> EmbeddingVec {
         match self {
-            Self::RandomProjection { projection_matrix, .. } => {
-                projection_matrix.iter()
-                    .map(|row| {
-                        row.iter().zip(embedding).map(|(a, b)| a * b).sum()
-                    })
-                    .collect()
-            }
+            Self::RandomProjection {
+                projection_matrix, ..
+            } => projection_matrix
+                .iter()
+                .map(|row| row.iter().zip(embedding).map(|(a, b)| a * b).sum())
+                .collect(),
             Self::PCA { components, mean } => {
-                let centered: Vec<f32> = embedding.iter()
-                    .zip(mean)
-                    .map(|(v, m)| v - m)
-                    .collect();
+                let centered: Vec<f32> = embedding.iter().zip(mean).map(|(v, m)| v - m).collect();
 
-                components.iter()
-                    .map(|comp| {
-                        comp.iter().zip(&centered).map(|(a, b)| a * b).sum()
-                    })
+                components
+                    .iter()
+                    .map(|comp| comp.iter().zip(&centered).map(|(a, b)| a * b).sum())
                     .collect()
             }
         }
@@ -883,7 +918,11 @@ impl CrossEncoder {
     }
 
     /// Score query against multiple documents
-    pub fn score_batch(&self, query: &str, documents: &[String]) -> Result<Vec<f32>, EmbeddingError> {
+    pub fn score_batch(
+        &self,
+        query: &str,
+        documents: &[String],
+    ) -> Result<Vec<f32>, EmbeddingError> {
         // For Ollama, we use a prompt-based approach
         let mut scores = Vec::with_capacity(documents.len());
 
@@ -909,10 +948,12 @@ impl CrossEncoder {
                 }))
                 .map_err(|e| EmbeddingError::ApiError(e.to_string()))?;
 
-            let result: serde_json::Value = response.into_json()
+            let result: serde_json::Value = response
+                .into_json()
                 .map_err(|e| EmbeddingError::ParseError(e.to_string()))?;
 
-            let response_text = result["response"].as_str()
+            let response_text = result["response"]
+                .as_str()
                 .or(result["content"].as_str())
                 .unwrap_or("5");
 
@@ -932,10 +973,16 @@ impl CrossEncoder {
     }
 
     /// Rerank documents by relevance to query
-    pub fn rerank(&self, query: &str, documents: &[String], top_k: usize) -> Result<Vec<RankedDocument>, EmbeddingError> {
+    pub fn rerank(
+        &self,
+        query: &str,
+        documents: &[String],
+        top_k: usize,
+    ) -> Result<Vec<RankedDocument>, EmbeddingError> {
         let scores = self.score_batch(query, documents)?;
 
-        let mut ranked: Vec<RankedDocument> = documents.iter()
+        let mut ranked: Vec<RankedDocument> = documents
+            .iter()
             .zip(scores.iter())
             .enumerate()
             .map(|(idx, (doc, &score))| RankedDocument {
@@ -945,7 +992,11 @@ impl CrossEncoder {
             })
             .collect();
 
-        ranked.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        ranked.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         ranked.truncate(top_k);
 
         Ok(ranked)

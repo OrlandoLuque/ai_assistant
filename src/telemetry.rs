@@ -2,10 +2,10 @@
 //!
 //! Opt-in metrics collection for performance monitoring.
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use serde::{Deserialize, Serialize};
 
 /// Telemetry configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,7 +46,9 @@ impl TelemetryEvent {
         Self {
             name: name.into(),
             timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
             duration_ms: None,
             properties: HashMap::new(),
             metrics: HashMap::new(),
@@ -103,9 +105,10 @@ impl TelemetryCollector {
             return;
         }
 
-        // Sample rate check
+        // Deterministic sample rate check based on event name + timestamp
         if self.config.sample_rate < 1.0 {
-            if rand::random::<f64>() > self.config.sample_rate {
+            let trace_id = format!("{}:{}", event.name, event.timestamp);
+            if !should_sample(&trace_id, self.config.sample_rate) {
                 return;
             }
         }
@@ -130,25 +133,35 @@ impl TelemetryCollector {
             }
         }
 
-        self.events.lock().unwrap_or_else(|e| e.into_inner()).push(event);
+        self.events
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(event);
     }
 
     pub fn record_request(&self, provider: &str, model: &str, duration: Duration, tokens: usize) {
-        self.record(TelemetryEvent::new("request")
-            .with_duration(duration)
-            .with_property("provider", provider)
-            .with_property("model", model)
-            .with_metric("tokens", tokens as f64));
+        self.record(
+            TelemetryEvent::new("request")
+                .with_duration(duration)
+                .with_property("provider", provider)
+                .with_property("model", model)
+                .with_metric("tokens", tokens as f64),
+        );
     }
 
     pub fn record_error(&self, provider: &str, error: &str) {
-        self.record(TelemetryEvent::new("error")
-            .with_property("provider", provider)
-            .with_property("error", error));
+        self.record(
+            TelemetryEvent::new("error")
+                .with_property("provider", provider)
+                .with_property("error", error),
+        );
     }
 
     pub fn get_aggregated(&self) -> AggregatedMetrics {
-        self.aggregated.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.aggregated
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     pub fn flush(&self) -> Vec<TelemetryEvent> {
@@ -181,17 +194,37 @@ impl TimedOperation {
 
     pub fn finish(self) -> Duration {
         let duration = self.start.elapsed();
-        self.collector.record(TelemetryEvent::new(&self.event_name).with_duration(duration));
+        self.collector
+            .record(TelemetryEvent::new(&self.event_name).with_duration(duration));
         duration
     }
 }
 
-mod rand {
-    pub fn random<T>() -> f64 {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().subsec_nanos();
-        (nanos as f64) / 1_000_000_000.0
+/// Compute a deterministic FNV-1a hash of the given bytes, returning a u64.
+fn fnv1a_hash(data: &[u8]) -> u64 {
+    const FNV_OFFSET_BASIS: u64 = 14695981039346656037;
+    const FNV_PRIME: u64 = 1099511628211;
+    let mut hash = FNV_OFFSET_BASIS;
+    for &byte in data {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(FNV_PRIME);
     }
+    hash
+}
+
+/// Deterministic sampling decision based on a trace identifier and a rate in [0.0, 1.0].
+///
+/// Hashes the `trace_id` with FNV-1a and checks whether the hash falls within
+/// the acceptance range.  The same `trace_id` always produces the same decision.
+fn should_sample(trace_id: &str, rate: f64) -> bool {
+    if rate >= 1.0 {
+        return true;
+    }
+    if rate <= 0.0 {
+        return false;
+    }
+    let hash = fnv1a_hash(trace_id.as_bytes());
+    (hash % 10000) < (rate * 10000.0) as u64
 }
 
 #[cfg(test)]
@@ -207,7 +240,10 @@ mod tests {
 
     #[test]
     fn test_telemetry_enabled() {
-        let config = TelemetryConfig { enabled: true, ..Default::default() };
+        let config = TelemetryConfig {
+            enabled: true,
+            ..Default::default()
+        };
         let collector = TelemetryCollector::new(config);
 
         collector.record_request("ollama", "llama2", Duration::from_millis(100), 50);
@@ -215,5 +251,38 @@ mod tests {
         let agg = collector.get_aggregated();
         assert_eq!(agg.total_requests, 1);
         assert_eq!(agg.total_tokens, 50);
+    }
+
+    #[test]
+    fn test_deterministic_sampling() {
+        // The same trace_id with the same rate must always produce the same decision
+        let trace = "request-abc-12345";
+        let rate = 0.5;
+
+        let first = should_sample(trace, rate);
+        for _ in 0..100 {
+            assert_eq!(
+                should_sample(trace, rate),
+                first,
+                "should_sample must be deterministic for the same trace_id"
+            );
+        }
+    }
+
+    #[test]
+    fn test_approximate_sampling_rate() {
+        let rate = 0.5;
+        let total = 1000;
+        let sampled = (0..total)
+            .filter(|i| should_sample(&format!("trace-{}", i), rate))
+            .count();
+
+        // With 1000 unique trace IDs at rate 0.5, expect roughly 40-60% sampled
+        assert!(
+            sampled >= 400 && sampled <= 600,
+            "Expected ~50% sampling rate, got {}/1000 = {:.1}%",
+            sampled,
+            sampled as f64 / 10.0
+        );
     }
 }

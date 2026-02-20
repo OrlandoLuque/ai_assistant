@@ -3,7 +3,9 @@
 //! Provides reusable configuration profiles for agents, conversations,
 //! and multi-step workflows. Includes built-in profiles for common use cases.
 
-use crate::agent_policy::{AgentPolicy, AgentPolicyBuilder, AutonomyLevel, InternetMode, RiskLevel};
+use crate::agent_policy::{
+    AgentPolicy, AgentPolicyBuilder, AutonomyLevel, InternetMode, RiskLevel,
+};
 use crate::mode_manager::OperationMode;
 use std::collections::HashMap;
 
@@ -135,7 +137,8 @@ impl ProfileRegistry {
 
     /// Register a custom conversation profile (overwrites if name exists).
     pub fn register_conversation_profile(&mut self, profile: ConversationProfile) {
-        self.conversation_profiles.insert(profile.name.clone(), profile);
+        self.conversation_profiles
+            .insert(profile.name.clone(), profile);
     }
 
     /// Register a custom workflow profile (overwrites if name exists).
@@ -167,7 +170,11 @@ impl ProfileRegistry {
 
     /// List all registered conversation profile names (sorted).
     pub fn list_conversation_profiles(&self) -> Vec<&str> {
-        let mut names: Vec<&str> = self.conversation_profiles.keys().map(|s| s.as_str()).collect();
+        let mut names: Vec<&str> = self
+            .conversation_profiles
+            .keys()
+            .map(|s| s.as_str())
+            .collect();
         names.sort();
         names
     }
@@ -226,7 +233,12 @@ fn builtin_agent_profiles() -> Vec<AgentProfile> {
                     .to_string(),
             ),
             tools: vec![
-                "read_file", "write_file", "run_command", "git_status", "git_diff", "git_log",
+                "read_file",
+                "write_file",
+                "run_command",
+                "git_status",
+                "git_diff",
+                "git_log",
             ]
             .into_iter()
             .map(|s| s.to_string())
@@ -288,7 +300,11 @@ fn builtin_agent_profiles() -> Vec<AgentProfile> {
                     .to_string(),
             ),
             tools: vec![
-                "run_command", "read_file", "write_file", "git_status", "git_diff",
+                "run_command",
+                "read_file",
+                "write_file",
+                "git_status",
+                "git_diff",
             ]
             .into_iter()
             .map(|s| s.to_string())
@@ -807,9 +823,7 @@ mod tests {
 
         // Verify chain: each phase depends on the previous
         for i in 1..wf.phases.len() {
-            assert!(wf.phases[i]
-                .depends_on
-                .contains(&wf.phases[i - 1].name));
+            assert!(wf.phases[i].depends_on.contains(&wf.phases[i - 1].name));
         }
     }
 

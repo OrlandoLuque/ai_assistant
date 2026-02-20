@@ -3,9 +3,9 @@
 //! Automated quality evaluation, performance benchmarking, and A/B testing
 //! for AI model responses.
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
-use serde::{Deserialize, Serialize};
 
 /// Evaluation metric types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -164,7 +164,10 @@ impl TextQualityEvaluator {
 
     fn evaluate_fluency(&self, text: &str) -> f64 {
         // Simple fluency heuristics
-        let sentences: Vec<&str> = text.split(['.', '!', '?']).filter(|s| !s.trim().is_empty()).collect();
+        let sentences: Vec<&str> = text
+            .split(['.', '!', '?'])
+            .filter(|s| !s.trim().is_empty())
+            .collect();
         if sentences.is_empty() {
             return 0.0;
         }
@@ -172,15 +175,26 @@ impl TextQualityEvaluator {
         let mut score: f64 = 0.5;
 
         // Check sentence length variety
-        let avg_len: f64 = sentences.iter().map(|s| s.split_whitespace().count() as f64).sum::<f64>() / sentences.len() as f64;
+        let avg_len: f64 = sentences
+            .iter()
+            .map(|s| s.split_whitespace().count() as f64)
+            .sum::<f64>()
+            / sentences.len() as f64;
         if (5.0..25.0).contains(&avg_len) {
             score += 0.2;
         }
 
         // Check for proper capitalization
-        let proper_caps = sentences.iter().filter(|s| {
-            s.trim().chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
-        }).count();
+        let proper_caps = sentences
+            .iter()
+            .filter(|s| {
+                s.trim()
+                    .chars()
+                    .next()
+                    .map(|c| c.is_uppercase())
+                    .unwrap_or(false)
+            })
+            .count();
         score += (proper_caps as f64 / sentences.len() as f64) * 0.2;
 
         // Check for repeated words (sign of poor fluency)
@@ -193,7 +207,10 @@ impl TextQualityEvaluator {
     }
 
     fn evaluate_coherence(&self, text: &str) -> f64 {
-        let paragraphs: Vec<&str> = text.split("\n\n").filter(|p| !p.trim().is_empty()).collect();
+        let paragraphs: Vec<&str> = text
+            .split("\n\n")
+            .filter(|p| !p.trim().is_empty())
+            .collect();
 
         // Single paragraph is considered coherent
         if paragraphs.len() <= 1 {
@@ -203,16 +220,29 @@ impl TextQualityEvaluator {
         let mut score: f64 = 0.5;
 
         // Check for transition words
-        let transitions = ["however", "therefore", "additionally", "furthermore", "moreover", "consequently", "thus", "hence"];
+        let transitions = [
+            "however",
+            "therefore",
+            "additionally",
+            "furthermore",
+            "moreover",
+            "consequently",
+            "thus",
+            "hence",
+        ];
         let text_lower = text.to_lowercase();
-        let transition_count = transitions.iter().filter(|t| text_lower.contains(*t)).count();
+        let transition_count = transitions
+            .iter()
+            .filter(|t| text_lower.contains(*t))
+            .count();
         score += (transition_count as f64 / 3.0).min(0.3);
 
         // Check for pronouns (indicate connected discourse)
         let pronouns = ["it", "this", "that", "these", "they", "them"];
-        let pronoun_count = pronouns.iter().map(|p| {
-            text_lower.matches(&format!(" {} ", p)).count()
-        }).sum::<usize>();
+        let pronoun_count = pronouns
+            .iter()
+            .map(|p| text_lower.matches(&format!(" {} ", p)).count())
+            .sum::<usize>();
         score += (pronoun_count as f64 / 10.0).min(0.2);
 
         score.min(1.0)
@@ -242,7 +272,11 @@ impl Evaluator for TextQualityEvaluator {
         } else {
             1.0
         };
-        results.push(MetricResult::new(MetricType::Custom, "length", length_score));
+        results.push(MetricResult::new(
+            MetricType::Custom,
+            "length",
+            length_score,
+        ));
 
         // Fluency
         let fluency = self.evaluate_fluency(response);
@@ -250,7 +284,11 @@ impl Evaluator for TextQualityEvaluator {
 
         // Coherence
         let coherence = self.evaluate_coherence(response);
-        results.push(MetricResult::new(MetricType::Coherence, "coherence", coherence));
+        results.push(MetricResult::new(
+            MetricType::Coherence,
+            "coherence",
+            coherence,
+        ));
 
         results
     }
@@ -305,18 +343,30 @@ impl Evaluator for RelevanceEvaluator {
 
         // Relevance to prompt
         let prompt_relevance = self.word_overlap(&sample.prompt, &sample.response);
-        results.push(MetricResult::new(MetricType::Relevance, "prompt_relevance", prompt_relevance));
+        results.push(MetricResult::new(
+            MetricType::Relevance,
+            "prompt_relevance",
+            prompt_relevance,
+        ));
 
         // Relevance to reference (if available)
         if let Some(ref reference) = sample.reference {
             let ref_relevance = self.word_overlap(reference, &sample.response);
-            results.push(MetricResult::new(MetricType::Relevance, "reference_relevance", ref_relevance));
+            results.push(MetricResult::new(
+                MetricType::Relevance,
+                "reference_relevance",
+                ref_relevance,
+            ));
         }
 
         // Context relevance (if available)
         if let Some(ref context) = sample.context {
             let ctx_relevance = self.word_overlap(context, &sample.response);
-            results.push(MetricResult::new(MetricType::Relevance, "context_relevance", ctx_relevance));
+            results.push(MetricResult::new(
+                MetricType::Relevance,
+                "context_relevance",
+                ctx_relevance,
+            ));
         }
 
         results
@@ -406,8 +456,8 @@ impl Evaluator for SafetyEvaluator {
             }
         }
 
-        let mut result = MetricResult::new(MetricType::Safety, "safety", safety_score)
-            .with_threshold(0.5);
+        let mut result =
+            MetricResult::new(MetricType::Safety, "safety", safety_score).with_threshold(0.5);
 
         if !details.is_empty() {
             result.details = Some(details.join("; "));
@@ -454,8 +504,14 @@ impl BenchmarkResult {
             min_duration: sorted.first().copied().unwrap_or_default(),
             max_duration: sorted.last().copied().unwrap_or_default(),
             p50_duration: sorted.get(p50_idx).copied().unwrap_or_default(),
-            p95_duration: sorted.get(p95_idx.min(count - 1)).copied().unwrap_or_default(),
-            p99_duration: sorted.get(p99_idx.min(count - 1)).copied().unwrap_or_default(),
+            p95_duration: sorted
+                .get(p95_idx.min(count - 1))
+                .copied()
+                .unwrap_or_default(),
+            p99_duration: sorted
+                .get(p99_idx.min(count - 1))
+                .copied()
+                .unwrap_or_default(),
             tokens_per_second: None,
             time_to_first_token: None,
         }
@@ -572,7 +628,9 @@ impl AbTestManager {
         let config = self.tests.get(test_name)?;
 
         // Deterministic assignment based on user ID hash
-        let hash = user_id.bytes().fold(0u64, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u64));
+        let hash = user_id
+            .bytes()
+            .fold(0u64, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u64));
         let normalized = (hash % 10000) as f64 / 10000.0;
 
         if normalized < config.traffic_split {
@@ -601,10 +659,14 @@ impl AbTestManager {
         let results_a = self.results_a.get(test_name)?;
         let results_b = self.results_b.get(test_name)?;
 
-        let mean_a = if results_a.is_empty() { 0.0 } else {
+        let mean_a = if results_a.is_empty() {
+            0.0
+        } else {
             results_a.iter().sum::<f64>() / results_a.len() as f64
         };
-        let mean_b = if results_b.is_empty() { 0.0 } else {
+        let mean_b = if results_b.is_empty() {
+            0.0
+        } else {
             results_b.iter().sum::<f64>() / results_b.len() as f64
         };
 
@@ -725,7 +787,8 @@ fn regularized_incomplete_beta(a: f64, b: f64, x: f64) -> f64 {
     }
 
     // Compute the log of the prefactor: x^a * (1-x)^b / (a * B(a,b))
-    let ln_prefix = a * x.ln() + b * (1.0 - x).ln() - ln_gamma(a) - ln_gamma(b) + ln_gamma(a + b) - a.ln();
+    let ln_prefix =
+        a * x.ln() + b * (1.0 - x).ln() - ln_gamma(a) - ln_gamma(b) + ln_gamma(a + b) - a.ln();
 
     // Lentz's continued fraction for I_x(a,b)
     let max_iter = 200;
@@ -746,18 +809,27 @@ fn regularized_incomplete_beta(a: f64, b: f64, x: f64) -> f64 {
         // Even step: d_{2m}
         let numerator_even = m_f * (b - m_f) * x / ((a + 2.0 * m_f - 1.0) * (a + 2.0 * m_f));
         d = 1.0 + numerator_even * d;
-        if d.abs() < tiny { d = tiny; }
+        if d.abs() < tiny {
+            d = tiny;
+        }
         c = 1.0 + numerator_even / c;
-        if c.abs() < tiny { c = tiny; }
+        if c.abs() < tiny {
+            c = tiny;
+        }
         d = 1.0 / d;
         result *= d * c;
 
         // Odd step: d_{2m+1}
-        let numerator_odd = -((a + m_f) * (a + b + m_f) * x) / ((a + 2.0 * m_f) * (a + 2.0 * m_f + 1.0));
+        let numerator_odd =
+            -((a + m_f) * (a + b + m_f) * x) / ((a + 2.0 * m_f) * (a + 2.0 * m_f + 1.0));
         d = 1.0 + numerator_odd * d;
-        if d.abs() < tiny { d = tiny; }
+        if d.abs() < tiny {
+            d = tiny;
+        }
         c = 1.0 + numerator_odd / c;
-        if c.abs() < tiny { c = tiny; }
+        if c.abs() < tiny {
+            c = tiny;
+        }
         d = 1.0 / d;
         let delta = d * c;
         result *= delta;
@@ -827,7 +899,11 @@ impl EvalSuite {
         let mut weighted_sum: f64 = 0.0;
 
         for metric in &all_metrics {
-            let weight = self.weights.get(&metric.metric_type).copied().unwrap_or(1.0);
+            let weight = self
+                .weights
+                .get(&metric.metric_type)
+                .copied()
+                .unwrap_or(1.0);
             weighted_sum += metric.normalized() * weight;
             total_weight += weight;
         }
@@ -871,7 +947,8 @@ impl EvalSuite {
 
         let avg_duration = if total > 0 {
             Duration::from_nanos(
-                (results.iter().map(|r| r.duration.as_nanos()).sum::<u128>() / total as u128) as u64
+                (results.iter().map(|r| r.duration.as_nanos()).sum::<u128>() / total as u128)
+                    as u64,
             )
         } else {
             Duration::ZERO
@@ -881,13 +958,15 @@ impl EvalSuite {
         let mut metric_scores: HashMap<MetricType, Vec<f64>> = HashMap::new();
         for result in results {
             for metric in &result.metrics {
-                metric_scores.entry(metric.metric_type)
+                metric_scores
+                    .entry(metric.metric_type)
                     .or_default()
                     .push(metric.value);
             }
         }
 
-        let metric_averages: HashMap<MetricType, f64> = metric_scores.into_iter()
+        let metric_averages: HashMap<MetricType, f64> = metric_scores
+            .into_iter()
             .map(|(k, v)| {
                 let avg = v.iter().sum::<f64>() / v.len() as f64;
                 (k, avg)
@@ -937,14 +1016,235 @@ mod duration_serde {
     }
 }
 
+// ============================================================================
+// LLM-as-Judge Evaluator
+// ============================================================================
+
+use std::sync::Arc;
+
+/// Configuration for LLM-as-judge evaluation.
+#[derive(Clone)]
+pub struct LlmJudgeConfig {
+    /// Metrics to evaluate (default: Relevance, Coherence, Helpfulness, Safety)
+    pub metrics: Vec<MetricType>,
+    /// Custom rubric/grading criteria (optional, uses default if None)
+    pub rubric: Option<String>,
+    /// Number of judge calls for majority voting (1 = single judge, 3+ = voting)
+    pub num_judges: usize,
+}
+
+impl Default for LlmJudgeConfig {
+    fn default() -> Self {
+        Self {
+            metrics: vec![
+                MetricType::Relevance,
+                MetricType::Coherence,
+                MetricType::Helpfulness,
+                MetricType::Safety,
+            ],
+            rubric: None,
+            num_judges: 1,
+        }
+    }
+}
+
+/// LLM-as-Judge evaluator that uses a language model to evaluate responses.
+///
+/// Takes a generator callback that produces LLM responses given a prompt.
+/// The generator is the same pattern used in `agentic_loop.rs`.
+pub struct LlmJudgeEvaluator {
+    /// Callback that generates an LLM response given a prompt string
+    generator: Arc<dyn Fn(&str) -> Result<String, String> + Send + Sync>,
+    config: LlmJudgeConfig,
+}
+
+impl LlmJudgeEvaluator {
+    /// Create a new LLM-as-Judge evaluator with the given generator callback.
+    pub fn new<F>(generator: F) -> Self
+    where
+        F: Fn(&str) -> Result<String, String> + Send + Sync + 'static,
+    {
+        Self {
+            generator: Arc::new(generator),
+            config: LlmJudgeConfig::default(),
+        }
+    }
+
+    pub fn with_config(mut self, config: LlmJudgeConfig) -> Self {
+        self.config = config;
+        self
+    }
+
+    /// Build the grading prompt for the judge.
+    fn build_grading_prompt(&self, sample: &EvalSample) -> String {
+        let metrics_str = self
+            .config
+            .metrics
+            .iter()
+            .map(|m| format!("{:?}", m))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let rubric = self.config.rubric.as_deref().unwrap_or(
+            "Rate each metric on a scale of 1-10 where:\n\
+             1-3: Poor quality\n\
+             4-6: Acceptable quality\n\
+             7-9: Good quality\n\
+             10: Excellent quality",
+        );
+
+        let mut prompt = format!(
+            "You are an expert evaluator. Grade the following AI response on these metrics: {}\n\n\
+             {}\n\n\
+             ## Prompt\n{}\n\n\
+             ## Response\n{}",
+            metrics_str, rubric, sample.prompt, sample.response
+        );
+
+        if let Some(ref reference) = sample.reference {
+            prompt.push_str(&format!("\n\n## Reference Answer\n{}", reference));
+        }
+        if let Some(ref context) = sample.context {
+            prompt.push_str(&format!("\n\n## Context\n{}", context));
+        }
+
+        prompt.push_str(&format!(
+            "\n\nRespond ONLY with a JSON object mapping each metric to its score (1-10). Example:\n\
+             {{{}}}",
+            self.config.metrics.iter()
+                .map(|m| format!("\"{:?}\": 7", m))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+
+        prompt
+    }
+
+    /// Parse scores from LLM response. Supports:
+    /// - JSON: {"Relevance": 8, "Coherence": 7}
+    /// - Text: "Score: 8/10" or "Relevance: 8"
+    fn parse_scores(&self, response: &str) -> HashMap<MetricType, f64> {
+        let mut scores = HashMap::new();
+
+        // Try JSON parsing first
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(response) {
+            if let Some(obj) = json.as_object() {
+                for metric in &self.config.metrics {
+                    let key = format!("{:?}", metric);
+                    if let Some(val) = obj.get(&key).and_then(|v| v.as_f64()) {
+                        scores.insert(*metric, val);
+                    }
+                }
+                if !scores.is_empty() {
+                    return scores;
+                }
+            }
+        }
+
+        // Try extracting JSON from markdown code block
+        let json_re = regex::Regex::new(r"(?s)\{[^}]+\}").ok();
+        if let Some(re) = json_re {
+            if let Some(m) = re.find(response) {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(m.as_str()) {
+                    if let Some(obj) = json.as_object() {
+                        for metric in &self.config.metrics {
+                            let key = format!("{:?}", metric);
+                            if let Some(val) = obj.get(&key).and_then(|v| v.as_f64()) {
+                                scores.insert(*metric, val);
+                            }
+                        }
+                        if !scores.is_empty() {
+                            return scores;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback: look for "Score: X/10" or "Metric: X" patterns
+        let score_re = regex::Regex::new(r"(\w+)\s*[:=]\s*(\d+(?:\.\d+)?)\s*(?:/\s*10)?").ok();
+        if let Some(re) = score_re {
+            for cap in re.captures_iter(response) {
+                let name = &cap[1];
+                if let Ok(val) = cap[2].parse::<f64>() {
+                    for metric in &self.config.metrics {
+                        if format!("{:?}", metric).to_lowercase() == name.to_lowercase() {
+                            scores.insert(*metric, val);
+                        }
+                    }
+                }
+            }
+        }
+
+        scores
+    }
+}
+
+impl Evaluator for LlmJudgeEvaluator {
+    fn name(&self) -> &str {
+        "llm_judge"
+    }
+
+    fn evaluate(&self, sample: &EvalSample) -> Vec<MetricResult> {
+        let prompt = self.build_grading_prompt(sample);
+
+        // Collect scores from multiple judges for majority voting
+        let mut all_scores: Vec<HashMap<MetricType, f64>> = Vec::new();
+
+        for _ in 0..self.config.num_judges {
+            match (self.generator)(&prompt) {
+                Ok(response) => {
+                    let scores = self.parse_scores(&response);
+                    if !scores.is_empty() {
+                        all_scores.push(scores);
+                    }
+                }
+                Err(_) => continue,
+            }
+        }
+
+        if all_scores.is_empty() {
+            // All judges failed — return zero scores
+            return self
+                .config
+                .metrics
+                .iter()
+                .map(|m| MetricResult::new(*m, &format!("{:?}", m), 0.0).with_range(0.0, 10.0))
+                .collect();
+        }
+
+        // Average scores across judges
+        let mut final_scores: HashMap<MetricType, f64> = HashMap::new();
+        for metric in &self.config.metrics {
+            let values: Vec<f64> = all_scores
+                .iter()
+                .filter_map(|s| s.get(metric).copied())
+                .collect();
+            if !values.is_empty() {
+                let avg = values.iter().sum::<f64>() / values.len() as f64;
+                final_scores.insert(*metric, avg);
+            }
+        }
+
+        // Build results
+        self.config
+            .metrics
+            .iter()
+            .map(|m| {
+                let value = final_scores.get(m).copied().unwrap_or(0.0);
+                MetricResult::new(*m, &format!("{:?}", m), value).with_range(0.0, 10.0)
+            })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_metric_result() {
-        let result = MetricResult::new(MetricType::Fluency, "fluency", 0.8)
-            .with_threshold(0.7);
+        let result = MetricResult::new(MetricType::Fluency, "fluency", 0.8).with_threshold(0.7);
 
         assert!(result.passed.unwrap());
         assert_eq!(result.normalized(), 0.8);
@@ -962,8 +1262,12 @@ mod tests {
     #[test]
     fn test_relevance_evaluator() {
         let evaluator = RelevanceEvaluator::new();
-        let sample = EvalSample::new("1", "Tell me about cats", "Cats are domesticated animals known for their independence.")
-            .with_reference("Cats are popular pets worldwide.");
+        let sample = EvalSample::new(
+            "1",
+            "Tell me about cats",
+            "Cats are domesticated animals known for their independence.",
+        )
+        .with_reference("Cats are popular pets worldwide.");
 
         let results = evaluator.evaluate(&sample);
         assert!(results.len() >= 1);
@@ -1064,6 +1368,145 @@ mod tests {
         assert!(result.p_value < 0.001, "p_value was {}", result.p_value);
         assert!(result.significant);
         assert_eq!(result.winner, Some("A".to_string()));
+    }
+
+    #[test]
+    fn test_llm_judge_config_defaults() {
+        let config = LlmJudgeConfig {
+            metrics: vec![MetricType::Relevance, MetricType::Fluency],
+            rubric: None,
+            num_judges: 3,
+        };
+        assert_eq!(config.metrics.len(), 2);
+        assert_eq!(config.num_judges, 3);
+        assert!(config.rubric.is_none());
+    }
+
+    #[test]
+    fn test_llm_judge_build_grading_prompt() {
+        let judge =
+            LlmJudgeEvaluator::new(|_: &str| Ok("{}".to_string())).with_config(LlmJudgeConfig {
+                metrics: vec![MetricType::Relevance],
+                rubric: Some("Be strict".to_string()),
+                num_judges: 1,
+            });
+        let sample = EvalSample::new("1", "What is Rust?", "Rust is a programming language.");
+        let prompt = judge.build_grading_prompt(&sample);
+        assert!(prompt.contains("Relevance"));
+        assert!(prompt.contains("Be strict"));
+        assert!(prompt.contains("What is Rust?"));
+        assert!(prompt.contains("Rust is a programming language"));
+    }
+
+    #[test]
+    fn test_llm_judge_parse_scores_json() {
+        let judge =
+            LlmJudgeEvaluator::new(|_: &str| Ok("{}".to_string())).with_config(LlmJudgeConfig {
+                metrics: vec![MetricType::Relevance, MetricType::Fluency],
+                rubric: None,
+                num_judges: 1,
+            });
+        let response = r#"{"Relevance": 8.5, "Fluency": 7.0}"#;
+        let scores = judge.parse_scores(response);
+        assert!((scores[&MetricType::Relevance] - 8.5).abs() < 0.01);
+        assert!((scores[&MetricType::Fluency] - 7.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_llm_judge_parse_scores_markdown_json() {
+        let judge =
+            LlmJudgeEvaluator::new(|_: &str| Ok("{}".to_string())).with_config(LlmJudgeConfig {
+                metrics: vec![MetricType::Relevance],
+                rubric: None,
+                num_judges: 1,
+            });
+        let response = "Here are the scores:\n```json\n{\"Relevance\": 9.0}\n```\n";
+        let scores = judge.parse_scores(response);
+        assert!((scores[&MetricType::Relevance] - 9.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_llm_judge_parse_scores_regex_fallback() {
+        let judge =
+            LlmJudgeEvaluator::new(|_: &str| Ok("{}".to_string())).with_config(LlmJudgeConfig {
+                metrics: vec![MetricType::Relevance],
+                rubric: None,
+                num_judges: 1,
+            });
+        let response = "I would rate this response:\nRelevance: 7/10\nOverall good quality.";
+        let scores = judge.parse_scores(response);
+        assert!((scores[&MetricType::Relevance] - 7.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_llm_judge_evaluate_with_mock() {
+        let judge = LlmJudgeEvaluator::new(|_: &str| {
+            Ok(r#"{"Relevance": 8.0, "Fluency": 7.5}"#.to_string())
+        })
+        .with_config(LlmJudgeConfig {
+            metrics: vec![MetricType::Relevance, MetricType::Fluency],
+            rubric: None,
+            num_judges: 3,
+        });
+        let sample = EvalSample::new("1", "What is AI?", "AI is artificial intelligence.");
+        let results = judge.evaluate(&sample);
+        assert_eq!(results.len(), 2);
+        assert!((results[0].value - 8.0).abs() < 0.01);
+        assert!((results[1].value - 7.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_llm_judge_evaluate_all_failures() {
+        let judge = LlmJudgeEvaluator::new(|_: &str| Err("LLM unavailable".to_string()))
+            .with_config(LlmJudgeConfig {
+                metrics: vec![MetricType::Relevance],
+                rubric: None,
+                num_judges: 2,
+            });
+        let sample = EvalSample::new("1", "test", "test response");
+        let results = judge.evaluate(&sample);
+        assert_eq!(results.len(), 1);
+        assert!((results[0].value - 0.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_llm_judge_majority_voting() {
+        let call_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let call_count_clone = call_count.clone();
+        let judge = LlmJudgeEvaluator::new(move |_: &str| {
+            let n = call_count_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            match n {
+                0 => Ok(r#"{"Relevance": 8.0}"#.to_string()),
+                1 => Ok(r#"{"Relevance": 9.0}"#.to_string()),
+                _ => Ok(r#"{"Relevance": 8.5}"#.to_string()),
+            }
+        })
+        .with_config(LlmJudgeConfig {
+            metrics: vec![MetricType::Relevance],
+            rubric: None,
+            num_judges: 3,
+        });
+        let sample = EvalSample::new("1", "test", "test response");
+        let results = judge.evaluate(&sample);
+        // Average of 8.0, 9.0, 8.5 = 8.5
+        assert!((results[0].value - 8.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_llm_judge_custom_rubric() {
+        let judge = LlmJudgeEvaluator::new(|prompt: &str| {
+            // Verify rubric is included in prompt
+            assert!(prompt.contains("Custom rubric for evaluation"));
+            Ok(r#"{"Relevance": 6.0}"#.to_string())
+        })
+        .with_config(LlmJudgeConfig {
+            metrics: vec![MetricType::Relevance],
+            rubric: Some("Custom rubric for evaluation".to_string()),
+            num_judges: 1,
+        });
+        let sample = EvalSample::new("1", "test", "test response");
+        let results = judge.evaluate(&sample);
+        assert!((results[0].value - 6.0).abs() < 0.01);
     }
 
     #[test]

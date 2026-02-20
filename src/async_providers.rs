@@ -376,8 +376,7 @@ where
         rx.recv()
             .map_err(|_| anyhow::anyhow!("Async task thread panicked"))?
     } else {
-        let rt =
-            tokio::runtime::Runtime::new().context("Failed to create tokio runtime")?;
+        let rt = tokio::runtime::Runtime::new().context("Failed to create tokio runtime")?;
         rt.block_on(future)
     }
 }
@@ -528,10 +527,9 @@ mod tests {
             ..Default::default()
         };
 
-        let response =
-            generate_response_async(&client, &config, &messages, "You are helpful")
-                .await
-                .unwrap();
+        let response = generate_response_async(&client, &config, &messages, "You are helpful")
+            .await
+            .unwrap();
         match response {
             AiResponse::Complete(text) => assert_eq!(text, "Hello! How can I help you?"),
             other => panic!("Expected Complete, got {:?}", other),
@@ -599,17 +597,12 @@ mod tests {
             ..Default::default()
         };
 
-        let response = generate_response_streaming_async(
-            &client,
-            &config,
-            &messages,
-            "",
-            move |token| {
+        let response =
+            generate_response_streaming_async(&client, &config, &messages, "", move |token| {
                 tokens_clone.lock().unwrap().push(token.to_string());
-            },
-        )
-        .await
-        .unwrap();
+            })
+            .await
+            .unwrap();
 
         match response {
             AiResponse::Complete(text) => assert_eq!(text, "Streamed response"),

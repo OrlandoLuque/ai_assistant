@@ -3,9 +3,9 @@
 //! This module provides tools for generating structured JSON outputs
 //! from LLM responses with schema validation.
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 
 /// JSON Schema types
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -379,7 +379,11 @@ impl SchemaValidator {
         if !type_valid {
             errors.push(ValidationError {
                 path: path.to_string(),
-                message: format!("Expected {:?}, got {:?}", prop.schema_type, value_type(value)),
+                message: format!(
+                    "Expected {:?}, got {:?}",
+                    prop.schema_type,
+                    value_type(value)
+                ),
             });
             return value.clone();
         }
@@ -534,22 +538,28 @@ impl StructuredOutputGenerator {
 
     /// Generate prompt for a schema
     pub fn generate_prompt(&self, schema_name: &str, user_prompt: &str) -> Option<String> {
-        self.schemas.get(schema_name).map(|schema| {
-            format!("{}\n\n{}", user_prompt, schema.to_prompt())
-        })
+        self.schemas
+            .get(schema_name)
+            .map(|schema| format!("{}\n\n{}", user_prompt, schema.to_prompt()))
     }
 
     /// Parse and validate a response
-    pub fn parse_response(&self, schema_name: &str, response: &str) -> Result<ValidationResult, String> {
-        let schema = self.schemas.get(schema_name)
+    pub fn parse_response(
+        &self,
+        schema_name: &str,
+        response: &str,
+    ) -> Result<ValidationResult, String> {
+        let schema = self
+            .schemas
+            .get(schema_name)
             .ok_or_else(|| format!("Schema '{}' not found", schema_name))?;
 
         // Try to extract JSON from response
         let json_str = extract_json(response);
 
         // Parse JSON
-        let value: Value = serde_json::from_str(&json_str)
-            .map_err(|e| format!("JSON parse error: {}", e))?;
+        let value: Value =
+            serde_json::from_str(&json_str).map_err(|e| format!("JSON parse error: {}", e))?;
 
         Ok(SchemaValidator::validate(&value, schema))
     }
@@ -558,12 +568,14 @@ impl StructuredOutputGenerator {
     pub fn parse_with_hints(&self, schema_name: &str, response: &str) -> StructuredParseResult {
         let schema = match self.schemas.get(schema_name) {
             Some(s) => s,
-            None => return StructuredParseResult {
-                success: false,
-                value: None,
-                errors: vec!["Schema not found".to_string()],
-                retry_prompt: None,
-            },
+            None => {
+                return StructuredParseResult {
+                    success: false,
+                    value: None,
+                    errors: vec!["Schema not found".to_string()],
+                    retry_prompt: None,
+                }
+            }
         };
 
         let json_str = extract_json(response);
@@ -579,9 +591,8 @@ impl StructuredOutputGenerator {
                         retry_prompt: None,
                     }
                 } else {
-                    let error_msgs: Vec<String> = validation.errors.iter()
-                        .map(|e| e.to_string())
-                        .collect();
+                    let error_msgs: Vec<String> =
+                        validation.errors.iter().map(|e| e.to_string()).collect();
                     let retry = format!(
                         "The JSON response had validation errors:\n{}\n\nPlease fix these issues and respond again with valid JSON.",
                         error_msgs.join("\n")
@@ -684,15 +695,29 @@ impl SchemaBuilder {
     pub fn sentiment_analysis() -> JsonSchema {
         JsonSchema::new("sentiment_analysis")
             .with_description("Sentiment analysis result")
-            .with_property("sentiment", SchemaProperty::string()
-                .with_description("Overall sentiment")
-                .with_enum(vec!["positive".to_string(), "negative".to_string(), "neutral".to_string(), "mixed".to_string()]))
-            .with_property("confidence", SchemaProperty::number()
-                .with_description("Confidence score from 0 to 1")
-                .with_minimum(0.0)
-                .with_maximum(1.0))
-            .with_property("reasons", SchemaProperty::array(SchemaProperty::string())
-                .with_description("Reasons for the sentiment"))
+            .with_property(
+                "sentiment",
+                SchemaProperty::string()
+                    .with_description("Overall sentiment")
+                    .with_enum(vec![
+                        "positive".to_string(),
+                        "negative".to_string(),
+                        "neutral".to_string(),
+                        "mixed".to_string(),
+                    ]),
+            )
+            .with_property(
+                "confidence",
+                SchemaProperty::number()
+                    .with_description("Confidence score from 0 to 1")
+                    .with_minimum(0.0)
+                    .with_maximum(1.0),
+            )
+            .with_property(
+                "reasons",
+                SchemaProperty::array(SchemaProperty::string())
+                    .with_description("Reasons for the sentiment"),
+            )
             .with_required("sentiment")
             .with_required("confidence")
     }
@@ -700,29 +725,38 @@ impl SchemaBuilder {
     /// Create an entity extraction schema
     pub fn entity_extraction() -> JsonSchema {
         let entity = SchemaProperty::object()
-            .with_property("text", SchemaProperty::string().with_description("The extracted text"))
-            .with_property("type", SchemaProperty::string()
-                .with_description("Entity type")
-                .with_enum(vec![
-                    "person".to_string(),
-                    "organization".to_string(),
-                    "location".to_string(),
-                    "date".to_string(),
-                    "email".to_string(),
-                    "phone".to_string(),
-                    "url".to_string(),
-                    "other".to_string(),
-                ]))
-            .with_property("confidence", SchemaProperty::number()
-                .with_minimum(0.0)
-                .with_maximum(1.0))
+            .with_property(
+                "text",
+                SchemaProperty::string().with_description("The extracted text"),
+            )
+            .with_property(
+                "type",
+                SchemaProperty::string()
+                    .with_description("Entity type")
+                    .with_enum(vec![
+                        "person".to_string(),
+                        "organization".to_string(),
+                        "location".to_string(),
+                        "date".to_string(),
+                        "email".to_string(),
+                        "phone".to_string(),
+                        "url".to_string(),
+                        "other".to_string(),
+                    ]),
+            )
+            .with_property(
+                "confidence",
+                SchemaProperty::number().with_minimum(0.0).with_maximum(1.0),
+            )
             .with_required("text")
             .with_required("type");
 
         JsonSchema::new("entity_extraction")
             .with_description("Entity extraction result")
-            .with_property("entities", SchemaProperty::array(entity)
-                .with_description("List of extracted entities"))
+            .with_property(
+                "entities",
+                SchemaProperty::array(entity).with_description("List of extracted entities"),
+            )
             .with_required("entities")
     }
 
@@ -730,15 +764,23 @@ impl SchemaBuilder {
     pub fn classification(categories: Vec<String>) -> JsonSchema {
         JsonSchema::new("classification")
             .with_description("Text classification result")
-            .with_property("category", SchemaProperty::string()
-                .with_description("The classified category")
-                .with_enum(categories))
-            .with_property("confidence", SchemaProperty::number()
-                .with_description("Confidence score")
-                .with_minimum(0.0)
-                .with_maximum(1.0))
-            .with_property("explanation", SchemaProperty::string()
-                .with_description("Explanation for the classification"))
+            .with_property(
+                "category",
+                SchemaProperty::string()
+                    .with_description("The classified category")
+                    .with_enum(categories),
+            )
+            .with_property(
+                "confidence",
+                SchemaProperty::number()
+                    .with_description("Confidence score")
+                    .with_minimum(0.0)
+                    .with_maximum(1.0),
+            )
+            .with_property(
+                "explanation",
+                SchemaProperty::string().with_description("Explanation for the classification"),
+            )
             .with_required("category")
             .with_required("confidence")
     }
@@ -747,15 +789,23 @@ impl SchemaBuilder {
     pub fn summary() -> JsonSchema {
         JsonSchema::new("summary")
             .with_description("Text summary result")
-            .with_property("title", SchemaProperty::string()
-                .with_description("A short title")
-                .with_max_length(100))
-            .with_property("summary", SchemaProperty::string()
-                .with_description("The summary text"))
-            .with_property("key_points", SchemaProperty::array(SchemaProperty::string())
-                .with_description("Key points from the text")
-                .with_min_length(1)
-                .with_max_length(10))
+            .with_property(
+                "title",
+                SchemaProperty::string()
+                    .with_description("A short title")
+                    .with_max_length(100),
+            )
+            .with_property(
+                "summary",
+                SchemaProperty::string().with_description("The summary text"),
+            )
+            .with_property(
+                "key_points",
+                SchemaProperty::array(SchemaProperty::string())
+                    .with_description("Key points from the text")
+                    .with_min_length(1)
+                    .with_max_length(10),
+            )
             .with_required("summary")
             .with_required("key_points")
     }
@@ -764,14 +814,23 @@ impl SchemaBuilder {
     pub fn translation() -> JsonSchema {
         JsonSchema::new("translation")
             .with_description("Translation result")
-            .with_property("original_language", SchemaProperty::string()
-                .with_description("Detected source language"))
-            .with_property("target_language", SchemaProperty::string()
-                .with_description("Target language"))
-            .with_property("translation", SchemaProperty::string()
-                .with_description("The translated text"))
-            .with_property("alternatives", SchemaProperty::array(SchemaProperty::string())
-                .with_description("Alternative translations"))
+            .with_property(
+                "original_language",
+                SchemaProperty::string().with_description("Detected source language"),
+            )
+            .with_property(
+                "target_language",
+                SchemaProperty::string().with_description("Target language"),
+            )
+            .with_property(
+                "translation",
+                SchemaProperty::string().with_description("The translated text"),
+            )
+            .with_property(
+                "alternatives",
+                SchemaProperty::array(SchemaProperty::string())
+                    .with_description("Alternative translations"),
+            )
             .with_required("translation")
     }
 
@@ -779,16 +838,27 @@ impl SchemaBuilder {
     pub fn question_answer() -> JsonSchema {
         JsonSchema::new("question_answer")
             .with_description("Question answering result")
-            .with_property("answer", SchemaProperty::string()
-                .with_description("The answer to the question"))
-            .with_property("confidence", SchemaProperty::number()
-                .with_description("Confidence in the answer")
-                .with_minimum(0.0)
-                .with_maximum(1.0))
-            .with_property("sources", SchemaProperty::array(SchemaProperty::string())
-                .with_description("Sources for the answer"))
-            .with_property("follow_up_questions", SchemaProperty::array(SchemaProperty::string())
-                .with_description("Suggested follow-up questions"))
+            .with_property(
+                "answer",
+                SchemaProperty::string().with_description("The answer to the question"),
+            )
+            .with_property(
+                "confidence",
+                SchemaProperty::number()
+                    .with_description("Confidence in the answer")
+                    .with_minimum(0.0)
+                    .with_maximum(1.0),
+            )
+            .with_property(
+                "sources",
+                SchemaProperty::array(SchemaProperty::string())
+                    .with_description("Sources for the answer"),
+            )
+            .with_property(
+                "follow_up_questions",
+                SchemaProperty::array(SchemaProperty::string())
+                    .with_description("Suggested follow-up questions"),
+            )
             .with_required("answer")
     }
 }
@@ -839,8 +909,12 @@ impl StructuredRequest {
             prompt.push_str("\n\nExamples:\n");
             for (i, (input, output)) in self.examples.iter().enumerate() {
                 let output_str = serde_json::to_string_pretty(output).unwrap_or_default();
-                prompt.push_str(&format!("\nExample {}:\nInput: {}\nOutput:\n```json\n{}\n```\n",
-                    i + 1, input, output_str));
+                prompt.push_str(&format!(
+                    "\nExample {}:\nInput: {}\nOutput:\n```json\n{}\n```\n",
+                    i + 1,
+                    input,
+                    output_str
+                ));
             }
         }
 
@@ -858,6 +932,321 @@ impl StructuredRequest {
     /// Get max retries
     pub fn max_retries(&self) -> usize {
         self.max_retries
+    }
+}
+
+/// Configuration for the structured output enforcement loop
+#[derive(Debug, Clone)]
+pub struct EnforcementConfig {
+    /// Maximum number of retry attempts
+    pub max_retries: u32,
+    /// Whether to include response_format parameter for compatible APIs
+    pub include_response_format: bool,
+    /// Whether to include the full schema in the prompt
+    pub include_schema_in_prompt: bool,
+    /// Whether to include error feedback in retry prompts
+    pub feedback_on_error: bool,
+}
+
+impl Default for EnforcementConfig {
+    fn default() -> Self {
+        Self {
+            max_retries: 3,
+            include_response_format: true,
+            include_schema_in_prompt: true,
+            feedback_on_error: true,
+        }
+    }
+}
+
+/// Result of an enforcement loop execution
+#[derive(Debug, Clone)]
+pub struct EnforcementResult {
+    /// The successfully parsed JSON value, if any
+    pub value: Option<serde_json::Value>,
+    /// Number of attempts made
+    pub attempts: u32,
+    /// Errors collected across all attempts
+    pub errors: Vec<String>,
+    /// Whether enforcement succeeded
+    pub success: bool,
+}
+
+/// Extract JSON from an LLM response that may contain markdown fences or surrounding text.
+///
+/// Tries in order:
+/// 1. ```json\n...\n``` fenced blocks
+/// 2. ```\n...\n``` generic fenced blocks (if content looks like JSON)
+/// 3. Raw JSON object `{...}` with brace-nesting tracking
+/// 4. Raw JSON array `[...]` with bracket-nesting tracking
+pub fn extract_json_from_response(response: &str) -> Option<&str> {
+    // Try ```json ... ```
+    if let Some(start_marker) = response.find("```json") {
+        let content_start = start_marker + 7; // length of "```json"
+                                              // Skip optional newline after ```json
+        let content_start = if response[content_start..].starts_with('\n') {
+            content_start + 1
+        } else {
+            content_start
+        };
+        if let Some(end_offset) = response[content_start..].find("```") {
+            let json_str = response[content_start..content_start + end_offset].trim();
+            if !json_str.is_empty() {
+                return Some(json_str);
+            }
+        }
+    }
+
+    // Try ``` ... ``` (generic code block)
+    if let Some(start_marker) = response.find("```") {
+        let after_backticks = start_marker + 3;
+        if let Some(end_offset) = response[after_backticks..].find("```") {
+            let block = &response[after_backticks..after_backticks + end_offset];
+            // Skip language identifier line if present
+            let content = if let Some(newline_pos) = block.find('\n') {
+                &block[newline_pos + 1..]
+            } else {
+                block
+            };
+            let trimmed = content.trim();
+            if trimmed.starts_with('{') || trimmed.starts_with('[') {
+                return Some(trimmed);
+            }
+        }
+    }
+
+    // Try raw JSON object with nesting tracking
+    if let Some(result) = find_balanced(response, '{', '}') {
+        return Some(result);
+    }
+
+    // Try raw JSON array with nesting tracking
+    if let Some(result) = find_balanced(response, '[', ']') {
+        return Some(result);
+    }
+
+    None
+}
+
+/// Find a balanced pair of open/close characters in the string, tracking nesting depth.
+fn find_balanced(s: &str, open: char, close: char) -> Option<&str> {
+    let start = s.find(open)?;
+    let mut depth = 0i32;
+    let mut in_string = false;
+    let mut escape_next = false;
+
+    for (i, ch) in s[start..].char_indices() {
+        if escape_next {
+            escape_next = false;
+            continue;
+        }
+        if ch == '\\' && in_string {
+            escape_next = true;
+            continue;
+        }
+        if ch == '"' {
+            in_string = !in_string;
+            continue;
+        }
+        if in_string {
+            continue;
+        }
+        if ch == open {
+            depth += 1;
+        } else if ch == close {
+            depth -= 1;
+            if depth == 0 {
+                return Some(&s[start..start + i + ch.len_utf8()]);
+            }
+        }
+    }
+    None
+}
+
+/// Enforces structured JSON output from LLM responses with a retry loop,
+/// schema validation, and error feedback.
+pub struct StructuredOutputEnforcer {
+    generator: StructuredOutputGenerator,
+    config: EnforcementConfig,
+}
+
+impl StructuredOutputEnforcer {
+    /// Create a new enforcer wrapping a generator and enforcement configuration.
+    pub fn new(generator: StructuredOutputGenerator, config: EnforcementConfig) -> Self {
+        Self { generator, config }
+    }
+
+    /// Build a prompt that includes JSON constraint instructions.
+    ///
+    /// Uses the generator's `generate_prompt` if the schema exists, otherwise
+    /// builds a basic constrained prompt from the user text alone.
+    pub fn build_constrained_prompt(&self, schema_name: &str, user_prompt: &str) -> Option<String> {
+        let base = if self.config.include_schema_in_prompt {
+            self.generator.generate_prompt(schema_name, user_prompt)?
+        } else {
+            // Schema exists but caller chose not to embed it
+            self.generator.get_schema(schema_name)?;
+            user_prompt.to_string()
+        };
+
+        Some(format!(
+            "{}\n\nYou MUST respond with valid JSON matching this schema. Do not include any text outside the JSON.",
+            base
+        ))
+    }
+
+    /// Validate a response string against the named schema, extracting JSON first.
+    ///
+    /// Returns `Ok(Value)` on success or `Err(Vec<String>)` with all error messages.
+    pub fn validate_and_extract(
+        &self,
+        schema_name: &str,
+        response: &str,
+    ) -> Result<serde_json::Value, Vec<String>> {
+        // Step 1: extract JSON substring
+        let json_str = match extract_json_from_response(response) {
+            Some(s) => s,
+            None => {
+                return Err(vec![
+                    "No JSON found in response. Expected a JSON object or array.".to_string(),
+                ]);
+            }
+        };
+
+        // Step 2: parse
+        let value: serde_json::Value =
+            serde_json::from_str(json_str).map_err(|e| vec![format!("JSON parse error: {}", e)])?;
+
+        // Step 3: validate against schema if available
+        if let Some(schema) = self.generator.get_schema(schema_name) {
+            let result = SchemaValidator::validate(&value, schema);
+            if result.valid {
+                Ok(result.value.unwrap_or(value))
+            } else {
+                Err(result.errors.iter().map(|e| e.to_string()).collect())
+            }
+        } else {
+            // No schema registered under that name — just return parsed value
+            Ok(value)
+        }
+    }
+
+    /// Build a retry prompt that includes error feedback from the previous attempt.
+    pub fn build_retry_prompt(
+        &self,
+        schema_name: &str,
+        user_prompt: &str,
+        previous_response: &str,
+        errors: &[String],
+    ) -> String {
+        let mut prompt = String::new();
+
+        // Include original constrained prompt
+        if let Some(constrained) = self.build_constrained_prompt(schema_name, user_prompt) {
+            prompt.push_str(&constrained);
+        } else {
+            prompt.push_str(user_prompt);
+        }
+
+        if self.config.feedback_on_error && !errors.is_empty() {
+            prompt.push_str("\n\nYour previous response was invalid:\n");
+            prompt.push_str(&format!("```\n{}\n```\n", previous_response));
+            prompt.push_str("\nErrors found:\n");
+            for err in errors {
+                prompt.push_str(&format!("- {}\n", err));
+            }
+            prompt.push_str("\nPlease correct these errors and respond with valid JSON only.");
+        }
+
+        prompt
+    }
+
+    /// Main enforcement loop: prompt -> validate -> retry if needed.
+    ///
+    /// The `response_generator` closure is called with a prompt string and should
+    /// return the LLM's response text. The loop retries up to `config.max_retries`
+    /// times on validation failure.
+    pub fn enforce<F>(
+        &self,
+        schema_name: &str,
+        user_prompt: &str,
+        response_generator: &F,
+    ) -> EnforcementResult
+    where
+        F: Fn(&str) -> String,
+    {
+        let mut all_errors: Vec<String> = Vec::new();
+        let mut attempts = 0u32;
+        let mut last_response = String::new();
+
+        let max = self.config.max_retries.max(1); // at least one attempt
+
+        for attempt in 0..max {
+            attempts = attempt + 1;
+
+            // Build the prompt
+            let prompt = if attempt == 0 {
+                match self.build_constrained_prompt(schema_name, user_prompt) {
+                    Some(p) => p,
+                    None => {
+                        all_errors.push(format!("Schema '{}' not found", schema_name));
+                        return EnforcementResult {
+                            value: None,
+                            attempts,
+                            errors: all_errors,
+                            success: false,
+                        };
+                    }
+                }
+            } else {
+                self.build_retry_prompt(schema_name, user_prompt, &last_response, &all_errors)
+            };
+
+            // Generate response
+            last_response = response_generator(&prompt);
+
+            // Validate
+            match self.validate_and_extract(schema_name, &last_response) {
+                Ok(value) => {
+                    return EnforcementResult {
+                        value: Some(value),
+                        attempts,
+                        errors: all_errors,
+                        success: true,
+                    };
+                }
+                Err(errs) => {
+                    all_errors.extend(errs);
+                }
+            }
+        }
+
+        // Exhausted retries
+        EnforcementResult {
+            value: None,
+            attempts,
+            errors: all_errors,
+            success: false,
+        }
+    }
+
+    /// Build an OpenAI-compatible `response_format` parameter for the named schema.
+    ///
+    /// If the schema is registered and `include_response_format` is enabled, returns
+    /// a `json_schema` format with the full schema. Otherwise returns a basic
+    /// `json_object` format, or `None` if response_format is disabled.
+    pub fn build_response_format_param(&self, schema_name: &str) -> Option<serde_json::Value> {
+        if !self.config.include_response_format {
+            return None;
+        }
+
+        if let Some(schema) = self.generator.get_schema(schema_name) {
+            Some(schema.to_openai_format())
+        } else {
+            Some(serde_json::json!({
+                "type": "json_object"
+            }))
+        }
     }
 }
 
@@ -882,17 +1271,32 @@ mod tests {
     fn test_json_schema_builder() {
         let schema = JsonSchema::new("person")
             .with_description("A person object")
-            .with_property("name", SchemaProperty::string()
-                .with_description("Person's name"))
-            .with_property("age", SchemaProperty::integer()
-                .with_minimum(0.0)
-                .with_maximum(150.0))
+            .with_property(
+                "name",
+                SchemaProperty::string().with_description("Person's name"),
+            )
+            .with_property(
+                "age",
+                SchemaProperty::integer()
+                    .with_minimum(0.0)
+                    .with_maximum(150.0),
+            )
             .with_required("name");
 
         assert_eq!(schema.name, "person");
         assert!(schema.description.is_some());
-        assert!(schema.root.properties.as_ref().unwrap().contains_key("name"));
-        assert!(schema.root.required.as_ref().unwrap().contains(&"name".to_string()));
+        assert!(schema
+            .root
+            .properties
+            .as_ref()
+            .unwrap()
+            .contains_key("name"));
+        assert!(schema
+            .root
+            .required
+            .as_ref()
+            .unwrap()
+            .contains(&"name".to_string()));
     }
 
     #[test]
@@ -929,8 +1333,7 @@ mod tests {
 
     #[test]
     fn test_validation_wrong_type() {
-        let schema = JsonSchema::new("test")
-            .with_property("age", SchemaProperty::integer());
+        let schema = JsonSchema::new("test").with_property("age", SchemaProperty::integer());
 
         let value = serde_json::json!({
             "age": "thirty"
@@ -942,9 +1345,14 @@ mod tests {
 
     #[test]
     fn test_validation_enum() {
-        let schema = JsonSchema::new("test")
-            .with_property("color", SchemaProperty::string()
-                .with_enum(vec!["red".to_string(), "green".to_string(), "blue".to_string()]));
+        let schema = JsonSchema::new("test").with_property(
+            "color",
+            SchemaProperty::string().with_enum(vec![
+                "red".to_string(),
+                "green".to_string(),
+                "blue".to_string(),
+            ]),
+        );
 
         let valid = serde_json::json!({ "color": "red" });
         let invalid = serde_json::json!({ "color": "yellow" });
@@ -966,8 +1374,18 @@ mod tests {
     fn test_schema_builder_sentiment() {
         let schema = SchemaBuilder::sentiment_analysis();
         assert_eq!(schema.name, "sentiment_analysis");
-        assert!(schema.root.properties.as_ref().unwrap().contains_key("sentiment"));
-        assert!(schema.root.properties.as_ref().unwrap().contains_key("confidence"));
+        assert!(schema
+            .root
+            .properties
+            .as_ref()
+            .unwrap()
+            .contains_key("sentiment"));
+        assert!(schema
+            .root
+            .properties
+            .as_ref()
+            .unwrap()
+            .contains_key("confidence"));
     }
 
     #[test]
@@ -975,20 +1393,26 @@ mod tests {
         let mut generator = StructuredOutputGenerator::new();
         generator.register_schema(SchemaBuilder::sentiment_analysis());
 
-        let prompt = generator.generate_prompt("sentiment_analysis", "Analyze this text").unwrap();
+        let prompt = generator
+            .generate_prompt("sentiment_analysis", "Analyze this text")
+            .unwrap();
         assert!(prompt.contains("Analyze this text"));
         assert!(prompt.contains("sentiment_analysis"));
     }
 
     #[test]
     fn test_structured_request() {
-        let schema = SchemaBuilder::classification(vec!["spam".to_string(), "not_spam".to_string()]);
+        let schema =
+            SchemaBuilder::classification(vec!["spam".to_string(), "not_spam".to_string()]);
         let request = StructuredRequest::new(schema)
             .with_prompt("Classify this email")
-            .with_example("Buy now!", serde_json::json!({
-                "category": "spam",
-                "confidence": 0.95
-            }))
+            .with_example(
+                "Buy now!",
+                serde_json::json!({
+                    "category": "spam",
+                    "confidence": 0.95
+                }),
+            )
             .with_max_retries(5);
 
         let prompt = request.build_prompt();
@@ -996,5 +1420,135 @@ mod tests {
         assert!(prompt.contains("Buy now!"));
         assert!(prompt.contains("spam"));
         assert_eq!(request.max_retries(), 5);
+    }
+
+    #[test]
+    fn test_constrained_prompt_includes_json_instruction() {
+        let mut generator = StructuredOutputGenerator::new();
+        generator.register_schema(
+            JsonSchema::new("person")
+                .with_property("name", SchemaProperty::string())
+                .with_required("name"),
+        );
+        let enforcer = StructuredOutputEnforcer::new(generator, EnforcementConfig::default());
+
+        let prompt = enforcer
+            .build_constrained_prompt("person", "Describe a person")
+            .unwrap();
+        assert!(
+            prompt.contains("JSON"),
+            "Constrained prompt must contain JSON instruction"
+        );
+        assert!(prompt.contains("Describe a person"));
+    }
+
+    #[test]
+    fn test_validate_valid_json() {
+        let mut generator = StructuredOutputGenerator::new();
+        generator.register_schema(
+            JsonSchema::new("item")
+                .with_property("name", SchemaProperty::string())
+                .with_property("count", SchemaProperty::integer())
+                .with_required("name")
+                .with_required("count"),
+        );
+        let enforcer = StructuredOutputEnforcer::new(generator, EnforcementConfig::default());
+
+        let result = enforcer.validate_and_extract("item", r#"{"name": "apple", "count": 5}"#);
+        assert!(result.is_ok(), "Valid JSON should pass validation");
+        let val = result.unwrap();
+        assert_eq!(val["name"], "apple");
+        assert_eq!(val["count"], 5);
+    }
+
+    #[test]
+    fn test_validate_invalid_json() {
+        let mut generator = StructuredOutputGenerator::new();
+        generator.register_schema(
+            JsonSchema::new("item")
+                .with_property("name", SchemaProperty::string())
+                .with_required("name"),
+        );
+        let enforcer = StructuredOutputEnforcer::new(generator, EnforcementConfig::default());
+
+        // Completely non-JSON string
+        let result = enforcer.validate_and_extract("item", "This is not JSON at all");
+        assert!(result.is_err(), "Non-JSON string should fail validation");
+        let errors = result.unwrap_err();
+        assert!(!errors.is_empty(), "Should have error messages");
+    }
+
+    #[test]
+    fn test_extract_json_from_markdown() {
+        // Test ```json ... ``` fenced block
+        let markdown = "Here is the result:\n```json\n{\"key\":\"value\"}\n```\nDone.";
+        let extracted = extract_json_from_response(markdown);
+        assert!(extracted.is_some());
+        let parsed: serde_json::Value = serde_json::from_str(extracted.unwrap()).unwrap();
+        assert_eq!(parsed["key"], "value");
+
+        // Test raw JSON extraction
+        let raw = "Sure, here: {\"key\":\"value\"} that's it.";
+        let extracted_raw = extract_json_from_response(raw);
+        assert!(extracted_raw.is_some());
+        let parsed_raw: serde_json::Value = serde_json::from_str(extracted_raw.unwrap()).unwrap();
+        assert_eq!(parsed_raw["key"], "value");
+    }
+
+    #[test]
+    fn test_enforce_succeeds_first_try() {
+        let mut generator = StructuredOutputGenerator::new();
+        generator.register_schema(
+            JsonSchema::new("greeting")
+                .with_property("message", SchemaProperty::string())
+                .with_required("message"),
+        );
+        let enforcer = StructuredOutputEnforcer::new(generator, EnforcementConfig::default());
+
+        let result = enforcer.enforce("greeting", "Say hello", &|_prompt: &str| {
+            r#"{"message": "Hello, world!"}"#.to_string()
+        });
+
+        assert!(result.success);
+        assert_eq!(result.attempts, 1);
+        assert!(result.value.is_some());
+        assert_eq!(result.value.unwrap()["message"], "Hello, world!");
+    }
+
+    #[test]
+    fn test_enforce_retries_on_invalid() {
+        let mut generator = StructuredOutputGenerator::new();
+        generator.register_schema(
+            JsonSchema::new("greeting")
+                .with_property("message", SchemaProperty::string())
+                .with_required("message"),
+        );
+        let config = EnforcementConfig {
+            max_retries: 3,
+            ..Default::default()
+        };
+        let enforcer = StructuredOutputEnforcer::new(generator, config);
+
+        let call_count = std::cell::Cell::new(0u32);
+        let result = enforcer.enforce("greeting", "Say hello", &|_prompt: &str| {
+            let count = call_count.get() + 1;
+            call_count.set(count);
+            if count == 1 {
+                // First attempt: invalid response (not JSON)
+                "I don't know what to say".to_string()
+            } else {
+                // Second attempt: valid JSON
+                r#"{"message": "Hello!"}"#.to_string()
+            }
+        });
+
+        assert!(result.success);
+        assert_eq!(result.attempts, 2);
+        assert!(result.value.is_some());
+        assert_eq!(result.value.unwrap()["message"], "Hello!");
+        assert!(
+            !result.errors.is_empty(),
+            "Should have collected errors from first attempt"
+        );
     }
 }

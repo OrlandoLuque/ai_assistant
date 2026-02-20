@@ -208,10 +208,7 @@ pub fn clear_context_size_cache() {
 ///
 /// Primarily intended for testing and diagnostics.
 pub fn context_size_cache_len() -> usize {
-    CONTEXT_SIZE_CACHE
-        .lock()
-        .map(|c| c.len())
-        .unwrap_or(0)
+    CONTEXT_SIZE_CACHE.lock().map(|c| c.len()).unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -269,7 +266,7 @@ mod tests {
 
         let size = get_model_context_size_cached("llama3.2:7b", |_| None);
         assert_eq!(size, 128_000); // falls back to static table
-        assert_eq!(context_size_cache_len(), 1); // cached
+        assert!(context_size_cache_len() >= 1); // cached (other parallel tests may add entries)
     }
 
     #[test]
@@ -282,19 +279,17 @@ mod tests {
 
     #[test]
     fn test_cached_returns_cached_value_on_second_call() {
-        clear_context_size_cache();
+        // Use a unique key unlikely to collide with other parallel tests.
+        // Do NOT clear the global cache here — another test could re-clear
+        // it between our two calls, evicting the entry we just inserted.
+        let unique_key = "cache-second-call-test-xyzzy-42";
 
-        // First call — fetcher is invoked
-        let mut fetcher_called = false;
-        let size1 = get_model_context_size_cached("cache-test-model", |_| {
-            fetcher_called = true;
-            Some(99_999)
-        });
-        assert!(fetcher_called);
+        // First call — fetcher is invoked, value is cached
+        let size1 = get_model_context_size_cached(unique_key, |_| Some(99_999));
         assert_eq!(size1, 99_999);
 
         // Second call — fetcher should NOT be invoked (cache hit)
-        let size2 = get_model_context_size_cached("cache-test-model", |_| {
+        let size2 = get_model_context_size_cached(unique_key, |_| {
             panic!("fetcher should not be called on cache hit");
         });
         assert_eq!(size2, 99_999);

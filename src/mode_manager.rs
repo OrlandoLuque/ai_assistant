@@ -63,22 +63,54 @@ impl OperationMode {
         match self {
             OperationMode::Chat => vec!["conversation", "context"],
             OperationMode::Assistant => vec![
-                "conversation", "context", "web_search", "calculator", "datetime",
+                "conversation",
+                "context",
+                "web_search",
+                "calculator",
+                "datetime",
             ],
             OperationMode::Programming => vec![
-                "conversation", "context", "web_search", "calculator", "datetime",
-                "file_read", "file_write", "shell", "git",
+                "conversation",
+                "context",
+                "web_search",
+                "calculator",
+                "datetime",
+                "file_read",
+                "file_write",
+                "shell",
+                "git",
             ],
             OperationMode::AssemblyLine => vec![
-                "conversation", "context", "web_search", "calculator", "datetime",
-                "file_read", "file_write", "shell", "git",
-                "multi_agent", "task_board", "delegation",
+                "conversation",
+                "context",
+                "web_search",
+                "calculator",
+                "datetime",
+                "file_read",
+                "file_write",
+                "shell",
+                "git",
+                "multi_agent",
+                "task_board",
+                "delegation",
             ],
             OperationMode::Autonomous => vec![
-                "conversation", "context", "web_search", "calculator", "datetime",
-                "file_read", "file_write", "shell", "git",
-                "multi_agent", "task_board", "delegation",
-                "autonomous_loop", "mcp", "browser", "scheduler",
+                "conversation",
+                "context",
+                "web_search",
+                "calculator",
+                "datetime",
+                "file_read",
+                "file_write",
+                "shell",
+                "git",
+                "multi_agent",
+                "task_board",
+                "delegation",
+                "autonomous_loop",
+                "mcp",
+                "browser",
+                "scheduler",
             ],
         }
     }
@@ -228,16 +260,36 @@ impl ModeManager {
     pub fn suggest_mode(&self, context: &str) -> OperationMode {
         let lower = context.to_lowercase();
 
-        if contains_any(&lower, &["run", "execute", "deploy", "build and test", "autonomous"]) {
+        if contains_any(
+            &lower,
+            &["run", "execute", "deploy", "build and test", "autonomous"],
+        ) {
             return cap(OperationMode::Autonomous, self.allowed_max);
         }
-        if contains_any(&lower, &["coordinate", "delegate", "team", "parallel agents", "assembly"]) {
+        if contains_any(
+            &lower,
+            &[
+                "coordinate",
+                "delegate",
+                "team",
+                "parallel agents",
+                "assembly",
+            ],
+        ) {
             return cap(OperationMode::AssemblyLine, self.allowed_max);
         }
-        if contains_any(&lower, &["file", "code", "edit", "commit", "compile", "shell", "git", "mkdir", "write"]) {
+        if contains_any(
+            &lower,
+            &[
+                "file", "code", "edit", "commit", "compile", "shell", "git", "mkdir", "write",
+            ],
+        ) {
             return cap(OperationMode::Programming, self.allowed_max);
         }
-        if contains_any(&lower, &["search", "calculate", "what time", "look up", "find"]) {
+        if contains_any(
+            &lower,
+            &["search", "calculate", "what time", "look up", "find"],
+        ) {
             return cap(OperationMode::Assistant, self.allowed_max);
         }
         OperationMode::Chat
@@ -280,7 +332,11 @@ fn contains_any(text: &str, keywords: &[&str]) -> bool {
 }
 
 fn cap(mode: OperationMode, max: OperationMode) -> OperationMode {
-    if mode > max { max } else { mode }
+    if mode > max {
+        max
+    } else {
+        mode
+    }
 }
 
 fn now_millis() -> u64 {
@@ -318,11 +374,8 @@ mod tests {
 
     #[test]
     fn test_escalate_capped() {
-        let mut mgr = ModeManager::with_config(
-            OperationMode::Chat,
-            OperationMode::Programming,
-            false,
-        );
+        let mut mgr =
+            ModeManager::with_config(OperationMode::Chat, OperationMode::Programming, false);
         assert_eq!(mgr.escalate().unwrap(), OperationMode::Assistant);
         assert_eq!(mgr.escalate().unwrap(), OperationMode::Programming);
         assert!(mgr.escalate().is_err());
@@ -330,11 +383,8 @@ mod tests {
 
     #[test]
     fn test_de_escalate() {
-        let mut mgr = ModeManager::with_config(
-            OperationMode::Autonomous,
-            OperationMode::Autonomous,
-            false,
-        );
+        let mut mgr =
+            ModeManager::with_config(OperationMode::Autonomous, OperationMode::Autonomous, false);
         assert_eq!(mgr.de_escalate(), OperationMode::AssemblyLine);
         assert_eq!(mgr.de_escalate(), OperationMode::Programming);
         assert_eq!(mgr.de_escalate(), OperationMode::Assistant);
@@ -351,11 +401,8 @@ mod tests {
 
     #[test]
     fn test_set_mode_exceeds_max() {
-        let mut mgr = ModeManager::with_config(
-            OperationMode::Chat,
-            OperationMode::Assistant,
-            false,
-        );
+        let mut mgr =
+            ModeManager::with_config(OperationMode::Chat, OperationMode::Assistant, false);
         assert!(mgr.set_mode(OperationMode::Programming).is_err());
         assert_eq!(mgr.current(), OperationMode::Chat);
     }
@@ -364,19 +411,28 @@ mod tests {
     fn test_suggest_mode() {
         let mgr = ModeManager::new();
         assert_eq!(mgr.suggest_mode("hello, how are you?"), OperationMode::Chat);
-        assert_eq!(mgr.suggest_mode("search for rust docs"), OperationMode::Assistant);
-        assert_eq!(mgr.suggest_mode("edit the file main.rs"), OperationMode::Programming);
-        assert_eq!(mgr.suggest_mode("coordinate a team of agents"), OperationMode::AssemblyLine);
-        assert_eq!(mgr.suggest_mode("run the full test suite and deploy"), OperationMode::Autonomous);
+        assert_eq!(
+            mgr.suggest_mode("search for rust docs"),
+            OperationMode::Assistant
+        );
+        assert_eq!(
+            mgr.suggest_mode("edit the file main.rs"),
+            OperationMode::Programming
+        );
+        assert_eq!(
+            mgr.suggest_mode("coordinate a team of agents"),
+            OperationMode::AssemblyLine
+        );
+        assert_eq!(
+            mgr.suggest_mode("run the full test suite and deploy"),
+            OperationMode::Autonomous
+        );
     }
 
     #[test]
     fn test_auto_escalate() {
-        let mut mgr = ModeManager::with_config(
-            OperationMode::Chat,
-            OperationMode::Autonomous,
-            true,
-        );
+        let mut mgr =
+            ModeManager::with_config(OperationMode::Chat, OperationMode::Autonomous, true);
         let result = mgr.auto_suggest_and_escalate("please edit the file config.rs");
         assert_eq!(result, Some(OperationMode::Programming));
         assert_eq!(mgr.current(), OperationMode::Programming);
@@ -391,7 +447,9 @@ mod tests {
         assert!(OperationMode::Chat.capabilities().contains(&"conversation"));
         assert!(!OperationMode::Chat.capabilities().contains(&"shell"));
         assert!(OperationMode::Programming.capabilities().contains(&"shell"));
-        assert!(OperationMode::Autonomous.capabilities().contains(&"autonomous_loop"));
+        assert!(OperationMode::Autonomous
+            .capabilities()
+            .contains(&"autonomous_loop"));
     }
 
     #[test]
@@ -419,20 +477,29 @@ mod tests {
 
     #[test]
     fn test_from_str_loose() {
-        assert_eq!(OperationMode::from_str_loose("chat"), Some(OperationMode::Chat));
-        assert_eq!(OperationMode::from_str_loose("AUTONOMOUS"), Some(OperationMode::Autonomous));
-        assert_eq!(OperationMode::from_str_loose("coding"), Some(OperationMode::Programming));
-        assert_eq!(OperationMode::from_str_loose("assembly-line"), Some(OperationMode::AssemblyLine));
+        assert_eq!(
+            OperationMode::from_str_loose("chat"),
+            Some(OperationMode::Chat)
+        );
+        assert_eq!(
+            OperationMode::from_str_loose("AUTONOMOUS"),
+            Some(OperationMode::Autonomous)
+        );
+        assert_eq!(
+            OperationMode::from_str_loose("coding"),
+            Some(OperationMode::Programming)
+        );
+        assert_eq!(
+            OperationMode::from_str_loose("assembly-line"),
+            Some(OperationMode::AssemblyLine)
+        );
         assert_eq!(OperationMode::from_str_loose("unknown"), None);
     }
 
     #[test]
     fn test_set_allowed_max_deescalates() {
-        let mut mgr = ModeManager::with_config(
-            OperationMode::Autonomous,
-            OperationMode::Autonomous,
-            false,
-        );
+        let mut mgr =
+            ModeManager::with_config(OperationMode::Autonomous, OperationMode::Autonomous, false);
         assert_eq!(mgr.current(), OperationMode::Autonomous);
 
         mgr.set_allowed_max(OperationMode::Assistant);
@@ -443,7 +510,11 @@ mod tests {
     fn test_mode_description() {
         for mode in OperationMode::all() {
             let desc = mode.description();
-            assert!(!desc.is_empty(), "Mode {:?} should have a non-empty description", mode);
+            assert!(
+                !desc.is_empty(),
+                "Mode {:?} should have a non-empty description",
+                mode
+            );
         }
     }
 

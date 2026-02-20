@@ -26,8 +26,8 @@
 //! assert_eq!(next.unwrap().priority, Priority::Critical);
 //! ```
 
-use std::collections::{BinaryHeap, HashMap};
 use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashMap};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
@@ -169,7 +169,11 @@ impl PriorityRequest {
     pub fn time_until_deadline(&self) -> Option<Duration> {
         self.deadline.and_then(|d| {
             let now = Instant::now();
-            if d > now { Some(d - now) } else { None }
+            if d > now {
+                Some(d - now)
+            } else {
+                None
+            }
         })
     }
 
@@ -190,7 +194,8 @@ impl PriorityRequest {
         };
 
         // Boost based on deadline proximity
-        let deadline_boost = self.time_until_deadline()
+        let deadline_boost = self
+            .time_until_deadline()
             .map(|remaining| {
                 if remaining < config.deadline_urgent_threshold {
                     500 // Urgent boost
@@ -470,7 +475,8 @@ impl PriorityQueue {
     /// Get all pending requests for a user
     pub fn get_user_requests(&self, user_id: &str) -> Vec<PriorityRequest> {
         let pending = self.pending.read().unwrap_or_else(|e| e.into_inner());
-        pending.values()
+        pending
+            .values()
             .filter(|r| r.user_id.as_deref() == Some(user_id))
             .cloned()
             .collect()
@@ -660,9 +666,15 @@ mod tests {
     fn test_basic_queue() {
         let queue = PriorityQueue::new(100);
 
-        queue.enqueue(PriorityRequest::new("low", Priority::Low)).unwrap();
-        queue.enqueue(PriorityRequest::new("critical", Priority::Critical)).unwrap();
-        queue.enqueue(PriorityRequest::new("normal", Priority::Normal)).unwrap();
+        queue
+            .enqueue(PriorityRequest::new("low", Priority::Low))
+            .unwrap();
+        queue
+            .enqueue(PriorityRequest::new("critical", Priority::Critical))
+            .unwrap();
+        queue
+            .enqueue(PriorityRequest::new("normal", Priority::Normal))
+            .unwrap();
 
         // Should get critical first
         let first = queue.dequeue().unwrap();
@@ -679,8 +691,12 @@ mod tests {
     fn test_queue_full() {
         let queue = PriorityQueue::new(2);
 
-        queue.enqueue(PriorityRequest::new("1", Priority::Normal)).unwrap();
-        queue.enqueue(PriorityRequest::new("2", Priority::Normal)).unwrap();
+        queue
+            .enqueue(PriorityRequest::new("1", Priority::Normal))
+            .unwrap();
+        queue
+            .enqueue(PriorityRequest::new("2", Priority::Normal))
+            .unwrap();
 
         let result = queue.enqueue(PriorityRequest::new("3", Priority::Normal));
         assert_eq!(result, Err(QueueError::QueueFull));
@@ -690,7 +706,9 @@ mod tests {
     fn test_cancel() {
         let queue = PriorityQueue::new(100);
 
-        let id = queue.enqueue(PriorityRequest::new("test", Priority::Normal)).unwrap();
+        let id = queue
+            .enqueue(PriorityRequest::new("test", Priority::Normal))
+            .unwrap();
         assert_eq!(queue.len(), 1);
 
         let cancelled = queue.cancel(&id).unwrap();
@@ -706,20 +724,26 @@ mod tests {
         };
         let queue = PriorityQueue::with_config(config);
 
-        queue.enqueue(PriorityRequest::new("1", Priority::Normal).with_user("user1")).unwrap();
-        queue.enqueue(PriorityRequest::new("2", Priority::Normal).with_user("user1")).unwrap();
+        queue
+            .enqueue(PriorityRequest::new("1", Priority::Normal).with_user("user1"))
+            .unwrap();
+        queue
+            .enqueue(PriorityRequest::new("2", Priority::Normal).with_user("user1"))
+            .unwrap();
 
         let result = queue.enqueue(PriorityRequest::new("3", Priority::Normal).with_user("user1"));
         assert_eq!(result, Err(QueueError::UserLimitExceeded));
 
         // Different user should work
-        queue.enqueue(PriorityRequest::new("4", Priority::Normal).with_user("user2")).unwrap();
+        queue
+            .enqueue(PriorityRequest::new("4", Priority::Normal).with_user("user2"))
+            .unwrap();
     }
 
     #[test]
     fn test_deadline() {
-        let request = PriorityRequest::new("test", Priority::Normal)
-            .with_timeout(Duration::from_secs(10));
+        let request =
+            PriorityRequest::new("test", Priority::Normal).with_timeout(Duration::from_secs(10));
 
         assert!(!request.is_expired());
         assert!(request.time_until_deadline().is_some());

@@ -6,13 +6,13 @@
 //! - CRDT (Conflict-free Replicated Data Types) for eventual consistency
 //! - Consensus primitives for strong consistency when needed
 
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, RwLock, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use std::net::SocketAddr;
-use std::hash::{Hash, Hasher};
+use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
-use serde::{Serialize, Deserialize};
+use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
+use std::net::SocketAddr;
+use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 // =============================================================================
 // DHT (Distributed Hash Table)
@@ -212,7 +212,9 @@ impl RoutingTable {
 
     /// Find the K closest nodes to a target
     pub fn find_closest(&self, target: &NodeId, count: usize) -> Vec<DhtNode> {
-        let mut all_nodes: Vec<_> = self.buckets.iter()
+        let mut all_nodes: Vec<_> = self
+            .buckets
+            .iter()
             .flat_map(|b| b.nodes.iter().cloned())
             .collect();
 
@@ -401,7 +403,10 @@ impl Dht {
 
     /// Add a node to the routing table
     pub fn add_node(&self, node: DhtNode) -> bool {
-        let mut rt = self.routing_table.write().unwrap_or_else(|e| e.into_inner());
+        let mut rt = self
+            .routing_table
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
         rt.add(node)
     }
 
@@ -547,8 +552,9 @@ impl<T: Clone> LWWRegister<T> {
 
     /// Set a new value with timestamp
     pub fn set(&mut self, value: T, timestamp: u64, node_id: &str) {
-        if timestamp > self.timestamp ||
-           (timestamp == self.timestamp && node_id > self.node_id.as_str()) {
+        if timestamp > self.timestamp
+            || (timestamp == self.timestamp && node_id > self.node_id.as_str())
+        {
             self.value = Some(value);
             self.timestamp = timestamp;
             self.node_id = node_id.to_string();
@@ -562,8 +568,9 @@ impl<T: Clone> LWWRegister<T> {
 
     /// Merge with another LWW-Register
     pub fn merge(&mut self, other: &LWWRegister<T>) {
-        if other.timestamp > self.timestamp ||
-           (other.timestamp == self.timestamp && other.node_id > self.node_id) {
+        if other.timestamp > self.timestamp
+            || (other.timestamp == self.timestamp && other.node_id > self.node_id)
+        {
             self.value = other.value.clone();
             self.timestamp = other.timestamp;
             self.node_id = other.node_id.clone();
@@ -639,7 +646,10 @@ impl<T: Clone + Eq + Hash> ORSet<T> {
     pub fn merge(&mut self, other: &ORSet<T>) {
         // Merge elements
         for (elem, tags) in &other.elements {
-            let entry = self.elements.entry(elem.clone()).or_insert_with(HashSet::new);
+            let entry = self
+                .elements
+                .entry(elem.clone())
+                .or_insert_with(HashSet::new);
             for tag in tags {
                 entry.insert(tag.clone());
             }
@@ -697,7 +707,10 @@ impl<K: Clone + Eq + Hash, V: Clone> LWWMap<K, V> {
     /// Merge with another LWW-Map
     pub fn merge(&mut self, other: &LWWMap<K, V>) {
         for (key, reg) in &other.entries {
-            let entry = self.entries.entry(key.clone()).or_insert_with(LWWRegister::new);
+            let entry = self
+                .entries
+                .entry(key.clone())
+                .or_insert_with(LWWRegister::new);
             entry.merge(reg);
         }
     }
@@ -862,11 +875,7 @@ pub struct MapReduceJob {
 
 impl MapReduceJob {
     /// Create a new MapReduce job
-    pub fn new(
-        id: impl Into<String>,
-        map_fn: MapFn,
-        reduce_fn: ReduceFn,
-    ) -> Self {
+    pub fn new(id: impl Into<String>, map_fn: MapFn, reduce_fn: ReduceFn) -> Self {
         Self {
             id: id.into(),
             config: MapReduceConfig::default(),
@@ -910,10 +919,7 @@ impl MapReduceJob {
     /// Split raw data into chunks
     pub fn split_input(&mut self, data: &[u8], chunk_prefix: &str) {
         for (i, chunk_data) in data.chunks(self.config.chunk_size).enumerate() {
-            let chunk = DataChunk::new(
-                format!("{}_{}", chunk_prefix, i),
-                chunk_data.to_vec(),
-            );
+            let chunk = DataChunk::new(format!("{}_{}", chunk_prefix, i), chunk_data.to_vec());
             self.input_chunks.push(chunk);
         }
     }
@@ -927,7 +933,8 @@ impl MapReduceJob {
         // Phase 1: Parallel Map
         self.status = JobStatus::Mapping;
         let map_fn = &self.map_fn;
-        let all_outputs: Vec<Vec<MapOutput>> = self.input_chunks
+        let all_outputs: Vec<Vec<MapOutput>> = self
+            .input_chunks
             .par_iter()
             .map(|chunk| (map_fn)(chunk))
             .collect();
@@ -979,7 +986,10 @@ impl MapReduceJob {
         self.status = JobStatus::Completed;
         self.completed_at = Some(Instant::now());
 
-        *self.reduce_outputs.lock().unwrap_or_else(|e| e.into_inner()) = results.clone();
+        *self
+            .reduce_outputs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = results.clone();
 
         Ok(results)
     }
@@ -989,7 +999,11 @@ impl MapReduceJob {
         let mapped = *self.mapped_chunks.lock().unwrap_or_else(|e| e.into_inner());
         let total_chunks = self.input_chunks.len();
         let reduced = *self.reduced_keys.lock().unwrap_or_else(|e| e.into_inner());
-        let total_keys = self.map_outputs.lock().unwrap_or_else(|e| e.into_inner()).len();
+        let total_keys = self
+            .map_outputs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .len();
         (mapped, total_chunks, reduced, total_keys)
     }
 
@@ -1004,7 +1018,10 @@ impl MapReduceJob {
 
     /// Get results
     pub fn results(&self) -> Vec<ReduceOutput> {
-        self.reduce_outputs.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.reduce_outputs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 }
 
@@ -1019,7 +1036,8 @@ impl MapReduceBuilder {
             let mut outputs = Vec::new();
 
             for word in text.split_whitespace() {
-                let word = word.to_lowercase()
+                let word = word
+                    .to_lowercase()
                     .chars()
                     .filter(|c| c.is_alphanumeric())
                     .collect::<String>();
@@ -1033,7 +1051,8 @@ impl MapReduceBuilder {
         });
 
         let reduce_fn: ReduceFn = Arc::new(|key, values| {
-            let count: u64 = values.iter()
+            let count: u64 = values
+                .iter()
                 .filter_map(|v| String::from_utf8_lossy(v).parse::<u64>().ok())
                 .sum();
 
@@ -1041,15 +1060,15 @@ impl MapReduceBuilder {
         });
 
         let combine_fn: CombineFn = Arc::new(|_key, values| {
-            let count: u64 = values.iter()
+            let count: u64 = values
+                .iter()
                 .filter_map(|v| String::from_utf8_lossy(v).parse::<u64>().ok())
                 .sum();
 
             count.to_string().into_bytes()
         });
 
-        MapReduceJob::new("word_count", map_fn, reduce_fn)
-            .with_combiner(combine_fn)
+        MapReduceJob::new("word_count", map_fn, reduce_fn).with_combiner(combine_fn)
     }
 
     /// Sum values by key
@@ -1068,7 +1087,8 @@ impl MapReduceBuilder {
         });
 
         let reduce_fn: ReduceFn = Arc::new(|key, values| {
-            let sum: f64 = values.iter()
+            let sum: f64 = values
+                .iter()
                 .filter_map(|v| String::from_utf8_lossy(v).parse::<f64>().ok())
                 .sum();
 
@@ -1094,7 +1114,8 @@ impl MapReduceBuilder {
         });
 
         let reduce_fn: ReduceFn = Arc::new(|key, values| {
-            let collected: Vec<String> = values.iter()
+            let collected: Vec<String> = values
+                .iter()
                 .map(|v| String::from_utf8_lossy(v).to_string())
                 .collect();
 
@@ -1187,14 +1208,18 @@ impl DistributedCoordinator {
     /// Increment a distributed counter
     pub fn increment_counter(&self, name: &str) {
         let mut counters = self.counters.write().unwrap_or_else(|e| e.into_inner());
-        let counter = counters.entry(name.to_string()).or_insert_with(PNCounter::new);
+        let counter = counters
+            .entry(name.to_string())
+            .or_insert_with(PNCounter::new);
         counter.increment(&self.node_id.to_hex());
     }
 
     /// Decrement a distributed counter
     pub fn decrement_counter(&self, name: &str) {
         let mut counters = self.counters.write().unwrap_or_else(|e| e.into_inner());
-        let counter = counters.entry(name.to_string()).or_insert_with(PNCounter::new);
+        let counter = counters
+            .entry(name.to_string())
+            .or_insert_with(PNCounter::new);
         counter.decrement(&self.node_id.to_hex());
     }
 
@@ -1206,7 +1231,9 @@ impl DistributedCoordinator {
             .as_micros() as u64;
 
         let mut registers = self.registers.write().unwrap_or_else(|e| e.into_inner());
-        let register = registers.entry(name.to_string()).or_insert_with(LWWRegister::new);
+        let register = registers
+            .entry(name.to_string())
+            .or_insert_with(LWWRegister::new);
         register.set(value, timestamp, &self.node_id.to_hex());
     }
 
@@ -1255,7 +1282,9 @@ impl DistributedCoordinator {
             let their_counters = other.counters.read().unwrap_or_else(|e| e.into_inner());
 
             for (name, their_counter) in their_counters.iter() {
-                let our_counter = our_counters.entry(name.clone()).or_insert_with(PNCounter::new);
+                let our_counter = our_counters
+                    .entry(name.clone())
+                    .or_insert_with(PNCounter::new);
                 our_counter.merge(their_counter);
             }
         }
@@ -1266,7 +1295,9 @@ impl DistributedCoordinator {
             let their_registers = other.registers.read().unwrap_or_else(|e| e.into_inner());
 
             for (name, their_register) in their_registers.iter() {
-                let our_register = our_registers.entry(name.clone()).or_insert_with(LWWRegister::new);
+                let our_register = our_registers
+                    .entry(name.clone())
+                    .or_insert_with(LWWRegister::new);
                 our_register.merge(their_register);
             }
         }
@@ -1311,21 +1342,45 @@ pub enum NodeMessage {
     /// Request to get a value by key.
     Get { key: String, request_id: u64 },
     /// Response to a Get request.
-    GetResponse { key: String, value: Option<Vec<u8>>, request_id: u64 },
+    GetResponse {
+        key: String,
+        value: Option<Vec<u8>>,
+        request_id: u64,
+    },
     /// Request to store a key-value pair.
-    Put { key: String, value: Vec<u8>, ttl_secs: Option<u64> },
+    Put {
+        key: String,
+        value: Vec<u8>,
+        ttl_secs: Option<u64>,
+    },
     /// Acknowledgement of a Put request.
-    PutAck { key: String, success: bool, request_id: u64 },
+    PutAck {
+        key: String,
+        success: bool,
+        request_id: u64,
+    },
     /// Request to delete a key.
     Delete { key: String, request_id: u64 },
     /// Acknowledgement of a Delete request.
-    DeleteAck { key: String, success: bool, request_id: u64 },
+    DeleteAck {
+        key: String,
+        success: bool,
+        request_id: u64,
+    },
 
     // --- Replication ---
     /// Replicate a key-value pair to this node.
-    Replicate { key: String, value: Vec<u8>, version: u64 },
+    Replicate {
+        key: String,
+        value: Vec<u8>,
+        version: u64,
+    },
     /// Acknowledgement of replication.
-    ReplicateAck { key: String, version: u64, success: bool },
+    ReplicateAck {
+        key: String,
+        version: u64,
+        success: bool,
+    },
 
     // --- Anti-Entropy Sync ---
     /// Request sync by sending our Merkle root hash.
@@ -1337,19 +1392,37 @@ pub enum NodeMessage {
 
     // --- MapReduce ---
     /// Distribute a map task to a node.
-    MapTask { job_id: String, chunk_id: String, data: Vec<u8> },
+    MapTask {
+        job_id: String,
+        chunk_id: String,
+        data: Vec<u8>,
+    },
     /// Result of a map task.
-    MapResult { job_id: String, outputs: Vec<(String, Vec<u8>)> },
+    MapResult {
+        job_id: String,
+        outputs: Vec<(String, Vec<u8>)>,
+    },
     /// Distribute a reduce task to a node.
-    ReduceTask { job_id: String, key: String, values: Vec<Vec<u8>> },
+    ReduceTask {
+        job_id: String,
+        key: String,
+        values: Vec<Vec<u8>>,
+    },
     /// Result of a reduce task.
-    ReduceResult { job_id: String, key: String, value: Vec<u8> },
+    ReduceResult {
+        job_id: String,
+        key: String,
+        value: Vec<u8>,
+    },
 
     // --- Cluster Management ---
     /// Request to join the cluster with a token and certificate.
     JoinRequest { token: String, cert_der: Vec<u8> },
     /// Accept a join request, providing the assigned node ID and peer list.
-    JoinAccepted { node_id: Vec<u8>, peers: Vec<(Vec<u8>, String)> },
+    JoinAccepted {
+        node_id: Vec<u8>,
+        peers: Vec<(Vec<u8>, String)>,
+    },
     /// Reject a join request.
     JoinRejected { reason: String },
     /// Notification that a node has left the cluster.
@@ -1367,9 +1440,16 @@ pub enum NodeMessage {
 
     // --- Vector DB ---
     /// Search for similar vectors across the cluster.
-    VectorSearch { query: Vec<f32>, limit: usize, request_id: u64 },
+    VectorSearch {
+        query: Vec<f32>,
+        limit: usize,
+        request_id: u64,
+    },
     /// Response with vector search results: (id, score, metadata).
-    VectorSearchResponse { results: Vec<(String, f32, HashMap<String, String>)>, request_id: u64 },
+    VectorSearchResponse {
+        results: Vec<(String, f32, HashMap<String, String>)>,
+        request_id: u64,
+    },
 }
 
 // =============================================================================
@@ -1563,8 +1643,14 @@ mod tests {
 
         let results = job.execute().unwrap();
 
-        let results_map: HashMap<_, _> = results.iter()
-            .map(|r| (r.key.as_str(), String::from_utf8_lossy(&r.value).to_string()))
+        let results_map: HashMap<_, _> = results
+            .iter()
+            .map(|r| {
+                (
+                    r.key.as_str(),
+                    String::from_utf8_lossy(&r.value).to_string(),
+                )
+            })
             .collect();
 
         assert_eq!(results_map.get("hello"), Some(&"2".to_string()));
@@ -1582,8 +1668,14 @@ mod tests {
 
         let results = job.execute().unwrap();
 
-        let results_map: HashMap<_, _> = results.iter()
-            .map(|r| (r.key.as_str(), String::from_utf8_lossy(&r.value).parse::<f64>().unwrap()))
+        let results_map: HashMap<_, _> = results
+            .iter()
+            .map(|r| {
+                (
+                    r.key.as_str(),
+                    String::from_utf8_lossy(&r.value).parse::<f64>().unwrap(),
+                )
+            })
             .collect();
 
         assert_eq!(results_map.get("a"), Some(&15.0));
@@ -1595,12 +1687,21 @@ mod tests {
     fn test_group_by_key() {
         let mut job = MapReduceBuilder::group_by_key();
 
-        job.add_input(DataChunk::new("data", b"user1,item1\nuser1,item2\nuser2,item3".to_vec()));
+        job.add_input(DataChunk::new(
+            "data",
+            b"user1,item1\nuser1,item2\nuser2,item3".to_vec(),
+        ));
 
         let results = job.execute().unwrap();
 
-        let results_map: HashMap<_, _> = results.iter()
-            .map(|r| (r.key.as_str(), String::from_utf8_lossy(&r.value).to_string()))
+        let results_map: HashMap<_, _> = results
+            .iter()
+            .map(|r| {
+                (
+                    r.key.as_str(),
+                    String::from_utf8_lossy(&r.value).to_string(),
+                )
+            })
             .collect();
 
         let user1_items = results_map.get("user1").unwrap();
@@ -1621,7 +1722,8 @@ mod tests {
                     .collect()
             },
             |key, values| {
-                let max = values.iter()
+                let max = values
+                    .iter()
                     .filter_map(|v| String::from_utf8_lossy(v).parse::<i64>().ok())
                     .max()
                     .unwrap_or(0);
@@ -1630,12 +1732,21 @@ mod tests {
         );
 
         let mut job = job;
-        job.add_input(DataChunk::new("data", b"x,5\nx,10\nx,3\ny,20\ny,15".to_vec()));
+        job.add_input(DataChunk::new(
+            "data",
+            b"x,5\nx,10\nx,3\ny,20\ny,15".to_vec(),
+        ));
 
         let results = job.execute().unwrap();
 
-        let results_map: HashMap<_, _> = results.iter()
-            .map(|r| (r.key.as_str(), String::from_utf8_lossy(&r.value).to_string()))
+        let results_map: HashMap<_, _> = results
+            .iter()
+            .map(|r| {
+                (
+                    r.key.as_str(),
+                    String::from_utf8_lossy(&r.value).to_string(),
+                )
+            })
             .collect();
 
         assert_eq!(results_map.get("x"), Some(&"10".to_string()));
@@ -1755,11 +1866,10 @@ mod tests {
 
     #[test]
     fn test_split_input() {
-        let mut job = MapReduceBuilder::word_count()
-            .with_config(MapReduceConfig {
-                chunk_size: 10,
-                ..Default::default()
-            });
+        let mut job = MapReduceBuilder::word_count().with_config(MapReduceConfig {
+            chunk_size: 10,
+            ..Default::default()
+        });
 
         let data = b"hello world foo bar baz qux";
         job.split_input(data, "chunk");

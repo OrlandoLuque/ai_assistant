@@ -94,7 +94,7 @@ impl ModelProfile {
             max_tokens: None,
             stop_sequences: vec![],
             system_prompt_modifier: Some(
-                "Be precise and accurate. Stick to facts and avoid speculation.".to_string()
+                "Be precise and accurate. Stick to facts and avoid speculation.".to_string(),
             ),
             custom_params: HashMap::new(),
         }
@@ -134,7 +134,7 @@ impl ModelProfile {
             max_tokens: None,
             stop_sequences: vec![],
             system_prompt_modifier: Some(
-                "Respond in a natural, conversational tone. Be friendly and engaging.".to_string()
+                "Respond in a natural, conversational tone. Be friendly and engaging.".to_string(),
             ),
             custom_params: HashMap::new(),
         }
@@ -154,7 +154,8 @@ impl ModelProfile {
             max_tokens: Some(256),
             stop_sequences: vec![],
             system_prompt_modifier: Some(
-                "Be concise and direct. Get to the point quickly without unnecessary elaboration.".to_string()
+                "Be concise and direct. Get to the point quickly without unnecessary elaboration."
+                    .to_string(),
             ),
             custom_params: HashMap::new(),
         }
@@ -214,7 +215,8 @@ impl ModelProfile {
             max_tokens: None,
             stop_sequences: vec![],
             system_prompt_modifier: Some(
-                "Stay in character. Be expressive and immersive. Use descriptive language.".to_string()
+                "Stay in character. Be expressive and immersive. Use descriptive language."
+                    .to_string(),
             ),
             custom_params: HashMap::new(),
         }
@@ -368,7 +370,9 @@ impl ProfileManager {
 
     /// Get the current profile
     pub fn current(&self) -> Option<&ModelProfile> {
-        self.current_profile.as_ref().and_then(|name| self.profiles.get(name))
+        self.current_profile
+            .as_ref()
+            .and_then(|name| self.profiles.get(name))
     }
 
     /// Set the current profile
@@ -595,9 +599,7 @@ mod tests {
     #[test]
     fn test_profile_export_import() {
         let mut manager = ProfileManager::new();
-        let custom = ModelProfile::custom("exported")
-            .temperature(0.99)
-            .build();
+        let custom = ModelProfile::custom("exported").temperature(0.99).build();
         manager.add_profile(custom);
 
         let json = manager.export_json().unwrap();

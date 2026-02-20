@@ -170,13 +170,26 @@ impl PlanStep {
 
     /// Count pending steps recursively (including self if pending).
     pub fn pending_count(&self) -> usize {
-        let self_count = if self.status == StepStatus::Pending { 1 } else { 0 };
-        self_count + self.children.iter().map(|c| c.pending_count()).sum::<usize>()
+        let self_count = if self.status == StepStatus::Pending {
+            1
+        } else {
+            0
+        };
+        self_count
+            + self
+                .children
+                .iter()
+                .map(|c| c.pending_count())
+                .sum::<usize>()
     }
 
     /// Count done steps recursively (including self if done).
     pub fn done_count(&self) -> usize {
-        let self_count = if self.status == StepStatus::Done { 1 } else { 0 };
+        let self_count = if self.status == StepStatus::Done {
+            1
+        } else {
+            0
+        };
         self_count + self.children.iter().map(|c| c.done_count()).sum::<usize>()
     }
 
@@ -544,7 +557,14 @@ impl TaskPlan {
         let mut pending = 0;
         let mut blocked = 0;
         let mut skipped = 0;
-        self.count_statuses(&self.steps, &mut done, &mut in_progress, &mut pending, &mut blocked, &mut skipped);
+        self.count_statuses(
+            &self.steps,
+            &mut done,
+            &mut in_progress,
+            &mut pending,
+            &mut blocked,
+            &mut skipped,
+        );
         let total_steps = done + in_progress + pending + blocked + skipped;
         let progress_percent = if total_steps > 0 {
             self.progress() * 100.0
@@ -978,13 +998,15 @@ mod tests {
         assert_eq!(restored.name, "JSON Test");
         assert_eq!(restored.steps.len(), 2);
         assert_eq!(restored.tags, vec!["test"]);
-        assert_eq!(restored.description.as_deref(), Some("Testing serialization"));
+        assert_eq!(
+            restored.description.as_deref(),
+            Some("Testing serialization")
+        );
     }
 
     #[test]
     fn test_to_markdown() {
-        let mut plan = TaskPlan::new("Markdown Plan")
-            .with_description("A test plan");
+        let mut plan = TaskPlan::new("Markdown Plan").with_description("A test plan");
 
         let mut done_step = PlanStep::new("Completed Task");
         done_step.status = StepStatus::Done;
@@ -1109,9 +1131,7 @@ mod tests {
         b1.status = StepStatus::Done;
         let b2 = PlanStep::new("B2"); // Pending
 
-        let b = PlanStep::new("B")
-            .with_child(b1)
-            .with_child(b2);
+        let b = PlanStep::new("B").with_child(b1).with_child(b2);
 
         let mut plan = TaskPlan::new("Deep Progress");
         plan.add_step(a);

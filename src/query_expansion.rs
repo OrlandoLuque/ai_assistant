@@ -91,7 +91,11 @@ impl ExpansionResult {
     /// Get queries sorted by weight
     pub fn sorted_queries(&self) -> Vec<&ExpandedQuery> {
         let mut queries: Vec<_> = self.expansions.iter().collect();
-        queries.sort_by(|a, b| b.weight.partial_cmp(&a.weight).unwrap_or(std::cmp::Ordering::Equal));
+        queries.sort_by(|a, b| {
+            b.weight
+                .partial_cmp(&a.weight)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         queries
     }
 
@@ -140,17 +144,17 @@ impl QueryExpander {
 
     fn init_defaults(&mut self) {
         // Common stop words
-        let stops = ["the", "a", "an", "is", "are", "was", "were", "be", "been",
-            "being", "have", "has", "had", "do", "does", "did", "will", "would",
-            "could", "should", "may", "might", "must", "shall", "can", "need",
-            "dare", "ought", "used", "to", "of", "in", "for", "on", "with", "at",
-            "by", "from", "as", "into", "through", "during", "before", "after",
-            "above", "below", "between", "under", "again", "further", "then",
-            "once", "here", "there", "when", "where", "why", "how", "all", "each",
-            "few", "more", "most", "other", "some", "such", "no", "nor", "not",
-            "only", "own", "same", "so", "than", "too", "very", "just", "and",
-            "but", "if", "or", "because", "until", "while", "this", "that",
-            "these", "those", "what", "which", "who", "whom", "it", "its"];
+        let stops = [
+            "the", "a", "an", "is", "are", "was", "were", "be", "been", "being", "have", "has",
+            "had", "do", "does", "did", "will", "would", "could", "should", "may", "might", "must",
+            "shall", "can", "need", "dare", "ought", "used", "to", "of", "in", "for", "on", "with",
+            "at", "by", "from", "as", "into", "through", "during", "before", "after", "above",
+            "below", "between", "under", "again", "further", "then", "once", "here", "there",
+            "when", "where", "why", "how", "all", "each", "few", "more", "most", "other", "some",
+            "such", "no", "nor", "not", "only", "own", "same", "so", "than", "too", "very", "just",
+            "and", "but", "if", "or", "because", "until", "while", "this", "that", "these",
+            "those", "what", "which", "who", "whom", "it", "its",
+        ];
 
         self.stop_words = stops.iter().map(|s| s.to_string()).collect();
 
@@ -163,13 +167,24 @@ impl QueryExpander {
         self.add_synonyms("help", vec!["assist", "support", "guide", "aid"]);
 
         // Common acronyms
-        self.acronyms.insert("API".to_string(), "Application Programming Interface".to_string());
-        self.acronyms.insert("UI".to_string(), "User Interface".to_string());
-        self.acronyms.insert("DB".to_string(), "Database".to_string());
-        self.acronyms.insert("ML".to_string(), "Machine Learning".to_string());
-        self.acronyms.insert("AI".to_string(), "Artificial Intelligence".to_string());
-        self.acronyms.insert("LLM".to_string(), "Large Language Model".to_string());
-        self.acronyms.insert("RAG".to_string(), "Retrieval Augmented Generation".to_string());
+        self.acronyms.insert(
+            "API".to_string(),
+            "Application Programming Interface".to_string(),
+        );
+        self.acronyms
+            .insert("UI".to_string(), "User Interface".to_string());
+        self.acronyms
+            .insert("DB".to_string(), "Database".to_string());
+        self.acronyms
+            .insert("ML".to_string(), "Machine Learning".to_string());
+        self.acronyms
+            .insert("AI".to_string(), "Artificial Intelligence".to_string());
+        self.acronyms
+            .insert("LLM".to_string(), "Large Language Model".to_string());
+        self.acronyms.insert(
+            "RAG".to_string(),
+            "Retrieval Augmented Generation".to_string(),
+        );
     }
 
     /// Add synonyms for a word
@@ -181,7 +196,8 @@ impl QueryExpander {
 
     /// Add an acronym expansion
     pub fn add_acronym(&mut self, acronym: impl Into<String>, expansion: impl Into<String>) {
-        self.acronyms.insert(acronym.into().to_uppercase(), expansion.into());
+        self.acronyms
+            .insert(acronym.into().to_uppercase(), expansion.into());
     }
 
     /// Expand a query
@@ -297,9 +313,7 @@ impl QueryExpander {
         text.split_whitespace()
             .map(|w| w.to_lowercase())
             .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_string())
-            .filter(|w| {
-                w.len() >= self.config.min_keyword_length && !self.stop_words.contains(w)
-            })
+            .filter(|w| w.len() >= self.config.min_keyword_length && !self.stop_words.contains(w))
             .collect()
     }
 
@@ -398,7 +412,10 @@ impl MultiQueryRetriever {
 
         // Sort by score and match count
         all_results.sort_by(|a, b| {
-            let score_cmp = b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal);
+            let score_cmp = b
+                .score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal);
             if score_cmp == std::cmp::Ordering::Equal {
                 b.match_count.cmp(&a.match_count)
             } else {
@@ -528,7 +545,10 @@ mod tests {
         let result = expander.expand("search for errors");
 
         // Original should have highest weight
-        let original = result.expansions.iter().find(|e| e.source == ExpansionSource::Original);
+        let original = result
+            .expansions
+            .iter()
+            .find(|e| e.source == ExpansionSource::Original);
         assert!(original.is_some());
         assert!(original.unwrap().weight >= 1.0);
 

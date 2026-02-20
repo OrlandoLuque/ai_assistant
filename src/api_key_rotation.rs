@@ -159,7 +159,9 @@ impl ApiKeyManager {
             if let Some(key) = keys.iter_mut().find(|k| k.id == key_id) {
                 key.mark_error();
 
-                if self.config.auto_rotate && key.error_count >= self.config.max_errors_before_rotation {
+                if self.config.auto_rotate
+                    && key.error_count >= self.config.max_errors_before_rotation
+                {
                     self.rotate(provider);
                 }
             }
@@ -200,8 +202,14 @@ impl ApiKeyManager {
 
         Some(KeyStats {
             total: keys.len(),
-            active: keys.iter().filter(|k| k.status == KeyStatus::Active).count(),
-            rate_limited: keys.iter().filter(|k| k.status == KeyStatus::RateLimited).count(),
+            active: keys
+                .iter()
+                .filter(|k| k.status == KeyStatus::Active)
+                .count(),
+            rate_limited: keys
+                .iter()
+                .filter(|k| k.status == KeyStatus::RateLimited)
+                .count(),
             total_uses: keys.iter().map(|k| k.use_count).sum(),
             total_errors: keys.iter().map(|k| k.error_count).sum(),
         })
@@ -258,5 +266,87 @@ mod tests {
 
         let key = manager.get_key("openai").unwrap();
         assert_eq!(key.id, "key2");
+    }
+
+    #[test]
+    fn test_key_expiry() {
+        // Create a key that expires immediately (zero duration)
+        let mut key = ApiKey::new("k1", "secret", "openai");
+        // Set expires_at to a time already in the past by using a very short duration
+        // and then waiting, or more reliably, set it directly.
+        // with_expiry sets expires_at to now + duration, so Duration::ZERO means it expires at now.
+        key = key.with_expiry(Duration::from_secs(0));
+        // Instant::now() >= expires_at, so is_usable should return false
+        assert!(
+            !key.is_usable(),
+            "Key with zero-duration expiry should not be usable"
+        );
+
+        // Also verify a key with a long expiry IS usable
+        let long_key =
+            ApiKey::new("k2", "secret2", "openai").with_expiry(Duration::from_secs(3600));
+        assert!(
+            long_key.is_usable(),
+            "Key with future expiry should be usable"
+        );
+    }
+
+    #[test]
+    fn test_status_transitions() {
+        let mut key = ApiKey::new("k1", "secret", "openai");
+        assert_eq!(key.status, KeyStatus::Active);
+
+        // Active -> RateLimited
+        key.mark_rate_limited(Duration::from_secs(60));
+        assert_eq!(key.status, KeyStatus::RateLimited);
+
+        // RateLimited -> Revoked (via direct status set, as revoke_key does)
+        key.status = KeyStatus::Revoked;
+        assert_eq!(key.status, KeyStatus::Revoked);
+        assert!(!key.is_usable(), "Revoked key should not be usable");
+    }
+
+    #[test]
+    fn test_use_and_error_counting() {
+        let mut key = ApiKey::new("k1", "secret", "openai");
+        assert_eq!(key.use_count, 0);
+        assert_eq!(key.error_count, 0);
+
+        key.mark_used();
+        key.mark_used();
+        key.mark_used();
+        assert_eq!(key.use_count, 3);
+        assert!(key.last_used.is_some());
+
+        key.mark_error();
+        key.mark_error();
+        assert_eq!(key.error_count, 2);
+    }
+
+    #[test]
+    fn test_get_stats() {
+        let mut manager = ApiKeyManager::default();
+
+        manager.add_key(ApiKey::new("k1", "s1", "openai"));
+        manager.add_key(ApiKey::new("k2", "s2", "openai"));
+        manager.add_key(ApiKey::new("k3", "s3", "openai"));
+
+        // Record some usage and errors
+        manager.mark_used("openai", "k1");
+        manager.mark_used("openai", "k1");
+        manager.mark_used("openai", "k2");
+        manager.mark_error("openai", "k3");
+
+        // Revoke one key
+        manager.revoke_key("openai", "k3");
+
+        let stats = manager.get_stats("openai").unwrap();
+        assert_eq!(stats.total, 3);
+        assert_eq!(stats.active, 2); // k1 and k2 active, k3 revoked
+        assert_eq!(stats.total_uses, 3); // k1 used 2x, k2 used 1x
+        assert_eq!(stats.total_errors, 1); // k3 had 1 error
+
+        // No stats for unknown provider
+        assert!(manager.get_stats("anthropic").is_none());
     }
 }

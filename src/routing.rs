@@ -3,7 +3,7 @@
 //! This module provides a router that selects the optimal model based on
 //! the type of task, requirements, and available models.
 
-use crate::{ModelInfo, AiProvider};
+use crate::{AiProvider, ModelInfo};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -168,7 +168,9 @@ impl ModelCapabilityProfile {
 
     /// Check if profile matches a model name
     pub fn matches(&self, model_name: &str) -> bool {
-        model_name.to_lowercase().contains(&self.model_pattern.to_lowercase())
+        model_name
+            .to_lowercase()
+            .contains(&self.model_pattern.to_lowercase())
     }
 
     /// Get score for a task type
@@ -209,13 +211,13 @@ impl ModelRouter {
                 .with_task_score(TaskType::Chat, 90)
                 .with_task_score(TaskType::Coding, 85)
                 .with_task_score(TaskType::Creative, 80)
-                .with_functions()
+                .with_functions(),
         );
 
         self.profiles.push(
             ModelCapabilityProfile::new("llama-2", 4096, 70)
                 .with_task_score(TaskType::Chat, 75)
-                .with_task_score(TaskType::Coding, 65)
+                .with_task_score(TaskType::Coding, 65),
         );
 
         // Qwen models
@@ -224,7 +226,7 @@ impl ModelRouter {
                 .with_task_score(TaskType::Coding, 95)
                 .with_task_score(TaskType::Math, 90)
                 .with_task_score(TaskType::Technical, 88)
-                .with_functions()
+                .with_functions(),
         );
 
         // Mistral/Mixtral
@@ -232,7 +234,7 @@ impl ModelRouter {
             ModelCapabilityProfile::new("mistral", 32000, 82)
                 .with_task_score(TaskType::Chat, 85)
                 .with_task_score(TaskType::Coding, 80)
-                .with_functions()
+                .with_functions(),
         );
 
         self.profiles.push(
@@ -240,14 +242,14 @@ impl ModelRouter {
                 .with_task_score(TaskType::Chat, 88)
                 .with_task_score(TaskType::Coding, 85)
                 .with_task_score(TaskType::Technical, 85)
-                .with_functions()
+                .with_functions(),
         );
 
         // CodeLlama
         self.profiles.push(
             ModelCapabilityProfile::new("codellama", 16000, 78)
                 .with_task_score(TaskType::Coding, 90)
-                .with_task_score(TaskType::CodeReview, 85)
+                .with_task_score(TaskType::CodeReview, 85),
         );
 
         // DeepSeek
@@ -255,34 +257,34 @@ impl ModelRouter {
             ModelCapabilityProfile::new("deepseek", 32000, 86)
                 .with_task_score(TaskType::Coding, 92)
                 .with_task_score(TaskType::Math, 88)
-                .with_functions()
+                .with_functions(),
         );
 
         // Vision models
         self.profiles.push(
             ModelCapabilityProfile::new("llava", 4096, 75)
                 .with_task_score(TaskType::Vision, 85)
-                .with_vision()
+                .with_vision(),
         );
 
         self.profiles.push(
             ModelCapabilityProfile::new("moondream", 4096, 70)
                 .with_task_score(TaskType::Vision, 75)
-                .with_vision()
+                .with_vision(),
         );
 
         // Phi models (fast)
         self.profiles.push(
             ModelCapabilityProfile::new("phi", 4096, 72)
                 .with_task_score(TaskType::Chat, 70)
-                .with_task_score(TaskType::FastResponse, 90)
+                .with_task_score(TaskType::FastResponse, 90),
         );
 
         // Gemma
         self.profiles.push(
             ModelCapabilityProfile::new("gemma", 8000, 78)
                 .with_task_score(TaskType::Chat, 80)
-                .with_task_score(TaskType::Technical, 75)
+                .with_task_score(TaskType::Technical, 75),
         );
     }
 
@@ -379,7 +381,11 @@ impl ModelRouter {
     }
 
     /// Select the best model from available models
-    pub fn select_best<'a>(&self, models: &'a [ModelInfo], requirements: &ModelRequirements) -> Option<&'a ModelInfo> {
+    pub fn select_best<'a>(
+        &self,
+        models: &'a [ModelInfo],
+        requirements: &ModelRequirements,
+    ) -> Option<&'a ModelInfo> {
         if models.is_empty() {
             return None;
         }
@@ -406,7 +412,11 @@ impl ModelRouter {
     }
 
     /// Get ranked models for requirements
-    pub fn rank_models<'a>(&self, models: &'a [ModelInfo], requirements: &ModelRequirements) -> Vec<(&'a ModelInfo, u32)> {
+    pub fn rank_models<'a>(
+        &self,
+        models: &'a [ModelInfo],
+        requirements: &ModelRequirements,
+    ) -> Vec<(&'a ModelInfo, u32)> {
         let mut scored: Vec<_> = models
             .iter()
             .map(|m| (m, self.score_model(m, requirements)))
@@ -422,14 +432,31 @@ impl ModelRouter {
         let msg_lower = message.to_lowercase();
 
         // Code-related keywords
-        let code_keywords = ["code", "function", "implement", "bug", "error", "compile",
-                           "syntax", "debug", "class", "method", "api", "program"];
-        let code_score: usize = code_keywords.iter()
+        let code_keywords = [
+            "code",
+            "function",
+            "implement",
+            "bug",
+            "error",
+            "compile",
+            "syntax",
+            "debug",
+            "class",
+            "method",
+            "api",
+            "program",
+        ];
+        let code_score: usize = code_keywords
+            .iter()
             .filter(|kw| msg_lower.contains(*kw))
             .count();
 
         // Review keywords
-        if code_score > 0 && (msg_lower.contains("review") || msg_lower.contains("check") || msg_lower.contains("analyze")) {
+        if code_score > 0
+            && (msg_lower.contains("review")
+                || msg_lower.contains("check")
+                || msg_lower.contains("analyze"))
+        {
             return TaskType::CodeReview;
         }
 
@@ -449,31 +476,54 @@ impl ModelRouter {
         }
 
         // Summarization
-        if msg_lower.contains("summarize") || msg_lower.contains("summary") || msg_lower.contains("tldr") {
+        if msg_lower.contains("summarize")
+            || msg_lower.contains("summary")
+            || msg_lower.contains("tldr")
+        {
             return TaskType::Summarization;
         }
 
         // Math/reasoning
-        let math_keywords = ["calculate", "math", "equation", "solve", "compute", "formula"];
+        let math_keywords = [
+            "calculate",
+            "math",
+            "equation",
+            "solve",
+            "compute",
+            "formula",
+        ];
         if math_keywords.iter().any(|kw| msg_lower.contains(kw)) {
             return TaskType::Math;
         }
 
         // Analysis
-        if msg_lower.contains("analyze") || msg_lower.contains("analysis") || msg_lower.contains("data") {
+        if msg_lower.contains("analyze")
+            || msg_lower.contains("analysis")
+            || msg_lower.contains("data")
+        {
             return TaskType::Analysis;
         }
 
         // Technical explanation
-        let tech_keywords = ["explain", "how does", "what is", "technical", "architecture"];
+        let tech_keywords = [
+            "explain",
+            "how does",
+            "what is",
+            "technical",
+            "architecture",
+        ];
         if tech_keywords.iter().any(|kw| msg_lower.contains(kw)) {
             return TaskType::Technical;
         }
 
         // Question answering
-        if msg_lower.contains('?') || msg_lower.starts_with("what") ||
-           msg_lower.starts_with("who") || msg_lower.starts_with("when") ||
-           msg_lower.starts_with("where") || msg_lower.starts_with("why") {
+        if msg_lower.contains('?')
+            || msg_lower.starts_with("what")
+            || msg_lower.starts_with("who")
+            || msg_lower.starts_with("when")
+            || msg_lower.starts_with("where")
+            || msg_lower.starts_with("why")
+        {
             return TaskType::QA;
         }
 
@@ -536,17 +586,35 @@ mod tests {
     #[test]
     fn test_task_detection() {
         // Code-related should detect Coding (need 2+ code keywords)
-        assert_eq!(ModelRouter::detect_task_type("implement a function to sort an array"), TaskType::Coding);
+        assert_eq!(
+            ModelRouter::detect_task_type("implement a function to sort an array"),
+            TaskType::Coding
+        );
         // Creative writing
-        assert_eq!(ModelRouter::detect_task_type("Write me a creative poem about nature"), TaskType::Creative);
+        assert_eq!(
+            ModelRouter::detect_task_type("Write me a creative poem about nature"),
+            TaskType::Creative
+        );
         // Translation
-        assert_eq!(ModelRouter::detect_task_type("Translate this to Spanish"), TaskType::Translation);
+        assert_eq!(
+            ModelRouter::detect_task_type("Translate this to Spanish"),
+            TaskType::Translation
+        );
         // Math calculation
-        assert_eq!(ModelRouter::detect_task_type("Calculate 2 + 2"), TaskType::Math);
+        assert_eq!(
+            ModelRouter::detect_task_type("Calculate 2 + 2"),
+            TaskType::Math
+        );
         // Code review
-        assert_eq!(ModelRouter::detect_task_type("Review this code and check for bugs"), TaskType::CodeReview);
+        assert_eq!(
+            ModelRouter::detect_task_type("Review this code and check for bugs"),
+            TaskType::CodeReview
+        );
         // Summarization
-        assert_eq!(ModelRouter::detect_task_type("Summarize this article"), TaskType::Summarization);
+        assert_eq!(
+            ModelRouter::detect_task_type("Summarize this article"),
+            TaskType::Summarization
+        );
     }
 
     #[test]

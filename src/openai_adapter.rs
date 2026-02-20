@@ -279,7 +279,8 @@ impl OpenAIClient {
 
         match response {
             Ok(resp) => {
-                let text = resp.into_string()
+                let text = resp
+                    .into_string()
                     .map_err(|e| OpenAIAdapterError::Network(e.to_string()))?;
 
                 serde_json::from_str(&text)
@@ -306,7 +307,11 @@ impl OpenAIClient {
     }
 
     /// Create a streaming chat completion
-    pub fn chat_stream<F>(&self, request: OpenAIRequest, mut on_chunk: F) -> Result<String, OpenAIAdapterError>
+    pub fn chat_stream<F>(
+        &self,
+        request: OpenAIRequest,
+        mut on_chunk: F,
+    ) -> Result<String, OpenAIAdapterError>
     where
         F: FnMut(&str),
     {
@@ -326,7 +331,8 @@ impl OpenAIClient {
         let body = serde_json::to_string(&streaming_request)
             .map_err(|e| OpenAIAdapterError::Serialization(e.to_string()))?;
 
-        let response = req.send_string(&body)
+        let response = req
+            .send_string(&body)
             .map_err(|e| OpenAIAdapterError::Network(e.to_string()))?;
 
         let reader = response.into_reader();
@@ -362,17 +368,18 @@ impl OpenAIClient {
     pub fn list_models(&self) -> Result<Vec<String>, OpenAIAdapterError> {
         let url = format!("{}/models", self.config.base_url);
 
-        let mut req = ureq::get(&url)
-            .timeout(self.config.timeout);
+        let mut req = ureq::get(&url).timeout(self.config.timeout);
 
         if !self.config.api_key.is_empty() {
             req = req.set("Authorization", &format!("Bearer {}", self.config.api_key));
         }
 
-        let response = req.call()
+        let response = req
+            .call()
             .map_err(|e| OpenAIAdapterError::Network(e.to_string()))?;
 
-        let text = response.into_string()
+        let text = response
+            .into_string()
             .map_err(|e| OpenAIAdapterError::Network(e.to_string()))?;
 
         let models: ModelsResponse = serde_json::from_str(&text)
@@ -444,10 +451,15 @@ impl std::fmt::Display for OpenAIAdapterError {
 impl std::error::Error for OpenAIAdapterError {}
 
 /// Simple chat helper
-pub fn simple_chat(api_key: &str, model: &str, messages: Vec<(&str, &str)>) -> Result<String, OpenAIAdapterError> {
+pub fn simple_chat(
+    api_key: &str,
+    model: &str,
+    messages: Vec<(&str, &str)>,
+) -> Result<String, OpenAIAdapterError> {
     let client = OpenAIClient::new(OpenAIConfig::new(api_key));
 
-    let openai_messages: Vec<OpenAIMessage> = messages.into_iter()
+    let openai_messages: Vec<OpenAIMessage> = messages
+        .into_iter()
         .map(|(role, content)| OpenAIMessage {
             role: role.to_string(),
             content: serde_json::Value::String(content.to_string()),
@@ -459,7 +471,9 @@ pub fn simple_chat(api_key: &str, model: &str, messages: Vec<(&str, &str)>) -> R
     let request = OpenAIRequest::new(model, openai_messages);
     let response = client.chat(request)?;
 
-    Ok(response.choices.first()
+    Ok(response
+        .choices
+        .first()
         .and_then(|c| c.message.content.clone())
         .unwrap_or_default())
 }
@@ -496,5 +510,144 @@ mod tests {
 
         let local = OpenAIConfig::local("http://localhost:8000");
         assert!(local.api_key.is_empty());
+    }
+
+    #[test]
+    fn test_model_presets() {
+        let turbo = OpenAIModel::gpt4_turbo();
+        assert_eq!(turbo.id, "gpt-4-turbo-preview");
+        assert_eq!(turbo.name, "GPT-4 Turbo");
+        assert_eq!(turbo.context_length, 128000);
+        assert!(turbo.supports_vision);
+        assert!(turbo.supports_functions);
+
+        let gpt4 = OpenAIModel::gpt4();
+        assert_eq!(gpt4.id, "gpt-4");
+        assert_eq!(gpt4.name, "GPT-4");
+        assert_eq!(gpt4.context_length, 8192);
+        assert!(!gpt4.supports_vision);
+        assert!(gpt4.supports_functions);
+
+        let gpt35 = OpenAIModel::gpt35_turbo();
+        assert_eq!(gpt35.id, "gpt-3.5-turbo");
+        assert_eq!(gpt35.name, "GPT-3.5 Turbo");
+        assert_eq!(gpt35.context_length, 16385);
+        assert!(!gpt35.supports_vision);
+        assert!(gpt35.supports_functions);
+    }
+
+    #[test]
+    fn test_message_types() {
+        let sys = OpenAIMessage::system("Be helpful");
+        assert_eq!(sys.role, "system");
+        assert_eq!(sys.content, serde_json::Value::String("Be helpful".to_string()));
+        assert!(sys.name.is_none());
+        assert!(sys.function_call.is_none());
+
+        let usr = OpenAIMessage::user("Hello");
+        assert_eq!(usr.role, "user");
+        assert_eq!(usr.content, serde_json::Value::String("Hello".to_string()));
+
+        let asst = OpenAIMessage::assistant("Hi there");
+        assert_eq!(asst.role, "assistant");
+        assert_eq!(asst.content, serde_json::Value::String("Hi there".to_string()));
+    }
+
+    #[test]
+    fn test_user_with_image_message() {
+        let msg = OpenAIMessage::user_with_image("Describe this", "https://example.com/img.png");
+        assert_eq!(msg.role, "user");
+
+        let content = msg.content.as_array().expect("content should be an array");
+        assert_eq!(content.len(), 2);
+
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[0]["text"], "Describe this");
+
+        assert_eq!(content[1]["type"], "image_url");
+        assert_eq!(content[1]["image_url"]["url"], "https://example.com/img.png");
+    }
+
+    #[test]
+    fn test_request_options() {
+        let messages = vec![OpenAIMessage::user("Hi")];
+        let req = OpenAIRequest::new("gpt-4", messages)
+            .with_temperature(0.5)
+            .with_max_tokens(200)
+            .streaming();
+
+        assert_eq!(req.model, "gpt-4");
+        assert_eq!(req.temperature, Some(0.5));
+        assert_eq!(req.max_tokens, Some(200));
+        assert!(req.stream);
+
+        // Verify defaults for unset fields
+        assert!(req.top_p.is_none());
+        assert!(req.frequency_penalty.is_none());
+        assert!(req.presence_penalty.is_none());
+        assert!(req.stop.is_none());
+        assert!(req.functions.is_none());
+        assert!(req.function_call.is_none());
+    }
+
+    #[test]
+    fn test_azure_config() {
+        let config = OpenAIConfig::azure(
+            "https://myresource.openai.azure.com",
+            "az-key-123",
+            "my-deployment",
+        );
+        assert_eq!(
+            config.base_url,
+            "https://myresource.openai.azure.com/openai/deployments/my-deployment"
+        );
+        assert_eq!(config.api_key, "az-key-123");
+        assert!(config.organization.is_none());
+        assert_eq!(config.timeout, Duration::from_secs(60));
+        assert_eq!(config.max_retries, 3);
+    }
+
+    #[test]
+    fn test_response_deserialization() {
+        let json = r#"{
+            "id": "chatcmpl-abc123",
+            "object": "chat.completion",
+            "created": 1700000000,
+            "model": "gpt-4",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": "Hello! How can I help?"
+                    },
+                    "finish_reason": "stop"
+                }
+            ],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 7,
+                "total_tokens": 17
+            }
+        }"#;
+
+        let resp: OpenAIResponse = serde_json::from_str(json).expect("should deserialize");
+        assert_eq!(resp.id, "chatcmpl-abc123");
+        assert_eq!(resp.object, "chat.completion");
+        assert_eq!(resp.created, 1700000000);
+        assert_eq!(resp.model, "gpt-4");
+        assert_eq!(resp.choices.len(), 1);
+        assert_eq!(resp.choices[0].index, 0);
+        assert_eq!(resp.choices[0].message.role, "assistant");
+        assert_eq!(
+            resp.choices[0].message.content.as_deref(),
+            Some("Hello! How can I help?")
+        );
+        assert_eq!(resp.choices[0].finish_reason.as_deref(), Some("stop"));
+
+        let usage = resp.usage.expect("usage should be present");
+        assert_eq!(usage.prompt_tokens, 10);
+        assert_eq!(usage.completion_tokens, 7);
+        assert_eq!(usage.total_tokens, 17);
     }
 }

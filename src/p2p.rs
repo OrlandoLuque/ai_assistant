@@ -10,14 +10,15 @@
 //! This module is optional and gated behind the "p2p" feature flag.
 //! It does NOT affect local functionality when disabled.
 
-use std::collections::HashMap;
-use std::net::{SocketAddr, IpAddr, Ipv4Addr};
-use std::sync::{Arc, RwLock, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+#[allow(unused_imports)]
 #[cfg(feature = "distributed")]
-use crate::distributed::{NodeId, Dht, DhtNode};
+use crate::distributed::{Dht, DhtNode, NodeId};
 
 // =============================================================================
 // P2P CONFIGURATION
@@ -63,7 +64,6 @@ pub struct P2PConfig {
     pub store_peer_data_locally: bool,
 
     // --- NAT Traversal ---
-
     /// STUN servers for NAT discovery
     pub stun_servers: Vec<String>,
 
@@ -80,7 +80,6 @@ pub struct P2PConfig {
     pub listen_port: u16,
 
     // --- Security ---
-
     /// Require peer authentication
     pub require_auth: bool,
 
@@ -94,7 +93,6 @@ pub struct P2PConfig {
     pub min_reputation: f32,
 
     // --- Bootstrap ---
-
     /// Bootstrap nodes for initial peer discovery
     pub bootstrap_nodes: Vec<String>,
 
@@ -150,7 +148,10 @@ pub enum NatType {
 impl NatType {
     /// Whether direct P2P is likely possible
     pub fn can_direct_connect(&self) -> bool {
-        matches!(self, NatType::None | NatType::FullCone | NatType::RestrictedCone)
+        matches!(
+            self,
+            NatType::None | NatType::FullCone | NatType::RestrictedCone
+        )
     }
 
     /// Whether TURN relay is recommended
@@ -199,12 +200,20 @@ fn parse_stun_mapped_address(attrs: &[u8], magic: &[u8]) -> Option<(IpAddr, u16)
             }
             0x0020 if value.len() >= 8 && value[1] == 0x01 => {
                 // XOR-MAPPED-ADDRESS: XOR with magic cookie
-                let port = u16::from_be_bytes([value[2], value[3]]) ^ u16::from_be_bytes([magic[0], magic[1]]);
+                let port = u16::from_be_bytes([value[2], value[3]])
+                    ^ u16::from_be_bytes([magic[0], magic[1]]);
                 let ip_bytes = [
-                    value[4] ^ magic[0], value[5] ^ magic[1],
-                    value[6] ^ magic[2], value[7] ^ magic[3],
+                    value[4] ^ magic[0],
+                    value[5] ^ magic[1],
+                    value[6] ^ magic[2],
+                    value[7] ^ magic[3],
                 ];
-                let ip = IpAddr::V4(Ipv4Addr::new(ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3]));
+                let ip = IpAddr::V4(Ipv4Addr::new(
+                    ip_bytes[0],
+                    ip_bytes[1],
+                    ip_bytes[2],
+                    ip_bytes[3],
+                ));
                 return Some((ip, port));
             }
             _ => {}
@@ -228,7 +237,8 @@ fn fetch_upnp_control_url(location: &str) -> Result<String, String> {
     let host_port = url_parts[2];
     let path = format!("/{}", url_parts[3..].join("/"));
 
-    let addr: SocketAddr = host_port.parse()
+    let addr: SocketAddr = host_port
+        .parse()
         .map_err(|_| format!("Cannot parse UPnP host: {}", host_port))?;
     let mut stream = std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(5))
         .map_err(|e| format!("UPnP describe connect: {}", e))?;
@@ -238,7 +248,8 @@ fn fetch_upnp_control_url(location: &str) -> Result<String, String> {
         "GET {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
         path, host_port
     );
-    stream.write_all(request.as_bytes())
+    stream
+        .write_all(request.as_bytes())
         .map_err(|e| format!("UPnP describe write: {}", e))?;
 
     let mut resp = String::new();
@@ -250,7 +261,8 @@ fn fetch_upnp_control_url(location: &str) -> Result<String, String> {
     for line in resp.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with("<controlURL>") {
-            if let Some(url) = trimmed.strip_prefix("<controlURL>")
+            if let Some(url) = trimmed
+                .strip_prefix("<controlURL>")
                 .and_then(|s| s.strip_suffix("</controlURL>"))
             {
                 if url.starts_with("http") {
@@ -293,19 +305,27 @@ impl NatTraversal {
             .map_err(|e| format!("Failed to bind UDP socket: {}", e))?;
         socket.set_read_timeout(Some(Duration::from_secs(3))).ok();
 
-        let local_addr = socket.local_addr()
+        let local_addr = socket
+            .local_addr()
             .map_err(|e| format!("Failed to get local addr: {}", e))?;
 
         let mut external_addrs: Vec<(IpAddr, u16)> = Vec::new();
 
         // STUN Binding Request (RFC 5389 minimal): type=0x0001, length=0, magic=0x2112A442, txn_id=12 bytes
         let mut stun_request = [0u8; 20];
-        stun_request[0] = 0x00; stun_request[1] = 0x01; // Binding Request
-        stun_request[2] = 0x00; stun_request[3] = 0x00; // Length = 0
-        stun_request[4] = 0x21; stun_request[5] = 0x12; // Magic cookie
-        stun_request[6] = 0xA4; stun_request[7] = 0x42;
+        stun_request[0] = 0x00;
+        stun_request[1] = 0x01; // Binding Request
+        stun_request[2] = 0x00;
+        stun_request[3] = 0x00; // Length = 0
+        stun_request[4] = 0x21;
+        stun_request[5] = 0x12; // Magic cookie
+        stun_request[6] = 0xA4;
+        stun_request[7] = 0x42;
         // Transaction ID: use timestamp-based bytes
-        let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
         for i in 0..12 {
             stun_request[8 + i] = ((ts >> (i * 4)) & 0xFF) as u8;
         }
@@ -329,7 +349,9 @@ impl NatTraversal {
                 if let Ok((n, _)) = socket.recv_from(&mut buf) {
                     if n >= 20 && buf[0] == 0x01 && buf[1] == 0x01 {
                         // Parse XOR-MAPPED-ADDRESS (0x0020) or MAPPED-ADDRESS (0x0001)
-                        if let Some((ip, port)) = parse_stun_mapped_address(&buf[20..n], &stun_request[4..8]) {
+                        if let Some((ip, port)) =
+                            parse_stun_mapped_address(&buf[20..n], &stun_request[4..8])
+                        {
                             external_addrs.push((ip, port));
                         }
                     }
@@ -376,13 +398,17 @@ impl NatTraversal {
     }
 
     /// Try to open a port via UPnP IGD (SSDP discovery + SOAP AddPortMapping).
-    pub fn try_upnp_mapping(&mut self, internal_port: u16, external_port: u16) -> Result<u16, String> {
+    pub fn try_upnp_mapping(
+        &mut self,
+        internal_port: u16,
+        external_port: u16,
+    ) -> Result<u16, String> {
         if !self.config.enable_upnp {
             return Err("UPnP disabled".to_string());
         }
 
-        use std::net::UdpSocket;
         use std::io::Read;
+        use std::net::UdpSocket;
 
         // Step 1: SSDP M-SEARCH for IGD device
         let ssdp_request = format!(
@@ -393,22 +419,27 @@ impl NatTraversal {
              ST: urn:schemas-upnp-org:device:InternetGatewayDevice:1\r\n\r\n"
         );
 
-        let socket = UdpSocket::bind("0.0.0.0:0")
-            .map_err(|e| format!("SSDP bind failed: {}", e))?;
+        let socket =
+            UdpSocket::bind("0.0.0.0:0").map_err(|e| format!("SSDP bind failed: {}", e))?;
         socket.set_read_timeout(Some(Duration::from_secs(3))).ok();
 
-        let ssdp_addr: SocketAddr = "239.255.255.250:1900".parse().expect("valid SSDP multicast address");
-        socket.send_to(ssdp_request.as_bytes(), ssdp_addr)
+        let ssdp_addr: SocketAddr = "239.255.255.250:1900"
+            .parse()
+            .expect("valid SSDP multicast address");
+        socket
+            .send_to(ssdp_request.as_bytes(), ssdp_addr)
             .map_err(|e| format!("SSDP send failed: {}", e))?;
 
         let mut buf = [0u8; 2048];
-        let (n, _) = socket.recv_from(&mut buf)
+        let (n, _) = socket
+            .recv_from(&mut buf)
             .map_err(|e| format!("SSDP no response: {}", e))?;
 
         let response = String::from_utf8_lossy(&buf[..n]);
 
         // Extract LOCATION header
-        let location = response.lines()
+        let location = response
+            .lines()
             .find(|line| line.to_uppercase().starts_with("LOCATION:"))
             .and_then(|line| line.splitn(2, ':').nth(1))
             .map(|s| s.trim().to_string())
@@ -418,7 +449,8 @@ impl NatTraversal {
         let control_url = fetch_upnp_control_url(&location)?;
 
         // Step 3: SOAP AddPortMapping
-        let local_ip = socket.local_addr()
+        let local_ip = socket
+            .local_addr()
             .map_err(|e| format!("local addr: {}", e))?
             .ip();
 
@@ -456,16 +488,21 @@ impl NatTraversal {
              Content-Length: {}\r\n\
              SOAPAction: \"urn:schemas-upnp-org:service:WANIPConnection:1#AddPortMapping\"\r\n\
              \r\n{}",
-            path, host_port, soap_body.len(), soap_body
+            path,
+            host_port,
+            soap_body.len(),
+            soap_body
         );
 
-        let stream_addr: SocketAddr = host_port.parse()
+        let stream_addr: SocketAddr = host_port
+            .parse()
             .map_err(|_| format!("Cannot parse UPnP host: {}", host_port))?;
         let mut stream = std::net::TcpStream::connect_timeout(&stream_addr, Duration::from_secs(5))
             .map_err(|e| format!("UPnP TCP connect failed: {}", e))?;
 
         use std::io::Write;
-        stream.write_all(http_request.as_bytes())
+        stream
+            .write_all(http_request.as_bytes())
             .map_err(|e| format!("UPnP write failed: {}", e))?;
 
         let mut resp = String::new();
@@ -476,7 +513,10 @@ impl NatTraversal {
             self.upnp_mapping = Some(external_port);
             Ok(external_port)
         } else {
-            Err(format!("UPnP AddPortMapping failed: {}", resp.lines().next().unwrap_or("")))
+            Err(format!(
+                "UPnP AddPortMapping failed: {}",
+                resp.lines().next().unwrap_or("")
+            ))
         }
     }
 
@@ -493,8 +533,8 @@ impl NatTraversal {
         // Try common gateway addresses
         let gateway_candidates = ["192.168.1.1:5351", "192.168.0.1:5351", "10.0.0.1:5351"];
 
-        let socket = UdpSocket::bind("0.0.0.0:0")
-            .map_err(|e| format!("NAT-PMP bind failed: {}", e))?;
+        let socket =
+            UdpSocket::bind("0.0.0.0:0").map_err(|e| format!("NAT-PMP bind failed: {}", e))?;
         socket.set_read_timeout(Some(Duration::from_secs(3))).ok();
 
         for gateway in &gateway_candidates {
@@ -508,12 +548,15 @@ impl NatTraversal {
             let mut request = [0u8; 12];
             request[0] = 0; // Version
             request[1] = 1; // Opcode: Map UDP
-            // request[2..4] = 0 (reserved)
+                            // request[2..4] = 0 (reserved)
             request[4] = (internal_port >> 8) as u8;
             request[5] = (internal_port & 0xFF) as u8;
             // request[6..8] = 0 (suggested external port = 0 means "same as internal")
             // Lifetime: 3600 seconds
-            request[8] = 0; request[9] = 0; request[10] = 0x0E; request[11] = 0x10;
+            request[8] = 0;
+            request[9] = 0;
+            request[10] = 0x0E;
+            request[11] = 0x10;
 
             if socket.send_to(&request, addr).is_err() {
                 continue;
@@ -521,7 +564,8 @@ impl NatTraversal {
 
             let mut buf = [0u8; 16];
             if let Ok((n, _)) = socket.recv_from(&mut buf) {
-                if n >= 16 && buf[1] == 129 { // Response opcode = 128 + request opcode
+                if n >= 16 && buf[1] == 129 {
+                    // Response opcode = 128 + request opcode
                     let result_code = u16::from_be_bytes([buf[2], buf[3]]);
                     if result_code == 0 {
                         let mapped_port = u16::from_be_bytes([buf[10], buf[11]]);
@@ -673,8 +717,12 @@ impl IceAgent {
         // Try each pair with a short timeout
         for (local, remote) in &pairs {
             if let Ok(socket) = UdpSocket::bind(local.address) {
-                socket.set_read_timeout(Some(Duration::from_millis(500))).ok();
-                socket.set_write_timeout(Some(Duration::from_millis(500))).ok();
+                socket
+                    .set_read_timeout(Some(Duration::from_millis(500)))
+                    .ok();
+                socket
+                    .set_write_timeout(Some(Duration::from_millis(500)))
+                    .ok();
 
                 // Send a 4-byte connectivity probe
                 let probe = b"ICE\x01";
@@ -864,7 +912,8 @@ impl ReputationSystem {
     /// Get or create reputation for a peer
     pub fn get_or_create(&mut self, peer_id: &str) -> &mut PeerReputation {
         if !self.peers.contains_key(peer_id) {
-            self.peers.insert(peer_id.to_string(), PeerReputation::new(peer_id));
+            self.peers
+                .insert(peer_id.to_string(), PeerReputation::new(peer_id));
         }
         self.peers.get_mut(peer_id).expect("key just inserted")
     }
@@ -884,10 +933,12 @@ impl ReputationSystem {
 
     /// Get top N trusted peers
     pub fn get_top_peers(&self, n: usize) -> Vec<&PeerReputation> {
-        let mut peers: Vec<_> = self.peers.values()
-            .filter(|r| !r.banned)
-            .collect();
-        peers.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        let mut peers: Vec<_> = self.peers.values().filter(|r| !r.banned).collect();
+        peers.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         peers.truncate(n);
         peers
     }
@@ -918,13 +969,20 @@ pub enum PeerMessage {
     /// Query for knowledge
     QueryKnowledge { query: String },
     /// Response to knowledge query
-    QueryResponse { query: String, results: Vec<KnowledgeShare> },
+    QueryResponse {
+        query: String,
+        results: Vec<KnowledgeShare>,
+    },
 
     /// Report contradiction
     ReportContradiction { contradiction: ContradictionReport },
 
     /// Request consensus on a value
-    ConsensusRequest { entity: String, attribute: String, value: String },
+    ConsensusRequest {
+        entity: String,
+        attribute: String,
+        value: String,
+    },
     /// Vote in consensus
     ConsensusVote { request_id: String, agree: bool },
 }
@@ -1001,7 +1059,8 @@ pub struct P2PManager {
     reputation: ReputationSystem,
     /// Connected peers
     connections: HashMap<String, PeerConnection>,
-    /// Pending ICE negotiations
+    /// Pending ICE negotiations (used during active P2P sessions)
+    #[allow(dead_code)]
     pending_ice: HashMap<String, IceAgent>,
     /// Volatile peer data (not persisted)
     volatile_data: HashMap<String, Vec<KnowledgeShare>>,
@@ -1017,10 +1076,13 @@ pub struct P2PManager {
 
 impl P2PManager {
     pub fn new(config: P2PConfig) -> Self {
-        let local_peer_id = format!("peer_{}", SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos());
+        let local_peer_id = format!(
+            "peer_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        );
 
         Self {
             nat: NatTraversal::new(config.clone()),
@@ -1090,7 +1152,9 @@ impl P2PManager {
                             if resp_len <= 65536 {
                                 let mut resp_buf = vec![0u8; resp_len];
                                 if stream.read_exact(&mut resp_buf).is_ok() {
-                                    if let Ok(PeerMessage::Pong { peer_id, .. }) = serde_json::from_slice(&resp_buf) {
+                                    if let Ok(PeerMessage::Pong { peer_id, .. }) =
+                                        serde_json::from_slice(&resp_buf)
+                                    {
                                         let conn = PeerConnection {
                                             peer_id: peer_id.clone(),
                                             address: addr,
@@ -1134,6 +1198,11 @@ impl P2PManager {
         self.connections.len()
     }
 
+    /// Register a peer in the reputation system (e.g. during bootstrap)
+    pub fn register_peer(&mut self, peer_id: &str) {
+        self.reputation.get_or_create(peer_id);
+    }
+
     /// Handle incoming message from peer
     pub fn handle_message(&mut self, from_peer: &str, message: PeerMessage) -> Option<PeerMessage> {
         // Check reputation before processing
@@ -1151,21 +1220,27 @@ impl P2PManager {
                 })
             }
 
-            PeerMessage::Pong { timestamp: _, peer_id: _ } => {
+            PeerMessage::Pong {
+                timestamp: _,
+                peer_id: _,
+            } => {
                 self.reputation.get_or_create(from_peer).record_success();
                 None
             }
 
             PeerMessage::GetPeers => {
-                let peers: Vec<PeerInfo> = self.connections
+                let peers: Vec<PeerInfo> = self
+                    .connections
                     .values()
                     .filter(|c| c.peer_id != from_peer)
                     .take(20)
                     .map(|c| PeerInfo {
                         id: c.peer_id.clone(),
                         address: c.address,
-                        reputation: self.reputation
-                            .peers.get(&c.peer_id)
+                        reputation: self
+                            .reputation
+                            .peers
+                            .get(&c.peer_id)
                             .map(|r| r.score)
                             .unwrap_or(0.5),
                         last_seen: c.last_message.elapsed().as_secs(),
@@ -1174,14 +1249,14 @@ impl P2PManager {
                 Some(PeerMessage::Peers { peers })
             }
 
-            PeerMessage::ShareKnowledge { data } => {
-                self.handle_shared_knowledge(from_peer, data)
-            }
+            PeerMessage::ShareKnowledge { data } => self.handle_shared_knowledge(from_peer, data),
 
             PeerMessage::QueryKnowledge { query } => {
                 // Search volatile data for matches
                 let query_lower = query.to_lowercase();
-                let results: Vec<KnowledgeShare> = self.volatile_data.values()
+                let results: Vec<KnowledgeShare> = self
+                    .volatile_data
+                    .values()
                     .flat_map(|entries| entries.iter())
                     .filter(|ks| {
                         ks.entity.to_lowercase().contains(&query_lower)
@@ -1219,7 +1294,9 @@ impl P2PManager {
             PeerMessage::AckKnowledge { id, accepted } => {
                 self.reputation.get_or_create(from_peer).record_success();
                 if accepted {
-                    self.reputation.get_or_create(from_peer).record_correct_contribution();
+                    self.reputation
+                        .get_or_create(from_peer)
+                        .record_correct_contribution();
                 }
                 let _ = (id, accepted); // logged implicitly via reputation
                 None
@@ -1254,12 +1331,19 @@ impl P2PManager {
                 None
             }
 
-            PeerMessage::ConsensusRequest { entity, attribute, value } => {
+            PeerMessage::ConsensusRequest {
+                entity,
+                attribute,
+                value,
+            } => {
                 // Check if we have local data that matches
-                let agree = self.volatile_data
+                let agree = self
+                    .volatile_data
                     .get(&entity)
                     .map(|entries| {
-                        entries.iter().any(|ks| ks.attribute == attribute && ks.value == value)
+                        entries
+                            .iter()
+                            .any(|ks| ks.attribute == attribute && ks.value == value)
                     })
                     .unwrap_or(false);
 
@@ -1279,7 +1363,11 @@ impl P2PManager {
     }
 
     /// Handle shared knowledge from peer
-    fn handle_shared_knowledge(&mut self, from_peer: &str, data: KnowledgeShare) -> Option<PeerMessage> {
+    fn handle_shared_knowledge(
+        &mut self,
+        from_peer: &str,
+        data: KnowledgeShare,
+    ) -> Option<PeerMessage> {
         let accepted = match self.config.peer_data_trust {
             PeerDataTrust::Ignore => false,
 
@@ -1305,10 +1393,12 @@ impl P2PManager {
 
             PeerDataTrust::ConsensusRequired(n) => {
                 // Count how many peers have sent the same entity+attribute+value
-                let matching_count = self.volatile_data
+                let matching_count = self
+                    .volatile_data
                     .get(&data.entity)
                     .map(|entries| {
-                        entries.iter()
+                        entries
+                            .iter()
                             .filter(|ks| ks.attribute == data.attribute && ks.value == data.value)
                             .count()
                     })
@@ -1349,7 +1439,9 @@ impl P2PManager {
     /// Also buffers QueryKnowledge messages to connected peers for async retrieval.
     pub fn query_peers(&mut self, query: &str) -> Vec<KnowledgeShare> {
         // Buffer queries to all connected peers
-        let msg = PeerMessage::QueryKnowledge { query: query.to_string() };
+        let msg = PeerMessage::QueryKnowledge {
+            query: query.to_string(),
+        };
         let peer_ids: Vec<String> = self.connections.keys().cloned().collect();
         for peer_id in peer_ids {
             self.outgoing_messages.push((peer_id, msg.clone()));
@@ -1357,7 +1449,8 @@ impl P2PManager {
 
         // Return matching results from volatile data
         let query_lower = query.to_lowercase();
-        self.volatile_data.values()
+        self.volatile_data
+            .values()
             .flat_map(|entries| entries.iter())
             .filter(|ks| {
                 ks.entity.to_lowercase().contains(&query_lower)
@@ -1505,7 +1598,10 @@ mod tests {
         };
 
         // Add peer to reputation first
-        manager.reputation.get_or_create("test_peer").record_success();
+        manager
+            .reputation
+            .get_or_create("test_peer")
+            .record_success();
 
         manager.handle_shared_knowledge("test_peer", data);
 
@@ -1545,15 +1641,18 @@ mod tests {
         });
 
         // Add some connections
-        manager.connections.insert("peer_a".to_string(), PeerConnection {
-            peer_id: "peer_a".to_string(),
-            address: "10.0.0.1:5000".parse().unwrap(),
-            connected_at: Instant::now(),
-            last_message: Instant::now(),
-            ice_agent: None,
-            messages_sent: 0,
-            messages_received: 0,
-        });
+        manager.connections.insert(
+            "peer_a".to_string(),
+            PeerConnection {
+                peer_id: "peer_a".to_string(),
+                address: "10.0.0.1:5000".parse().unwrap(),
+                connected_at: Instant::now(),
+                last_message: Instant::now(),
+                ice_agent: None,
+                messages_sent: 0,
+                messages_received: 0,
+            },
+        );
 
         manager.reputation.get_or_create("peer_b").record_success();
         let response = manager.handle_message("peer_b", PeerMessage::GetPeers);
@@ -1578,8 +1677,18 @@ mod tests {
         manager.reputation.get_or_create("peer1").record_success();
 
         let peers = vec![
-            PeerInfo { id: "new_peer_1".to_string(), address: "10.0.0.2:5000".parse().unwrap(), reputation: 0.8, last_seen: 0 },
-            PeerInfo { id: "new_peer_2".to_string(), address: "10.0.0.3:5000".parse().unwrap(), reputation: 0.7, last_seen: 0 },
+            PeerInfo {
+                id: "new_peer_1".to_string(),
+                address: "10.0.0.2:5000".parse().unwrap(),
+                reputation: 0.8,
+                last_seen: 0,
+            },
+            PeerInfo {
+                id: "new_peer_2".to_string(),
+                address: "10.0.0.3:5000".parse().unwrap(),
+                reputation: 0.7,
+                last_seen: 0,
+            },
         ];
 
         manager.handle_message("peer1", PeerMessage::Peers { peers });
@@ -1607,10 +1716,19 @@ mod tests {
             timestamp: 0,
             signature: None,
         };
-        manager.volatile_data.entry("Rust".to_string()).or_default().push(data);
+        manager
+            .volatile_data
+            .entry("Rust".to_string())
+            .or_default()
+            .push(data);
 
         manager.reputation.get_or_create("peer1").record_success();
-        let response = manager.handle_message("peer1", PeerMessage::QueryKnowledge { query: "Rust".to_string() });
+        let response = manager.handle_message(
+            "peer1",
+            PeerMessage::QueryKnowledge {
+                query: "Rust".to_string(),
+            },
+        );
 
         match response {
             Some(PeerMessage::QueryResponse { query, results }) => {
@@ -1631,15 +1749,18 @@ mod tests {
 
         // Add 3 peers
         for i in 0..3 {
-            manager.connections.insert(format!("peer_{}", i), PeerConnection {
-                peer_id: format!("peer_{}", i),
-                address: format!("10.0.0.{}:5000", i + 1).parse().unwrap(),
-                connected_at: Instant::now(),
-                last_message: Instant::now(),
-                ice_agent: None,
-                messages_sent: 0,
-                messages_received: 0,
-            });
+            manager.connections.insert(
+                format!("peer_{}", i),
+                PeerConnection {
+                    peer_id: format!("peer_{}", i),
+                    address: format!("10.0.0.{}:5000", i + 1).parse().unwrap(),
+                    connected_at: Instant::now(),
+                    last_message: Instant::now(),
+                    ice_agent: None,
+                    messages_sent: 0,
+                    messages_received: 0,
+                },
+            );
         }
 
         let data = KnowledgeShare {
@@ -1674,7 +1795,11 @@ mod tests {
             timestamp: 0,
             signature: None,
         };
-        manager.volatile_data.entry("Python".to_string()).or_default().push(data);
+        manager
+            .volatile_data
+            .entry("Python".to_string())
+            .or_default()
+            .push(data);
 
         let results = manager.query_peers("python");
         assert_eq!(results.len(), 1);
@@ -1702,7 +1827,10 @@ mod tests {
         };
 
         let response = manager.handle_shared_knowledge("peer1", data);
-        assert!(matches!(response, Some(PeerMessage::AckKnowledge { accepted: true, .. })));
+        assert!(matches!(
+            response,
+            Some(PeerMessage::AckKnowledge { accepted: true, .. })
+        ));
 
         // Data should be stored with peer attribution
         let stored = manager.get_volatile_data("AI");
@@ -1733,11 +1861,20 @@ mod tests {
 
         // First submission: not enough confirmations yet (0 existing + 1 = 1 < 2)
         let resp1 = manager.handle_shared_knowledge("peer1", make_data("c1"));
-        assert!(matches!(resp1, Some(PeerMessage::AckKnowledge { accepted: false, .. })));
+        assert!(matches!(
+            resp1,
+            Some(PeerMessage::AckKnowledge {
+                accepted: false,
+                ..
+            })
+        ));
 
         // Second submission: now we have 1 existing + 1 = 2 >= 2
         let resp2 = manager.handle_shared_knowledge("peer2", make_data("c2"));
-        assert!(matches!(resp2, Some(PeerMessage::AckKnowledge { accepted: true, .. })));
+        assert!(matches!(
+            resp2,
+            Some(PeerMessage::AckKnowledge { accepted: true, .. })
+        ));
     }
 
     #[test]
@@ -1752,35 +1889,62 @@ mod tests {
         manager.reputation.get_or_create("peer2").record_success();
 
         // Receive consensus request — should vote based on local data
-        let resp = manager.handle_message("peer1", PeerMessage::ConsensusRequest {
-            entity: "X".to_string(),
-            attribute: "a".to_string(),
-            value: "1".to_string(),
-        });
-        assert!(matches!(resp, Some(PeerMessage::ConsensusVote { agree: false, .. })));
+        let resp = manager.handle_message(
+            "peer1",
+            PeerMessage::ConsensusRequest {
+                entity: "X".to_string(),
+                attribute: "a".to_string(),
+                value: "1".to_string(),
+            },
+        );
+        assert!(matches!(
+            resp,
+            Some(PeerMessage::ConsensusVote { agree: false, .. })
+        ));
 
         // Now store matching data and try again
-        manager.volatile_data.entry("X".to_string()).or_default().push(KnowledgeShare {
-            id: "x1".to_string(), entity: "X".to_string(), attribute: "a".to_string(),
-            value: "1".to_string(), source: "local".to_string(), timestamp: 0, signature: None,
-        });
+        manager
+            .volatile_data
+            .entry("X".to_string())
+            .or_default()
+            .push(KnowledgeShare {
+                id: "x1".to_string(),
+                entity: "X".to_string(),
+                attribute: "a".to_string(),
+                value: "1".to_string(),
+                source: "local".to_string(),
+                timestamp: 0,
+                signature: None,
+            });
 
-        let resp2 = manager.handle_message("peer2", PeerMessage::ConsensusRequest {
-            entity: "X".to_string(),
-            attribute: "a".to_string(),
-            value: "1".to_string(),
-        });
-        assert!(matches!(resp2, Some(PeerMessage::ConsensusVote { agree: true, .. })));
+        let resp2 = manager.handle_message(
+            "peer2",
+            PeerMessage::ConsensusRequest {
+                entity: "X".to_string(),
+                attribute: "a".to_string(),
+                value: "1".to_string(),
+            },
+        );
+        assert!(matches!(
+            resp2,
+            Some(PeerMessage::ConsensusVote { agree: true, .. })
+        ));
 
         // Receive votes and check tally
-        manager.handle_message("peer1", PeerMessage::ConsensusVote {
-            request_id: "X:a:1".to_string(),
-            agree: true,
-        });
-        manager.handle_message("peer2", PeerMessage::ConsensusVote {
-            request_id: "X:a:1".to_string(),
-            agree: false,
-        });
+        manager.handle_message(
+            "peer1",
+            PeerMessage::ConsensusVote {
+                request_id: "X:a:1".to_string(),
+                agree: true,
+            },
+        );
+        manager.handle_message(
+            "peer2",
+            PeerMessage::ConsensusVote {
+                request_id: "X:a:1".to_string(),
+                agree: false,
+            },
+        );
 
         let votes = manager.consensus_votes.get("X:a:1").unwrap();
         assert_eq!(votes.len(), 2);
@@ -1808,7 +1972,8 @@ mod tests {
             timestamp: 1234,
         };
 
-        let resp = manager.handle_message("peer1", PeerMessage::ReportContradiction { contradiction });
+        let resp =
+            manager.handle_message("peer1", PeerMessage::ReportContradiction { contradiction });
         assert!(resp.is_none());
 
         // Should be stored in volatile data
@@ -1897,11 +2062,415 @@ mod tests {
             signature: None,
         }];
 
-        manager.handle_message("peer1", PeerMessage::QueryResponse {
-            query: "Topic".to_string(),
-            results,
-        });
+        manager.handle_message(
+            "peer1",
+            PeerMessage::QueryResponse {
+                query: "Topic".to_string(),
+                results,
+            },
+        );
 
         assert_eq!(manager.get_volatile_data("Topic").len(), 1);
+    }
+
+    // =========================================================================
+    // ICE Agent candidate management tests
+    // =========================================================================
+
+    #[test]
+    fn test_ice_agent_candidate_management() {
+        let mut agent = IceAgent::new();
+
+        // Initially empty
+        assert!(agent.get_local_candidates().is_empty());
+        assert_eq!(agent.state(), IceState::Gathering);
+
+        // Add local candidates
+        let host = IceCandidate::host("192.168.1.1:5000".parse().unwrap());
+        let srflx = IceCandidate::server_reflexive(
+            "203.0.113.1:5000".parse().unwrap(),
+            "192.168.1.1:5000".parse().unwrap(),
+        );
+        agent.add_local_candidate(host);
+        agent.add_local_candidate(srflx);
+        assert_eq!(agent.get_local_candidates().len(), 2);
+
+        // Verify candidate types preserved
+        assert!(matches!(
+            agent.get_local_candidates()[0].candidate_type,
+            IceCandidateType::Host
+        ));
+        assert!(matches!(
+            agent.get_local_candidates()[1].candidate_type,
+            IceCandidateType::ServerReflexive
+        ));
+
+        // Add remote candidate — local list should be unchanged
+        let remote = IceCandidate::host("10.0.0.1:6000".parse().unwrap());
+        agent.add_remote_candidate(remote);
+        assert_eq!(agent.get_local_candidates().len(), 2);
+
+        // Add relay candidate
+        let relay = IceCandidate::relay("198.51.100.1:3478".parse().unwrap(), "turn.example.com");
+        agent.add_local_candidate(relay);
+        assert_eq!(agent.get_local_candidates().len(), 3);
+        assert!(matches!(
+            agent.get_local_candidates()[2].candidate_type,
+            IceCandidateType::Relay
+        ));
+    }
+
+    // =========================================================================
+    // PeerReputation::unban() test
+    // =========================================================================
+
+    #[test]
+    fn test_peer_reputation_unban() {
+        let mut rep = PeerReputation::new("peer_ban_test");
+        assert!(!rep.banned);
+        assert_eq!(rep.score, 0.5);
+
+        // Ban the peer
+        rep.ban("spamming");
+        assert!(rep.banned);
+        assert_eq!(rep.score, 0.0);
+        assert_eq!(rep.ban_reason, Some("spamming".to_string()));
+        assert!(!rep.is_trusted(0.1)); // banned peers are never trusted
+
+        // Unban the peer
+        rep.unban();
+        assert!(!rep.banned);
+        assert!(rep.ban_reason.is_none());
+        assert!(
+            (rep.score - 0.1).abs() < f32::EPSILON,
+            "Score should be 0.1 after unban, got {}",
+            rep.score
+        );
+
+        // Trust behavior after unban: low score (0.1)
+        assert!(rep.is_trusted(0.05)); // 0.1 >= 0.05
+        assert!(rep.is_trusted(0.1)); // 0.1 >= 0.1
+        assert!(!rep.is_trusted(0.5)); // 0.1 < 0.5
+
+        // Can build reputation back up after unban
+        for _ in 0..10 {
+            rep.record_success();
+        }
+        assert!(rep.score > 0.1, "Score should increase after successes");
+        assert!(rep.is_trusted(0.3));
+    }
+
+    // =========================================================================
+    // ReputationSystem::get_top_peers() test
+    // =========================================================================
+
+    #[test]
+    fn test_reputation_system_get_top_peers() {
+        let mut system = ReputationSystem::new(0.3);
+
+        // Create peers with varying reputations
+        {
+            let rep_a = system.get_or_create("peer_high");
+            for _ in 0..10 {
+                rep_a.record_success();
+                rep_a.record_correct_contribution();
+            }
+        }
+
+        {
+            let rep_b = system.get_or_create("peer_medium");
+            for _ in 0..5 {
+                rep_b.record_success();
+            }
+            for _ in 0..3 {
+                rep_b.record_failure();
+            }
+        }
+
+        {
+            let rep_c = system.get_or_create("peer_low");
+            rep_c.record_success();
+        }
+
+        // Ban one peer
+        {
+            let rep_d = system.get_or_create("peer_banned");
+            for _ in 0..5 {
+                rep_d.record_success();
+            }
+            rep_d.ban("bad actor");
+        }
+
+        // get_top_peers(2): returns 2, highest score first, banned excluded
+        let top2 = system.get_top_peers(2);
+        assert_eq!(top2.len(), 2);
+        assert!(
+            top2[0].score >= top2[1].score,
+            "Should be sorted descending by score"
+        );
+        assert_eq!(top2[0].peer_id, "peer_high");
+        assert!(
+            !top2.iter().any(|p| p.peer_id == "peer_banned"),
+            "Banned peer should not appear"
+        );
+
+        // get_top_peers(0): empty
+        assert!(system.get_top_peers(0).is_empty());
+
+        // get_top_peers(10) with only 3 unbanned: returns 3
+        let top10 = system.get_top_peers(10);
+        assert_eq!(top10.len(), 3);
+        assert!(!top10.iter().any(|p| p.banned));
+
+        // Empty system: returns empty
+        let empty = ReputationSystem::new(0.3);
+        assert!(empty.get_top_peers(5).is_empty());
+    }
+
+    // =========================================================================
+    // NatTraversal::get_connectable_address() test
+    // =========================================================================
+
+    #[test]
+    fn test_nat_traversal_get_connectable_address_none() {
+        // Fresh NatTraversal has no discovery result
+        let nat = NatTraversal::new(P2PConfig::default());
+        assert!(
+            nat.get_connectable_address().is_none(),
+            "Should return None when no NAT discovery has been performed"
+        );
+    }
+
+    // =========================================================================
+    // P2PManager::stop() test
+    // =========================================================================
+
+    #[test]
+    fn test_p2p_manager_stop() {
+        let mut manager = P2PManager::new(P2PConfig {
+            enabled: true,
+            ..Default::default()
+        });
+
+        // Manually set state as if started
+        manager.running = true;
+        manager.connections.insert(
+            "peer1".to_string(),
+            PeerConnection {
+                peer_id: "peer1".to_string(),
+                address: "10.0.0.1:5000".parse().unwrap(),
+                connected_at: Instant::now(),
+                last_message: Instant::now(),
+                ice_agent: None,
+                messages_sent: 5,
+                messages_received: 3,
+            },
+        );
+        assert_eq!(manager.peer_count(), 1);
+        assert!(manager.running);
+
+        manager.stop();
+
+        assert!(!manager.running, "Should be stopped after stop()");
+        assert_eq!(manager.peer_count(), 0, "Connections should be cleared");
+        assert!(manager.connections.is_empty());
+    }
+
+    // =========================================================================
+    // P2PManager::stats() tests
+    // =========================================================================
+
+    #[test]
+    fn test_p2p_manager_stats_initial() {
+        let manager = P2PManager::new(P2PConfig {
+            enabled: true,
+            ..Default::default()
+        });
+
+        let stats = manager.stats();
+        assert!(stats.enabled);
+        assert!(!stats.running);
+        assert_eq!(stats.peer_count, 0);
+        assert_eq!(stats.volatile_entries, 0);
+        assert_eq!(stats.total_peers_known, 0);
+        assert_eq!(stats.banned_peers, 0);
+    }
+
+    #[test]
+    fn test_p2p_manager_stats_with_data() {
+        let mut manager = P2PManager::new(P2PConfig {
+            enabled: true,
+            ..Default::default()
+        });
+
+        // Add volatile data
+        manager
+            .volatile_data
+            .entry("Entity1".to_string())
+            .or_default()
+            .push(KnowledgeShare {
+                id: "ks1".to_string(),
+                entity: "Entity1".to_string(),
+                attribute: "attr".to_string(),
+                value: "val".to_string(),
+                source: "test".to_string(),
+                timestamp: 0,
+                signature: None,
+            });
+        manager
+            .volatile_data
+            .entry("Entity2".to_string())
+            .or_default()
+            .push(KnowledgeShare {
+                id: "ks2".to_string(),
+                entity: "Entity2".to_string(),
+                attribute: "attr".to_string(),
+                value: "val".to_string(),
+                source: "test".to_string(),
+                timestamp: 0,
+                signature: None,
+            });
+
+        // Create reputation entries (some banned)
+        manager.reputation.get_or_create("peer_a").record_success();
+        manager.reputation.get_or_create("peer_b").record_success();
+        manager.reputation.get_or_create("peer_banned").ban("test");
+
+        // Add a connection
+        manager.connections.insert(
+            "peer_a".to_string(),
+            PeerConnection {
+                peer_id: "peer_a".to_string(),
+                address: "10.0.0.1:5000".parse().unwrap(),
+                connected_at: Instant::now(),
+                last_message: Instant::now(),
+                ice_agent: None,
+                messages_sent: 0,
+                messages_received: 0,
+            },
+        );
+
+        manager.running = true;
+
+        let stats = manager.stats();
+        assert!(stats.enabled);
+        assert!(stats.running);
+        assert_eq!(stats.peer_count, 1);
+        assert_eq!(stats.volatile_entries, 2);
+        assert_eq!(stats.total_peers_known, 3);
+        assert_eq!(stats.banned_peers, 1);
+    }
+
+    // =========================================================================
+    // NatTraversal::discover_nat() tests (network-dependent, use empty/unreachable)
+    // =========================================================================
+
+    #[test]
+    fn test_discover_nat_empty_stun_servers() {
+        // With no STUN servers, discover_nat should still succeed but find nothing
+        let mut nat = NatTraversal::new(P2PConfig {
+            stun_servers: vec![],
+            ..Default::default()
+        });
+        let result = nat.discover_nat();
+        assert!(
+            result.is_ok(),
+            "discover_nat should succeed even with empty STUN list"
+        );
+        let discovery = result.unwrap();
+        assert_eq!(discovery.nat_type, NatType::Unknown);
+        assert!(discovery.public_ip.is_none());
+        assert!(discovery.public_port.is_none());
+    }
+
+    #[test]
+    fn test_discover_nat_populates_result() {
+        // After discover_nat with empty STUN, get_connectable_address should return None
+        // (no public IP discovered)
+        let mut nat = NatTraversal::new(P2PConfig {
+            stun_servers: vec![],
+            ..Default::default()
+        });
+        assert!(
+            nat.get_connectable_address().is_none(),
+            "Before discovery: None"
+        );
+
+        let _ = nat.discover_nat();
+        // After discovery with no STUN servers, still None (no public IP)
+        assert!(
+            nat.get_connectable_address().is_none(),
+            "After discovery with no STUN: still None (no public IP found)"
+        );
+    }
+
+    // =========================================================================
+    // UPnP / NAT-PMP disabled path tests
+    // =========================================================================
+
+    #[test]
+    fn test_upnp_mapping_disabled() {
+        let mut nat = NatTraversal::new(P2PConfig {
+            enable_upnp: false,
+            ..Default::default()
+        });
+        let result = nat.try_upnp_mapping(12345, 12345);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "UPnP disabled");
+    }
+
+    #[test]
+    fn test_nat_pmp_mapping_disabled() {
+        let mut nat = NatTraversal::new(P2PConfig {
+            enable_nat_pmp: false,
+            ..Default::default()
+        });
+        let result = nat.try_nat_pmp_mapping(12345);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "NAT-PMP disabled");
+    }
+
+    // =========================================================================
+    // P2PManager::start() tests
+    // =========================================================================
+
+    #[test]
+    fn test_p2p_manager_start_disabled() {
+        let mut manager = P2PManager::new(P2PConfig {
+            enabled: false,
+            ..Default::default()
+        });
+        let result = manager.start();
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "P2P is disabled");
+        assert!(!manager.running);
+    }
+
+    #[test]
+    fn test_p2p_manager_start_no_bootstrap() {
+        // Start with all network features disabled, empty STUN and bootstrap
+        // This exercises the full start() path without touching the network
+        let mut manager = P2PManager::new(P2PConfig {
+            enabled: true,
+            stun_servers: vec![],
+            bootstrap_nodes: vec![],
+            enable_upnp: false,
+            enable_nat_pmp: false,
+            ..Default::default()
+        });
+
+        let result = manager.start();
+        assert!(
+            result.is_ok(),
+            "start() should succeed with empty config: {:?}",
+            result
+        );
+        assert!(manager.running);
+        assert_eq!(manager.peer_count(), 0, "No bootstrap = no connections");
+
+        // Stats should reflect running state
+        let stats = manager.stats();
+        assert!(stats.running);
+        assert!(stats.enabled);
     }
 }

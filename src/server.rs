@@ -193,8 +193,7 @@ impl AiServer {
                     Ok(stream) => {
                         let assistant = assistant.clone();
                         std::thread::spawn(move || {
-                            if let Err(e) =
-                                handle_connection(stream, &assistant, max_body, timeout)
+                            if let Err(e) = handle_connection(stream, &assistant, max_body, timeout)
                             {
                                 log::debug!("Connection error: {}", e);
                             }
@@ -311,10 +310,7 @@ fn parse_request(stream: &TcpStream, max_body_size: usize) -> std::io::Result<Ht
     })
 }
 
-fn route_request(
-    request: &HttpRequest,
-    assistant: &Arc<Mutex<AiAssistant>>,
-) -> (String, String) {
+fn route_request(request: &HttpRequest, assistant: &Arc<Mutex<AiAssistant>>) -> (String, String) {
     // Handle CORS preflight
     if request.method == "OPTIONS" {
         return ("204 No Content".to_string(), String::new());
@@ -369,10 +365,7 @@ fn handle_list_models(assistant: &Arc<Mutex<AiAssistant>>) -> (String, String) {
     )
 }
 
-fn handle_chat(
-    request: &HttpRequest,
-    assistant: &Arc<Mutex<AiAssistant>>,
-) -> (String, String) {
+fn handle_chat(request: &HttpRequest, assistant: &Arc<Mutex<AiAssistant>>) -> (String, String) {
     let chat_req: ChatRequest = match serde_json::from_str(&request.body) {
         Ok(req) => req,
         Err(e) => {
@@ -413,8 +406,7 @@ fn handle_chat(
             Some(crate::messages::AiResponse::Error(e)) => {
                 return (
                     "500 Internal Server Error".to_string(),
-                    serde_json::to_string(&ErrorResponse { error: e })
-                        .unwrap_or_default(),
+                    serde_json::to_string(&ErrorResponse { error: e }).unwrap_or_default(),
                 );
             }
             Some(crate::messages::AiResponse::Cancelled(partial)) => {

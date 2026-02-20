@@ -40,10 +40,10 @@
 //! }
 //! ```
 
-use std::path::Path;
-use serde::{Deserialize, Serialize};
 use crate::config::{AiConfig, AiProvider};
 use crate::error::{AiError, ConfigError, IoError};
+use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 /// Complete configuration file structure
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -132,11 +132,21 @@ pub struct UrlConfig {
     pub local_ai: String,
 }
 
-fn default_ollama_url() -> String { "http://localhost:11434".to_string() }
-fn default_lm_studio_url() -> String { "http://localhost:1234".to_string() }
-fn default_text_gen_url() -> String { "http://localhost:5000".to_string() }
-fn default_kobold_url() -> String { "http://localhost:5001".to_string() }
-fn default_local_ai_url() -> String { "http://localhost:8080".to_string() }
+fn default_ollama_url() -> String {
+    "http://localhost:11434".to_string()
+}
+fn default_lm_studio_url() -> String {
+    "http://localhost:1234".to_string()
+}
+fn default_text_gen_url() -> String {
+    "http://localhost:5000".to_string()
+}
+fn default_kobold_url() -> String {
+    "http://localhost:5001".to_string()
+}
+fn default_local_ai_url() -> String {
+    "http://localhost:8080".to_string()
+}
 
 impl Default for UrlConfig {
     fn default() -> Self {
@@ -182,8 +192,12 @@ pub struct GenerationConfig {
     pub stop_sequences: Vec<String>,
 }
 
-fn default_temperature() -> f32 { 0.7 }
-fn default_max_history() -> usize { 20 }
+fn default_temperature() -> f32 {
+    0.7
+}
+fn default_max_history() -> usize {
+    20
+}
 
 impl Default for GenerationConfig {
     fn default() -> Self {
@@ -239,10 +253,18 @@ pub struct RagFileConfig {
     pub hybrid: Option<HybridConfig>,
 }
 
-fn default_knowledge_tokens() -> usize { 2000 }
-fn default_conversation_tokens() -> usize { 1500 }
-fn default_top_k() -> usize { 5 }
-fn default_min_relevance() -> f32 { 0.1 }
+fn default_knowledge_tokens() -> usize {
+    2000
+}
+fn default_conversation_tokens() -> usize {
+    1500
+}
+fn default_top_k() -> usize {
+    5
+}
+fn default_min_relevance() -> f32 {
+    0.1
+}
 
 impl Default for RagFileConfig {
     fn default() -> Self {
@@ -276,8 +298,12 @@ pub struct HybridConfig {
     pub semantic_weight: f32,
 }
 
-fn default_bm25_weight() -> f32 { 0.6 }
-fn default_semantic_weight() -> f32 { 0.4 }
+fn default_bm25_weight() -> f32 {
+    0.6
+}
+fn default_semantic_weight() -> f32 {
+    0.4
+}
 
 impl Default for HybridConfig {
     fn default() -> Self {
@@ -309,8 +335,12 @@ pub struct SecurityConfig {
     pub audit_logging: bool,
 }
 
-fn default_rate_limit() -> u32 { 60 }
-fn default_true() -> bool { true }
+fn default_rate_limit() -> u32 {
+    60
+}
+fn default_true() -> bool {
+    true
+}
 
 impl Default for SecurityConfig {
     fn default() -> Self {
@@ -347,9 +377,15 @@ pub struct CacheConfig {
     pub similarity_threshold: f32,
 }
 
-fn default_cache_size() -> usize { 100 }
-fn default_cache_ttl() -> u64 { 3600 }
-fn default_similarity_threshold() -> f32 { 0.95 }
+fn default_cache_size() -> usize {
+    100
+}
+fn default_cache_ttl() -> u64 {
+    3600
+}
+fn default_similarity_threshold() -> f32 {
+    0.95
+}
 
 impl Default for CacheConfig {
     fn default() -> Self {
@@ -379,7 +415,9 @@ pub struct LoggingConfig {
     pub metrics: bool,
 }
 
-fn default_log_level() -> String { "info".to_string() }
+fn default_log_level() -> String {
+    "info".to_string()
+}
 
 impl Default for LoggingConfig {
     fn default() -> Self {
@@ -427,9 +465,9 @@ impl ConfigFormat {
                 let between = &trimmed[1..end_bracket];
                 // TOML section names are simple identifiers (letters, numbers, underscore, dash, dot)
                 // JSON arrays contain values, quotes, or commas
-                let is_toml_section = between.chars().all(|c| {
-                    c.is_alphanumeric() || c == '_' || c == '-' || c == '.' || c == ' '
-                });
+                let is_toml_section = between
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.' || c == ' ');
                 if is_toml_section && !between.contains(',') && !between.contains('"') {
                     return ConfigFormat::Toml;
                 }
@@ -452,8 +490,8 @@ impl ConfigFile {
         let content = std::fs::read_to_string(path)
             .map_err(|e| IoError::with_path("read", path.display().to_string(), e.to_string()))?;
 
-        let format = ConfigFormat::from_path(path)
-            .unwrap_or_else(|| ConfigFormat::from_content(&content));
+        let format =
+            ConfigFormat::from_path(path).unwrap_or_else(|| ConfigFormat::from_content(&content));
 
         Self::parse(&content, format)
     }
@@ -465,14 +503,13 @@ impl ConfigFile {
                 // Simple TOML parser (basic implementation without toml crate)
                 Self::parse_toml(content)
             }
-            ConfigFormat::Json => {
-                serde_json::from_str(content).map_err(|e| {
-                    ConfigError::LoadFailed {
-                        path: "<string>".to_string(),
-                        reason: e.to_string(),
-                    }.into()
-                })
-            }
+            ConfigFormat::Json => serde_json::from_str(content).map_err(|e| {
+                ConfigError::LoadFailed {
+                    path: "<string>".to_string(),
+                    reason: e.to_string(),
+                }
+                .into()
+            }),
         }
     }
 
@@ -491,14 +528,13 @@ impl ConfigFile {
     pub fn serialize(&self, format: ConfigFormat) -> Result<String, AiError> {
         match format {
             ConfigFormat::Toml => Ok(self.to_toml()),
-            ConfigFormat::Json => {
-                serde_json::to_string_pretty(self).map_err(|e| {
-                    ConfigError::SaveFailed {
-                        path: "<string>".to_string(),
-                        reason: e.to_string(),
-                    }.into()
-                })
-            }
+            ConfigFormat::Json => serde_json::to_string_pretty(self).map_err(|e| {
+                ConfigError::SaveFailed {
+                    path: "<string>".to_string(),
+                    reason: e.to_string(),
+                }
+                .into()
+            }),
         }
     }
 
@@ -510,13 +546,21 @@ impl ConfigFile {
             "textgenwebui" | "text_gen_webui" => AiProvider::TextGenWebUI,
             "kobold" | "koboldcpp" => AiProvider::KoboldCpp,
             "localai" | "local_ai" => AiProvider::LocalAI,
-            "openai_compatible" => {
-                AiProvider::OpenAICompatible {
-                    base_url: self.provider.custom_url.clone().unwrap_or_default(),
-                }
-            }
+            "openai_compatible" => AiProvider::OpenAICompatible {
+                base_url: self.provider.custom_url.clone().unwrap_or_default(),
+            },
             "openai" => AiProvider::OpenAI,
             "anthropic" => AiProvider::Anthropic,
+            "gemini" | "google" => AiProvider::Gemini,
+            s if s.starts_with("bedrock") => {
+                let region = self
+                    .provider
+                    .custom_url
+                    .as_deref()
+                    .unwrap_or("us-east-1")
+                    .to_string();
+                AiProvider::Bedrock { region }
+            }
             _ => AiProvider::Ollama,
         };
 
@@ -549,6 +593,8 @@ impl ConfigFile {
             }
             AiProvider::OpenAI => ("openai".to_string(), None),
             AiProvider::Anthropic => ("anthropic".to_string(), None),
+            AiProvider::Gemini => ("gemini".to_string(), None),
+            AiProvider::Bedrock { ref region } => ("bedrock".to_string(), Some(region.clone())),
         };
 
         Self {
@@ -589,93 +635,97 @@ impl ConfigFile {
 
             // Section header
             if line.starts_with('[') && line.ends_with(']') {
-                current_section = line[1..line.len()-1].to_string();
+                current_section = line[1..line.len() - 1].to_string();
                 continue;
             }
 
             // Key-value pair
             if let Some(eq_pos) = line.find('=') {
                 let key = line[..eq_pos].trim();
-                let value = line[eq_pos+1..].trim();
+                let value = line[eq_pos + 1..].trim();
                 let value = Self::parse_toml_value(value);
 
                 match current_section.as_str() {
-                    "provider" => {
-                        match key {
-                            "type" => config.provider.provider_type = value,
-                            "model" => config.provider.model = value,
-                            "custom_url" => config.provider.custom_url = Some(value),
-                            "api_key" => config.provider.api_key = Some(value),
-                            _ => {}
+                    "provider" => match key {
+                        "type" => config.provider.provider_type = value,
+                        "model" => config.provider.model = value,
+                        "custom_url" => config.provider.custom_url = Some(value),
+                        "api_key" => config.provider.api_key = Some(value),
+                        _ => {}
+                    },
+                    "urls" => match key {
+                        "ollama" => config.urls.ollama = value,
+                        "lm_studio" => config.urls.lm_studio = value,
+                        "text_gen_webui" => config.urls.text_gen_webui = value,
+                        "kobold" => config.urls.kobold = value,
+                        "local_ai" => config.urls.local_ai = value,
+                        _ => {}
+                    },
+                    "generation" => match key {
+                        "temperature" => {
+                            config.generation.temperature = value.parse().unwrap_or(0.7)
                         }
-                    }
-                    "urls" => {
-                        match key {
-                            "ollama" => config.urls.ollama = value,
-                            "lm_studio" => config.urls.lm_studio = value,
-                            "text_gen_webui" => config.urls.text_gen_webui = value,
-                            "kobold" => config.urls.kobold = value,
-                            "local_ai" => config.urls.local_ai = value,
-                            _ => {}
+                        "max_history" => {
+                            config.generation.max_history = value.parse().unwrap_or(20)
                         }
-                    }
-                    "generation" => {
-                        match key {
-                            "temperature" => config.generation.temperature = value.parse().unwrap_or(0.7),
-                            "max_history" => config.generation.max_history = value.parse().unwrap_or(20),
-                            "top_p" => config.generation.top_p = value.parse().ok(),
-                            "top_k" => config.generation.top_k = value.parse().ok(),
-                            "repeat_penalty" => config.generation.repeat_penalty = value.parse().ok(),
-                            "max_tokens" => config.generation.max_tokens = value.parse().ok(),
-                            _ => {}
+                        "top_p" => config.generation.top_p = value.parse().ok(),
+                        "top_k" => config.generation.top_k = value.parse().ok(),
+                        "repeat_penalty" => config.generation.repeat_penalty = value.parse().ok(),
+                        "max_tokens" => config.generation.max_tokens = value.parse().ok(),
+                        _ => {}
+                    },
+                    "rag" => match key {
+                        "knowledge_enabled" | "enabled" => {
+                            config.rag.knowledge_enabled = value == "true"
                         }
-                    }
-                    "rag" => {
-                        match key {
-                            "knowledge_enabled" | "enabled" => config.rag.knowledge_enabled = value == "true",
-                            "conversation_enabled" => config.rag.conversation_enabled = value == "true",
-                            "knowledge_tokens" => config.rag.knowledge_tokens = value.parse().unwrap_or(2000),
-                            "conversation_tokens" => config.rag.conversation_tokens = value.parse().unwrap_or(1500),
-                            "top_k" => config.rag.top_k = value.parse().unwrap_or(5),
-                            "min_relevance" => config.rag.min_relevance = value.parse().unwrap_or(0.1),
-                            "append_only" => config.rag.append_only = value == "true",
-                            "database_path" => config.rag.database_path = Some(value),
-                            _ => {}
+                        "conversation_enabled" => config.rag.conversation_enabled = value == "true",
+                        "knowledge_tokens" => {
+                            config.rag.knowledge_tokens = value.parse().unwrap_or(2000)
                         }
-                    }
-                    "security" => {
-                        match key {
-                            "rate_limit_enabled" => config.security.rate_limit_enabled = value == "true",
-                            "requests_per_minute" => config.security.requests_per_minute = value.parse().unwrap_or(60),
-                            "sanitize_input" => config.security.sanitize_input = value == "true",
-                            "audit_logging" => config.security.audit_logging = value == "true",
-                            _ => {}
+                        "conversation_tokens" => {
+                            config.rag.conversation_tokens = value.parse().unwrap_or(1500)
                         }
-                    }
-                    "cache" => {
-                        match key {
-                            "enabled" => config.cache.enabled = value == "true",
-                            "max_entries" => config.cache.max_entries = value.parse().unwrap_or(100),
-                            "ttl_seconds" => config.cache.ttl_seconds = value.parse().unwrap_or(3600),
-                            "semantic_enabled" => config.cache.semantic_enabled = value == "true",
-                            "similarity_threshold" => config.cache.similarity_threshold = value.parse().unwrap_or(0.95),
-                            _ => {}
+                        "top_k" => config.rag.top_k = value.parse().unwrap_or(5),
+                        "min_relevance" => config.rag.min_relevance = value.parse().unwrap_or(0.1),
+                        "append_only" => config.rag.append_only = value == "true",
+                        "database_path" => config.rag.database_path = Some(value),
+                        _ => {}
+                    },
+                    "security" => match key {
+                        "rate_limit_enabled" => {
+                            config.security.rate_limit_enabled = value == "true"
                         }
-                    }
-                    "logging" => {
-                        match key {
-                            "level" => config.logging.level = value,
-                            "file" => config.logging.file = Some(value),
-                            "metrics" => config.logging.metrics = value == "true",
-                            _ => {}
+                        "requests_per_minute" => {
+                            config.security.requests_per_minute = value.parse().unwrap_or(60)
                         }
-                    }
+                        "sanitize_input" => config.security.sanitize_input = value == "true",
+                        "audit_logging" => config.security.audit_logging = value == "true",
+                        _ => {}
+                    },
+                    "cache" => match key {
+                        "enabled" => config.cache.enabled = value == "true",
+                        "max_entries" => config.cache.max_entries = value.parse().unwrap_or(100),
+                        "ttl_seconds" => config.cache.ttl_seconds = value.parse().unwrap_or(3600),
+                        "semantic_enabled" => config.cache.semantic_enabled = value == "true",
+                        "similarity_threshold" => {
+                            config.cache.similarity_threshold = value.parse().unwrap_or(0.95)
+                        }
+                        _ => {}
+                    },
+                    "logging" => match key {
+                        "level" => config.logging.level = value,
+                        "file" => config.logging.file = Some(value),
+                        "metrics" => config.logging.metrics = value == "true",
+                        _ => {}
+                    },
                     "rag.hybrid" | "hybrid" => {
                         let hybrid = config.rag.hybrid.get_or_insert_with(HybridConfig::default);
                         match key {
                             "semantic_enabled" => hybrid.semantic_enabled = value == "true",
                             "bm25_weight" => hybrid.bm25_weight = value.parse().unwrap_or(0.6),
-                            "semantic_weight" => hybrid.semantic_weight = value.parse().unwrap_or(0.4),
+                            "semantic_weight" => {
+                                hybrid.semantic_weight = value.parse().unwrap_or(0.4)
+                            }
                             _ => {}
                         }
                     }
@@ -693,7 +743,7 @@ impl ConfigFile {
         if (value.starts_with('"') && value.ends_with('"'))
             || (value.starts_with('\'') && value.ends_with('\''))
         {
-            value[1..value.len()-1].to_string()
+            value[1..value.len() - 1].to_string()
         } else {
             value.to_string()
         }
@@ -718,7 +768,10 @@ impl ConfigFile {
         out.push_str("[urls]\n");
         out.push_str(&format!("ollama = \"{}\"\n", self.urls.ollama));
         out.push_str(&format!("lm_studio = \"{}\"\n", self.urls.lm_studio));
-        out.push_str(&format!("text_gen_webui = \"{}\"\n", self.urls.text_gen_webui));
+        out.push_str(&format!(
+            "text_gen_webui = \"{}\"\n",
+            self.urls.text_gen_webui
+        ));
         out.push_str(&format!("kobold = \"{}\"\n", self.urls.kobold));
         out.push_str(&format!("local_ai = \"{}\"\n", self.urls.local_ai));
         out.push('\n');
@@ -735,10 +788,22 @@ impl ConfigFile {
         out.push('\n');
 
         out.push_str("[rag]\n");
-        out.push_str(&format!("knowledge_enabled = {}\n", self.rag.knowledge_enabled));
-        out.push_str(&format!("conversation_enabled = {}\n", self.rag.conversation_enabled));
-        out.push_str(&format!("knowledge_tokens = {}\n", self.rag.knowledge_tokens));
-        out.push_str(&format!("conversation_tokens = {}\n", self.rag.conversation_tokens));
+        out.push_str(&format!(
+            "knowledge_enabled = {}\n",
+            self.rag.knowledge_enabled
+        ));
+        out.push_str(&format!(
+            "conversation_enabled = {}\n",
+            self.rag.conversation_enabled
+        ));
+        out.push_str(&format!(
+            "knowledge_tokens = {}\n",
+            self.rag.knowledge_tokens
+        ));
+        out.push_str(&format!(
+            "conversation_tokens = {}\n",
+            self.rag.conversation_tokens
+        ));
         out.push_str(&format!("top_k = {}\n", self.rag.top_k));
         out.push_str(&format!("min_relevance = {}\n", self.rag.min_relevance));
         out.push_str(&format!("append_only = {}\n", self.rag.append_only));
@@ -756,18 +821,36 @@ impl ConfigFile {
         }
 
         out.push_str("[security]\n");
-        out.push_str(&format!("rate_limit_enabled = {}\n", self.security.rate_limit_enabled));
-        out.push_str(&format!("requests_per_minute = {}\n", self.security.requests_per_minute));
-        out.push_str(&format!("sanitize_input = {}\n", self.security.sanitize_input));
-        out.push_str(&format!("audit_logging = {}\n", self.security.audit_logging));
+        out.push_str(&format!(
+            "rate_limit_enabled = {}\n",
+            self.security.rate_limit_enabled
+        ));
+        out.push_str(&format!(
+            "requests_per_minute = {}\n",
+            self.security.requests_per_minute
+        ));
+        out.push_str(&format!(
+            "sanitize_input = {}\n",
+            self.security.sanitize_input
+        ));
+        out.push_str(&format!(
+            "audit_logging = {}\n",
+            self.security.audit_logging
+        ));
         out.push('\n');
 
         out.push_str("[cache]\n");
         out.push_str(&format!("enabled = {}\n", self.cache.enabled));
         out.push_str(&format!("max_entries = {}\n", self.cache.max_entries));
         out.push_str(&format!("ttl_seconds = {}\n", self.cache.ttl_seconds));
-        out.push_str(&format!("semantic_enabled = {}\n", self.cache.semantic_enabled));
-        out.push_str(&format!("similarity_threshold = {}\n", self.cache.similarity_threshold));
+        out.push_str(&format!(
+            "semantic_enabled = {}\n",
+            self.cache.semantic_enabled
+        ));
+        out.push_str(&format!(
+            "similarity_threshold = {}\n",
+            self.cache.similarity_threshold
+        ));
         out.push('\n');
 
         out.push_str("[logging]\n");
@@ -788,7 +871,8 @@ impl ConfigFile {
                 field: "generation.temperature".to_string(),
                 value: self.generation.temperature.to_string(),
                 expected: "0.0 to 2.0".to_string(),
-            }.into());
+            }
+            .into());
         }
 
         // Validate RAG weights
@@ -799,7 +883,8 @@ impl ConfigFile {
                     field: "rag.hybrid.bm25_weight + semantic_weight".to_string(),
                     value: sum.to_string(),
                     expected: "weights should sum to 1.0".to_string(),
-                }.into());
+                }
+                .into());
             }
         }
 
@@ -840,13 +925,20 @@ mod platform_dirs {
         }
         #[cfg(target_os = "macos")]
         {
-            std::env::var("HOME").ok().map(|h| PathBuf::from(h).join("Library/Application Support"))
+            std::env::var("HOME")
+                .ok()
+                .map(|h| PathBuf::from(h).join("Library/Application Support"))
         }
         #[cfg(target_os = "linux")]
         {
-            std::env::var("XDG_CONFIG_HOME").ok()
+            std::env::var("XDG_CONFIG_HOME")
+                .ok()
                 .map(PathBuf::from)
-                .or_else(|| std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".config")))
+                .or_else(|| {
+                    std::env::var("HOME")
+                        .ok()
+                        .map(|h| PathBuf::from(h).join(".config"))
+                })
         }
         #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
         {
@@ -923,7 +1015,13 @@ knowledge_enabled = true
 
     #[test]
     fn test_format_detection() {
-        assert_eq!(ConfigFormat::from_content("{\"key\": \"value\"}"), ConfigFormat::Json);
-        assert_eq!(ConfigFormat::from_content("[section]\nkey = \"value\""), ConfigFormat::Toml);
+        assert_eq!(
+            ConfigFormat::from_content("{\"key\": \"value\"}"),
+            ConfigFormat::Json
+        );
+        assert_eq!(
+            ConfigFormat::from_content("[section]\nkey = \"value\""),
+            ConfigFormat::Toml
+        );
     }
 }

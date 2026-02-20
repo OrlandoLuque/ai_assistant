@@ -1,0 +1,26 @@
+{
+  "name": "ai-assistant-wasm",
+  "version": "0.1.0",
+  "description": "WASM bindings for ai_assistant — React-style hooks for chat, completion, and agent UIs",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lander/ai_assistant"
+  },
+  "files": [
+    "pkg/"
+  ],
+  "scripts": {
+    "build": "wasm-pack build --target web --out-dir pkg --features wasm",
+    "build:bundler": "wasm-pack build --target bundler --out-dir pkg --features wasm",
+    "build:nodejs": "wasm-pack build --target nodejs --out-dir pkg --features wasm"
+  },
+  "keywords": [
+    "ai",
+    "llm",
+    "wasm",
+    "assistant",
+    "rust",
+    "hooks"
+  ]
+}

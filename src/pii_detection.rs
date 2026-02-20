@@ -10,8 +10,8 @@
 //! - **Configurable redaction**: Replace, mask, or hash PII
 //! - **Audit logging**: Track what was redacted
 
-use std::collections::HashMap;
 use regex::Regex;
+use std::collections::HashMap;
 
 /// Configuration for PII detection
 #[derive(Debug, Clone)]
@@ -200,7 +200,8 @@ impl PiiDetector {
         // Phone patterns (various formats)
         self.patterns.insert(
             PiiType::Phone,
-            Regex::new(r"(?:\+?1[-.\s]?)?\(?[0-9]{3}\)?[-.\s]?[0-9]{3}[-.\s]?[0-9]{4}").expect("valid regex"),
+            Regex::new(r"(?:\+?1[-.\s]?)?\(?[0-9]{3}\)?[-.\s]?[0-9]{3}[-.\s]?[0-9]{4}")
+                .expect("valid regex"),
         );
 
         // SSN pattern
@@ -224,16 +225,37 @@ impl PiiDetector {
         // Date of birth patterns
         self.patterns.insert(
             PiiType::DateOfBirth,
-            Regex::new(r"\b(?:0[1-9]|1[0-2])[/-](?:0[1-9]|[12]\d|3[01])[/-](?:19|20)\d{2}\b").expect("valid regex"),
+            Regex::new(r"\b(?:0[1-9]|1[0-2])[/-](?:0[1-9]|[12]\d|3[01])[/-](?:19|20)\d{2}\b")
+                .expect("valid regex"),
         );
     }
 
     fn load_common_names(&mut self) {
         // Common first names for name detection
         let names = [
-            "james", "john", "robert", "michael", "william", "david", "richard", "joseph",
-            "thomas", "charles", "mary", "patricia", "jennifer", "linda", "elizabeth",
-            "barbara", "susan", "jessica", "sarah", "karen", "alice", "bob", "charlie",
+            "james",
+            "john",
+            "robert",
+            "michael",
+            "william",
+            "david",
+            "richard",
+            "joseph",
+            "thomas",
+            "charles",
+            "mary",
+            "patricia",
+            "jennifer",
+            "linda",
+            "elizabeth",
+            "barbara",
+            "susan",
+            "jessica",
+            "sarah",
+            "karen",
+            "alice",
+            "bob",
+            "charlie",
         ];
         self.common_names = names.iter().map(|s| s.to_string()).collect();
     }
@@ -317,7 +339,9 @@ impl PiiDetector {
         let mut detections = Vec::new();
 
         // Look for "Mr.", "Mrs.", "Ms.", "Dr." patterns
-        let title_pattern = Regex::new(r"\b(?:Mr|Mrs|Ms|Dr|Miss)\.?\s+([A-Z][a-z]+)(?:\s+([A-Z][a-z]+))?").expect("valid regex");
+        let title_pattern =
+            Regex::new(r"\b(?:Mr|Mrs|Ms|Dr|Miss)\.?\s+([A-Z][a-z]+)(?:\s+([A-Z][a-z]+))?")
+                .expect("valid regex");
 
         for cap in title_pattern.captures_iter(text) {
             let full_match = cap.get(0).expect("capture group 0");
@@ -343,7 +367,12 @@ impl PiiDetector {
                 if self.common_names.contains(&word_clean.to_string()) {
                     // Check if next word is also capitalized (potential last name)
                     if let Some(next) = words.get(i + 1) {
-                        if next.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                        if next
+                            .chars()
+                            .next()
+                            .map(|c| c.is_uppercase())
+                            .unwrap_or(false)
+                        {
                             if let Some(start) = text.find(*word) {
                                 let full_name = format!("{} {}", word, next);
                                 let end = start + full_name.len();
@@ -371,7 +400,10 @@ impl PiiDetector {
         match pii_type {
             PiiType::Email => {
                 // Higher confidence for common email domains
-                if value.contains("@gmail.com") || value.contains("@yahoo.com") || value.contains("@hotmail.com") {
+                if value.contains("@gmail.com")
+                    || value.contains("@yahoo.com")
+                    || value.contains("@hotmail.com")
+                {
                     0.95
                 } else {
                     0.85
@@ -408,10 +440,12 @@ impl PiiDetector {
                 // Validate octets
                 let parts: Vec<_> = value.split('.').collect();
                 if parts.len() == 4 {
-                    let valid = parts.iter().all(|p| {
-                        p.parse::<u8>().is_ok()
-                    });
-                    if valid { 0.9 } else { 0.3 }
+                    let valid = parts.iter().all(|p| p.parse::<u8>().is_ok());
+                    if valid {
+                        0.9
+                    } else {
+                        0.3
+                    }
                 } else {
                     0.3
                 }
@@ -427,14 +461,23 @@ impl PiiDetector {
             return false;
         }
 
-        let checksum: u32 = digits.iter().rev().enumerate().map(|(i, &d)| {
-            if i % 2 == 1 {
-                let doubled = d * 2;
-                if doubled > 9 { doubled - 9 } else { doubled }
-            } else {
-                d
-            }
-        }).sum();
+        let checksum: u32 = digits
+            .iter()
+            .rev()
+            .enumerate()
+            .map(|(i, &d)| {
+                if i % 2 == 1 {
+                    let doubled = d * 2;
+                    if doubled > 9 {
+                        doubled - 9
+                    } else {
+                        doubled
+                    }
+                } else {
+                    d
+                }
+            })
+            .sum();
 
         checksum % 10 == 0
     }
@@ -466,7 +509,8 @@ impl PiiDetector {
             "*".repeat(len)
         } else {
             let show = (len / 4).max(1);
-            format!("{}{}{}",
+            format!(
+                "{}{}{}",
                 &value[..show],
                 "*".repeat(len - show * 2),
                 &value[len - show..]
@@ -554,7 +598,10 @@ mod tests {
         let result = detector.detect("Contact me at john@example.com");
 
         assert!(result.has_pii);
-        assert!(result.detections.iter().any(|d| d.pii_type == PiiType::Email));
+        assert!(result
+            .detections
+            .iter()
+            .any(|d| d.pii_type == PiiType::Email));
     }
 
     #[test]
@@ -563,7 +610,10 @@ mod tests {
         let result = detector.detect("Call me at 555-123-4567");
 
         assert!(result.has_pii);
-        assert!(result.detections.iter().any(|d| d.pii_type == PiiType::Phone));
+        assert!(result
+            .detections
+            .iter()
+            .any(|d| d.pii_type == PiiType::Phone));
     }
 
     #[test]

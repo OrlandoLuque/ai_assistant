@@ -191,7 +191,12 @@ impl ConversationAnalytics {
     }
 
     /// Track conversation start
-    pub fn track_conversation_start(&mut self, session_id: &str, user_id: Option<&str>, model: &str) {
+    pub fn track_conversation_start(
+        &mut self,
+        session_id: &str,
+        user_id: Option<&str>,
+        model: &str,
+    ) {
         let mut data = HashMap::new();
         data.insert("model".to_string(), EventValue::String(model.to_string()));
 
@@ -219,14 +224,21 @@ impl ConversationAnalytics {
         let mut data = HashMap::new();
         data.insert("tokens".to_string(), EventValue::Int(tokens as i64));
         data.insert("is_user".to_string(), EventValue::Bool(is_user));
-        data.insert("message_length".to_string(), EventValue::Int(message.len() as i64));
+        data.insert(
+            "message_length".to_string(),
+            EventValue::Int(message.len() as i64),
+        );
 
         if let Some(rt) = response_time {
             data.insert("response_time".to_string(), EventValue::Duration(rt));
         }
 
         self.track(AnalyticsEvent {
-            event_type: if is_user { EventType::MessageSent } else { EventType::ResponseReceived },
+            event_type: if is_user {
+                EventType::MessageSent
+            } else {
+                EventType::ResponseReceived
+            },
             timestamp: SystemTime::now(),
             session_id: Some(session_id.to_string()),
             user_id: user_id.map(|s| s.to_string()),
@@ -288,13 +300,17 @@ impl ConversationAnalytics {
                 }
 
                 if let Some(model) = &event.model {
-                    *self.aggregated.model_usage.entry(model.clone()).or_insert(0) += 1;
+                    *self
+                        .aggregated
+                        .model_usage
+                        .entry(model.clone())
+                        .or_insert(0) += 1;
                 }
             }
             EventType::Error => {
                 self.aggregated.total_errors += 1;
-                self.aggregated.error_rate =
-                    self.aggregated.total_errors as f64 / self.aggregated.total_messages.max(1) as f64;
+                self.aggregated.error_rate = self.aggregated.total_errors as f64
+                    / self.aggregated.total_messages.max(1) as f64;
             }
             _ => {}
         }
@@ -351,7 +367,11 @@ impl ConversationAnalytics {
         let top_models: Vec<_> = {
             let mut models: Vec<_> = self.aggregated.model_usage.iter().collect();
             models.sort_by(|a, b| b.1.cmp(a.1));
-            models.into_iter().take(5).map(|(k, v)| (k.clone(), *v)).collect()
+            models
+                .into_iter()
+                .take(5)
+                .map(|(k, v)| (k.clone(), *v))
+                .collect()
         };
 
         AnalyticsReport {
@@ -370,15 +390,19 @@ impl ConversationAnalytics {
 
     /// Export events as JSON-like structure
     pub fn export_events(&self) -> Vec<ExportedEvent> {
-        self.events.iter().map(|e| ExportedEvent {
-            event_type: format!("{:?}", e.event_type),
-            timestamp: e.timestamp
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0),
-            session_id: e.session_id.clone(),
-            model: e.model.clone(),
-        }).collect()
+        self.events
+            .iter()
+            .map(|e| ExportedEvent {
+                event_type: format!("{:?}", e.event_type),
+                timestamp: e
+                    .timestamp
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0),
+                session_id: e.session_id.clone(),
+                model: e.model.clone(),
+            })
+            .collect()
     }
 
     /// Clear all data
@@ -436,7 +460,9 @@ pub struct AnalyticsConfigBuilder {
 
 impl AnalyticsConfigBuilder {
     pub fn new() -> Self {
-        Self { config: AnalyticsConfig::default() }
+        Self {
+            config: AnalyticsConfig::default(),
+        }
     }
 
     pub fn detailed_tracking(mut self, enabled: bool) -> Self {
@@ -485,15 +511,7 @@ mod tests {
         let mut analytics = ConversationAnalytics::default();
 
         analytics.track_conversation_start("session1", Some("user1"), "gpt-4");
-        analytics.track_message(
-            "session1",
-            Some("user1"),
-            "gpt-4",
-            "Hello",
-            true,
-            10,
-            None,
-        );
+        analytics.track_message("session1", Some("user1"), "gpt-4", "Hello", true, 10, None);
         analytics.track_message(
             "session1",
             Some("user1"),

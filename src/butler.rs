@@ -134,8 +134,8 @@ pub struct OllamaDetector {
 
 impl OllamaDetector {
     pub fn new() -> Self {
-        let base_url = std::env::var("OLLAMA_HOST")
-            .unwrap_or_else(|_| "http://localhost:11434".to_string());
+        let base_url =
+            std::env::var("OLLAMA_HOST").unwrap_or_else(|_| "http://localhost:11434".to_string());
         Self { base_url }
     }
 }
@@ -181,7 +181,10 @@ impl ResourceDetector for OllamaDetector {
                 details: {
                     let mut d = HashMap::new();
                     d.insert("url".to_string(), self.base_url.clone());
-                    d.insert("error".to_string(), "Connection refused or timeout".to_string());
+                    d.insert(
+                        "error".to_string(),
+                        "Connection refused or timeout".to_string(),
+                    );
                     d
                 },
                 suggested_config: None,
@@ -197,8 +200,8 @@ pub struct LmStudioDetector {
 
 impl LmStudioDetector {
     pub fn new() -> Self {
-        let base_url = std::env::var("LM_STUDIO_URL")
-            .unwrap_or_else(|_| "http://localhost:1234".to_string());
+        let base_url =
+            std::env::var("LM_STUDIO_URL").unwrap_or_else(|_| "http://localhost:1234".to_string());
         Self { base_url }
     }
 }
@@ -244,7 +247,10 @@ impl ResourceDetector for LmStudioDetector {
                 details: {
                     let mut d = HashMap::new();
                     d.insert("url".to_string(), self.base_url.clone());
-                    d.insert("error".to_string(), "Connection refused or timeout".to_string());
+                    d.insert(
+                        "error".to_string(),
+                        "Connection refused or timeout".to_string(),
+                    );
                     d
                 },
                 suggested_config: None,
@@ -405,7 +411,11 @@ impl ResourceDetector for DockerDetector {
                     details.insert("has_dockerfile".to_string(), "true".to_string());
                 }
 
-                DetectionResult { detected: true, details, suggested_config: None }
+                DetectionResult {
+                    detected: true,
+                    details,
+                    suggested_config: None,
+                }
             }
             Ok(output) => {
                 // docker exists but daemon not running
@@ -414,11 +424,19 @@ impl ResourceDetector for DockerDetector {
                     details.insert("docker_installed".to_string(), "true".to_string());
                     details.insert("daemon_running".to_string(), "false".to_string());
                 }
-                DetectionResult { detected: false, details, suggested_config: None }
+                DetectionResult {
+                    detected: false,
+                    details,
+                    suggested_config: None,
+                }
             }
             Err(_) => {
                 // docker not installed
-                DetectionResult { detected: false, details, suggested_config: None }
+                DetectionResult {
+                    detected: false,
+                    details,
+                    suggested_config: None,
+                }
             }
         }
     }
@@ -450,7 +468,11 @@ impl ResourceDetector for GpuDetector {
                     if let Some(first) = gpus.first() {
                         details.insert("gpu_info".to_string(), first.to_string());
                     }
-                    return DetectionResult { detected: true, details, suggested_config: None };
+                    return DetectionResult {
+                        detected: true,
+                        details,
+                        suggested_config: None,
+                    };
                 }
                 _ => {}
             }
@@ -459,7 +481,11 @@ impl ResourceDetector for GpuDetector {
         // Check CUDA env vars as fallback
         if std::env::var("CUDA_VISIBLE_DEVICES").is_ok() || std::env::var("CUDA_HOME").is_ok() {
             details.insert("gpu_type".to_string(), "nvidia (env vars only)".to_string());
-            return DetectionResult { detected: true, details, suggested_config: None };
+            return DetectionResult {
+                detected: true,
+                details,
+                suggested_config: None,
+            };
         }
 
         // macOS: check for Apple Silicon
@@ -474,14 +500,22 @@ impl ResourceDetector for GpuDetector {
                     if cpu.contains("Apple") {
                         details.insert("gpu_type".to_string(), "apple_silicon".to_string());
                         details.insert("gpu_info".to_string(), cpu.trim().to_string());
-                        return DetectionResult { detected: true, details, suggested_config: None };
+                        return DetectionResult {
+                            detected: true,
+                            details,
+                            suggested_config: None,
+                        };
                     }
                 }
                 _ => {}
             }
         }
 
-        DetectionResult { detected: false, details, suggested_config: None }
+        DetectionResult {
+            detected: false,
+            details,
+            suggested_config: None,
+        }
     }
 }
 
@@ -503,7 +537,11 @@ impl ResourceDetector for BrowserDetector {
                 if p.exists() {
                     details.insert("browser_path".to_string(), path);
                     details.insert("source".to_string(), format!("${}", var));
-                    return DetectionResult { detected: true, details, suggested_config: None };
+                    return DetectionResult {
+                        detected: true,
+                        details,
+                        suggested_config: None,
+                    };
                 }
             }
         }
@@ -511,35 +549,51 @@ impl ResourceDetector for BrowserDetector {
         // Check common installation paths
         let candidates: Vec<&str> = {
             #[cfg(target_os = "windows")]
-            { vec![
-                r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-                r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-            ] }
+            {
+                vec![
+                    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+                ]
+            }
             #[cfg(target_os = "macos")]
-            { vec![
-                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-                "/Applications/Chromium.app/Contents/MacOS/Chromium",
-            ] }
+            {
+                vec![
+                    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+                ]
+            }
             #[cfg(target_os = "linux")]
-            { vec![
-                "/usr/bin/google-chrome",
-                "/usr/bin/google-chrome-stable",
-                "/usr/bin/chromium-browser",
-                "/usr/bin/chromium",
-            ] }
+            {
+                vec![
+                    "/usr/bin/google-chrome",
+                    "/usr/bin/google-chrome-stable",
+                    "/usr/bin/chromium-browser",
+                    "/usr/bin/chromium",
+                ]
+            }
             #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-            { vec![] }
+            {
+                vec![]
+            }
         };
 
         for candidate in candidates {
             if std::path::Path::new(candidate).exists() {
                 details.insert("browser_path".to_string(), candidate.to_string());
                 details.insert("source".to_string(), "system path".to_string());
-                return DetectionResult { detected: true, details, suggested_config: None };
+                return DetectionResult {
+                    detected: true,
+                    details,
+                    suggested_config: None,
+                };
             }
         }
 
-        DetectionResult { detected: false, details, suggested_config: None }
+        DetectionResult {
+            detected: false,
+            details,
+            suggested_config: None,
+        }
     }
 }
 
@@ -555,7 +609,14 @@ impl ResourceDetector for NetworkDetector {
         let mut details = HashMap::new();
 
         // Check proxy env vars
-        for var in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "NO_PROXY", "no_proxy"] {
+        for var in [
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "http_proxy",
+            "https_proxy",
+            "NO_PROXY",
+            "no_proxy",
+        ] {
             if let Ok(val) = std::env::var(var) {
                 details.insert(format!("proxy_{}", var.to_lowercase()), val);
             }
@@ -589,7 +650,11 @@ impl ResourceDetector for NetworkDetector {
             details.insert("internet".to_string(), "unavailable".to_string());
         }
 
-        DetectionResult { detected: connected, details, suggested_config: None }
+        DetectionResult {
+            detected: connected,
+            details,
+            suggested_config: None,
+        }
     }
 }
 
@@ -659,7 +724,9 @@ impl Butler {
                     name: "Ollama".to_string(),
                     provider_type: AiProvider::Ollama,
                     url,
-                    available_models: r.details.get("models")
+                    available_models: r
+                        .details
+                        .get("models")
                         .map(|m| m.split(", ").map(|s| s.to_string()).collect())
                         .unwrap_or_default(),
                 });
@@ -679,7 +746,9 @@ impl Butler {
                     name: "LM Studio".to_string(),
                     provider_type: AiProvider::LMStudio,
                     url,
-                    available_models: r.details.get("models")
+                    available_models: r
+                        .details
+                        .get("models")
                         .map(|m| m.split(", ").map(|s| s.to_string()).collect())
                         .unwrap_or_default(),
                 });
@@ -690,7 +759,11 @@ impl Butler {
         // Cloud APIs
         if let Some(r) = self.cache.get("cloud_api") {
             if r.detected {
-                if r.details.get("anthropic").map(|v| v == "true").unwrap_or(false) {
+                if r.details
+                    .get("anthropic")
+                    .map(|v| v == "true")
+                    .unwrap_or(false)
+                {
                     llm_providers.push(DetectedProvider {
                         name: "Anthropic".to_string(),
                         provider_type: AiProvider::Anthropic,
@@ -699,7 +772,11 @@ impl Butler {
                     });
                     capabilities.push("anthropic_api".to_string());
                 }
-                if r.details.get("openai").map(|v| v == "true").unwrap_or(false) {
+                if r.details
+                    .get("openai")
+                    .map(|v| v == "true")
+                    .unwrap_or(false)
+                {
                     llm_providers.push(DetectedProvider {
                         name: "OpenAI".to_string(),
                         provider_type: AiProvider::OpenAI,
@@ -714,7 +791,11 @@ impl Butler {
         // Project type
         let project_type = if let Some(r) = self.cache.get("project_type") {
             if r.detected {
-                let pt = r.details.get("type").map(|s| s.as_str()).unwrap_or("unknown");
+                let pt = r
+                    .details
+                    .get("type")
+                    .map(|s| s.as_str())
+                    .unwrap_or("unknown");
                 Some(parse_project_type(pt))
             } else {
                 None
@@ -760,11 +841,7 @@ impl Butler {
         }
 
         // GPU
-        let has_gpu = self
-            .cache
-            .get("gpu")
-            .map(|r| r.detected)
-            .unwrap_or(false);
+        let has_gpu = self.cache.get("gpu").map(|r| r.detected).unwrap_or(false);
         if has_gpu {
             capabilities.push("gpu".to_string());
         }
@@ -899,9 +976,7 @@ impl Butler {
             }
         } else {
             // Research agent profile
-            let mut builder = AgentPolicyBuilder::new()
-                .max_iterations(80)
-                .max_cost(3.0);
+            let mut builder = AgentPolicyBuilder::new().max_iterations(80).max_cost(3.0);
 
             if report.capabilities.contains(&"network".to_string()) {
                 builder = builder.internet(InternetMode::FullAccess);
@@ -1278,9 +1353,17 @@ mod tests {
         let detector = NetworkDetector;
         let result = detector.detect();
         if result.detected {
-            assert!(result.details.get("internet").map(|v| v == "available").unwrap_or(false));
+            assert!(result
+                .details
+                .get("internet")
+                .map(|v| v == "available")
+                .unwrap_or(false));
         } else {
-            assert!(result.details.get("internet").map(|v| v == "unavailable").unwrap_or(false));
+            assert!(result
+                .details
+                .get("internet")
+                .map(|v| v == "unavailable")
+                .unwrap_or(false));
         }
     }
 }

@@ -238,10 +238,7 @@ impl RagDebugConfig {
 #[serde(tag = "type")]
 pub enum RagDebugStep {
     /// Initial query received
-    QueryReceived {
-        query: String,
-        timestamp_ms: u64,
-    },
+    QueryReceived { query: String, timestamp_ms: u64 },
 
     /// Query analysis/classification
     QueryAnalysis {
@@ -424,10 +421,7 @@ pub enum RagDebugStep {
     },
 
     /// Warning
-    Warning {
-        step: String,
-        message: String,
-    },
+    Warning { step: String, message: String },
 
     /// Custom debug info
     Custom {
@@ -567,21 +561,38 @@ impl RagDebugSession {
     pub fn add_step(&mut self, step: RagDebugStep) {
         // Update stats based on step type
         match &step {
-            RagDebugStep::LlmCall { input_tokens, output_tokens, duration_ms, .. } => {
+            RagDebugStep::LlmCall {
+                input_tokens,
+                output_tokens,
+                duration_ms,
+                ..
+            } => {
                 self.stats.llm_calls += 1;
                 self.stats.llm_input_tokens += input_tokens;
                 self.stats.llm_output_tokens += output_tokens;
                 self.stats.llm_time_ms += duration_ms;
             }
-            RagDebugStep::KeywordSearch { results_count, duration_ms, .. }
-            | RagDebugStep::SemanticSearch { results_count, duration_ms, .. } => {
+            RagDebugStep::KeywordSearch {
+                results_count,
+                duration_ms,
+                ..
+            }
+            | RagDebugStep::SemanticSearch {
+                results_count,
+                duration_ms,
+                ..
+            } => {
                 self.stats.chunks_retrieved += results_count;
                 self.stats.retrieval_time_ms += duration_ms;
             }
             RagDebugStep::Reranking { duration_ms, .. } => {
                 self.stats.rerank_time_ms += duration_ms;
             }
-            RagDebugStep::ContextAssembly { total_chunks, duration_ms, .. } => {
+            RagDebugStep::ContextAssembly {
+                total_chunks,
+                duration_ms,
+                ..
+            } => {
                 self.stats.chunks_used = *total_chunks;
                 self.stats.other_time_ms += duration_ms;
             }
@@ -620,7 +631,12 @@ impl RagDebugSession {
     }
 
     /// Set provider information
-    pub fn set_provider(&mut self, provider_type: impl Into<String>, provider_url: impl Into<String>, model_name: impl Into<String>) {
+    pub fn set_provider(
+        &mut self,
+        provider_type: impl Into<String>,
+        provider_url: impl Into<String>,
+        model_name: impl Into<String>,
+    ) {
         self.provider_type = Some(provider_type.into());
         self.provider_url = Some(provider_url.into());
         self.model_name = Some(model_name.into());
@@ -723,17 +739,26 @@ impl RagDebugLogger {
 
     /// Get current configuration
     pub fn config(&self) -> RagDebugConfig {
-        self.config.read().unwrap_or_else(|e| e.into_inner()).clone()
+        self.config
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Enable/disable debugging
     pub fn set_enabled(&self, enabled: bool) {
-        self.config.write().unwrap_or_else(|e| e.into_inner()).enabled = enabled;
+        self.config
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .enabled = enabled;
     }
 
     /// Check if enabled
     pub fn is_enabled(&self) -> bool {
-        self.config.read().unwrap_or_else(|e| e.into_inner()).enabled
+        self.config
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .enabled
     }
 
     /// Set debug level
@@ -769,14 +794,20 @@ impl RagDebugLogger {
         let session = RagDebugSession::new(&session_id, &query_str);
 
         // Store as current session
-        *self.current_session.lock().unwrap_or_else(|e| e.into_inner()) = Some(ActiveSession {
+        *self
+            .current_session
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(ActiveSession {
             session: session.clone(),
             start_instant: Instant::now(),
         });
 
         // Log start if enabled
         if self.is_level_enabled(RagDebugLevel::Basic) {
-            self.log_to_output(&format!("[RAG] Starting query: {}", truncate_str(&query_str, 100)));
+            self.log_to_output(&format!(
+                "[RAG] Starting query: {}",
+                truncate_str(&query_str, 100)
+            ));
         }
 
         RagQuerySession {
@@ -810,7 +841,11 @@ impl RagDebugLogger {
         drop(config);
 
         // Always add to current session regardless of filter
-        if let Some(ref mut active) = *self.current_session.lock().unwrap_or_else(|e| e.into_inner()) {
+        if let Some(ref mut active) = *self
+            .current_session
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+        {
             active.session.add_step(step);
         }
     }
@@ -844,9 +879,18 @@ impl RagDebugLogger {
 
     /// Complete the current session
     pub fn complete_session(&self, session_id: &str, response: Option<String>) {
-        let config = self.config.read().unwrap_or_else(|e| e.into_inner()).clone();
+        let config = self
+            .config
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
 
-        if let Some(mut active) = self.current_session.lock().unwrap_or_else(|e| e.into_inner()).take() {
+        if let Some(mut active) = self
+            .current_session
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
             if active.session.session_id == session_id {
                 active.session.complete(response);
 
@@ -962,7 +1006,10 @@ impl RagDebugLogger {
 
     /// Get all sessions
     pub fn all_sessions(&self) -> Vec<RagDebugSession> {
-        self.sessions.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.sessions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Get session by ID
@@ -977,7 +1024,10 @@ impl RagDebugLogger {
 
     /// Clear all sessions
     pub fn clear_sessions(&self) {
-        self.sessions.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        self.sessions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
     }
 
     /// Get aggregate statistics
@@ -1005,8 +1055,7 @@ impl RagDebugLogger {
         if stats.total_sessions > 0 {
             stats.avg_llm_calls_per_session =
                 stats.total_llm_calls as f32 / stats.total_sessions as f32;
-            stats.avg_duration_ms =
-                stats.total_duration_ms as f32 / stats.total_sessions as f32;
+            stats.avg_duration_ms = stats.total_duration_ms as f32 / stats.total_sessions as f32;
         }
 
         stats
@@ -1092,7 +1141,13 @@ impl<'a> RagQuerySession<'a> {
     }
 
     /// Log query expansion
-    pub fn log_expansion(&self, original: &str, expanded: Vec<String>, method: &str, duration: Duration) {
+    pub fn log_expansion(
+        &self,
+        original: &str,
+        expanded: Vec<String>,
+        method: &str,
+        duration: Duration,
+    ) {
         self.log_step(RagDebugStep::QueryExpansion {
             original: original.to_string(),
             expanded,
@@ -1102,7 +1157,13 @@ impl<'a> RagQuerySession<'a> {
     }
 
     /// Log keyword search
-    pub fn log_keyword_search(&self, query: &str, results: usize, top_score: Option<f32>, duration: Duration) {
+    pub fn log_keyword_search(
+        &self,
+        query: &str,
+        results: usize,
+        top_score: Option<f32>,
+        duration: Duration,
+    ) {
         self.log_step(RagDebugStep::KeywordSearch {
             query: query.to_string(),
             results_count: results,
@@ -1168,7 +1229,12 @@ impl<'a> RagQuerySession<'a> {
 
     /// Set tier for this session
     pub fn set_tier(&self, tier: &str) {
-        if let Some(ref mut active) = *self.logger.current_session.lock().unwrap_or_else(|e| e.into_inner()) {
+        if let Some(ref mut active) = *self
+            .logger
+            .current_session
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+        {
             if active.session.session_id == self.session_id {
                 active.session.set_tier(tier);
             }
@@ -1177,7 +1243,12 @@ impl<'a> RagQuerySession<'a> {
 
     /// Set features for this session
     pub fn set_features(&self, features: Vec<String>) {
-        if let Some(ref mut active) = *self.logger.current_session.lock().unwrap_or_else(|e| e.into_inner()) {
+        if let Some(ref mut active) = *self
+            .logger
+            .current_session
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+        {
             if active.session.session_id == self.session_id {
                 active.session.set_features(features);
             }
@@ -1186,7 +1257,12 @@ impl<'a> RagQuerySession<'a> {
 
     /// Set final context
     pub fn set_context(&self, context: &str) {
-        if let Some(ref mut active) = *self.logger.current_session.lock().unwrap_or_else(|e| e.into_inner()) {
+        if let Some(ref mut active) = *self
+            .logger
+            .current_session
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+        {
             if active.session.session_id == self.session_id {
                 active.session.set_context(context);
             }
@@ -1195,9 +1271,16 @@ impl<'a> RagQuerySession<'a> {
 
     /// Set provider information for this session
     pub fn set_provider(&self, provider_type: &str, provider_url: &str, model_name: &str) {
-        if let Some(ref mut active) = *self.logger.current_session.lock().unwrap_or_else(|e| e.into_inner()) {
+        if let Some(ref mut active) = *self
+            .logger
+            .current_session
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+        {
             if active.session.session_id == self.session_id {
-                active.session.set_provider(provider_type, provider_url, model_name);
+                active
+                    .session
+                    .set_provider(provider_type, provider_url, model_name);
             }
         }
     }
@@ -1275,13 +1358,24 @@ fn format_step(step: &RagDebugStep, config: &RagDebugConfig) -> String {
         RagDebugStep::QueryReceived { query, .. } => {
             format!("Query received: {}", truncate_str(query, 80))
         }
-        RagDebugStep::QueryAnalysis { intent, complexity, keywords, duration_ms, .. } => {
+        RagDebugStep::QueryAnalysis {
+            intent,
+            complexity,
+            keywords,
+            duration_ms,
+            ..
+        } => {
             format!(
                 "Analysis: intent={:?}, complexity={:?}, keywords={:?} ({}ms)",
                 intent, complexity, keywords, duration_ms
             )
         }
-        RagDebugStep::QueryExpansion { original, expanded, method, duration_ms } => {
+        RagDebugStep::QueryExpansion {
+            original,
+            expanded,
+            method,
+            duration_ms,
+        } => {
             format!(
                 "Expansion ({}): {} -> {} variants ({}ms)",
                 method,
@@ -1290,13 +1384,26 @@ fn format_step(step: &RagDebugStep, config: &RagDebugConfig) -> String {
                 duration_ms
             )
         }
-        RagDebugStep::MultiQuery { sub_queries, duration_ms, .. } => {
-            format!("Multi-query: {} sub-queries ({}ms)", sub_queries.len(), duration_ms)
+        RagDebugStep::MultiQuery {
+            sub_queries,
+            duration_ms,
+            ..
+        } => {
+            format!(
+                "Multi-query: {} sub-queries ({}ms)",
+                sub_queries.len(),
+                duration_ms
+            )
         }
         RagDebugStep::HyDE { duration_ms, .. } => {
             format!("HyDE: generated hypothetical document ({}ms)", duration_ms)
         }
-        RagDebugStep::KeywordSearch { results_count, top_score, duration_ms, .. } => {
+        RagDebugStep::KeywordSearch {
+            results_count,
+            top_score,
+            duration_ms,
+            ..
+        } => {
             format!(
                 "Keyword search: {} results, top score={:.3} ({}ms)",
                 results_count,
@@ -1304,7 +1411,13 @@ fn format_step(step: &RagDebugStep, config: &RagDebugConfig) -> String {
                 duration_ms
             )
         }
-        RagDebugStep::SemanticSearch { embedding_model, results_count, top_similarity, duration_ms, .. } => {
+        RagDebugStep::SemanticSearch {
+            embedding_model,
+            results_count,
+            top_similarity,
+            duration_ms,
+            ..
+        } => {
             format!(
                 "Semantic search ({}): {} results, top sim={:.3} ({}ms)",
                 embedding_model,
@@ -1313,90 +1426,176 @@ fn format_step(step: &RagDebugStep, config: &RagDebugConfig) -> String {
                 duration_ms
             )
         }
-        RagDebugStep::HybridFusion { keyword_results, semantic_results, fused_results, method, duration_ms, .. } => {
+        RagDebugStep::HybridFusion {
+            keyword_results,
+            semantic_results,
+            fused_results,
+            method,
+            duration_ms,
+            ..
+        } => {
             format!(
                 "Hybrid fusion ({}): {}+{} -> {} results ({}ms)",
                 method, keyword_results, semantic_results, fused_results, duration_ms
             )
         }
-        RagDebugStep::Reranking { input_count, output_count, method, duration_ms, .. } => {
+        RagDebugStep::Reranking {
+            input_count,
+            output_count,
+            method,
+            duration_ms,
+            ..
+        } => {
             format!(
                 "Reranking ({}): {} -> {} results ({}ms)",
                 method, input_count, output_count, duration_ms
             )
         }
-        RagDebugStep::ContextualCompression { input_tokens, output_tokens, compression_ratio, duration_ms, .. } => {
+        RagDebugStep::ContextualCompression {
+            input_tokens,
+            output_tokens,
+            compression_ratio,
+            duration_ms,
+            ..
+        } => {
             format!(
                 "Compression: {} -> {} tokens ({:.1}x) ({}ms)",
                 input_tokens, output_tokens, compression_ratio, duration_ms
             )
         }
-        RagDebugStep::SentenceWindow { matched_sentences, expanded_chunks, duration_ms, .. } => {
+        RagDebugStep::SentenceWindow {
+            matched_sentences,
+            expanded_chunks,
+            duration_ms,
+            ..
+        } => {
             format!(
                 "Sentence window: {} sentences -> {} chunks ({}ms)",
                 matched_sentences, expanded_chunks, duration_ms
             )
         }
-        RagDebugStep::ParentDocument { child_matches, parent_docs_retrieved, duration_ms } => {
+        RagDebugStep::ParentDocument {
+            child_matches,
+            parent_docs_retrieved,
+            duration_ms,
+        } => {
             format!(
                 "Parent doc: {} children -> {} parents ({}ms)",
                 child_matches, parent_docs_retrieved, duration_ms
             )
         }
-        RagDebugStep::SelfReflection { is_sufficient, confidence, duration_ms, .. } => {
+        RagDebugStep::SelfReflection {
+            is_sufficient,
+            confidence,
+            duration_ms,
+            ..
+        } => {
             format!(
                 "Self-reflection: sufficient={}, confidence={:.2} ({}ms)",
                 is_sufficient, confidence, duration_ms
             )
         }
-        RagDebugStep::CorrectiveRag { retrieval_quality, action_taken, duration_ms, .. } => {
+        RagDebugStep::CorrectiveRag {
+            retrieval_quality,
+            action_taken,
+            duration_ms,
+            ..
+        } => {
             format!(
                 "CRAG: quality={:.2}, action={} ({}ms)",
                 retrieval_quality, action_taken, duration_ms
             )
         }
-        RagDebugStep::AdaptiveStrategy { selected_strategy, duration_ms, .. } => {
-            format!("Adaptive: selected {} ({}ms)", selected_strategy, duration_ms)
+        RagDebugStep::AdaptiveStrategy {
+            selected_strategy,
+            duration_ms,
+            ..
+        } => {
+            format!(
+                "Adaptive: selected {} ({}ms)",
+                selected_strategy, duration_ms
+            )
         }
-        RagDebugStep::AgenticIteration { iteration, action, is_complete, duration_ms, .. } => {
+        RagDebugStep::AgenticIteration {
+            iteration,
+            action,
+            is_complete,
+            duration_ms,
+            ..
+        } => {
             format!(
                 "Agentic #{}: {} (complete={}) ({}ms)",
                 iteration, action, is_complete, duration_ms
             )
         }
-        RagDebugStep::GraphTraversal { nodes_visited, relationships_found, duration_ms, .. } => {
+        RagDebugStep::GraphTraversal {
+            nodes_visited,
+            relationships_found,
+            duration_ms,
+            ..
+        } => {
             format!(
                 "Graph: {} nodes, {} relationships ({}ms)",
                 nodes_visited, relationships_found, duration_ms
             )
         }
-        RagDebugStep::RaptorRetrieval { level, summaries_retrieved, leaf_chunks_retrieved, duration_ms } => {
+        RagDebugStep::RaptorRetrieval {
+            level,
+            summaries_retrieved,
+            leaf_chunks_retrieved,
+            duration_ms,
+        } => {
             format!(
                 "RAPTOR L{}: {} summaries, {} leaves ({}ms)",
                 level, summaries_retrieved, leaf_chunks_retrieved, duration_ms
             )
         }
-        RagDebugStep::LlmCall { purpose, model, input_tokens, output_tokens, duration_ms, .. } => {
+        RagDebugStep::LlmCall {
+            purpose,
+            model,
+            input_tokens,
+            output_tokens,
+            duration_ms,
+            ..
+        } => {
             if config.log_llm_details {
                 format!(
                     "LLM ({}/{}): {} in, {} out ({}ms)",
                     purpose, model, input_tokens, output_tokens, duration_ms
                 )
             } else {
-                format!("LLM ({}): {} in, {} out ({}ms)", purpose, input_tokens, output_tokens, duration_ms)
+                format!(
+                    "LLM ({}): {} in, {} out ({}ms)",
+                    purpose, input_tokens, output_tokens, duration_ms
+                )
             }
         }
-        RagDebugStep::ChunkRetrieved { source, score, token_count, preview, .. } => {
+        RagDebugStep::ChunkRetrieved {
+            source,
+            score,
+            token_count,
+            preview,
+            ..
+        } => {
             if config.log_chunks {
                 format!(
                     "Chunk: {} (score={:.3}, {} tokens): {}",
-                    source, score, token_count, truncate_str(preview, 50)
+                    source,
+                    score,
+                    token_count,
+                    truncate_str(preview, 50)
                 )
             } else {
                 format!("Chunk: {} (score={:.3})", source, score)
             }
         }
-        RagDebugStep::ContextAssembly { total_chunks, total_tokens, truncated, duration_ms, .. } => {
+        RagDebugStep::ContextAssembly {
+            total_chunks,
+            total_tokens,
+            truncated,
+            duration_ms,
+            ..
+        } => {
             format!(
                 "Context: {} chunks, {} tokens{} ({}ms)",
                 total_chunks,
@@ -1405,13 +1604,22 @@ fn format_step(step: &RagDebugStep, config: &RagDebugConfig) -> String {
                 duration_ms
             )
         }
-        RagDebugStep::Error { step, message, recoverable } => {
-            format!("ERROR in {}: {} (recoverable={})", step, message, recoverable)
+        RagDebugStep::Error {
+            step,
+            message,
+            recoverable,
+        } => {
+            format!(
+                "ERROR in {}: {} (recoverable={})",
+                step, message, recoverable
+            )
         }
         RagDebugStep::Warning { step, message } => {
             format!("WARNING in {}: {}", step, message)
         }
-        RagDebugStep::Custom { name, duration_ms, .. } => {
+        RagDebugStep::Custom {
+            name, duration_ms, ..
+        } => {
             format!("Custom ({}): {}ms", name, duration_ms.unwrap_or(0))
         }
     }
@@ -1478,22 +1686,18 @@ macro_rules! rag_debug_step {
 #[macro_export]
 macro_rules! rag_debug_error {
     ($step:expr, $msg:expr) => {
-        $crate::rag_debug::global_rag_debug().log_step(
-            $crate::rag_debug::RagDebugStep::Error {
-                step: $step.to_string(),
-                message: $msg.to_string(),
-                recoverable: false,
-            }
-        )
+        $crate::rag_debug::global_rag_debug().log_step($crate::rag_debug::RagDebugStep::Error {
+            step: $step.to_string(),
+            message: $msg.to_string(),
+            recoverable: false,
+        })
     };
     ($step:expr, $msg:expr, recoverable) => {
-        $crate::rag_debug::global_rag_debug().log_step(
-            $crate::rag_debug::RagDebugStep::Error {
-                step: $step.to_string(),
-                message: $msg.to_string(),
-                recoverable: true,
-            }
-        )
+        $crate::rag_debug::global_rag_debug().log_step($crate::rag_debug::RagDebugStep::Error {
+            step: $step.to_string(),
+            message: $msg.to_string(),
+            recoverable: true,
+        })
     };
 }
 
@@ -1501,12 +1705,10 @@ macro_rules! rag_debug_error {
 #[macro_export]
 macro_rules! rag_debug_warning {
     ($step:expr, $msg:expr) => {
-        $crate::rag_debug::global_rag_debug().log_step(
-            $crate::rag_debug::RagDebugStep::Warning {
-                step: $step.to_string(),
-                message: $msg.to_string(),
-            }
-        )
+        $crate::rag_debug::global_rag_debug().log_step($crate::rag_debug::RagDebugStep::Warning {
+            step: $step.to_string(),
+            message: $msg.to_string(),
+        })
     };
 }
 
@@ -1547,7 +1749,13 @@ mod tests {
 
         let session = logger.start_query("test query");
         session.log_keyword_search("test", 5, Some(0.8), Duration::from_millis(50));
-        session.log_semantic_search("test", "test-model", 10, Some(0.9), Duration::from_millis(100));
+        session.log_semantic_search(
+            "test",
+            "test-model",
+            10,
+            Some(0.9),
+            Duration::from_millis(100),
+        );
         session.complete_with_response("test response");
 
         let sessions = logger.all_sessions();

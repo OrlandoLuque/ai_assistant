@@ -3,8 +3,8 @@
 //! This module provides utilities for exporting API definitions
 //! in OpenAPI 3.0 and JSON Schema formats.
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// OpenAPI 3.0 specification
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -159,7 +159,11 @@ pub struct OpenApiResponse {
 pub struct OpenApiComponents {
     #[serde(skip_serializing_if = "HashMap::is_empty", default)]
     pub schemas: HashMap<String, JsonSchema>,
-    #[serde(skip_serializing_if = "HashMap::is_empty", default, rename = "securitySchemes")]
+    #[serde(
+        skip_serializing_if = "HashMap::is_empty",
+        default,
+        rename = "securitySchemes"
+    )]
     pub security_schemes: HashMap<String, OpenApiSecurityScheme>,
 }
 
@@ -212,7 +216,10 @@ pub struct JsonSchema {
     pub max_length: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pattern: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", rename = "additionalProperties")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        rename = "additionalProperties"
+    )]
     pub additional_properties: Option<Box<JsonSchema>>,
     #[serde(skip_serializing_if = "Option::is_none", rename = "oneOf")]
     pub one_of: Option<Vec<JsonSchema>>,
@@ -294,7 +301,10 @@ impl JsonSchema {
         if self.properties.is_none() {
             self.properties = Some(HashMap::new());
         }
-        self.properties.as_mut().expect("properties must be initialized").insert(name.into(), schema);
+        self.properties
+            .as_mut()
+            .expect("properties must be initialized")
+            .insert(name.into(), schema);
         self
     }
 
@@ -375,7 +385,12 @@ impl OpenApiBuilder {
         if self.spec.components.is_none() {
             self.spec.components = Some(OpenApiComponents::default());
         }
-        self.spec.components.as_mut().expect("components must be initialized").schemas.insert(name.into(), schema);
+        self.spec
+            .components
+            .as_mut()
+            .expect("components must be initialized")
+            .schemas
+            .insert(name.into(), schema);
         self
     }
 
@@ -430,7 +445,12 @@ impl OperationBuilder {
         self
     }
 
-    pub fn query_param(mut self, name: impl Into<String>, schema: JsonSchema, required: bool) -> Self {
+    pub fn query_param(
+        mut self,
+        name: impl Into<String>,
+        schema: JsonSchema,
+        required: bool,
+    ) -> Self {
         self.operation.parameters.push(OpenApiParameter {
             name: name.into(),
             location: "query".to_string(),
@@ -454,10 +474,13 @@ impl OperationBuilder {
 
     pub fn request_body(mut self, schema: JsonSchema, required: bool) -> Self {
         let mut content = HashMap::new();
-        content.insert("application/json".to_string(), OpenApiMediaType {
-            schema,
-            example: None,
-        });
+        content.insert(
+            "application/json".to_string(),
+            OpenApiMediaType {
+                schema,
+                example: None,
+            },
+        );
         self.operation.request_body = Some(OpenApiRequestBody {
             description: None,
             content,
@@ -466,19 +489,30 @@ impl OperationBuilder {
         self
     }
 
-    pub fn response(mut self, status: &str, description: impl Into<String>, schema: Option<JsonSchema>) -> Self {
+    pub fn response(
+        mut self,
+        status: &str,
+        description: impl Into<String>,
+        schema: Option<JsonSchema>,
+    ) -> Self {
         let content = schema.map(|s| {
             let mut map = HashMap::new();
-            map.insert("application/json".to_string(), OpenApiMediaType {
-                schema: s,
-                example: None,
-            });
+            map.insert(
+                "application/json".to_string(),
+                OpenApiMediaType {
+                    schema: s,
+                    example: None,
+                },
+            );
             map
         });
-        self.operation.responses.insert(status.to_string(), OpenApiResponse {
-            description: description.into(),
-            content,
-        });
+        self.operation.responses.insert(
+            status.to_string(),
+            OpenApiResponse {
+                description: description.into(),
+                content,
+            },
+        );
         self
     }
 
@@ -499,93 +533,146 @@ pub fn generate_ai_assistant_spec() -> OpenApiSpec {
         .tag("models", Some("Model management"))
         .tag("embeddings", Some("Text embeddings"))
         // Chat completion endpoint
-        .path("/api/chat", OpenApiPathItem {
-            post: Some(OperationBuilder::new()
-                .summary("Generate chat completion")
-                .description("Send messages and receive AI responses")
-                .operation_id("createChatCompletion")
-                .tag("chat")
-                .request_body(
-                    JsonSchema::object()
-                        .with_property("model", JsonSchema::string().with_description("Model name"))
-                        .with_property("messages", JsonSchema::array(
+        .path(
+            "/api/chat",
+            OpenApiPathItem {
+                post: Some(
+                    OperationBuilder::new()
+                        .summary("Generate chat completion")
+                        .description("Send messages and receive AI responses")
+                        .operation_id("createChatCompletion")
+                        .tag("chat")
+                        .request_body(
                             JsonSchema::object()
-                                .with_property("role", JsonSchema::string())
-                                .with_property("content", JsonSchema::string())
-                        ))
-                        .with_property("stream", JsonSchema::boolean())
-                        .with_property("temperature", JsonSchema::number())
-                        .with_required(vec!["model", "messages"]),
-                    true
-                )
-                .response("200", "Successful response", Some(
-                    JsonSchema::object()
-                        .with_property("model", JsonSchema::string())
-                        .with_property("message", JsonSchema::object()
-                            .with_property("role", JsonSchema::string())
-                            .with_property("content", JsonSchema::string()))
-                        .with_property("done", JsonSchema::boolean())
-                ))
-                .response("400", "Bad request", None)
-                .response("500", "Server error", None)
-                .build()),
-            ..Default::default()
-        })
+                                .with_property(
+                                    "model",
+                                    JsonSchema::string().with_description("Model name"),
+                                )
+                                .with_property(
+                                    "messages",
+                                    JsonSchema::array(
+                                        JsonSchema::object()
+                                            .with_property("role", JsonSchema::string())
+                                            .with_property("content", JsonSchema::string()),
+                                    ),
+                                )
+                                .with_property("stream", JsonSchema::boolean())
+                                .with_property("temperature", JsonSchema::number())
+                                .with_required(vec!["model", "messages"]),
+                            true,
+                        )
+                        .response(
+                            "200",
+                            "Successful response",
+                            Some(
+                                JsonSchema::object()
+                                    .with_property("model", JsonSchema::string())
+                                    .with_property(
+                                        "message",
+                                        JsonSchema::object()
+                                            .with_property("role", JsonSchema::string())
+                                            .with_property("content", JsonSchema::string()),
+                                    )
+                                    .with_property("done", JsonSchema::boolean()),
+                            ),
+                        )
+                        .response("400", "Bad request", None)
+                        .response("500", "Server error", None)
+                        .build(),
+                ),
+                ..Default::default()
+            },
+        )
         // List models endpoint
-        .path("/api/tags", OpenApiPathItem {
-            get: Some(OperationBuilder::new()
-                .summary("List available models")
-                .operation_id("listModels")
-                .tag("models")
-                .response("200", "List of models", Some(
-                    JsonSchema::object()
-                        .with_property("models", JsonSchema::array(
-                            JsonSchema::object()
-                                .with_property("name", JsonSchema::string())
-                                .with_property("size", JsonSchema::integer())
-                                .with_property("modified_at", JsonSchema::string().with_format("date-time"))
-                        ))
-                ))
-                .build()),
-            ..Default::default()
-        })
+        .path(
+            "/api/tags",
+            OpenApiPathItem {
+                get: Some(
+                    OperationBuilder::new()
+                        .summary("List available models")
+                        .operation_id("listModels")
+                        .tag("models")
+                        .response(
+                            "200",
+                            "List of models",
+                            Some(
+                                JsonSchema::object().with_property(
+                                    "models",
+                                    JsonSchema::array(
+                                        JsonSchema::object()
+                                            .with_property("name", JsonSchema::string())
+                                            .with_property("size", JsonSchema::integer())
+                                            .with_property(
+                                                "modified_at",
+                                                JsonSchema::string().with_format("date-time"),
+                                            ),
+                                    ),
+                                ),
+                            ),
+                        )
+                        .build(),
+                ),
+                ..Default::default()
+            },
+        )
         // Embeddings endpoint
-        .path("/api/embeddings", OpenApiPathItem {
-            post: Some(OperationBuilder::new()
-                .summary("Generate embeddings")
-                .operation_id("createEmbeddings")
-                .tag("embeddings")
-                .request_body(
-                    JsonSchema::object()
-                        .with_property("model", JsonSchema::string())
-                        .with_property("prompt", JsonSchema::string())
-                        .with_required(vec!["model", "prompt"]),
-                    true
-                )
-                .response("200", "Embedding vector", Some(
-                    JsonSchema::object()
-                        .with_property("embedding", JsonSchema::array(JsonSchema::number()))
-                ))
-                .build()),
-            ..Default::default()
-        })
+        .path(
+            "/api/embeddings",
+            OpenApiPathItem {
+                post: Some(
+                    OperationBuilder::new()
+                        .summary("Generate embeddings")
+                        .operation_id("createEmbeddings")
+                        .tag("embeddings")
+                        .request_body(
+                            JsonSchema::object()
+                                .with_property("model", JsonSchema::string())
+                                .with_property("prompt", JsonSchema::string())
+                                .with_required(vec!["model", "prompt"]),
+                            true,
+                        )
+                        .response(
+                            "200",
+                            "Embedding vector",
+                            Some(JsonSchema::object().with_property(
+                                "embedding",
+                                JsonSchema::array(JsonSchema::number()),
+                            )),
+                        )
+                        .build(),
+                ),
+                ..Default::default()
+            },
+        )
         // Common schemas
-        .schema("Message", JsonSchema::object()
-            .with_property("role", JsonSchema::string().with_enum(vec![
-                serde_json::json!("system"),
-                serde_json::json!("user"),
-                serde_json::json!("assistant"),
-            ]))
-            .with_property("content", JsonSchema::string())
-            .with_required(vec!["role", "content"]))
-        .schema("Model", JsonSchema::object()
-            .with_property("name", JsonSchema::string())
-            .with_property("size", JsonSchema::integer())
-            .with_property("modified_at", JsonSchema::string().with_format("date-time")))
-        .schema("Error", JsonSchema::object()
-            .with_property("error", JsonSchema::string())
-            .with_property("message", JsonSchema::string())
-            .with_required(vec!["error"]))
+        .schema(
+            "Message",
+            JsonSchema::object()
+                .with_property(
+                    "role",
+                    JsonSchema::string().with_enum(vec![
+                        serde_json::json!("system"),
+                        serde_json::json!("user"),
+                        serde_json::json!("assistant"),
+                    ]),
+                )
+                .with_property("content", JsonSchema::string())
+                .with_required(vec!["role", "content"]),
+        )
+        .schema(
+            "Model",
+            JsonSchema::object()
+                .with_property("name", JsonSchema::string())
+                .with_property("size", JsonSchema::integer())
+                .with_property("modified_at", JsonSchema::string().with_format("date-time")),
+        )
+        .schema(
+            "Error",
+            JsonSchema::object()
+                .with_property("error", JsonSchema::string())
+                .with_property("message", JsonSchema::string())
+                .with_required(vec!["error"]),
+        )
         .build()
 }
 
@@ -618,7 +705,8 @@ fn json_to_yaml(value: &serde_json::Value, indent: usize) -> String {
             if arr.is_empty() {
                 "[]".to_string()
             } else {
-                let items: Vec<String> = arr.iter()
+                let items: Vec<String> = arr
+                    .iter()
                     .map(|v| format!("{}- {}", prefix, json_to_yaml(v, indent + 1).trim_start()))
                     .collect();
                 format!("\n{}", items.join("\n"))
@@ -628,7 +716,8 @@ fn json_to_yaml(value: &serde_json::Value, indent: usize) -> String {
             if obj.is_empty() {
                 "{}".to_string()
             } else {
-                let items: Vec<String> = obj.iter()
+                let items: Vec<String> = obj
+                    .iter()
                     .map(|(k, v)| {
                         let val_str = json_to_yaml(v, indent + 1);
                         if val_str.starts_with('\n') {
@@ -730,11 +819,10 @@ mod tests {
 
     #[test]
     fn test_json_schema_enum() {
-        let schema = JsonSchema::string()
-            .with_enum(vec![
-                serde_json::json!("option1"),
-                serde_json::json!("option2"),
-            ]);
+        let schema = JsonSchema::string().with_enum(vec![
+            serde_json::json!("option1"),
+            serde_json::json!("option2"),
+        ]);
 
         assert!(schema.enum_values.is_some());
         assert_eq!(schema.enum_values.as_ref().unwrap().len(), 2);

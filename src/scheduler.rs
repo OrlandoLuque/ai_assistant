@@ -71,11 +71,14 @@ impl CronField {
 
         // List: contains comma
         if s.contains(',') {
-            let values: Result<Vec<u32>, _> = s.split(',').map(|v| {
-                v.trim()
-                    .parse::<u32>()
-                    .map_err(|_| format!("invalid list value: {}", v.trim()))
-            }).collect();
+            let values: Result<Vec<u32>, _> = s
+                .split(',')
+                .map(|v| {
+                    v.trim()
+                        .parse::<u32>()
+                        .map_err(|_| format!("invalid list value: {}", v.trim()))
+                })
+                .collect();
             return Ok(CronField::List(values?));
         }
 
@@ -145,14 +148,7 @@ impl CronSchedule {
     }
 
     /// Check if this schedule matches the given broken-down time.
-    pub fn matches(
-        &self,
-        minute: u32,
-        hour: u32,
-        day: u32,
-        month: u32,
-        weekday: u32,
-    ) -> bool {
+    pub fn matches(&self, minute: u32, hour: u32, day: u32, month: u32, weekday: u32) -> bool {
         self.minute.matches(minute)
             && self.hour.matches(hour)
             && self.day_of_month.matches(day)
@@ -163,9 +159,21 @@ impl CronSchedule {
     /// Return a human-readable description of this schedule.
     pub fn describe(&self) -> String {
         // Simple common-case descriptions
-        match (&self.minute, &self.hour, &self.day_of_month, &self.month, &self.day_of_week) {
+        match (
+            &self.minute,
+            &self.hour,
+            &self.day_of_month,
+            &self.month,
+            &self.day_of_week,
+        ) {
             // Every N minutes: */N * * * *
-            (CronField::Step(m), CronField::Any, CronField::Any, CronField::Any, CronField::Any) => {
+            (
+                CronField::Step(m),
+                CronField::Any,
+                CronField::Any,
+                CronField::Any,
+                CronField::Any,
+            ) => {
                 format!("Every {} minutes", m)
             }
             // Every minute: * * * * *
@@ -173,15 +181,31 @@ impl CronSchedule {
                 "Every minute".to_string()
             }
             // At specific minute every hour: N * * * *
-            (CronField::Value(m), CronField::Any, CronField::Any, CronField::Any, CronField::Any) => {
+            (
+                CronField::Value(m),
+                CronField::Any,
+                CronField::Any,
+                CronField::Any,
+                CronField::Any,
+            ) => {
                 format!("At minute {} of every hour", m)
             }
             // Daily at midnight: 0 0 * * *
-            (CronField::Value(0), CronField::Value(0), CronField::Any, CronField::Any, CronField::Any) => {
-                "Daily at midnight".to_string()
-            }
+            (
+                CronField::Value(0),
+                CronField::Value(0),
+                CronField::Any,
+                CronField::Any,
+                CronField::Any,
+            ) => "Daily at midnight".to_string(),
             // At specific hour:minute every day: M H * * *
-            (CronField::Value(m), CronField::Value(h), CronField::Any, CronField::Any, CronField::Any) => {
+            (
+                CronField::Value(m),
+                CronField::Value(h),
+                CronField::Any,
+                CronField::Any,
+                CronField::Any,
+            ) => {
                 let period = if *h < 12 { "AM" } else { "PM" };
                 let display_h = if *h == 0 {
                     12
@@ -213,7 +237,11 @@ fn describe_field(field: &CronField) -> String {
         CronField::Any => "*".to_string(),
         CronField::Value(v) => v.to_string(),
         CronField::Range(lo, hi) => format!("{}-{}", lo, hi),
-        CronField::List(vs) => vs.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(","),
+        CronField::List(vs) => vs
+            .iter()
+            .map(|v| v.to_string())
+            .collect::<Vec<_>>()
+            .join(","),
         CronField::Step(s) => format!("*/{}", s),
     }
 }
@@ -240,7 +268,10 @@ pub enum ScheduledAction {
     /// Run a shell command.
     RunShell { command: String },
     /// Custom/extensible action.
-    Custom { action_type: String, payload: String },
+    Custom {
+        action_type: String,
+        payload: String,
+    },
 }
 
 // =============================================================================
@@ -276,11 +307,7 @@ impl ScheduledJob {
     ///
     /// The `id` field will be empty initially and is expected to be set by the
     /// `Scheduler` when the job is added.
-    pub fn new(
-        name: impl Into<String>,
-        schedule: CronSchedule,
-        action: ScheduledAction,
-    ) -> Self {
+    pub fn new(name: impl Into<String>, schedule: CronSchedule, action: ScheduledAction) -> Self {
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -553,8 +580,8 @@ mod tests {
 
         // Weekdays only (1-5 = Mon-Fri)
         let weekdays = CronSchedule::parse("0 9 * * 1-5").unwrap();
-        assert!(weekdays.matches(0, 9, 15, 6, 1));  // Monday
-        assert!(weekdays.matches(0, 9, 15, 6, 5));  // Friday
+        assert!(weekdays.matches(0, 9, 15, 6, 1)); // Monday
+        assert!(weekdays.matches(0, 9, 15, 6, 5)); // Friday
         assert!(!weekdays.matches(0, 9, 15, 6, 0)); // Sunday
         assert!(!weekdays.matches(0, 9, 15, 6, 6)); // Saturday
     }
@@ -587,7 +614,9 @@ mod tests {
         let job1 = ScheduledJob::new(
             "Job 1",
             CronSchedule::parse("*/5 * * * *").unwrap(),
-            ScheduledAction::RunShell { command: "echo hi".into() },
+            ScheduledAction::RunShell {
+                command: "echo hi".into(),
+            },
         );
         let id1 = sched.add_job(job1);
         assert_eq!(sched.job_count(), 1);
@@ -627,14 +656,18 @@ mod tests {
         let job_every5 = ScheduledJob::new(
             "Every 5 min",
             CronSchedule::parse("*/5 * * * *").unwrap(),
-            ScheduledAction::RunShell { command: "echo 5".into() },
+            ScheduledAction::RunShell {
+                command: "echo 5".into(),
+            },
         );
         let id_every5 = sched.add_job(job_every5);
 
         let job_midnight = ScheduledJob::new(
             "Midnight",
             CronSchedule::parse("0 0 * * *").unwrap(),
-            ScheduledAction::RunShell { command: "echo midnight".into() },
+            ScheduledAction::RunShell {
+                command: "echo midnight".into(),
+            },
         );
         let _id_midnight = sched.add_job(job_midnight);
 
@@ -665,7 +698,9 @@ mod tests {
         let mut job = ScheduledJob::new(
             "Limited",
             CronSchedule::parse("* * * * *").unwrap(),
-            ScheduledAction::RunShell { command: "echo limited".into() },
+            ScheduledAction::RunShell {
+                command: "echo limited".into(),
+            },
         );
         job.max_runs = Some(2);
         let id = sched.add_job(job);
@@ -703,7 +738,9 @@ mod tests {
         let job = ScheduledJob::new(
             "Mutable Job",
             CronSchedule::parse("*/10 * * * *").unwrap(),
-            ScheduledAction::RunShell { command: "echo hello".into() },
+            ScheduledAction::RunShell {
+                command: "echo hello".into(),
+            },
         );
         let id = sched.add_job(job);
 
@@ -727,12 +764,16 @@ mod tests {
         let job1 = ScheduledJob::new(
             "Job A",
             CronSchedule::parse("*/5 * * * *").unwrap(),
-            ScheduledAction::RunShell { command: "echo a".into() },
+            ScheduledAction::RunShell {
+                command: "echo a".into(),
+            },
         );
         let job2 = ScheduledJob::new(
             "Job B",
             CronSchedule::parse("0 0 * * *").unwrap(),
-            ScheduledAction::RunShell { command: "echo b".into() },
+            ScheduledAction::RunShell {
+                command: "echo b".into(),
+            },
         );
         let job3 = ScheduledJob::new(
             "Job C",
@@ -768,7 +809,9 @@ mod tests {
         let job = ScheduledJob::new(
             "Real Job",
             CronSchedule::parse("* * * * *").unwrap(),
-            ScheduledAction::RunShell { command: "echo real".into() },
+            ScheduledAction::RunShell {
+                command: "echo real".into(),
+            },
         );
         let _id = sched.add_job(job);
         assert_eq!(sched.job_count(), 1);

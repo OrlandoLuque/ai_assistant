@@ -11,7 +11,7 @@
 //! - **Resource-aware**: Respect rate limits and resource constraints
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, RwLock, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 /// Configuration for prefetching
@@ -146,7 +146,10 @@ impl Prefetcher {
         let model = model.into();
         let now = Instant::now();
 
-        let mut recent = self.recent_queries.lock().unwrap_or_else(|e| e.into_inner());
+        let mut recent = self
+            .recent_queries
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
 
         // Learn from previous query -> this query
         if let Some((prev_query, prev_model, _)) = recent.back() {
@@ -195,7 +198,11 @@ impl Prefetcher {
         });
 
         // Sort by confidence
-        entries.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
+        entries.sort_by(|a, b| {
+            b.confidence
+                .partial_cmp(&a.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         // Limit patterns per trigger
         entries.truncate(10);
@@ -214,7 +221,10 @@ impl Prefetcher {
         let mut candidates = Vec::new();
 
         if let Some(entries) = patterns.get(&key) {
-            for pattern in entries.iter().filter(|p| p.confidence >= self.config.min_confidence) {
+            for pattern in entries
+                .iter()
+                .filter(|p| p.confidence >= self.config.min_confidence)
+            {
                 candidates.push(PrefetchCandidate {
                     query: pattern.followup.clone(),
                     model: pattern.model.clone(),
@@ -281,14 +291,17 @@ impl Prefetcher {
 
             // Generate response
             if let Ok(response) = generate(&candidate.query, &candidate.model) {
-                cache.insert(cache_key, PrefetchedResponse {
-                    query: candidate.query.clone(),
-                    model: candidate.model.clone(),
-                    response,
-                    prefetched_at: Instant::now(),
-                    confidence: candidate.confidence,
-                    used: false,
-                });
+                cache.insert(
+                    cache_key,
+                    PrefetchedResponse {
+                        query: candidate.query.clone(),
+                        model: candidate.model.clone(),
+                        response,
+                        prefetched_at: Instant::now(),
+                        confidence: candidate.confidence,
+                        used: false,
+                    },
+                );
 
                 if let Ok(mut stats) = self.stats.lock() {
                     stats.total_prefetches += 1;
@@ -325,8 +338,8 @@ impl Prefetcher {
         // Miss
         if let Ok(mut stats) = self.stats.lock() {
             stats.cache_misses += 1;
-            stats.hit_rate = stats.cache_hits as f64
-                / (stats.cache_hits + stats.cache_misses).max(1) as f64;
+            stats.hit_rate =
+                stats.cache_hits as f64 / (stats.cache_hits + stats.cache_misses).max(1) as f64;
         }
 
         None

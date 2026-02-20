@@ -3,9 +3,9 @@
 //! This module provides real-time metrics for streaming responses,
 //! including tokens per second, time to first token, and throughput tracking.
 
-use std::time::{Duration, Instant};
-use std::collections::VecDeque;
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
+use std::time::{Duration, Instant};
 
 /// Real-time streaming metrics collector
 #[derive(Debug)]
@@ -278,7 +278,8 @@ pub struct FinalMetrics {
 impl FinalMetrics {
     /// Format as human-readable summary
     pub fn summary(&self) -> String {
-        let ttft = self.time_to_first_token
+        let ttft = self
+            .time_to_first_token
             .map(|d| format!("{:.0}ms", d.as_millis()))
             .unwrap_or_else(|| "N/A".to_string());
 
@@ -330,8 +331,12 @@ impl AggregatedMetrics {
             self.min_tokens_per_second = metrics.average_tokens_per_second;
             self.max_tokens_per_second = metrics.average_tokens_per_second;
         } else {
-            self.min_tokens_per_second = self.min_tokens_per_second.min(metrics.average_tokens_per_second);
-            self.max_tokens_per_second = self.max_tokens_per_second.max(metrics.average_tokens_per_second);
+            self.min_tokens_per_second = self
+                .min_tokens_per_second
+                .min(metrics.average_tokens_per_second);
+            self.max_tokens_per_second = self
+                .max_tokens_per_second
+                .max(metrics.average_tokens_per_second);
         }
 
         // Update averages
@@ -345,11 +350,16 @@ impl AggregatedMetrics {
         }
 
         // Average tokens per second
-        let sum_tps: f64 = self.metrics.iter().map(|m| m.average_tokens_per_second).sum();
+        let sum_tps: f64 = self
+            .metrics
+            .iter()
+            .map(|m| m.average_tokens_per_second)
+            .sum();
         self.avg_tokens_per_second = sum_tps / self.metrics.len() as f64;
 
         // Average TTFT
-        let ttfts: Vec<Duration> = self.metrics
+        let ttfts: Vec<Duration> = self
+            .metrics
             .iter()
             .filter_map(|m| m.time_to_first_token)
             .collect();
@@ -362,7 +372,8 @@ impl AggregatedMetrics {
 
     /// Get summary statistics
     pub fn summary(&self) -> String {
-        let avg_ttft = self.avg_ttft
+        let avg_ttft = self
+            .avg_ttft
             .map(|d| format!("{:.0}ms", d.as_millis()))
             .unwrap_or_else(|| "N/A".to_string());
 
@@ -444,19 +455,19 @@ impl MetricsDisplay {
 
     /// Format streaming status line
     pub fn status_line(snapshot: &StreamingSnapshot) -> String {
-        let rate = snapshot.current_tokens_per_second
+        let rate = snapshot
+            .current_tokens_per_second
             .map(|r| Self::format_rate(r))
             .unwrap_or_else(|| "-- tok/s".to_string());
 
-        let time = snapshot.generation_time
+        let time = snapshot
+            .generation_time
             .map(|d| Self::format_duration(d))
             .unwrap_or_else(|| "--".to_string());
 
         format!(
             "Tokens: {} | Time: {} | Speed: {}",
-            snapshot.total_tokens,
-            time,
-            rate
+            snapshot.total_tokens, time, rate
         )
     }
 }
@@ -581,8 +592,14 @@ mod tests {
     fn test_display_formatting() {
         assert_eq!(MetricsDisplay::format_rate(50.5), "50.5 tok/s");
         assert_eq!(MetricsDisplay::format_rate(1500.0), "1.5k tok/s");
-        assert_eq!(MetricsDisplay::format_duration(Duration::from_millis(500)), "500ms");
-        assert_eq!(MetricsDisplay::format_duration(Duration::from_secs(5)), "5.0s");
+        assert_eq!(
+            MetricsDisplay::format_duration(Duration::from_millis(500)),
+            "500ms"
+        );
+        assert_eq!(
+            MetricsDisplay::format_duration(Duration::from_secs(5)),
+            "5.0s"
+        );
     }
 
     #[test]

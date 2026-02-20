@@ -139,7 +139,11 @@ impl AnswerExtractor {
         }
 
         // Sort by confidence
-        answers.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
+        answers.sort_by(|a, b| {
+            b.confidence
+                .partial_cmp(&a.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         answers
     }
@@ -147,9 +151,13 @@ impl AnswerExtractor {
     fn classify_question(&self, question: &str) -> QuestionType {
         let lower = question.to_lowercase();
 
-        if lower.starts_with("is ") || lower.starts_with("are ") ||
-           lower.starts_with("do ") || lower.starts_with("does ") ||
-           lower.starts_with("can ") || lower.starts_with("will ") {
+        if lower.starts_with("is ")
+            || lower.starts_with("are ")
+            || lower.starts_with("do ")
+            || lower.starts_with("does ")
+            || lower.starts_with("can ")
+            || lower.starts_with("will ")
+        {
             return QuestionType::YesNo;
         }
 
@@ -222,7 +230,10 @@ impl AnswerExtractor {
         for (i, sentence) in sentences.iter().enumerate() {
             let lower = sentence.to_lowercase();
 
-            if lower.contains("it is") || lower.contains("they are") || lower.contains("this is correct") {
+            if lower.contains("it is")
+                || lower.contains("they are")
+                || lower.contains("this is correct")
+            {
                 return Some(ExtractedAnswer {
                     answer: "Yes (implied)".to_string(),
                     confidence: 0.7,
@@ -275,7 +286,13 @@ impl AnswerExtractor {
 
     fn extract_explanation(&self, question: &str, sentences: &[String]) -> Option<ExtractedAnswer> {
         // Look for explanation indicators
-        let patterns = ["because", "the reason", "this is due to", "in order to", "by"];
+        let patterns = [
+            "because",
+            "the reason",
+            "this is due to",
+            "in order to",
+            "by",
+        ];
 
         for (i, sentence) in sentences.iter().enumerate() {
             let lower = sentence.to_lowercase();
@@ -400,7 +417,11 @@ impl AnswerExtractor {
         None
     }
 
-    fn extract_first_relevant(&self, question: &str, sentences: &[String]) -> Option<ExtractedAnswer> {
+    fn extract_first_relevant(
+        &self,
+        question: &str,
+        sentences: &[String],
+    ) -> Option<ExtractedAnswer> {
         let question_lower = question.to_lowercase();
         let keywords: Vec<&str> = question_lower
             .split_whitespace()
@@ -436,7 +457,13 @@ impl AnswerExtractor {
     }
 
     fn extract_from_conclusion(&self, sentences: &[String]) -> Option<ExtractedAnswer> {
-        let conclusion_markers = ["in conclusion", "to summarize", "in summary", "therefore", "thus"];
+        let conclusion_markers = [
+            "in conclusion",
+            "to summarize",
+            "in summary",
+            "therefore",
+            "thus",
+        ];
 
         for (i, sentence) in sentences.iter().enumerate() {
             let lower = sentence.to_lowercase();

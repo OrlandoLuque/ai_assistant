@@ -11,6 +11,8 @@
 
   History:
     - mcp_catalog.html  (v1: initial catalog, 29 capabilities)
+    - mcp_catalog_2026-02-20_1430_pre-phase8-docs.html (v1 backup before phase-8 updates)
+    - mcp_catalog.html  (v2: +structured output, model registry, benchmarks, browser/distributed exports)
 -->
 <html lang="es">
 <head>
@@ -378,7 +380,7 @@
 <body>
 
 <h1>AI Assistant &mdash; Cat&aacute;logo MCP</h1>
-<p class="subtitle">Tools, Resources y Prompts disponibles v&iacute;a Model Context Protocol (MCP 2024-11-05)</p>
+<p class="subtitle">Tools, Resources y Prompts disponibles v&iacute;a Model Context Protocol (MCP 2024-11-05) &mdash; Updated 2026-02-20</p>
 
 <div class="protocol-banner" id="banner"></div>
 
@@ -756,6 +758,218 @@ const CATEGORIES = [
       },
     ]
   },
+  {
+    id: 'structured-output',
+    name: 'Structured Output Enforcer',
+    icon: '\uD83D\uDCCB',
+    feature: 'tools',
+    featureInFull: true,
+    desc: 'Garantiza que las respuestas del modelo cumplan un esquema JSON esperado. Incluye validaci\u00f3n, extracci\u00f3n y auto-correcci\u00f3n de outputs.',
+    items: [
+      { name: 'StructuredOutputEnforcer', type: 'tool',
+        desc: 'Motor principal de validaci\u00f3n y enforcement de outputs estructurados',
+        params: [
+          { name: 'config', type: 'EnforcementConfig', required: true, desc: 'Configuraci\u00f3n: esquema esperado, max reintentos, modo estricto/lenient' }
+        ],
+        module: 'structured_output.rs',
+        notes: 'Valida la respuesta del modelo contra un JSON schema. Si falla, puede reintentar con feedback al modelo o extraer parcialmente.'
+      },
+      { name: 'EnforcementConfig', type: 'tool',
+        desc: 'Configuraci\u00f3n para el enforcer: esquema, reintentos, modo',
+        params: [
+          { name: 'schema', type: 'object', required: true, desc: 'JSON Schema esperado para la respuesta' },
+          { name: 'max_retries', type: 'number', required: false, desc: 'M\u00e1ximo de reintentos si la validaci\u00f3n falla (default: 2)' },
+          { name: 'strict', type: 'bool', required: false, desc: 'Si true, rechaza respuestas que no cumplan exactamente el esquema' }
+        ],
+        module: 'structured_output.rs',
+        notes: 'El modo lenient intenta extraer JSON parcial de respuestas con texto extra.'
+      },
+      { name: 'EnforcementResult', type: 'tool',
+        desc: 'Resultado del enforcement: datos validados + metadata',
+        params: [],
+        module: 'structured_output.rs',
+        notes: 'Contiene: parsed_data (JSON validado), attempts (n\u00famero de intentos), warnings (campos extra/faltantes), is_valid.'
+      },
+      { name: 'extract_json_from_response', type: 'tool',
+        desc: 'Extraer bloque JSON de una respuesta de texto libre',
+        params: [
+          { name: 'response', type: 'string', required: true, desc: 'Texto de respuesta del modelo (puede contener markdown, explicaciones, etc.)' }
+        ],
+        module: 'structured_output.rs',
+        notes: 'Busca bloques ```json```, objetos/arrays JSON sueltos, o JSON incrustado en texto. Devuelve el primer JSON v\u00e1lido encontrado.'
+      },
+    ]
+  },
+  {
+    id: 'model-registry',
+    name: 'Model Capability Registry',
+    icon: '\uD83E\uDDE0',
+    feature: 'tools',
+    featureInFull: true,
+    desc: 'Registro de capacidades de modelos de IA conocidos. Permite seleccionar el modelo \u00f3ptimo seg\u00fan la tarea.',
+    items: [
+      { name: 'ModelCapabilityInfo', type: 'tool',
+        desc: 'Informaci\u00f3n de capacidades de un modelo espec\u00edfico',
+        params: [],
+        module: 'model_registry.rs',
+        notes: 'Incluye: context_window, supports_tools, supports_vision, supports_structured_output, max_output_tokens, pricing_tier.'
+      },
+      { name: 'ModelRegistry', type: 'tool',
+        desc: 'Registro con 7 modelos conocidos y sus capacidades',
+        params: [
+          { name: 'model_id', type: 'string', required: false, desc: 'ID del modelo a consultar (ej: gpt-4o, claude-3-opus, etc.)' }
+        ],
+        module: 'model_registry.rs',
+        notes: 'Modelos incluidos: GPT-4o, GPT-4o-mini, Claude 3 Opus, Claude 3.5 Sonnet, Claude 3 Haiku, Gemini 1.5 Pro, Gemini 1.5 Flash. lookup(), list_all(), best_for_task().'
+      },
+    ]
+  },
+  {
+    id: 'benchmarks',
+    name: 'Benchmark Suite',
+    icon: '\u23F1\uFE0F',
+    feature: 'full',
+    featureInFull: true,
+    desc: 'Suite de benchmarks con criterion. 6 benchmarks cubriendo las rutas cr\u00edticas del crate.',
+    items: [
+      { name: 'criterion benchmarks', type: 'tool',
+        desc: '6 benchmarks de rendimiento para rutas cr\u00edticas',
+        params: [],
+        module: 'benches/',
+        notes: 'Benchmarks: tool_registry_lookup, rag_chunking, context_management, knowledge_graph_traversal, mcp_protocol_parsing, structured_output_enforcement. Ejecutar: cargo bench.'
+      },
+    ]
+  },
+  {
+    id: 'public-api',
+    name: 'Public API Exports',
+    icon: '\uD83D\uDD11',
+    feature: 'tools',
+    featureInFull: true,
+    desc: 'Tipos y funciones p\u00fablicas adicionales exportados por el crate para integraci\u00f3n externa.',
+    items: [
+      { name: 'verify_webhook_signature', type: 'tool',
+        desc: 'Verificar firma HMAC de webhooks entrantes',
+        params: [
+          { name: 'payload', type: 'bytes', required: true, desc: 'Cuerpo del webhook' },
+          { name: 'signature', type: 'string', required: true, desc: 'Firma proporcionada en el header' },
+          { name: 'secret', type: 'string', required: true, desc: 'Secreto compartido para HMAC' }
+        ],
+        module: 'webhook.rs',
+        notes: 'HMAC-SHA256 con comparaci\u00f3n en tiempo constante. Protege contra ataques de timing.'
+      },
+      { name: 'ProcessingStats', type: 'tool',
+        desc: 'Estad\u00edsticas de procesamiento de documentos/chunks',
+        params: [],
+        module: 'rag.rs',
+        notes: 'Campos: total_documents, total_chunks, avg_chunk_size, processing_duration, errors. Devuelto por operaciones batch de RAG.'
+      },
+      { name: 'compute_relevance', type: 'tool',
+        desc: 'Calcular relevancia sem\u00e1ntica entre query y documento',
+        params: [
+          { name: 'query', type: 'string', required: true, desc: 'Query de b\u00fasqueda' },
+          { name: 'document', type: 'string', required: true, desc: 'Texto del documento' }
+        ],
+        module: 'rag.rs',
+        notes: 'Combina similitud coseno de embeddings con TF-IDF keyword matching. Score normalizado [0.0, 1.0].'
+      },
+    ]
+  },
+  {
+    id: 'browser-exports',
+    name: 'Browser Tools Exports',
+    icon: '\uD83C\uDF10',
+    feature: 'browser',
+    featureInFull: false,
+    desc: 'Tipos p\u00fablicos exportados del m\u00f3dulo browser. Ahora wired en AiAssistant via init_browser() y browser_session().',
+    items: [
+      { name: 'BrowserSession', type: 'tool',
+        desc: 'Sesi\u00f3n de browser CDP activa para automatizaci\u00f3n web',
+        params: [],
+        module: 'browser_tools.rs',
+        notes: 'Maneja la conexi\u00f3n WebSocket con Chrome/Chromium. M\u00e9todos: navigate(), click(), type_text(), screenshot(), evaluate(). Accesible via AiAssistant::browser_session().'
+      },
+      { name: 'BrowserError', type: 'tool',
+        desc: 'Enum de errores espec\u00edficos del m\u00f3dulo browser',
+        params: [],
+        module: 'browser_tools.rs',
+        notes: 'Variantes: ConnectionFailed, NavigationTimeout, ElementNotFound, JavaScriptError, ProtocolError.'
+      },
+      { name: 'BrowserPageContent', type: 'tool',
+        desc: 'Contenido extra\u00eddo de una p\u00e1gina web',
+        params: [],
+        module: 'browser_tools.rs',
+        notes: 'Campos: url, title, text_content, html (opcional), screenshot_base64 (opcional).'
+      },
+      { name: 'find_chrome_binary', type: 'tool',
+        desc: 'Detectar autom\u00e1ticamente la ruta del binario de Chrome/Chromium',
+        params: [],
+        module: 'browser_tools.rs', platform: true,
+        notes: 'Busca en rutas est\u00e1ndar seg\u00fan la plataforma: Program Files (Windows), /Applications (macOS), /usr/bin (Linux).'
+      },
+      { name: 'register_browser_tools', type: 'tool',
+        desc: 'Registrar todas las browser tools en un ToolRegistry',
+        params: [
+          { name: 'registry', type: 'ToolRegistry', required: true, desc: 'Registro de tools donde a\u00f1adir las browser tools' }
+        ],
+        module: 'browser_tools.rs',
+        notes: 'Registra: browser_navigate, browser_click, browser_type, browser_screenshot, browser_get_html, browser_get_text, browser_evaluate.'
+      },
+    ]
+  },
+  {
+    id: 'distributed-exports',
+    name: 'Distributed Agents Exports',
+    icon: '\uD83C\uDF10',
+    feature: 'distributed-agents',
+    featureInFull: false,
+    desc: 'Tipos p\u00fablicos del m\u00f3dulo distributed-agents. Ahora wired en AiAssistant via init_distributed_agents() y distributed_agents().',
+    items: [
+      { name: 'DistributedAgentManager', type: 'tool',
+        desc: 'Gestor principal de agentes distribuidos en red',
+        params: [],
+        module: 'distributed_agents.rs',
+        notes: 'Coordina tareas entre nodos de la red. M\u00e9todos: submit_task(), task_status(), list_nodes(), cancel_task(). Accesible via AiAssistant::distributed_agents().'
+      },
+      { name: 'DistributedTask', type: 'tool',
+        desc: 'Definici\u00f3n de una tarea a distribuir entre agentes',
+        params: [
+          { name: 'task_type', type: 'string', required: true, desc: 'Tipo de tarea (compute, transform, aggregate)' },
+          { name: 'payload', type: 'object', required: true, desc: 'Datos de la tarea en formato JSON' }
+        ],
+        module: 'distributed_agents.rs',
+        notes: 'Incluye: id, task_type, payload, priority, timeout, assigned_node (tras asignaci\u00f3n).'
+      },
+      { name: 'TaskDistributionStatus', type: 'tool',
+        desc: 'Estado actual de una tarea distribuida',
+        params: [],
+        module: 'distributed_agents.rs',
+        notes: 'Variantes: Queued, Assigned(node_id), Running(progress), Completed(result), Failed(error).'
+      },
+      { name: 'AgentNodeInfo', type: 'tool',
+        desc: 'Informaci\u00f3n de un nodo agente en la red distribuida',
+        params: [],
+        module: 'distributed_agents.rs',
+        notes: 'Campos: node_id, address, capabilities, load_factor, status (Online/Offline/Busy), last_heartbeat.'
+      },
+      { name: 'MapReduceAgentJob', type: 'tool',
+        desc: 'Definici\u00f3n de un job MapReduce distribuido entre agentes',
+        params: [
+          { name: 'map_fn', type: 'string', required: true, desc: 'Funci\u00f3n de mapeo (nombre registrado)' },
+          { name: 'reduce_fn', type: 'string', required: true, desc: 'Funci\u00f3n de reducci\u00f3n (nombre registrado)' },
+          { name: 'input_data', type: 'array', required: true, desc: 'Datos de entrada a particionar' }
+        ],
+        module: 'distributed_agents.rs',
+        notes: 'Distribuye datos entre nodos disponibles, ejecuta map en paralelo, y reduce los resultados. Tolerante a fallos: reasigna particiones si un nodo cae.'
+      },
+      { name: 'MapReduceStatus', type: 'tool',
+        desc: 'Estado de un job MapReduce en ejecuci\u00f3n',
+        params: [],
+        module: 'distributed_agents.rs',
+        notes: 'Campos: job_id, phase (Map/Shuffle/Reduce/Done), partitions_total, partitions_completed, failed_nodes, result (si Done).'
+      },
+    ]
+  },
 ];
 
 // ============================================================
@@ -792,6 +1006,9 @@ function renderBanner() {
     <div class="protocol-stat"><div class="value">${totalResources}</div><div class="label">Resources</div></div>
     <div class="protocol-stat"><div class="value">${totalPrompts}</div><div class="label">Prompts</div></div>
     <div class="protocol-stat"><div class="value">2024-11-05</div><div class="label">MCP Version</div></div>
+    <div class="protocol-stat"><div class="value">2431</div><div class="label">Tests</div></div>
+    <div class="protocol-stat"><div class="value">6</div><div class="label">Benchmarks</div></div>
+    <div class="protocol-stat"><div class="value">19</div><div class="label">Examples</div></div>
   `;
 }
 

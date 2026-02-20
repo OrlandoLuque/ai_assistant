@@ -189,7 +189,8 @@ impl ConnectionPool {
 
         let pool = pool.unwrap_or_else(|| {
             let mut pools = self.pools.write().unwrap_or_else(|e| e.into_inner());
-            pools.entry(host.clone())
+            pools
+                .entry(host.clone())
                 .or_insert_with(|| Arc::new(Mutex::new(Vec::new())))
                 .clone()
         });
@@ -288,7 +289,10 @@ pub struct PooledConnectionGuard<'a> {
 impl<'a> PooledConnectionGuard<'a> {
     /// Get the agent for making requests
     pub fn agent(&self) -> &ureq::Agent {
-        self.connection.as_ref().expect("connection must be set").agent()
+        self.connection
+            .as_ref()
+            .expect("connection must be set")
+            .agent()
     }
 
     /// Make a GET request

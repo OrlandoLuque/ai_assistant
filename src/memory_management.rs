@@ -19,10 +19,10 @@
 //! cache.insert("key1".to_string(), vec![1.0, 2.0, 3.0]);
 //! ```
 
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::hash::Hash;
 use std::time::{Duration, Instant};
-use serde::{Deserialize, Serialize};
 
 /// Eviction policy for bounded collections
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -136,7 +136,11 @@ where
     }
 
     /// Create with both entry and memory limits
-    pub fn with_memory_limit(max_entries: usize, max_memory_bytes: usize, policy: EvictionPolicy) -> Self {
+    pub fn with_memory_limit(
+        max_entries: usize,
+        max_memory_bytes: usize,
+        policy: EvictionPolicy,
+    ) -> Self {
         Self {
             entries: HashMap::new(),
             order: VecDeque::new(),
@@ -167,7 +171,8 @@ where
         self.evict_if_needed(size_bytes);
 
         // Insert new entry
-        self.entries.insert(key.clone(), CacheEntry::new(value, size_bytes));
+        self.entries
+            .insert(key.clone(), CacheEntry::new(value, size_bytes));
         self.order.push_back(key);
         self.current_memory += size_bytes;
         self.stats.insertions += 1;
@@ -264,7 +269,8 @@ where
     /// Evict expired entries (for TTL policy)
     pub fn evict_expired(&mut self) {
         if let (EvictionPolicy::Ttl, Some(ttl)) = (self.policy, self.ttl) {
-            let expired: Vec<K> = self.entries
+            let expired: Vec<K> = self
+                .entries
                 .iter()
                 .filter(|(_, e)| e.inserted_at.elapsed() > ttl)
                 .map(|(k, _)| k.clone())
@@ -469,12 +475,15 @@ impl MemoryTracker {
 
     /// Register a component with optional limit
     pub fn register(&mut self, name: impl Into<String>, limit_bytes: Option<usize>) {
-        self.components.insert(name.into(), ComponentMemory {
-            current_bytes: 0,
-            peak_bytes: 0,
-            limit_bytes,
-            last_updated: None,
-        });
+        self.components.insert(
+            name.into(),
+            ComponentMemory {
+                current_bytes: 0,
+                peak_bytes: 0,
+                limit_bytes,
+                last_updated: None,
+            },
+        );
     }
 
     /// Update memory usage for a component
@@ -533,7 +542,8 @@ impl MemoryTracker {
 
     /// Check if a component is over its limit
     pub fn is_over_limit(&self, name: &str) -> bool {
-        self.components.get(name)
+        self.components
+            .get(name)
             .and_then(|c| c.limit_bytes.map(|l| c.current_bytes > l))
             .unwrap_or(false)
     }
@@ -562,7 +572,8 @@ impl MemoryTracker {
             peak_bytes: peak,
             limit_bytes: self.total_limit,
             pressure,
-            components: self.components
+            components: self
+                .components
                 .iter()
                 .map(|(k, v)| (k.clone(), v.current_bytes, v.peak_bytes))
                 .collect(),
@@ -588,7 +599,9 @@ impl MemoryReport {
         out.push_str(&format!(
             "Memory Usage: {} / {} (peak: {})\n",
             format_bytes(self.total_bytes),
-            self.limit_bytes.map(format_bytes).unwrap_or_else(|| "unlimited".to_string()),
+            self.limit_bytes
+                .map(format_bytes)
+                .unwrap_or_else(|| "unlimited".to_string()),
             format_bytes(self.peak_bytes)
         ));
 

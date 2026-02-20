@@ -7,10 +7,10 @@
 //!   JSON line appended to the file, avoiding a full rewrite on every message.
 //!   Supports compaction (rewrite with summary + recent messages).
 
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
-use serde::{Deserialize, Serialize};
-use anyhow::{Context, Result};
 
 use crate::messages::ChatMessage;
 
@@ -199,11 +199,11 @@ impl ChatSessionStore {
 #[cfg(feature = "rag")]
 mod encrypted {
     use super::*;
+    use aes_gcm::aead::rand_core::RngCore;
     use aes_gcm::{
         aead::{Aead, KeyInit, OsRng},
         Aes256Gcm, Nonce,
     };
-    use aes_gcm::aead::rand_core::RngCore;
 
     /// Size of AES-256-GCM nonce in bytes (96 bits).
     const NONCE_SIZE: usize = 12;
@@ -217,8 +217,7 @@ mod encrypted {
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            let plaintext = serde_json::to_vec(self)
-                .context("Failed to serialize sessions")?;
+            let plaintext = serde_json::to_vec(self).context("Failed to serialize sessions")?;
 
             let cipher = Aes256Gcm::new_from_slice(key)
                 .map_err(|e| anyhow::anyhow!("Invalid encryption key: {}", e))?;
@@ -227,7 +226,8 @@ mod encrypted {
             OsRng.fill_bytes(&mut nonce_bytes);
             let nonce = Nonce::from_slice(&nonce_bytes);
 
-            let ciphertext = cipher.encrypt(nonce, plaintext.as_slice())
+            let ciphertext = cipher
+                .encrypt(nonce, plaintext.as_slice())
                 .map_err(|_| anyhow::anyhow!("Encryption failed"))?;
 
             let mut output = Vec::with_capacity(NONCE_SIZE + ciphertext.len());
@@ -260,7 +260,8 @@ mod encrypted {
                 .map_err(|e| anyhow::anyhow!("Invalid encryption key: {}", e))?;
             let nonce = Nonce::from_slice(nonce_bytes);
 
-            let plaintext = cipher.decrypt(nonce, ciphertext)
+            let plaintext = cipher
+                .decrypt(nonce, ciphertext)
                 .map_err(|_| anyhow::anyhow!("Decryption failed — wrong key or corrupted data"))?;
 
             let store: Self = serde_json::from_slice(&plaintext)
@@ -397,8 +398,7 @@ impl JournalSession {
             .append(true)
             .open(&self.path)
             .with_context(|| format!("Failed to open journal: {}", self.path.display()))?;
-        let line = serde_json::to_string(entry)
-            .context("Failed to serialize journal entry")?;
+        let line = serde_json::to_string(entry).context("Failed to serialize journal entry")?;
         writeln!(file, "{}", line)?;
         Ok(())
     }
@@ -431,10 +431,7 @@ impl JournalSession {
     /// Load only `Message` entries as `ChatMessage`s.
     pub fn load_messages(&self) -> Result<Vec<ChatMessage>> {
         let entries = self.load()?;
-        Ok(entries
-            .iter()
-            .filter_map(|e| e.to_chat_message())
-            .collect())
+        Ok(entries.iter().filter_map(|e| e.to_chat_message()).collect())
     }
 
     /// Count the number of lines in the journal without loading all data.
@@ -447,7 +444,11 @@ impl JournalSession {
         let file = std::fs::File::open(&self.path)
             .with_context(|| format!("Failed to open journal: {}", self.path.display()))?;
         let reader = std::io::BufReader::new(file);
-        let count = reader.lines().filter_map(|l| l.ok()).filter(|l| !l.trim().is_empty()).count();
+        let count = reader
+            .lines()
+            .filter_map(|l| l.ok())
+            .filter(|l| !l.trim().is_empty())
+            .count();
         Ok(count)
     }
 
@@ -495,16 +496,15 @@ impl JournalSession {
         // Atomic-ish rewrite: write to temp, then rename
         let tmp_path = self.path.with_extension("jsonl.tmp");
         {
-            let mut file = std::fs::File::create(&tmp_path)
-                .context("Failed to create temp journal file")?;
+            let mut file =
+                std::fs::File::create(&tmp_path).context("Failed to create temp journal file")?;
             for entry in &compacted {
                 let line = serde_json::to_string(entry)?;
                 writeln!(file, "{}", line)?;
             }
             file.flush()?;
         }
-        std::fs::rename(&tmp_path, &self.path)
-            .context("Failed to rename temp journal file")?;
+        std::fs::rename(&tmp_path, &self.path).context("Failed to rename temp journal file")?;
 
         Ok(original_count - compacted.len())
     }
@@ -550,7 +550,9 @@ mod tests {
     #[test]
     fn test_chat_session_auto_name() {
         let mut session = ChatSession::new("Untitled");
-        session.messages.push(ChatMessage::user("What ships are in Star Citizen?"));
+        session
+            .messages
+            .push(ChatMessage::user("What ships are in Star Citizen?"));
         session.auto_name();
         assert_eq!(session.name, "What ships are in Star Citizen?");
     }
@@ -629,8 +631,12 @@ mod tests {
 
         let journal = JournalSession::new(&path);
         journal.append_message(&ChatMessage::user("Hello")).unwrap();
-        journal.append_message(&ChatMessage::assistant("Hi there")).unwrap();
-        journal.append_message(&ChatMessage::user("How are you?")).unwrap();
+        journal
+            .append_message(&ChatMessage::assistant("Hi there"))
+            .unwrap();
+        journal
+            .append_message(&ChatMessage::user("How are you?"))
+            .unwrap();
 
         let entries = journal.load().unwrap();
         assert_eq!(entries.len(), 3);
@@ -650,8 +656,12 @@ mod tests {
 
         let journal = JournalSession::new(&path);
         journal.append_message(&ChatMessage::user("Q")).unwrap();
-        journal.append_entry(&JournalEntry::metadata("some meta")).unwrap();
-        journal.append_message(&ChatMessage::assistant("A")).unwrap();
+        journal
+            .append_entry(&JournalEntry::metadata("some meta"))
+            .unwrap();
+        journal
+            .append_message(&ChatMessage::assistant("A"))
+            .unwrap();
 
         let messages = journal.load_messages().unwrap();
         assert_eq!(messages.len(), 2); // metadata entry is filtered out
@@ -670,7 +680,9 @@ mod tests {
         assert_eq!(journal.message_count().unwrap(), 0);
 
         for i in 0..10 {
-            journal.append_message(&ChatMessage::user(&format!("msg {}", i))).unwrap();
+            journal
+                .append_message(&ChatMessage::user(&format!("msg {}", i)))
+                .unwrap();
         }
         assert_eq!(journal.message_count().unwrap(), 10);
 
@@ -686,7 +698,9 @@ mod tests {
 
         // Write 20 messages
         for i in 0..20 {
-            journal.append_message(&ChatMessage::user(&format!("message {}", i))).unwrap();
+            journal
+                .append_message(&ChatMessage::user(&format!("message {}", i)))
+                .unwrap();
         }
         assert_eq!(journal.message_count().unwrap(), 20);
 
@@ -751,11 +765,16 @@ mod tests {
         journal.append_message(&ChatMessage::user("Valid")).unwrap();
 
         // Manually append a bad line
-        let mut file = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
         writeln!(file, "this is not valid JSON").unwrap();
 
         // Append another valid entry
-        journal.append_message(&ChatMessage::user("Also valid")).unwrap();
+        journal
+            .append_message(&ChatMessage::user("Also valid"))
+            .unwrap();
 
         // Load should skip the bad line
         let entries = journal.load().unwrap();
@@ -782,8 +801,12 @@ mod tests {
 
         let mut store = ChatSessionStore::new();
         let mut session = ChatSession::new("Secret Session");
-        session.messages.push(ChatMessage::user("Top secret question"));
-        session.messages.push(ChatMessage::assistant("Classified answer"));
+        session
+            .messages
+            .push(ChatMessage::user("Top secret question"));
+        session
+            .messages
+            .push(ChatMessage::assistant("Classified answer"));
         store.save_session(session);
 
         // Save encrypted
@@ -792,14 +815,20 @@ mod tests {
 
         // File should NOT be valid JSON (it's encrypted)
         let raw = std::fs::read_to_string(&path);
-        assert!(raw.is_err() || serde_json::from_str::<ChatSessionStore>(&raw.unwrap_or_default()).is_err());
+        assert!(
+            raw.is_err()
+                || serde_json::from_str::<ChatSessionStore>(&raw.unwrap_or_default()).is_err()
+        );
 
         // Load with correct key
         let loaded = ChatSessionStore::load_encrypted(&path, &key).unwrap();
         assert_eq!(loaded.sessions.len(), 1);
         assert_eq!(loaded.sessions[0].name, "Secret Session");
         assert_eq!(loaded.sessions[0].messages.len(), 2);
-        assert_eq!(loaded.sessions[0].messages[0].content, "Top secret question");
+        assert_eq!(
+            loaded.sessions[0].messages[0].content,
+            "Top secret question"
+        );
 
         let _ = std::fs::remove_file(&path);
     }

@@ -39,11 +39,11 @@
 
 use std::io::{Cursor, Read, Write as IoWrite};
 
+use aes_gcm::aead::rand_core::RngCore;
 use aes_gcm::{
     aead::{Aead, KeyInit, OsRng},
     Aes256Gcm, Nonce,
 };
-use aes_gcm::aead::rand_core::RngCore;
 use serde::{Deserialize, Serialize};
 use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
@@ -128,7 +128,11 @@ impl ExamplePair {
     }
 
     /// Create a new example pair with category
-    pub fn with_category(input: impl Into<String>, output: impl Into<String>, category: impl Into<String>) -> Self {
+    pub fn with_category(
+        input: impl Into<String>,
+        output: impl Into<String>,
+        category: impl Into<String>,
+    ) -> Self {
         Self {
             input: input.into(),
             output: output.into(),
@@ -271,7 +275,6 @@ pub struct KpkgManifest {
     pub default_priority: i32,
 
     // === New fields for professional KPKG ===
-
     /// System prompt to use with this knowledge base
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
@@ -382,7 +385,8 @@ impl KpkgIndexResultExt {
             return String::new();
         }
 
-        self.manifest.examples
+        self.manifest
+            .examples
             .iter()
             .map(|ex| ex.format_for_prompt())
             .collect::<Vec<_>>()
@@ -452,46 +456,20 @@ impl KeyProvider for CustomKeyProvider {
     }
 }
 
-/// Derive a 256-bit key from arbitrary seed using SHA-256
+/// Derive a 256-bit key from arbitrary seed using SHA-256 HKDF-like construction
 fn derive_key_from_seed(seed: &[u8]) -> [u8; KEY_SIZE] {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
+    use crate::request_signing::sha256::sha256;
 
-    // Simple key derivation using multiple rounds of hashing
-    // For production, consider using PBKDF2 or Argon2
-    let mut result = [0u8; KEY_SIZE];
+    // HKDF-like: extract then expand
+    let mut salted = b"kpkg_key_derivation_v2".to_vec();
+    salted.extend_from_slice(seed);
+    let prk = sha256(&salted);
 
-    // Round 1: Hash the seed
-    let mut hasher1 = DefaultHasher::new();
-    seed.hash(&mut hasher1);
-    b"kpkg_round1".hash(&mut hasher1);
-    let h1 = hasher1.finish().to_le_bytes();
-
-    // Round 2: Hash with different salt
-    let mut hasher2 = DefaultHasher::new();
-    seed.hash(&mut hasher2);
-    b"kpkg_round2".hash(&mut hasher2);
-    let h2 = hasher2.finish().to_le_bytes();
-
-    // Round 3: Hash with different salt
-    let mut hasher3 = DefaultHasher::new();
-    seed.hash(&mut hasher3);
-    b"kpkg_round3".hash(&mut hasher3);
-    let h3 = hasher3.finish().to_le_bytes();
-
-    // Round 4: Hash with different salt
-    let mut hasher4 = DefaultHasher::new();
-    seed.hash(&mut hasher4);
-    b"kpkg_round4".hash(&mut hasher4);
-    let h4 = hasher4.finish().to_le_bytes();
-
-    // Combine into 32-byte key
-    result[0..8].copy_from_slice(&h1);
-    result[8..16].copy_from_slice(&h2);
-    result[16..24].copy_from_slice(&h3);
-    result[24..32].copy_from_slice(&h4);
-
-    result
+    // Expand
+    let mut expand_input = prk.to_vec();
+    expand_input.extend_from_slice(b"kpkg_expand");
+    expand_input.push(0x01);
+    sha256(&expand_input)
 }
 
 /// Reader for encrypted knowledge packages
@@ -532,8 +510,7 @@ impl<K: KeyProvider> KpkgReader<K> {
 
         // Decrypt
         let key = self.key_provider.get_key();
-        let cipher = Aes256Gcm::new_from_slice(&key)
-            .map_err(|_| KpkgError::DecryptionFailed)?;
+        let cipher = Aes256Gcm::new_from_slice(&key).map_err(|_| KpkgError::DecryptionFailed)?;
         let nonce = Nonce::from_slice(nonce_bytes);
 
         let zip_data = cipher
@@ -547,8 +524,8 @@ impl<K: KeyProvider> KpkgReader<K> {
     /// Extract documents from decrypted ZIP data
     fn extract_zip(&self, zip_data: &[u8]) -> Result<Vec<ExtractedDocument>, KpkgError> {
         let cursor = Cursor::new(zip_data);
-        let mut archive = ZipArchive::new(cursor)
-            .map_err(|e| KpkgError::InvalidZipArchive(e.to_string()))?;
+        let mut archive =
+            ZipArchive::new(cursor).map_err(|e| KpkgError::InvalidZipArchive(e.to_string()))?;
 
         // Try to read manifest first
         let manifest = self.read_manifest(&mut archive);
@@ -617,8 +594,7 @@ impl<K: KeyProvider> KpkgReader<K> {
         let ciphertext = &encrypted_data[NONCE_SIZE..];
 
         let key = self.key_provider.get_key();
-        let cipher = Aes256Gcm::new_from_slice(&key)
-            .map_err(|_| KpkgError::DecryptionFailed)?;
+        let cipher = Aes256Gcm::new_from_slice(&key).map_err(|_| KpkgError::DecryptionFailed)?;
         let nonce = Nonce::from_slice(nonce_bytes);
 
         let zip_data = cipher
@@ -626,8 +602,8 @@ impl<K: KeyProvider> KpkgReader<K> {
             .map_err(|_| KpkgError::DecryptionFailed)?;
 
         let cursor = Cursor::new(&zip_data[..]);
-        let mut archive = ZipArchive::new(cursor)
-            .map_err(|e| KpkgError::InvalidZipArchive(e.to_string()))?;
+        let mut archive =
+            ZipArchive::new(cursor).map_err(|e| KpkgError::InvalidZipArchive(e.to_string()))?;
 
         self.read_manifest(&mut archive)
             .ok_or_else(|| KpkgError::ManifestError("Manifest not found or invalid".into()))
@@ -636,7 +612,10 @@ impl<K: KeyProvider> KpkgReader<K> {
     /// Read and decrypt a package, returning both documents and manifest
     ///
     /// Returns a tuple of (documents, manifest) for cases where both are needed.
-    pub fn read_with_manifest(&self, encrypted_data: &[u8]) -> Result<(Vec<ExtractedDocument>, KpkgManifest), KpkgError> {
+    pub fn read_with_manifest(
+        &self,
+        encrypted_data: &[u8],
+    ) -> Result<(Vec<ExtractedDocument>, KpkgManifest), KpkgError> {
         if encrypted_data.len() < NONCE_SIZE + 16 + 1 {
             return Err(KpkgError::DataTooShort);
         }
@@ -645,8 +624,7 @@ impl<K: KeyProvider> KpkgReader<K> {
         let ciphertext = &encrypted_data[NONCE_SIZE..];
 
         let key = self.key_provider.get_key();
-        let cipher = Aes256Gcm::new_from_slice(&key)
-            .map_err(|_| KpkgError::DecryptionFailed)?;
+        let cipher = Aes256Gcm::new_from_slice(&key).map_err(|_| KpkgError::DecryptionFailed)?;
         let nonce = Nonce::from_slice(nonce_bytes);
 
         let zip_data = cipher
@@ -654,11 +632,12 @@ impl<K: KeyProvider> KpkgReader<K> {
             .map_err(|_| KpkgError::DecryptionFailed)?;
 
         let cursor = Cursor::new(&zip_data[..]);
-        let mut archive = ZipArchive::new(cursor)
-            .map_err(|e| KpkgError::InvalidZipArchive(e.to_string()))?;
+        let mut archive =
+            ZipArchive::new(cursor).map_err(|e| KpkgError::InvalidZipArchive(e.to_string()))?;
 
         // Read manifest first
-        let manifest = self.read_manifest(&mut archive)
+        let manifest = self
+            .read_manifest(&mut archive)
             .ok_or_else(|| KpkgError::ManifestError("Manifest not found or invalid".into()))?;
 
         // Extract documents
@@ -683,7 +662,10 @@ impl<K: KeyProvider> KpkgReader<K> {
             file.read_to_string(&mut content)
                 .map_err(|_| KpkgError::InvalidUtf8(name.clone()))?;
 
-            let priority = manifest.priorities.get(&name).copied()
+            let priority = manifest
+                .priorities
+                .get(&name)
+                .copied()
                 .unwrap_or(manifest.default_priority);
 
             documents.push(ExtractedDocument {
@@ -779,110 +761,165 @@ impl<K: KeyProvider> KpkgBuilder<K> {
         output: impl Into<String>,
         category: impl Into<String>,
     ) -> Self {
-        self.manifest.examples.push(ExamplePair::with_category(input, output, category));
+        self.manifest
+            .examples
+            .push(ExamplePair::with_category(input, output, category));
         self
     }
 
     /// Set the chunk size for RAG
     pub fn chunk_size(mut self, size: usize) -> Self {
-        self.manifest.rag_config.get_or_insert_with(RagPackageConfig::default).chunk_size = Some(size);
+        self.manifest
+            .rag_config
+            .get_or_insert_with(RagPackageConfig::default)
+            .chunk_size = Some(size);
         self
     }
 
     /// Set the chunk overlap for RAG
     pub fn chunk_overlap(mut self, overlap: usize) -> Self {
-        self.manifest.rag_config.get_or_insert_with(RagPackageConfig::default).chunk_overlap = Some(overlap);
+        self.manifest
+            .rag_config
+            .get_or_insert_with(RagPackageConfig::default)
+            .chunk_overlap = Some(overlap);
         self
     }
 
     /// Set the top_k for RAG retrieval
     pub fn top_k(mut self, k: usize) -> Self {
-        self.manifest.rag_config.get_or_insert_with(RagPackageConfig::default).top_k = Some(k);
+        self.manifest
+            .rag_config
+            .get_or_insert_with(RagPackageConfig::default)
+            .top_k = Some(k);
         self
     }
 
     /// Set the max context tokens for RAG
     pub fn max_context_tokens(mut self, tokens: usize) -> Self {
-        self.manifest.rag_config.get_or_insert_with(RagPackageConfig::default).max_context_tokens = Some(tokens);
+        self.manifest
+            .rag_config
+            .get_or_insert_with(RagPackageConfig::default)
+            .max_context_tokens = Some(tokens);
         self
     }
 
     /// Set the minimum relevance score for RAG
     pub fn min_relevance(mut self, score: f32) -> Self {
-        self.manifest.rag_config.get_or_insert_with(RagPackageConfig::default).min_relevance = Some(score);
+        self.manifest
+            .rag_config
+            .get_or_insert_with(RagPackageConfig::default)
+            .min_relevance = Some(score);
         self
     }
 
     /// Set the chunking strategy
     pub fn chunking_strategy(mut self, strategy: impl Into<String>) -> Self {
-        self.manifest.rag_config.get_or_insert_with(RagPackageConfig::default).chunking_strategy = Some(strategy.into());
+        self.manifest
+            .rag_config
+            .get_or_insert_with(RagPackageConfig::default)
+            .chunking_strategy = Some(strategy.into());
         self
     }
 
     /// Enable or disable hybrid search
     pub fn use_hybrid_search(mut self, enabled: bool) -> Self {
-        self.manifest.rag_config.get_or_insert_with(RagPackageConfig::default).use_hybrid_search = Some(enabled);
+        self.manifest
+            .rag_config
+            .get_or_insert_with(RagPackageConfig::default)
+            .use_hybrid_search = Some(enabled);
         self
     }
 
     /// Set priority boost for all documents in package
     pub fn priority_boost(mut self, boost: i32) -> Self {
-        self.manifest.rag_config.get_or_insert_with(RagPackageConfig::default).priority_boost = Some(boost);
+        self.manifest
+            .rag_config
+            .get_or_insert_with(RagPackageConfig::default)
+            .priority_boost = Some(boost);
         self
     }
 
     /// Set the author
     pub fn author(mut self, author: impl Into<String>) -> Self {
-        self.manifest.metadata.get_or_insert_with(KpkgMetadata::default).author = Some(author.into());
+        self.manifest
+            .metadata
+            .get_or_insert_with(KpkgMetadata::default)
+            .author = Some(author.into());
         self
     }
 
     /// Set the language code
     pub fn language(mut self, lang: impl Into<String>) -> Self {
-        self.manifest.metadata.get_or_insert_with(KpkgMetadata::default).language = Some(lang.into());
+        self.manifest
+            .metadata
+            .get_or_insert_with(KpkgMetadata::default)
+            .language = Some(lang.into());
         self
     }
 
     /// Set the license
     pub fn license(mut self, license: impl Into<String>) -> Self {
-        self.manifest.metadata.get_or_insert_with(KpkgMetadata::default).license = Some(license.into());
+        self.manifest
+            .metadata
+            .get_or_insert_with(KpkgMetadata::default)
+            .license = Some(license.into());
         self
     }
 
     /// Set the URL
     pub fn url(mut self, url: impl Into<String>) -> Self {
-        self.manifest.metadata.get_or_insert_with(KpkgMetadata::default).url = Some(url.into());
+        self.manifest
+            .metadata
+            .get_or_insert_with(KpkgMetadata::default)
+            .url = Some(url.into());
         self
     }
 
     /// Add a tag
     pub fn add_tag(mut self, tag: impl Into<String>) -> Self {
-        self.manifest.metadata.get_or_insert_with(KpkgMetadata::default).tags.push(tag.into());
+        self.manifest
+            .metadata
+            .get_or_insert_with(KpkgMetadata::default)
+            .tags
+            .push(tag.into());
         self
     }
 
     /// Add a custom metadata field
     pub fn add_custom_metadata(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        self.manifest.metadata.get_or_insert_with(KpkgMetadata::default).custom.insert(key.into(), value.into());
+        self.manifest
+            .metadata
+            .get_or_insert_with(KpkgMetadata::default)
+            .custom
+            .insert(key.into(), value.into());
         self
     }
 
     /// Set created_at timestamp (ISO 8601)
     pub fn created_at(mut self, timestamp: impl Into<String>) -> Self {
-        self.manifest.metadata.get_or_insert_with(KpkgMetadata::default).created_at = Some(timestamp.into());
+        self.manifest
+            .metadata
+            .get_or_insert_with(KpkgMetadata::default)
+            .created_at = Some(timestamp.into());
         self
     }
 
     /// Set updated_at timestamp (ISO 8601)
     pub fn updated_at(mut self, timestamp: impl Into<String>) -> Self {
-        self.manifest.metadata.get_or_insert_with(KpkgMetadata::default).updated_at = Some(timestamp.into());
+        self.manifest
+            .metadata
+            .get_or_insert_with(KpkgMetadata::default)
+            .updated_at = Some(timestamp.into());
         self
     }
 
     /// Set timestamps to current time
     pub fn with_current_timestamps(mut self) -> Self {
         let now = chrono::Utc::now().to_rfc3339();
-        let metadata = self.manifest.metadata.get_or_insert_with(KpkgMetadata::default);
+        let metadata = self
+            .manifest
+            .metadata
+            .get_or_insert_with(KpkgMetadata::default);
         if metadata.created_at.is_none() {
             metadata.created_at = Some(now.clone());
         }
@@ -891,7 +928,12 @@ impl<K: KeyProvider> KpkgBuilder<K> {
     }
 
     /// Add a document with optional priority
-    pub fn add_document(mut self, path: impl Into<String>, content: impl Into<String>, priority: Option<i32>) -> Self {
+    pub fn add_document(
+        mut self,
+        path: impl Into<String>,
+        content: impl Into<String>,
+        priority: Option<i32>,
+    ) -> Self {
         let path = path.into();
         if let Some(p) = priority {
             self.manifest.priorities.insert(path.clone(), p);
@@ -901,7 +943,12 @@ impl<K: KeyProvider> KpkgBuilder<K> {
     }
 
     /// Add a document with explicit priority
-    pub fn add_document_with_priority(self, path: impl Into<String>, content: impl Into<String>, priority: i32) -> Self {
+    pub fn add_document_with_priority(
+        self,
+        path: impl Into<String>,
+        content: impl Into<String>,
+        priority: i32,
+    ) -> Self {
         self.add_document(path, content, Some(priority))
     }
 
@@ -943,8 +990,8 @@ impl<K: KeyProvider> KpkgBuilder<K> {
         let cursor = Cursor::new(buffer);
         let mut zip = ZipWriter::new(cursor);
 
-        let options = SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Deflated);
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
         // Write manifest
         let manifest_json = serde_json::to_string_pretty(&self.manifest)
@@ -962,7 +1009,8 @@ impl<K: KeyProvider> KpkgBuilder<K> {
                 .map_err(|e| KpkgError::ZipWriteError(e.to_string()))?;
         }
 
-        let cursor = zip.finish()
+        let cursor = zip
+            .finish()
             .map_err(|e| KpkgError::ZipWriteError(e.to_string()))?;
 
         Ok(cursor.into_inner())
@@ -979,7 +1027,11 @@ pub trait RagDbKpkgExt {
     fn index_kpkg(&self, encrypted_data: &[u8]) -> Result<KpkgIndexResult, KpkgError>;
 
     /// Index a package with a custom key provider
-    fn index_kpkg_with_key<K: KeyProvider>(&self, encrypted_data: &[u8], key_provider: K) -> Result<KpkgIndexResult, KpkgError>;
+    fn index_kpkg_with_key<K: KeyProvider>(
+        &self,
+        encrypted_data: &[u8],
+        key_provider: K,
+    ) -> Result<KpkgIndexResult, KpkgError>;
 
     /// Index a package and return extended result with manifest
     ///
@@ -988,7 +1040,11 @@ pub trait RagDbKpkgExt {
     fn index_kpkg_ext(&self, encrypted_data: &[u8]) -> Result<KpkgIndexResultExt, KpkgError>;
 
     /// Index a package with custom key and return extended result
-    fn index_kpkg_ext_with_key<K: KeyProvider>(&self, encrypted_data: &[u8], key_provider: K) -> Result<KpkgIndexResultExt, KpkgError>;
+    fn index_kpkg_ext_with_key<K: KeyProvider>(
+        &self,
+        encrypted_data: &[u8],
+        key_provider: K,
+    ) -> Result<KpkgIndexResultExt, KpkgError>;
 }
 
 #[cfg(feature = "rag")]
@@ -997,12 +1053,17 @@ impl RagDbKpkgExt for crate::rag::RagDb {
         self.index_kpkg_with_key(encrypted_data, AppKeyProvider)
     }
 
-    fn index_kpkg_with_key<K: KeyProvider>(&self, encrypted_data: &[u8], key_provider: K) -> Result<KpkgIndexResult, KpkgError> {
+    fn index_kpkg_with_key<K: KeyProvider>(
+        &self,
+        encrypted_data: &[u8],
+        key_provider: K,
+    ) -> Result<KpkgIndexResult, KpkgError> {
         let reader = KpkgReader::with_key_provider(key_provider);
         let docs = reader.read(encrypted_data)?;
 
         // Try to get package name from first document's metadata or use default
-        let package_name = docs.first()
+        let package_name = docs
+            .first()
             .map(|_| "Knowledge Package".to_string())
             .unwrap_or_default();
 
@@ -1042,7 +1103,11 @@ impl RagDbKpkgExt for crate::rag::RagDb {
         self.index_kpkg_ext_with_key(encrypted_data, AppKeyProvider)
     }
 
-    fn index_kpkg_ext_with_key<K: KeyProvider>(&self, encrypted_data: &[u8], key_provider: K) -> Result<KpkgIndexResultExt, KpkgError> {
+    fn index_kpkg_ext_with_key<K: KeyProvider>(
+        &self,
+        encrypted_data: &[u8],
+        key_provider: K,
+    ) -> Result<KpkgIndexResultExt, KpkgError> {
         let reader = KpkgReader::with_key_provider(key_provider);
         let (docs, manifest) = reader.read_with_manifest(encrypted_data)?;
 
@@ -1053,7 +1118,8 @@ impl RagDbKpkgExt for crate::rag::RagDb {
         let mut failed = Vec::new();
 
         // Get priority boost from rag_config
-        let priority_boost = manifest.rag_config
+        let priority_boost = manifest
+            .rag_config
             .as_ref()
             .and_then(|c| c.priority_boost)
             .unwrap_or(0);
@@ -1193,13 +1259,40 @@ mod tests {
 
     #[test]
     fn test_key_derivation_consistency() {
+        // Same seed must produce the same key
         let seed = b"test_seed";
         let key1 = derive_key_from_seed(seed);
         let key2 = derive_key_from_seed(seed);
         assert_eq!(key1, key2);
 
+        // Different seed must produce a different key
         let different_key = derive_key_from_seed(b"different_seed");
         assert_ne!(key1, different_key);
+    }
+
+    #[test]
+    fn test_key_derivation_avalanche() {
+        // Changing a single byte in the seed should change the key substantially
+        let seed_a = b"avalanche_test_seed_0";
+        let seed_b = b"avalanche_test_seed_1"; // differs by 1 byte (last char)
+
+        let key_a = derive_key_from_seed(seed_a);
+        let key_b = derive_key_from_seed(seed_b);
+
+        // Count differing bits between the two keys
+        let differing_bits: u32 = key_a
+            .iter()
+            .zip(key_b.iter())
+            .map(|(a, b)| (a ^ b).count_ones())
+            .sum();
+
+        // With 256 bits total, a good hash should flip ~50% of bits.
+        // We assert > 25% (64 bits) differ to allow margin.
+        assert!(
+            differing_bits > 64,
+            "Avalanche effect too weak: only {} of 256 bits differ",
+            differing_bits
+        );
     }
 
     // === New tests for professional KPKG features ===
@@ -1211,11 +1304,8 @@ mod tests {
         assert_eq!(ex1.output, "Rust is a systems programming language.");
         assert!(ex1.category.is_none());
 
-        let ex2 = ExamplePair::with_category(
-            "How do I compile?",
-            "Use cargo build.",
-            "compilation",
-        );
+        let ex2 =
+            ExamplePair::with_category("How do I compile?", "Use cargo build.", "compilation");
         assert_eq!(ex2.category, Some("compilation".to_string()));
     }
 
@@ -1281,11 +1371,19 @@ mod tests {
             .expect("Failed to build");
 
         let reader = KpkgReader::<AppKeyProvider>::with_app_key();
-        let manifest = reader.read_manifest_only(&encrypted).expect("Failed to read manifest");
+        let manifest = reader
+            .read_manifest_only(&encrypted)
+            .expect("Failed to read manifest");
 
         assert_eq!(manifest.name, "Professional Package");
-        assert_eq!(manifest.system_prompt, Some("You are a helpful assistant.".to_string()));
-        assert_eq!(manifest.persona, Some("Friendly and professional".to_string()));
+        assert_eq!(
+            manifest.system_prompt,
+            Some("You are a helpful assistant.".to_string())
+        );
+        assert_eq!(
+            manifest.persona,
+            Some("Friendly and professional".to_string())
+        );
         assert_eq!(manifest.examples.len(), 2);
         assert_eq!(manifest.examples[0].input, "Hello");
         assert_eq!(manifest.examples[1].category, Some("math".to_string()));
@@ -1315,11 +1413,16 @@ mod tests {
             .expect("Failed to build");
 
         let reader = KpkgReader::<AppKeyProvider>::with_app_key();
-        let (docs, manifest) = reader.read_with_manifest(&encrypted).expect("Failed to read");
+        let (docs, manifest) = reader
+            .read_with_manifest(&encrypted)
+            .expect("Failed to read");
 
         assert_eq!(docs.len(), 1);
         assert_eq!(manifest.name, "Test");
-        assert_eq!(manifest.system_prompt, Some("System prompt here".to_string()));
+        assert_eq!(
+            manifest.system_prompt,
+            Some("System prompt here".to_string())
+        );
     }
 
     #[test]
@@ -1333,8 +1436,8 @@ mod tests {
             "default_priority": 0
         }"#;
 
-        let manifest: KpkgManifest = serde_json::from_str(old_manifest_json)
-            .expect("Failed to deserialize old manifest");
+        let manifest: KpkgManifest =
+            serde_json::from_str(old_manifest_json).expect("Failed to deserialize old manifest");
 
         assert_eq!(manifest.name, "Old Package");
         assert!(manifest.system_prompt.is_none());
@@ -1357,10 +1460,7 @@ mod tests {
                 name: "Test".to_string(),
                 system_prompt: Some("You are helpful.".to_string()),
                 persona: Some("Expert".to_string()),
-                examples: vec![
-                    ExamplePair::new("Q1", "A1"),
-                    ExamplePair::new("Q2", "A2"),
-                ],
+                examples: vec![ExamplePair::new("Q1", "A1"), ExamplePair::new("Q2", "A2")],
                 ..Default::default()
             },
         };
@@ -1391,7 +1491,9 @@ mod tests {
             .expect("Failed to build");
 
         let reader = KpkgReader::<AppKeyProvider>::with_app_key();
-        let manifest = reader.read_manifest_only(&encrypted).expect("Failed to read");
+        let manifest = reader
+            .read_manifest_only(&encrypted)
+            .expect("Failed to read");
 
         let meta = manifest.metadata.expect("Metadata should exist");
         assert!(meta.created_at.is_some());

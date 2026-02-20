@@ -31,7 +31,10 @@
 //! ```
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, atomic::{AtomicUsize, Ordering}};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc, Mutex,
+};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -231,11 +234,7 @@ impl BatchProcessor {
     }
 
     /// Process a batch of requests
-    pub fn process<F>(
-        &self,
-        requests: Vec<BatchRequest>,
-        generator: F,
-    ) -> BatchResults
+    pub fn process<F>(&self, requests: Vec<BatchRequest>, generator: F) -> BatchResults
     where
         F: Fn(&BatchRequest) -> Result<String, String> + Send + Sync + 'static,
     {
@@ -341,13 +340,12 @@ impl BatchProcessor {
                             stats.failed += 1;
                         }
                         stats.total_retries += result.retries;
-                        stats.total_duration = stats.started_at
-                            .map(|s| s.elapsed())
-                            .unwrap_or_default();
+                        stats.total_duration =
+                            stats.started_at.map(|s| s.elapsed()).unwrap_or_default();
 
                         if stats.completed > 0 {
                             stats.avg_duration = Duration::from_nanos(
-                                stats.total_duration.as_nanos() as u64 / stats.completed as u64
+                                stats.total_duration.as_nanos() as u64 / stats.completed as u64,
                             );
                         }
 
@@ -357,7 +355,10 @@ impl BatchProcessor {
                         }
                     }
 
-                    results.lock().unwrap_or_else(|e| e.into_inner()).push(result);
+                    results
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .push(result);
                 }
             });
 
@@ -563,7 +564,9 @@ mod tests {
             .build();
 
         assert_eq!(requests.len(), 2);
-        assert!(requests.iter().all(|r| r.system_prompt == Some("System".to_string())));
+        assert!(requests
+            .iter()
+            .all(|r| r.system_prompt == Some("System".to_string())));
     }
 
     #[test]
@@ -582,9 +585,8 @@ mod tests {
             BatchRequest::new("3", "c"),
         ];
 
-        let results = processor.process(requests, |req| {
-            Ok(format!("Response to: {}", req.message))
-        });
+        let results =
+            processor.process(requests, |req| Ok(format!("Response to: {}", req.message)));
 
         assert_eq!(results.stats.total, 3);
         assert_eq!(results.stats.successful, 3);
@@ -602,10 +604,7 @@ mod tests {
 
         let processor = BatchProcessor::new(config);
 
-        let requests = vec![
-            BatchRequest::new("1", "ok"),
-            BatchRequest::new("2", "fail"),
-        ];
+        let requests = vec![BatchRequest::new("1", "ok"), BatchRequest::new("2", "fail")];
 
         let results = processor.process(requests, |req| {
             if req.message == "fail" {

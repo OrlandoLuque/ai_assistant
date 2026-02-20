@@ -122,20 +122,23 @@ impl SyncLog {
 
         // Trim old entries
         if self.entries.len() > self.max_entries {
-            self.entries.drain(0..(self.entries.len() - self.max_entries));
+            self.entries
+                .drain(0..(self.entries.len() - self.max_entries));
         }
 
         self.current_version
     }
 
     pub fn get_since(&self, version: u64) -> Vec<&SyncEntry> {
-        self.entries.iter()
+        self.entries
+            .iter()
             .filter(|e| e.version > version)
             .collect()
     }
 
     pub fn get_since_timestamp(&self, timestamp: u64) -> Vec<&SyncEntry> {
-        self.entries.iter()
+        self.entries
+            .iter()
             .filter(|e| e.timestamp > timestamp)
             .collect()
     }
@@ -153,9 +156,7 @@ impl SyncLog {
             latest.insert(key, entry);
         }
 
-        let compacted: Vec<SyncEntry> = latest.values()
-            .map(|e| (*e).clone())
-            .collect();
+        let compacted: Vec<SyncEntry> = latest.values().map(|e| (*e).clone()).collect();
 
         self.entries = compacted;
     }
@@ -240,11 +241,15 @@ impl IncrementalSyncManager {
     }
 
     pub fn get_delta(&self, client_id: &str) -> SyncDelta {
-        let from_version = self.client_states.get(client_id)
+        let from_version = self
+            .client_states
+            .get(client_id)
             .map(|s| s.last_sync_version)
             .unwrap_or(0);
 
-        let entries: Vec<SyncEntry> = self.log.get_since(from_version)
+        let entries: Vec<SyncEntry> = self
+            .log
+            .get_since(from_version)
             .into_iter()
             .cloned()
             .collect();
@@ -263,7 +268,8 @@ impl IncrementalSyncManager {
             .unwrap_or_default()
             .as_secs();
 
-        let state = self.client_states
+        let state = self
+            .client_states
             .entry(client_id.to_string())
             .or_insert_with(|| SyncState::new(client_id));
 
@@ -355,7 +361,9 @@ impl TwoWaySyncCoordinator {
     pub fn get_outbound_delta(&mut self) -> SyncDelta {
         let entries = std::mem::take(&mut self.pending_outbound);
         SyncDelta::new(
-            self.local.current_version().saturating_sub(entries.len() as u64),
+            self.local
+                .current_version()
+                .saturating_sub(entries.len() as u64),
             self.local.current_version(),
             entries,
         )

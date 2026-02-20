@@ -317,8 +317,14 @@ mod rag_tiers_tests {
 
     #[test]
     fn test_rag_requirement_display_names() {
-        assert_eq!(RagRequirement::EmbeddingModel.display_name(), "Embedding Model");
-        assert_eq!(RagRequirement::GraphDatabase.display_name(), "Graph Database");
+        assert_eq!(
+            RagRequirement::EmbeddingModel.display_name(),
+            "Embedding Model"
+        );
+        assert_eq!(
+            RagRequirement::GraphDatabase.display_name(),
+            "Graph Database"
+        );
         assert_eq!(RagRequirement::VisionModel.display_name(), "Vision Model");
     }
 
@@ -825,7 +831,12 @@ mod rag_debug_tests {
         let session = logger.start_query("test query");
 
         session.log_query_received("test query");
-        session.log_expansion("original", vec!["expanded1".into()], "llm", Duration::from_millis(50));
+        session.log_expansion(
+            "original",
+            vec!["expanded1".into()],
+            "llm",
+            Duration::from_millis(50),
+        );
         session.log_keyword_search("test", 5, Some(0.8), Duration::from_millis(30));
         session.log_semantic_search("test", "model", 10, Some(0.9), Duration::from_millis(40));
         session.log_llm_call("test", "model", 100, 50, Duration::from_millis(100));
@@ -993,7 +1004,9 @@ mod rag_methods_tests {
 
     impl MockLlm {
         fn new(response: &str) -> Self {
-            Self { response: response.into() }
+            Self {
+                response: response.into(),
+            }
         }
     }
 
@@ -1055,7 +1068,9 @@ mod rag_methods_tests {
         let expanded = expander.synonym_expand("What is the ship price?");
         assert!(!expanded.is_empty());
         // Should contain cost/vessel variants
-        assert!(expanded.iter().any(|s| s.contains("cost") || s.contains("vessel")));
+        assert!(expanded
+            .iter()
+            .any(|s| s.contains("cost") || s.contains("vessel")));
     }
 
     #[test]
@@ -1158,9 +1173,14 @@ mod rag_methods_tests {
         let hyde = HydeGenerator::new();
         let llm = MockLlm::new("This is a hypothetical answer to the question.");
 
-        let result = hyde.generate("What is the capital of France?", &llm).unwrap();
+        let result = hyde
+            .generate("What is the capital of France?", &llm)
+            .unwrap();
         assert!(!result.result.is_empty());
-        assert_eq!(result.result[0], "This is a hypothetical answer to the question.");
+        assert_eq!(
+            result.result[0],
+            "This is a hypothetical answer to the question."
+        );
     }
 
     #[test]
@@ -1252,7 +1272,13 @@ mod rag_methods_tests {
         let compressor = ContextualCompressor::new();
         let llm = MockLlm::new("The relevant extract with important details.");
 
-        let result = compressor.compress("What is X?", "Long content about X and many other things...", &llm).unwrap();
+        let result = compressor
+            .compress(
+                "What is X?",
+                "Long content about X and many other things...",
+                &llm,
+            )
+            .unwrap();
         assert!(!result.result.is_empty());
     }
 
@@ -1277,7 +1303,9 @@ mod rag_methods_tests {
         let evaluator = SelfRagEvaluator::new();
         let llm = MockLlm::new("YES|85|Context contains relevant information");
 
-        let result = evaluator.evaluate("What is X?", "X is a programming language.", &llm).unwrap();
+        let result = evaluator
+            .evaluate("What is X?", "X is a programming language.", &llm)
+            .unwrap();
         assert!(result.result.is_sufficient);
         assert!((result.result.confidence - 0.85).abs() < 0.01);
     }
@@ -1287,7 +1315,9 @@ mod rag_methods_tests {
         let evaluator = SelfRagEvaluator::new();
         let llm = MockLlm::new("NO|25|Context lacks specific details");
 
-        let result = evaluator.evaluate("What is X?", "Irrelevant content", &llm).unwrap();
+        let result = evaluator
+            .evaluate("What is X?", "Irrelevant content", &llm)
+            .unwrap();
         assert!(!result.result.is_sufficient);
         assert!(result.result.confidence < 0.5);
     }
@@ -1302,12 +1332,18 @@ mod rag_methods_tests {
         // High confidence -> UseAsIs
         let llm_high = MockLlm::new("YES|90|Good");
         let result = evaluator.evaluate("q", "c", &llm_high).unwrap();
-        assert!(matches!(result.result.suggested_action, SelfReflectionAction::UseAsIs));
+        assert!(matches!(
+            result.result.suggested_action,
+            SelfReflectionAction::UseAsIs
+        ));
 
         // Low confidence -> ExpandSearch
         let llm_low = MockLlm::new("NO|20|Bad");
         let result = evaluator.evaluate("q", "c", &llm_low).unwrap();
-        assert!(matches!(result.result.suggested_action, SelfReflectionAction::ExpandSearch));
+        assert!(matches!(
+            result.result.suggested_action,
+            SelfReflectionAction::ExpandSearch
+        ));
     }
 
     // --- CRAG Evaluator Tests ---
@@ -1317,7 +1353,9 @@ mod rag_methods_tests {
         let evaluator = CragEvaluator::new();
         let llm = MockLlm::new("80|Documents are highly relevant");
 
-        let result = evaluator.evaluate("query", &["doc1", "doc2"], &llm).unwrap();
+        let result = evaluator
+            .evaluate("query", &["doc1", "doc2"], &llm)
+            .unwrap();
         assert!((result.result.quality_score - 0.8).abs() < 0.01);
         assert!(matches!(result.result.action, CragAction::Correct));
     }
@@ -1461,14 +1499,12 @@ mod rag_methods_tests {
         let entity = Entity {
             name: "Aurora MR".into(),
             entity_type: "SHIP".into(),
-            mentions: vec![
-                EntityMention {
-                    text: "Aurora MR".into(),
-                    start: 0,
-                    end: 9,
-                    confidence: 0.95,
-                }
-            ],
+            mentions: vec![EntityMention {
+                text: "Aurora MR".into(),
+                start: 0,
+                end: 9,
+                confidence: 0.95,
+            }],
         };
 
         assert_eq!(entity.name, "Aurora MR");
@@ -1501,7 +1537,9 @@ mod rag_methods_tests {
         let retriever = GraphRagRetriever::new(config);
         let llm = MockLlm::new("SHIP: Aurora MR\nMANUFACTURER: RSI\nSHIP: Mustang Alpha");
 
-        let result = retriever.extract_entities("Text about Aurora MR made by RSI and Mustang Alpha", &llm).unwrap();
+        let result = retriever
+            .extract_entities("Text about Aurora MR made by RSI and Mustang Alpha", &llm)
+            .unwrap();
         assert_eq!(result.result.len(), 3);
         assert!(result.result.iter().any(|e| e.name == "Aurora MR"));
         assert!(result.result.iter().any(|e| e.name == "RSI"));
@@ -1555,9 +1593,8 @@ mod rag_methods_tests {
 
 #[cfg(feature = "rag")]
 mod rag_integration_tests {
-    use ai_assistant::rag_tiers::*;
     use ai_assistant::rag_debug::*;
-    use ai_assistant::rag_methods::*;
+    use ai_assistant::rag_tiers::*;
     use std::time::Duration;
 
     #[test]
@@ -1566,8 +1603,7 @@ mod rag_integration_tests {
         let logger = RagDebugLogger::with_level(RagDebugLevel::Detailed);
 
         // Create config
-        let config = RagConfig::with_tier(RagTier::Enhanced)
-            .with_max_chunks(10);
+        let config = RagConfig::with_tier(RagTier::Enhanced).with_max_chunks(10);
 
         // Verify config
         assert!(config.is_feature_enabled("fts_search"));
@@ -1577,8 +1613,14 @@ mod rag_integration_tests {
         // Start debug session
         let session = logger.start_query("What ships are good for cargo?");
         session.set_tier("Enhanced");
-        session.set_features(config.effective_features().enabled_features()
-            .into_iter().map(|s| s.to_string()).collect());
+        session.set_features(
+            config
+                .effective_features()
+                .enabled_features()
+                .into_iter()
+                .map(|s| s.to_string())
+                .collect(),
+        );
 
         // Simulate query expansion
         session.log_expansion(
@@ -1589,12 +1631,7 @@ mod rag_integration_tests {
         );
 
         // Simulate keyword search
-        session.log_keyword_search(
-            "cargo ships",
-            15,
-            Some(0.85),
-            Duration::from_millis(30),
-        );
+        session.log_keyword_search("cargo ships", 15, Some(0.85), Duration::from_millis(30));
 
         // Simulate semantic search
         session.log_semantic_search(

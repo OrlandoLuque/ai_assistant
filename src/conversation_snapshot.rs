@@ -219,26 +219,27 @@ impl SnapshotManager {
     }
 
     pub fn list(&self) -> Vec<&SnapshotMetadata> {
-        self.snapshots.values()
-            .map(|s| &s.metadata)
-            .collect()
+        self.snapshots.values().map(|s| &s.metadata).collect()
     }
 
     pub fn search_by_tag(&self, tag: &str) -> Vec<&ConversationSnapshot> {
-        self.snapshots.values()
+        self.snapshots
+            .values()
             .filter(|s| s.metadata.tags.contains(&tag.to_string()))
             .collect()
     }
 
     pub fn search_by_name(&self, query: &str) -> Vec<&ConversationSnapshot> {
         let query_lower = query.to_lowercase();
-        self.snapshots.values()
+        self.snapshots
+            .values()
             .filter(|s| s.metadata.name.to_lowercase().contains(&query_lower))
             .collect()
     }
 
     fn get_oldest_id(&self) -> Option<String> {
-        self.snapshots.values()
+        self.snapshots
+            .values()
             .min_by_key(|s| s.metadata.created_at)
             .map(|s| s.metadata.id.clone())
     }
@@ -266,8 +267,11 @@ impl SnapshotManager {
 
             if is_snapshot_file {
                 // Use internal_storage to auto-detect format
-                if let Ok(snapshot) = crate::internal_storage::load_internal::<ConversationSnapshot>(&path) {
-                    self.snapshots.insert(snapshot.metadata.id.clone(), snapshot);
+                if let Ok(snapshot) =
+                    crate::internal_storage::load_internal::<ConversationSnapshot>(&path)
+                {
+                    self.snapshots
+                        .insert(snapshot.metadata.id.clone(), snapshot);
                     count += 1;
                 }
             }
@@ -306,22 +310,28 @@ pub struct SnapshotDiff {
 pub enum MemoryChange {
     Added(MemoryItem),
     Removed(String),
-    Modified { key: String, old: String, new: String },
+    Modified {
+        key: String,
+        old: String,
+        new: String,
+    },
 }
 
 impl SnapshotDiff {
     pub fn compare(old: &ConversationSnapshot, new: &ConversationSnapshot) -> Self {
-        let old_msg_ids: std::collections::HashSet<_> = old.messages.iter().map(|m| m.id.clone()).collect();
-        let new_msg_ids: std::collections::HashSet<_> = new.messages.iter().map(|m| m.id.clone()).collect();
+        let old_msg_ids: std::collections::HashSet<_> =
+            old.messages.iter().map(|m| m.id.clone()).collect();
+        let new_msg_ids: std::collections::HashSet<_> =
+            new.messages.iter().map(|m| m.id.clone()).collect();
 
-        let added_messages: Vec<_> = new.messages.iter()
+        let added_messages: Vec<_> = new
+            .messages
+            .iter()
             .filter(|m| !old_msg_ids.contains(&m.id))
             .cloned()
             .collect();
 
-        let removed_messages: Vec<_> = old_msg_ids.difference(&new_msg_ids)
-            .cloned()
-            .collect();
+        let removed_messages: Vec<_> = old_msg_ids.difference(&new_msg_ids).cloned().collect();
 
         let mut context_changes = HashMap::new();
         for (key, new_val) in &new.context {
@@ -371,10 +381,10 @@ impl SnapshotDiff {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.added_messages.is_empty() &&
-        self.removed_messages.is_empty() &&
-        self.context_changes.is_empty() &&
-        self.memory_changes.is_empty()
+        self.added_messages.is_empty()
+            && self.removed_messages.is_empty()
+            && self.context_changes.is_empty()
+            && self.memory_changes.is_empty()
     }
 }
 

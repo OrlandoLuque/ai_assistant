@@ -12,10 +12,8 @@
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use rcgen::{
-    CertificateParams, DistinguishedName, DnType, KeyPair, PKCS_ED25519,
-};
-use sha2::{Sha256, Digest};
+use rcgen::{CertificateParams, DistinguishedName, DnType, KeyPair, PKCS_ED25519};
+use sha2::{Digest, Sha256};
 
 use crate::distributed::NodeId;
 
@@ -145,7 +143,8 @@ impl CertificateManager {
         let key_der = key_pair.serialized_der().to_vec();
 
         let params = Self::make_ca_params();
-        let cert = params.self_signed(&key_pair)
+        let cert = params
+            .self_signed(&key_pair)
             .map_err(|e| format!("Failed to create CA certificate: {}", e))?;
         let cert_der = cert.der().to_vec();
 
@@ -164,7 +163,8 @@ impl CertificateManager {
             .map_err(|e| format!("Failed to load CA key: {}", e))?;
 
         let params = Self::make_ca_params();
-        let ca_cert = params.self_signed(&ca_key)
+        let ca_cert = params
+            .self_signed(&ca_key)
             .map_err(|e| format!("Failed to reconstruct CA: {}", e))?;
 
         Ok((ca_cert, ca_key))
@@ -208,7 +208,8 @@ impl CertificateManager {
         node_params.not_after = rcgen::date_time_ymd(2034, 1, 1);
 
         // Sign the node cert with the CA
-        let node_cert = node_params.signed_by(&node_key, &ca_cert, &ca_key)
+        let node_cert = node_params
+            .signed_by(&node_key, &ca_cert, &ca_key)
             .map_err(|e| format!("Failed to sign node cert: {}", e))?;
         let node_cert_der = node_cert.der().to_vec();
 
@@ -242,8 +243,8 @@ impl CertificateManager {
     pub fn load_identity(dir: &Path) -> SecurityResult<NodeIdentity> {
         let cert_der = std::fs::read(dir.join("cert.der"))
             .map_err(|e| format!("Failed to read cert: {}", e))?;
-        let key_der = std::fs::read(dir.join("key.der"))
-            .map_err(|e| format!("Failed to read key: {}", e))?;
+        let key_der =
+            std::fs::read(dir.join("key.der")).map_err(|e| format!("Failed to read key: {}", e))?;
         let ca_cert_der = std::fs::read(dir.join("ca.der"))
             .map_err(|e| format!("Failed to read CA cert: {}", e))?;
 
@@ -293,15 +294,15 @@ impl CertificateManager {
 
         let mut root_store = rustls::RootCertStore::empty();
         let ca_cert = rustls::pki_types::CertificateDer::from(identity.ca_cert_der.clone());
-        root_store.add(ca_cert)
+        root_store
+            .add(ca_cert)
             .map_err(|e| format!("Failed to add CA to root store: {}", e))?;
 
         // Build server config with client cert verification
-        let client_verifier = rustls::server::WebPkiClientVerifier::builder(
-            std::sync::Arc::new(root_store),
-        )
-        .build()
-        .map_err(|e| format!("Failed to build client verifier: {}", e))?;
+        let client_verifier =
+            rustls::server::WebPkiClientVerifier::builder(std::sync::Arc::new(root_store))
+                .build()
+                .map_err(|e| format!("Failed to build client verifier: {}", e))?;
 
         let server_crypto = rustls::ServerConfig::builder()
             .with_client_cert_verifier(client_verifier)
@@ -326,7 +327,8 @@ impl CertificateManager {
 
         let mut root_store = rustls::RootCertStore::empty();
         let ca_cert = rustls::pki_types::CertificateDer::from(identity.ca_cert_der.clone());
-        root_store.add(ca_cert)
+        root_store
+            .add(ca_cert)
             .map_err(|e| format!("Failed to add CA to root store: {}", e))?;
 
         let client_crypto = rustls::ClientConfig::builder()
@@ -436,7 +438,8 @@ impl JoinToken {
             self.token,
             self.created_at,
             self.expires_at,
-            self.max_uses.map_or("unlimited".to_string(), |m| m.to_string()),
+            self.max_uses
+                .map_or("unlimited".to_string(), |m| m.to_string()),
             self.uses,
         )
     }
@@ -449,17 +452,23 @@ impl JoinToken {
         }
 
         let token = parts[0].to_string();
-        let created_at: u64 = parts[1].parse()
+        let created_at: u64 = parts[1]
+            .parse()
             .map_err(|_| "Invalid created_at timestamp".to_string())?;
-        let expires_at: u64 = parts[2].parse()
+        let expires_at: u64 = parts[2]
+            .parse()
             .map_err(|_| "Invalid expires_at timestamp".to_string())?;
         let max_uses = if parts[3] == "unlimited" {
             None
         } else {
-            Some(parts[3].parse::<usize>()
-                .map_err(|_| "Invalid max_uses value".to_string())?)
+            Some(
+                parts[3]
+                    .parse::<usize>()
+                    .map_err(|_| "Invalid max_uses value".to_string())?,
+            )
         };
-        let uses: usize = parts[4].parse()
+        let uses: usize = parts[4]
+            .parse()
             .map_err(|_| "Invalid uses count".to_string())?;
 
         Ok(Self {
@@ -604,7 +613,11 @@ mod tests {
     #[test]
     fn test_generate_ca() {
         let result = CertificateManager::generate_ca();
-        assert!(result.is_ok(), "CA generation should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "CA generation should succeed: {:?}",
+            result.err()
+        );
         let (cert_der, key_der) = result.unwrap();
         assert!(!cert_der.is_empty(), "CA cert should not be empty");
         assert!(!key_der.is_empty(), "CA key should not be empty");
@@ -614,7 +627,11 @@ mod tests {
     fn test_generate_node_cert() {
         let (ca_cert, ca_key) = CertificateManager::generate_ca().unwrap();
         let result = CertificateManager::generate_node_cert(&ca_cert, &ca_key);
-        assert!(result.is_ok(), "Node cert generation should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Node cert generation should succeed: {:?}",
+            result.err()
+        );
         let identity = result.unwrap();
         assert!(!identity.cert_der.is_empty());
         assert!(!identity.key_der.is_empty());
@@ -637,7 +654,10 @@ mod tests {
         let id1 = CertificateManager::generate_node_cert(&ca_cert, &ca_key).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(2));
         let id2 = CertificateManager::generate_node_cert(&ca_cert, &ca_key).unwrap();
-        assert_ne!(id1.node_id, id2.node_id, "Different nodes should have different IDs");
+        assert_ne!(
+            id1.node_id, id2.node_id,
+            "Different nodes should have different IDs"
+        );
     }
 
     #[test]
@@ -679,7 +699,11 @@ mod tests {
         let (ca_cert, ca_key) = CertificateManager::generate_ca().unwrap();
         let identity = CertificateManager::generate_node_cert(&ca_cert, &ca_key).unwrap();
         let result = CertificateManager::make_server_config(&identity);
-        assert!(result.is_ok(), "Server config should build: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Server config should build: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -687,7 +711,11 @@ mod tests {
         let (ca_cert, ca_key) = CertificateManager::generate_ca().unwrap();
         let identity = CertificateManager::generate_node_cert(&ca_cert, &ca_key).unwrap();
         let result = CertificateManager::make_client_config(&identity);
-        assert!(result.is_ok(), "Client config should build: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Client config should build: {:?}",
+            result.err()
+        );
     }
 
     #[test]

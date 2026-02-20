@@ -6,10 +6,10 @@
 //! - Relevance-based retrieval to minimize token usage
 //! - Multi-user support with isolated data per user
 
-use std::path::Path;
+use crate::messages::ChatMessage;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use crate::messages::ChatMessage;
+use std::path::Path;
 
 /// Default user ID for single-user applications
 pub const DEFAULT_USER_ID: &str = "default";
@@ -158,7 +158,10 @@ impl KnowledgeUsage {
     }
 
     /// Build from hybrid search results
-    pub fn from_hybrid_results(query: impl Into<String>, results: &[HybridKnowledgeResult]) -> Self {
+    pub fn from_hybrid_results(
+        query: impl Into<String>,
+        results: &[HybridKnowledgeResult],
+    ) -> Self {
         let mut usage = Self::new(query);
         usage.add_hybrid_results(results);
         usage
@@ -175,7 +178,8 @@ impl KnowledgeUsage {
         }
 
         for (source, source_chunks) in by_source {
-            let sections: Vec<String> = source_chunks.iter()
+            let sections: Vec<String> = source_chunks
+                .iter()
                 .map(|c| c.section.clone())
                 .filter(|s| !s.is_empty())
                 .collect::<std::collections::HashSet<_>>()
@@ -204,11 +208,15 @@ impl KnowledgeUsage {
         // Group by source
         let mut by_source: HashMap<&str, Vec<&HybridKnowledgeResult>> = HashMap::new();
         for result in results {
-            by_source.entry(&result.chunk.source).or_default().push(result);
+            by_source
+                .entry(&result.chunk.source)
+                .or_default()
+                .push(result);
         }
 
         for (source, source_results) in by_source {
-            let sections: Vec<String> = source_results.iter()
+            let sections: Vec<String> = source_results
+                .iter()
                 .map(|r| r.chunk.section.clone())
                 .filter(|s| !s.is_empty())
                 .collect::<std::collections::HashSet<_>>()
@@ -216,9 +224,8 @@ impl KnowledgeUsage {
                 .collect();
 
             let tokens: usize = source_results.iter().map(|r| r.chunk.token_count).sum();
-            let avg_relevance = source_results.iter()
-                .map(|r| r.combined_score)
-                .sum::<f32>() / source_results.len() as f32;
+            let avg_relevance = source_results.iter().map(|r| r.combined_score).sum::<f32>()
+                / source_results.len() as f32;
 
             self.sources.push(KnowledgeSourceUsage {
                 source: source.to_string(),
@@ -249,10 +256,17 @@ impl KnowledgeUsage {
             return "No knowledge used".to_string();
         }
 
-        let source_info: Vec<String> = self.sources.iter()
+        let source_info: Vec<String> = self
+            .sources
+            .iter()
             .map(|s| {
                 if let Some(score) = s.relevance_score {
-                    format!("{} ({} chunks, {:.0}% relevance)", s.source, s.chunks_used, score * 100.0)
+                    format!(
+                        "{} ({} chunks, {:.0}% relevance)",
+                        s.source,
+                        s.chunks_used,
+                        score * 100.0
+                    )
                 } else {
                     format!("{} ({} chunks)", s.source, s.chunks_used)
                 }
@@ -342,7 +356,9 @@ impl RagDb {
         let conn = rusqlite::Connection::open(db_path)?;
 
         let embedder = if hybrid_config.semantic_enabled {
-            Some(crate::embeddings::LocalEmbedder::new(crate::embeddings::EmbeddingConfig::default()))
+            Some(crate::embeddings::LocalEmbedder::new(
+                crate::embeddings::EmbeddingConfig::default(),
+            ))
         } else {
             None
         };
@@ -362,7 +378,7 @@ impl RagDb {
         self.hybrid_config.semantic_enabled = enabled;
         if enabled && self.embedder.is_none() {
             self.embedder = Some(crate::embeddings::LocalEmbedder::new(
-                crate::embeddings::EmbeddingConfig::default()
+                crate::embeddings::EmbeddingConfig::default(),
             ));
         }
     }
@@ -373,20 +389,21 @@ impl RagDb {
             Some(e) => e,
             None => {
                 self.embedder = Some(crate::embeddings::LocalEmbedder::new(
-                    crate::embeddings::EmbeddingConfig::default()
+                    crate::embeddings::EmbeddingConfig::default(),
                 ));
-                self.embedder.as_mut().expect("embedder must be initialized")
+                self.embedder
+                    .as_mut()
+                    .expect("embedder must be initialized")
             }
         };
 
         // Get all knowledge chunks
-        let mut stmt = self.conn.prepare(
-            "SELECT content FROM knowledge_chunks"
-        )?;
+        let mut stmt = self.conn.prepare("SELECT content FROM knowledge_chunks")?;
 
-        let contents: Vec<String> = stmt.query_map([], |row| {
-            row.get::<_, String>(0)
-        })?.filter_map(|r| r.ok()).collect();
+        let contents: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .filter_map(|r| r.ok())
+            .collect();
 
         let doc_refs: Vec<&str> = contents.iter().map(|s| s.as_str()).collect();
         embedder.train(&doc_refs);
@@ -463,7 +480,7 @@ impl RagDb {
                 VALUES ('delete', old.id, old.source, old.section, old.content);
                 INSERT INTO knowledge_fts(rowid, source, section, content)
                 VALUES (new.id, new.source, new.section, new.content);
-            END;"
+            END;",
         )?;
 
         // Conversation messages table (per user via session_id which includes user)
@@ -505,7 +522,7 @@ impl RagDb {
                 INSERT INTO conversation_fts(conversation_fts, rowid, content)
                 VALUES ('delete', old.id, old.content);
                 INSERT INTO conversation_fts(rowid, content) VALUES (new.id, new.content);
-            END;"
+            END;",
         )?;
 
         // Indexes
@@ -589,7 +606,7 @@ impl RagDb {
                  );
                  INSERT INTO knowledge_notes (user_id, source, notes, updated_at)
                  SELECT 'default', source, notes, updated_at FROM knowledge_notes_old;
-                 DROP TABLE knowledge_notes_old;"
+                 DROP TABLE knowledge_notes_old;",
             );
         }
 
@@ -695,14 +712,16 @@ impl RagDb {
             "SELECT id, user_id, display_name, global_notes, created_at, updated_at FROM users ORDER BY display_name"
         )?;
 
-        let rows = stmt.query_map([], |row| Ok(User {
-            id: row.get(0)?,
-            user_id: row.get(1)?,
-            display_name: row.get(2)?,
-            global_notes: row.get(3)?,
-            created_at: row.get(4)?,
-            updated_at: row.get(5)?,
-        }))?;
+        let rows = stmt.query_map([], |row| {
+            Ok(User {
+                id: row.get(0)?,
+                user_id: row.get(1)?,
+                display_name: row.get(2)?,
+                global_notes: row.get(3)?,
+                created_at: row.get(4)?,
+                updated_at: row.get(5)?,
+            })
+        })?;
 
         let mut results = Vec::new();
         for row in rows {
@@ -742,11 +761,14 @@ impl RagDb {
     pub fn needs_reindex(&self, source: &str, content: &str) -> Result<(bool, String)> {
         let new_hash = Self::hash_content(content);
 
-        let existing: Option<String> = self.conn.query_row(
-            "SELECT content_hash FROM knowledge_sources WHERE source = ?1",
-            [source],
-            |row| row.get(0),
-        ).ok();
+        let existing: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT content_hash FROM knowledge_sources WHERE source = ?1",
+                [source],
+                |row| row.get(0),
+            )
+            .ok();
 
         match existing {
             Some(old_hash) if old_hash == new_hash => Ok((false, new_hash)),
@@ -790,10 +812,8 @@ impl RagDb {
         }
 
         // Delete old chunks for this source
-        self.conn.execute(
-            "DELETE FROM knowledge_chunks WHERE source = ?1",
-            [source],
-        )?;
+        self.conn
+            .execute("DELETE FROM knowledge_chunks WHERE source = ?1", [source])?;
 
         // Index new chunks
         let chunks = chunk_document(source, content);
@@ -805,7 +825,13 @@ impl RagDb {
             self.conn.execute(
                 "INSERT INTO knowledge_chunks (source, section, content, token_count, created_at)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params![chunk.source, chunk.section, chunk.content, chunk.token_count, now],
+                rusqlite::params![
+                    chunk.source,
+                    chunk.section,
+                    chunk.content,
+                    chunk.token_count,
+                    now
+                ],
             )?;
             total_tokens += chunk.token_count;
             count += 1;
@@ -828,8 +854,10 @@ impl RagDb {
 
     /// Delete a specific document from the knowledge base
     pub fn delete_document(&self, source: &str) -> Result<()> {
-        self.conn.execute("DELETE FROM knowledge_chunks WHERE source = ?1", [source])?;
-        self.conn.execute("DELETE FROM knowledge_sources WHERE source = ?1", [source])?;
+        self.conn
+            .execute("DELETE FROM knowledge_chunks WHERE source = ?1", [source])?;
+        self.conn
+            .execute("DELETE FROM knowledge_sources WHERE source = ?1", [source])?;
         Ok(())
     }
 
@@ -852,7 +880,12 @@ impl RagDb {
 
     /// Search knowledge base for relevant chunks
     /// Results are ordered by: priority (higher first), then BM25 relevance score
-    pub fn search_knowledge(&self, query: &str, max_tokens: usize, top_k: usize) -> Result<Vec<KnowledgeChunk>> {
+    pub fn search_knowledge(
+        &self,
+        query: &str,
+        max_tokens: usize,
+        top_k: usize,
+    ) -> Result<Vec<KnowledgeChunk>> {
         let search_terms = prepare_fts_query(query);
 
         // Join with knowledge_sources to get priority, order by priority DESC then BM25 score
@@ -865,7 +898,7 @@ impl RagDb {
              LEFT JOIN knowledge_sources s ON k.source = s.source
              WHERE knowledge_fts MATCH ?1
              ORDER BY priority DESC, score
-             LIMIT ?2"
+             LIMIT ?2",
         )?;
 
         let mut results = Vec::new();
@@ -913,7 +946,9 @@ impl RagDb {
         let search_terms = prepare_fts_query(query);
 
         // Build source filter
-        let placeholders: Vec<String> = sources.iter().enumerate()
+        let placeholders: Vec<String> = sources
+            .iter()
+            .enumerate()
             .map(|(i, _)| format!("?{}", i + 3))
             .collect();
         let source_filter = placeholders.join(",");
@@ -974,7 +1009,12 @@ impl RagDb {
     /// Hybrid search combining BM25 and semantic similarity
     ///
     /// Returns results sorted by combined score (BM25 weighted + semantic weighted)
-    pub fn search_knowledge_hybrid(&self, query: &str, max_tokens: usize, top_k: usize) -> Result<Vec<HybridKnowledgeResult>> {
+    pub fn search_knowledge_hybrid(
+        &self,
+        query: &str,
+        max_tokens: usize,
+        top_k: usize,
+    ) -> Result<Vec<HybridKnowledgeResult>> {
         // Get BM25 results with scores
         let search_terms = prepare_fts_query(query);
 
@@ -987,7 +1027,7 @@ impl RagDb {
              LEFT JOIN knowledge_sources s ON k.source = s.source
              WHERE knowledge_fts MATCH ?1
              ORDER BY priority DESC, score DESC
-             LIMIT ?2"
+             LIMIT ?2",
         )?;
 
         let mut bm25_results: Vec<(KnowledgeChunk, f32)> = Vec::new();
@@ -1010,7 +1050,8 @@ impl RagDb {
         }
 
         // Normalize BM25 scores to 0-1 range
-        let max_bm25 = bm25_results.iter()
+        let max_bm25 = bm25_results
+            .iter()
             .map(|(_, s)| *s)
             .fold(0.0f32, f32::max)
             .max(1.0);
@@ -1019,12 +1060,13 @@ impl RagDb {
         let semantic_scores: Vec<Option<f32>> = if self.hybrid_config.semantic_enabled {
             if let Some(ref embedder) = self.embedder {
                 let query_embedding = embedder.embed(query);
-                bm25_results.iter()
+                bm25_results
+                    .iter()
                     .map(|(chunk, _)| {
                         let chunk_embedding = embedder.embed(&chunk.content);
                         let score = crate::embeddings::LocalEmbedder::cosine_similarity(
                             &query_embedding,
-                            &chunk_embedding
+                            &chunk_embedding,
                         );
                         Some(score)
                     })
@@ -1037,8 +1079,9 @@ impl RagDb {
         };
 
         // Combine scores
-        let mut hybrid_results: Vec<HybridKnowledgeResult> = bm25_results.into_iter()
-            .zip(semantic_scores.into_iter())
+        let mut hybrid_results: Vec<HybridKnowledgeResult> = bm25_results
+            .into_iter()
+            .zip(semantic_scores)
             .map(|((chunk, bm25_score), semantic_score)| {
                 let normalized_bm25 = bm25_score / max_bm25;
                 let combined_score = if let Some(sem_score) = semantic_score {
@@ -1059,7 +1102,8 @@ impl RagDb {
 
         // Sort by combined score
         hybrid_results.sort_by(|a, b| {
-            b.combined_score.partial_cmp(&a.combined_score)
+            b.combined_score
+                .partial_cmp(&a.combined_score)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
@@ -1090,7 +1134,12 @@ impl RagDb {
     }
 
     /// Search with auto-selection of BM25 or hybrid based on configuration
-    pub fn search_knowledge_auto(&self, query: &str, max_tokens: usize, top_k: usize) -> Result<Vec<KnowledgeChunk>> {
+    pub fn search_knowledge_auto(
+        &self,
+        query: &str,
+        max_tokens: usize,
+        top_k: usize,
+    ) -> Result<Vec<KnowledgeChunk>> {
         if self.hybrid_config.semantic_enabled && self.embedder.is_some() {
             // Use hybrid search and extract just the chunks
             let hybrid_results = self.search_knowledge_hybrid(query, max_tokens, top_k)?;
@@ -1128,11 +1177,11 @@ impl RagDb {
 
     /// Get total knowledge stats
     pub fn get_knowledge_stats(&self) -> Result<(usize, usize)> {
-        let count: usize = self.conn.query_row(
-            "SELECT COUNT(*) FROM knowledge_chunks",
-            [],
-            |row| row.get(0),
-        )?;
+        let count: usize =
+            self.conn
+                .query_row("SELECT COUNT(*) FROM knowledge_chunks", [], |row| {
+                    row.get(0)
+                })?;
         let total_tokens: usize = self.conn.query_row(
             "SELECT COALESCE(SUM(token_count), 0) FROM knowledge_chunks",
             [],
@@ -1182,7 +1231,7 @@ impl RagDb {
     /// Get all knowledge notes for a user
     pub fn get_all_knowledge_notes(&self, user_id: &str) -> Result<Vec<(String, String)>> {
         let mut stmt = self.conn.prepare(
-            "SELECT source, notes FROM knowledge_notes WHERE user_id = ?1 ORDER BY source"
+            "SELECT source, notes FROM knowledge_notes WHERE user_id = ?1 ORDER BY source",
         )?;
 
         let rows = stmt.query_map(rusqlite::params![user_id], |row| {
@@ -1198,9 +1247,9 @@ impl RagDb {
 
     /// Get list of all indexed knowledge sources
     pub fn get_knowledge_sources(&self) -> Result<Vec<String>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT DISTINCT source FROM knowledge_chunks ORDER BY source"
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT DISTINCT source FROM knowledge_chunks ORDER BY source")?;
 
         let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
 
@@ -1252,7 +1301,13 @@ impl RagDb {
     // === Conversation Operations (per user) ===
 
     /// Store a message in the database for a user
-    pub fn store_message(&self, user_id: &str, session_id: &str, msg: &ChatMessage, in_context: bool) -> Result<i64> {
+    pub fn store_message(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        msg: &ChatMessage,
+        in_context: bool,
+    ) -> Result<i64> {
         let token_count = crate::context::estimate_tokens(&msg.content);
         let now = chrono::Utc::now().to_rfc3339();
 
@@ -1275,7 +1330,12 @@ impl RagDb {
     }
 
     /// Mark messages as out of context (moved to RAG storage)
-    pub fn mark_messages_out_of_context(&self, user_id: &str, session_id: &str, message_ids: &[i64]) -> Result<()> {
+    pub fn mark_messages_out_of_context(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        message_ids: &[i64],
+    ) -> Result<()> {
         for id in message_ids {
             self.conn.execute(
                 "UPDATE conversation_messages SET in_context = 0 WHERE id = ?1 AND user_id = ?2 AND session_id = ?3",
@@ -1286,7 +1346,14 @@ impl RagDb {
     }
 
     /// Search conversation history for relevant messages
-    pub fn search_conversation(&self, user_id: &str, session_id: &str, query: &str, max_tokens: usize, exclude_in_context: bool) -> Result<Vec<StoredMessage>> {
+    pub fn search_conversation(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        query: &str,
+        max_tokens: usize,
+        exclude_in_context: bool,
+    ) -> Result<Vec<StoredMessage>> {
         let search_terms = prepare_fts_query(query);
 
         let sql = if exclude_in_context {
@@ -1309,17 +1376,20 @@ impl RagDb {
         let mut results = Vec::new();
         let mut total_tokens = 0;
 
-        let rows = stmt.query_map(rusqlite::params![search_terms, user_id, session_id], |row| {
-            Ok(StoredMessage {
-                id: row.get(0)?,
-                session_id: row.get(1)?,
-                role: row.get(2)?,
-                content: row.get(3)?,
-                timestamp: row.get(4)?,
-                token_count: row.get(5)?,
-                in_context: row.get::<_, i32>(6)? != 0,
-            })
-        })?;
+        let rows = stmt.query_map(
+            rusqlite::params![search_terms, user_id, session_id],
+            |row| {
+                Ok(StoredMessage {
+                    id: row.get(0)?,
+                    session_id: row.get(1)?,
+                    role: row.get(2)?,
+                    content: row.get(3)?,
+                    timestamp: row.get(4)?,
+                    token_count: row.get(5)?,
+                    in_context: row.get::<_, i32>(6)? != 0,
+                })
+            },
+        )?;
 
         for msg_result in rows {
             let msg = msg_result?;
@@ -1333,13 +1403,18 @@ impl RagDb {
     }
 
     /// Get recent messages from conversation (not in current context)
-    pub fn get_recent_archived_messages(&self, user_id: &str, session_id: &str, max_tokens: usize) -> Result<Vec<StoredMessage>> {
+    pub fn get_recent_archived_messages(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        max_tokens: usize,
+    ) -> Result<Vec<StoredMessage>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, session_id, role, content, timestamp, token_count, in_context
              FROM conversation_messages
              WHERE user_id = ?1 AND session_id = ?2 AND in_context = 0
              ORDER BY timestamp DESC
-             LIMIT 50"
+             LIMIT 50",
         )?;
 
         let mut results = Vec::new();
@@ -1371,7 +1446,11 @@ impl RagDb {
     }
 
     /// Get conversation stats for a session
-    pub fn get_conversation_stats(&self, user_id: &str, session_id: &str) -> Result<(usize, usize, usize)> {
+    pub fn get_conversation_stats(
+        &self,
+        user_id: &str,
+        session_id: &str,
+    ) -> Result<(usize, usize, usize)> {
         let total: usize = self.conn.query_row(
             "SELECT COUNT(*) FROM conversation_messages WHERE user_id = ?1 AND session_id = ?2",
             rusqlite::params![user_id, session_id],
@@ -1422,27 +1501,55 @@ impl RagDb {
     }
 
     /// Store a message (legacy - uses default user)
-    pub fn store_message_default(&self, session_id: &str, msg: &ChatMessage, in_context: bool) -> Result<i64> {
+    pub fn store_message_default(
+        &self,
+        session_id: &str,
+        msg: &ChatMessage,
+        in_context: bool,
+    ) -> Result<i64> {
         self.store_message(DEFAULT_USER_ID, session_id, msg, in_context)
     }
 
     /// Mark messages as out of context (legacy - uses default user)
-    pub fn mark_messages_out_of_context_default(&self, session_id: &str, message_ids: &[i64]) -> Result<()> {
+    pub fn mark_messages_out_of_context_default(
+        &self,
+        session_id: &str,
+        message_ids: &[i64],
+    ) -> Result<()> {
         self.mark_messages_out_of_context(DEFAULT_USER_ID, session_id, message_ids)
     }
 
     /// Search conversation (legacy - uses default user)
-    pub fn search_conversation_default(&self, session_id: &str, query: &str, max_tokens: usize, exclude_in_context: bool) -> Result<Vec<StoredMessage>> {
-        self.search_conversation(DEFAULT_USER_ID, session_id, query, max_tokens, exclude_in_context)
+    pub fn search_conversation_default(
+        &self,
+        session_id: &str,
+        query: &str,
+        max_tokens: usize,
+        exclude_in_context: bool,
+    ) -> Result<Vec<StoredMessage>> {
+        self.search_conversation(
+            DEFAULT_USER_ID,
+            session_id,
+            query,
+            max_tokens,
+            exclude_in_context,
+        )
     }
 
     /// Get recent archived messages (legacy - uses default user)
-    pub fn get_recent_archived_messages_default(&self, session_id: &str, max_tokens: usize) -> Result<Vec<StoredMessage>> {
+    pub fn get_recent_archived_messages_default(
+        &self,
+        session_id: &str,
+        max_tokens: usize,
+    ) -> Result<Vec<StoredMessage>> {
         self.get_recent_archived_messages(DEFAULT_USER_ID, session_id, max_tokens)
     }
 
     /// Get conversation stats (legacy - uses default user)
-    pub fn get_conversation_stats_default(&self, session_id: &str) -> Result<(usize, usize, usize)> {
+    pub fn get_conversation_stats_default(
+        &self,
+        session_id: &str,
+    ) -> Result<(usize, usize, usize)> {
         self.get_conversation_stats(DEFAULT_USER_ID, session_id)
     }
 
@@ -1491,28 +1598,34 @@ impl RagDb {
             "SELECT source, section, content, token_count FROM knowledge_chunks ORDER BY source, id"
         )?;
 
-        let chunks: Vec<ExportedChunk> = stmt.query_map([], |row| {
-            Ok(ExportedChunk {
-                source: row.get(0)?,
-                section: row.get(1)?,
-                content: row.get(2)?,
-                token_count: row.get(3)?,
-            })
-        })?.filter_map(|r| r.ok()).collect();
+        let chunks: Vec<ExportedChunk> = stmt
+            .query_map([], |row| {
+                Ok(ExportedChunk {
+                    source: row.get(0)?,
+                    section: row.get(1)?,
+                    content: row.get(2)?,
+                    token_count: row.get(3)?,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
 
         // Get all sources
         let mut stmt = self.conn.prepare(
             "SELECT source, content_hash, chunk_count, total_tokens FROM knowledge_sources ORDER BY source"
         )?;
 
-        let sources: Vec<ExportedSource> = stmt.query_map([], |row| {
-            Ok(ExportedSource {
-                source: row.get(0)?,
-                content_hash: row.get(1)?,
-                chunk_count: row.get(2)?,
-                total_tokens: row.get(3)?,
-            })
-        })?.filter_map(|r| r.ok()).collect();
+        let sources: Vec<ExportedSource> = stmt
+            .query_map([], |row| {
+                Ok(ExportedSource {
+                    source: row.get(0)?,
+                    content_hash: row.get(1)?,
+                    chunk_count: row.get(2)?,
+                    total_tokens: row.get(3)?,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
 
         Ok(KnowledgeExport {
             version: 1,
@@ -1546,11 +1659,14 @@ impl RagDb {
         // Import sources first
         for source in &data.sources {
             // Check if source already exists
-            let exists: bool = self.conn.query_row(
-                "SELECT COUNT(*) > 0 FROM knowledge_sources WHERE source = ?1",
-                [&source.source],
-                |row| row.get(0),
-            ).unwrap_or(false);
+            let exists: bool = self
+                .conn
+                .query_row(
+                    "SELECT COUNT(*) > 0 FROM knowledge_sources WHERE source = ?1",
+                    [&source.source],
+                    |row| row.get(0),
+                )
+                .unwrap_or(false);
 
             if !exists {
                 self.conn.execute(
@@ -1565,11 +1681,14 @@ impl RagDb {
         for chunk in &data.chunks {
             // Skip if source already has chunks (to avoid duplicates in merge mode)
             if !replace {
-                let has_chunks: bool = self.conn.query_row(
-                    "SELECT COUNT(*) > 0 FROM knowledge_chunks WHERE source = ?1",
-                    [&chunk.source],
-                    |row| row.get(0),
-                ).unwrap_or(false);
+                let has_chunks: bool = self
+                    .conn
+                    .query_row(
+                        "SELECT COUNT(*) > 0 FROM knowledge_chunks WHERE source = ?1",
+                        [&chunk.source],
+                        |row| row.get(0),
+                    )
+                    .unwrap_or(false);
 
                 if has_chunks {
                     continue;
@@ -1579,7 +1698,13 @@ impl RagDb {
             self.conn.execute(
                 "INSERT INTO knowledge_chunks (source, section, content, token_count, created_at)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params![chunk.source, chunk.section, chunk.content, chunk.token_count, now],
+                rusqlite::params![
+                    chunk.source,
+                    chunk.section,
+                    chunk.content,
+                    chunk.token_count,
+                    now
+                ],
             )?;
             imported += 1;
         }
@@ -1713,7 +1838,8 @@ pub fn build_knowledge_context(chunks: &[KnowledgeChunk]) -> String {
     let mut context = String::from("--- RELEVANT KNOWLEDGE ---\n");
 
     // Group by source
-    let mut by_source: std::collections::HashMap<&str, Vec<&KnowledgeChunk>> = std::collections::HashMap::new();
+    let mut by_source: std::collections::HashMap<&str, Vec<&KnowledgeChunk>> =
+        std::collections::HashMap::new();
     for chunk in chunks {
         by_source.entry(&chunk.source).or_default().push(chunk);
     }
@@ -1742,7 +1868,11 @@ pub fn build_conversation_context(messages: &[StoredMessage]) -> String {
     let mut context = String::from("[Previous conversation context]\n");
 
     for msg in messages {
-        let role = if msg.role == "user" { "User" } else { "Assistant" };
+        let role = if msg.role == "user" {
+            "User"
+        } else {
+            "Assistant"
+        };
         context.push_str(&format!("{}: {}\n", role, msg.content));
     }
 
@@ -1811,7 +1941,10 @@ Here is how to use it.
     #[test]
     fn test_prepare_fts_query_hyphen_underscore() {
         // Hyphens and underscores should be preserved
-        assert_eq!(prepare_fts_query("cross-chassis upgrade"), "cross-chassis* OR upgrade*");
+        assert_eq!(
+            prepare_fts_query("cross-chassis upgrade"),
+            "cross-chassis* OR upgrade*"
+        );
         assert_eq!(prepare_fts_query("user_name test"), "user_name* OR test*");
     }
 
@@ -1855,7 +1988,9 @@ A **CCU (Cross-Chassis Upgrade)** is an item that transforms one ship into anoth
 "#;
 
         // Index the document
-        let chunks_indexed = db.index_document("ccu-guide", content).expect("Failed to index");
+        let chunks_indexed = db
+            .index_document("ccu-guide", content)
+            .expect("Failed to index");
         assert!(chunks_indexed > 0, "Should have indexed at least one chunk");
 
         // Verify stats
@@ -1885,15 +2020,21 @@ This is the most economical way to obtain ships in Star Citizen.
 CCUs cost the difference between the two ship prices.
 "#;
 
-        db.index_document("ccu-guide", content).expect("Failed to index");
+        db.index_document("ccu-guide", content)
+            .expect("Failed to index");
 
         // Search for CCU
-        let results = db.search_knowledge("What is a CCU?", 2000, 5).expect("Search failed");
+        let results = db
+            .search_knowledge("What is a CCU?", 2000, 5)
+            .expect("Search failed");
         assert!(!results.is_empty(), "Search should return results");
 
         // Verify content contains CCU information
         let all_content: String = results.iter().map(|c| c.content.clone()).collect();
-        assert!(all_content.contains("Cross-Chassis Upgrade"), "Results should contain CCU definition");
+        assert!(
+            all_content.contains("Cross-Chassis Upgrade"),
+            "Results should contain CCU definition"
+        );
 
         cleanup_db(&path);
     }
@@ -1912,18 +2053,25 @@ The Aurora MR is a starter ship manufactured by Roberts Space Industries.
 The Mustang Alpha is another starter ship, made by Consolidated Outland.
 "#;
 
-        db.index_document("ships", content).expect("Failed to index");
+        db.index_document("ships", content)
+            .expect("Failed to index");
 
         // Search with question mark
-        let results = db.search_knowledge("What is the Aurora MR?", 2000, 5).expect("Search failed");
+        let results = db
+            .search_knowledge("What is the Aurora MR?", 2000, 5)
+            .expect("Search failed");
         assert!(!results.is_empty(), "Search with '?' should return results");
 
         // Search with exclamation
-        let results = db.search_knowledge("Tell me about Mustang!", 2000, 5).expect("Search failed");
+        let results = db
+            .search_knowledge("Tell me about Mustang!", 2000, 5)
+            .expect("Search failed");
         assert!(!results.is_empty(), "Search with '!' should return results");
 
         // Search with comma
-        let results = db.search_knowledge("Aurora, Mustang ships", 2000, 5).expect("Search failed");
+        let results = db
+            .search_knowledge("Aurora, Mustang ships", 2000, 5)
+            .expect("Search failed");
         assert!(!results.is_empty(), "Search with ',' should return results");
 
         cleanup_db(&path);
@@ -1938,10 +2086,13 @@ The Mustang Alpha is another starter ship, made by Consolidated Outland.
 The Aurora is a starter ship.
 "#;
 
-        db.index_document("ships", content).expect("Failed to index");
+        db.index_document("ships", content)
+            .expect("Failed to index");
 
         // Search for something not in the document
-        let results = db.search_knowledge("quantum drive specifications", 2000, 5).expect("Search failed");
+        let results = db
+            .search_knowledge("quantum drive specifications", 2000, 5)
+            .expect("Search failed");
         // This might return results due to partial matching, but let's verify the search doesn't crash
         // The important thing is that it doesn't error
         assert!(results.len() <= 5, "Should respect top_k limit");
@@ -1960,7 +2111,9 @@ The Aurora is a starter ship.
         assert!(chunks1 > 0);
 
         // Second index with same content - should skip
-        let chunks2 = db.index_document("test", content).expect("Failed to reindex");
+        let chunks2 = db
+            .index_document("test", content)
+            .expect("Failed to reindex");
         assert_eq!(chunks2, 0, "Should return 0 when content unchanged");
 
         // Verify still only original chunks
@@ -1978,18 +2131,26 @@ The Aurora is a starter ship.
         let content2 = "# Test\nUpdated content with more information.";
 
         // First index
-        let chunks1 = db.index_document("test", content1).expect("Failed to index");
+        let chunks1 = db
+            .index_document("test", content1)
+            .expect("Failed to index");
         assert!(chunks1 > 0);
 
         // Second index with changed content - should reindex
-        let chunks2 = db.index_document("test", content2).expect("Failed to reindex");
+        let chunks2 = db
+            .index_document("test", content2)
+            .expect("Failed to reindex");
         assert!(chunks2 > 0, "Should reindex when content changed");
 
         // Search should find new content
-        let results = db.search_knowledge("updated information", 2000, 5).expect("Search failed");
+        let results = db
+            .search_knowledge("updated information", 2000, 5)
+            .expect("Search failed");
         let all_content: String = results.iter().map(|c| c.content.clone()).collect();
-        assert!(all_content.contains("Updated") || all_content.contains("updated"),
-            "Should find updated content");
+        assert!(
+            all_content.contains("Updated") || all_content.contains("updated"),
+            "Should find updated content"
+        );
 
         cleanup_db(&path);
     }
@@ -1999,21 +2160,30 @@ The Aurora is a starter ship.
         let (db, path) = create_temp_db();
 
         let ccu_content = "# CCU Guide\nA CCU transforms one ship into another.";
-        let ships_content = "# Ships\nThe Aurora is a starter ship. The Carrack is an exploration ship.";
+        let ships_content =
+            "# Ships\nThe Aurora is a starter ship. The Carrack is an exploration ship.";
         let trading_content = "# Trading\nBuy low, sell high. Check commodity prices.";
 
-        db.index_document("ccu", ccu_content).expect("Failed to index ccu");
-        db.index_document("ships", ships_content).expect("Failed to index ships");
-        db.index_document("trading", trading_content).expect("Failed to index trading");
+        db.index_document("ccu", ccu_content)
+            .expect("Failed to index ccu");
+        db.index_document("ships", ships_content)
+            .expect("Failed to index ships");
+        db.index_document("trading", trading_content)
+            .expect("Failed to index trading");
 
         // Verify all sources indexed
         let sources = db.list_indexed_sources().expect("Failed to list sources");
         assert_eq!(sources.len(), 3);
 
         // Search should find relevant document
-        let results = db.search_knowledge("What is the Carrack?", 2000, 5).expect("Search failed");
+        let results = db
+            .search_knowledge("What is the Carrack?", 2000, 5)
+            .expect("Search failed");
         assert!(!results.is_empty());
-        assert!(results.iter().any(|c| c.source == "ships"), "Should find ships document");
+        assert!(
+            results.iter().any(|c| c.source == "ships"),
+            "Should find ships document"
+        );
 
         cleanup_db(&path);
     }
@@ -2141,12 +2311,16 @@ This should create enough chunks to test the token limit.
         db.index_document("test", content).expect("Failed to index");
 
         // Search with very low token limit
-        let results = db.search_knowledge("section content", 50, 10).expect("Search failed");
+        let results = db
+            .search_knowledge("section content", 50, 10)
+            .expect("Search failed");
 
         // Should respect token limit (though might get 0 if first chunk exceeds limit)
         let total_tokens: usize = results.iter().map(|c| c.token_count).sum();
-        assert!(total_tokens <= 50 || results.is_empty(),
-            "Should respect token limit or return empty if first chunk too large");
+        assert!(
+            total_tokens <= 50 || results.is_empty(),
+            "Should respect token limit or return empty if first chunk too large"
+        );
 
         cleanup_db(&path);
     }
@@ -2157,12 +2331,18 @@ This should create enough chunks to test the token limit.
 
         // Index multiple documents
         for i in 0..10 {
-            let content = format!("# Document {}\nThis document talks about ships and CCUs.", i);
-            db.index_document(&format!("doc{}", i), &content).expect("Failed to index");
+            let content = format!(
+                "# Document {}\nThis document talks about ships and CCUs.",
+                i
+            );
+            db.index_document(&format!("doc{}", i), &content)
+                .expect("Failed to index");
         }
 
         // Search with top_k = 3
-        let results = db.search_knowledge("ships CCU", 10000, 3).expect("Search failed");
+        let results = db
+            .search_knowledge("ships CCU", 10000, 3)
+            .expect("Search failed");
         assert!(results.len() <= 3, "Should respect top_k limit");
 
         cleanup_db(&path);
@@ -2198,7 +2378,8 @@ Un **CCU (Cross-Chassis Upgrade)** es un item que permite transformar una nave e
 - Mejor valor pero menos flexible
 "#;
 
-        db.index_document("ccu-game", ccu_content).expect("Failed to index CCU content");
+        db.index_document("ccu-game", ccu_content)
+            .expect("Failed to index CCU content");
 
         // Verify indexing worked
         let (chunks, _) = db.get_knowledge_stats().expect("Failed to get stats");
@@ -2208,10 +2389,15 @@ Un **CCU (Cross-Chassis Upgrade)** es un item que permite transformar una nave e
         let query = "What is a CCU in Star Citizen?";
         let results = db.search_knowledge(query, 2000, 5).expect("Search failed");
 
-        assert!(!results.is_empty(), "Search for '{}' should return results", query);
+        assert!(
+            !results.is_empty(),
+            "Search for '{}' should return results",
+            query
+        );
 
         // Verify the results contain the CCU definition
-        let all_content: String = results.iter()
+        let all_content: String = results
+            .iter()
             .map(|c| c.content.to_lowercase())
             .collect::<Vec<_>>()
             .join(" ");
@@ -2225,7 +2411,10 @@ Un **CCU (Cross-Chassis Upgrade)** es un item que permite transformar una nave e
         // Build context and verify it's not empty
         let context = build_knowledge_context(&results);
         assert!(!context.is_empty(), "Built context should not be empty");
-        assert!(context.contains("RELEVANT KNOWLEDGE"), "Context should have header");
+        assert!(
+            context.contains("RELEVANT KNOWLEDGE"),
+            "Context should have header"
+        );
 
         cleanup_db(&path);
     }
@@ -2247,15 +2436,20 @@ Es perfecta para nuevos ciudadanos que quieren explorar el universo.
 - Precio: 30 USD
 "#;
 
-        db.index_document("naves", content).expect("Failed to index");
+        db.index_document("naves", content)
+            .expect("Failed to index");
 
         // Search in Spanish
-        let results = db.search_knowledge("Qué es la Aurora?", 2000, 5).expect("Search failed");
+        let results = db
+            .search_knowledge("Qué es la Aurora?", 2000, 5)
+            .expect("Search failed");
         assert!(!results.is_empty(), "Should find Spanish content");
 
         let all_content: String = results.iter().map(|c| c.content.clone()).collect();
-        assert!(all_content.contains("Aurora") || all_content.contains("nave"),
-            "Should find Aurora information");
+        assert!(
+            all_content.contains("Aurora") || all_content.contains("nave"),
+            "Should find Aurora information"
+        );
 
         cleanup_db(&path);
     }
@@ -2300,7 +2494,8 @@ Ahorro: $25 (12.5%)
    - Mercury Star Runner ($260)
 "#;
 
-        db.index_document("ccu-game", ccu_content).expect("Failed to index CCU content");
+        db.index_document("ccu-game", ccu_content)
+            .expect("Failed to index CCU content");
 
         // Verify indexing
         let (chunks, _) = db.get_knowledge_stats().expect("Failed to get stats");
@@ -2310,10 +2505,14 @@ Ahorro: $25 (12.5%)
         let query = "dime una cadena de CCUs de ejemplo";
         let results = db.search_knowledge(query, 4000, 10).expect("Search failed");
 
-        assert!(!results.is_empty(), "Search for CCU chain example should return results");
+        assert!(
+            !results.is_empty(),
+            "Search for CCU chain example should return results"
+        );
 
         // Check that results contain the actual example
-        let all_content: String = results.iter()
+        let all_content: String = results
+            .iter()
             .map(|c| c.content.clone())
             .collect::<Vec<_>>()
             .join("\n");
@@ -2327,13 +2526,20 @@ Ahorro: $25 (12.5%)
 
         println!("Query: {}", query);
         println!("Results count: {}", results.len());
-        println!("Content preview: {}...", &all_content[..all_content.len().min(500)]);
-        println!("Has Aurora: {}, Mustang: {}, Avenger: {}, Cutlass: {}, Cadena: {}",
-            has_aurora, has_mustang, has_avenger, has_cutlass, has_chain_keyword);
+        println!(
+            "Content preview: {}...",
+            &all_content[..all_content.len().min(500)]
+        );
+        println!(
+            "Has Aurora: {}, Mustang: {}, Avenger: {}, Cutlass: {}, Cadena: {}",
+            has_aurora, has_mustang, has_avenger, has_cutlass, has_chain_keyword
+        );
 
-        assert!(has_chain_keyword || has_aurora,
+        assert!(
+            has_chain_keyword || has_aurora,
             "Results should contain CCU chain information. Got: {}...",
-            &all_content[..all_content.len().min(300)]);
+            &all_content[..all_content.len().min(300)]
+        );
 
         cleanup_db(&path);
     }
@@ -2357,16 +2563,24 @@ Aurora MR ($30)
 This shows a simple upgrade path.
 "#;
 
-        db.index_document("example", content).expect("Failed to index");
+        db.index_document("example", content)
+            .expect("Failed to index");
 
         // Search for content that's inside the code block
-        let results = db.search_knowledge("Aurora Mustang Avenger", 2000, 5).expect("Search failed");
+        let results = db
+            .search_knowledge("Aurora Mustang Avenger", 2000, 5)
+            .expect("Search failed");
 
-        assert!(!results.is_empty(), "Should find content inside code blocks");
+        assert!(
+            !results.is_empty(),
+            "Should find content inside code blocks"
+        );
 
         let all_content: String = results.iter().map(|c| c.content.clone()).collect();
-        assert!(all_content.contains("Aurora") || all_content.contains("Mustang"),
-            "Should find ships mentioned in code block");
+        assert!(
+            all_content.contains("Aurora") || all_content.contains("Mustang"),
+            "Should find ships mentioned in code block"
+        );
 
         cleanup_db(&path);
     }
@@ -2392,22 +2606,27 @@ Total gastado: $175
         let chunks = chunk_document("test", content);
 
         // Find the chunk that should contain the example
-        let example_chunk = chunks.iter()
+        let example_chunk = chunks
+            .iter()
             .find(|c| c.content.contains("Aurora") || c.content.contains("Mustang"));
 
-        assert!(example_chunk.is_some(), "Should have a chunk with the example");
+        assert!(
+            example_chunk.is_some(),
+            "Should have a chunk with the example"
+        );
 
         let chunk = example_chunk.unwrap();
         // The chunk should contain most of the chain
-        let has_multiple_ships =
-            (chunk.content.contains("Aurora") as u8) +
-            (chunk.content.contains("Mustang") as u8) +
-            (chunk.content.contains("Avenger") as u8) +
-            (chunk.content.contains("Cutlass") as u8);
+        let has_multiple_ships = (chunk.content.contains("Aurora") as u8)
+            + (chunk.content.contains("Mustang") as u8)
+            + (chunk.content.contains("Avenger") as u8)
+            + (chunk.content.contains("Cutlass") as u8);
 
-        assert!(has_multiple_ships >= 2,
+        assert!(
+            has_multiple_ships >= 2,
             "Chunk should contain multiple ships from the chain. Got: {}",
-            chunk.content);
+            chunk.content
+        );
     }
 
     #[test]
@@ -2433,8 +2652,10 @@ Total gastado: $175
         let (db1, path1) = create_temp_db();
 
         // Index some documents
-        db1.index_document("doc1", "# Document 1\nContent about ships.").expect("Failed to index");
-        db1.index_document("doc2", "# Document 2\nContent about CCUs.").expect("Failed to index");
+        db1.index_document("doc1", "# Document 1\nContent about ships.")
+            .expect("Failed to index");
+        db1.index_document("doc2", "# Document 2\nContent about CCUs.")
+            .expect("Failed to index");
 
         // Export
         let export = db1.export_knowledge().expect("Export failed");
@@ -2447,7 +2668,9 @@ Total gastado: $175
         assert!(imported > 0);
 
         // Verify imported content is searchable
-        let results = db2.search_knowledge("ships CCUs", 2000, 5).expect("Search failed");
+        let results = db2
+            .search_knowledge("ships CCUs", 2000, 5)
+            .expect("Search failed");
         assert!(!results.is_empty(), "Should find imported content");
 
         cleanup_db(&path1);
