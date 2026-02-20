@@ -3,9 +3,9 @@
 //! This module provides tools to measure and analyze conversation quality,
 //! including response times, token usage, context efficiency, and RAG retrieval quality.
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
-use serde::{Serialize, Deserialize};
 
 /// Metrics for a single message exchange
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,7 +148,13 @@ impl MessageMetricsBuilder {
         self.input_tokens = tokens;
     }
 
-    pub fn set_context_info(&mut self, total: usize, knowledge: usize, conversation: usize, near_limit: bool) {
+    pub fn set_context_info(
+        &mut self,
+        total: usize,
+        knowledge: usize,
+        conversation: usize,
+        near_limit: bool,
+    ) {
         self.context_tokens = total;
         self.knowledge_tokens = knowledge;
         self.conversation_tokens = conversation;
@@ -168,9 +174,9 @@ impl MessageMetricsBuilder {
 
     pub fn finish(self, output_tokens: usize) -> MessageMetrics {
         let total_time = self.start_time.elapsed();
-        let ttft = self.first_token_time.map(|t| {
-            t.duration_since(self.start_time).as_millis() as u64
-        });
+        let ttft = self
+            .first_token_time
+            .map(|t| t.duration_since(self.start_time).as_millis() as u64);
 
         MessageMetrics {
             timestamp: chrono::Utc::now().to_rfc3339(),
@@ -243,7 +249,10 @@ impl MetricsTracker {
 
     /// Record source access
     pub fn record_source_access(&mut self, source: &str) {
-        *self.source_access_counts.entry(source.to_string()).or_insert(0) += 1;
+        *self
+            .source_access_counts
+            .entry(source.to_string())
+            .or_insert(0) += 1;
     }
 
     /// Get all message metrics
@@ -263,15 +272,31 @@ impl MetricsTracker {
 
         let total_input: usize = self.message_metrics.iter().map(|m| m.input_tokens).sum();
         let total_output: usize = self.message_metrics.iter().map(|m| m.output_tokens).sum();
-        let total_response_time: u64 = self.message_metrics.iter().map(|m| m.total_response_time_ms).sum();
-        let total_ttft: u64 = self.message_metrics.iter()
+        let total_response_time: u64 = self
+            .message_metrics
+            .iter()
+            .map(|m| m.total_response_time_ms)
+            .sum();
+        let total_ttft: u64 = self
+            .message_metrics
+            .iter()
             .filter_map(|m| m.time_to_first_token_ms)
             .sum();
-        let ttft_count = self.message_metrics.iter()
+        let ttft_count = self
+            .message_metrics
+            .iter()
             .filter(|m| m.time_to_first_token_ms.is_some())
             .count();
-        let total_chunks: usize = self.message_metrics.iter().map(|m| m.knowledge_chunks_retrieved).sum();
-        let context_warnings = self.message_metrics.iter().filter(|m| m.context_near_limit).count();
+        let total_chunks: usize = self
+            .message_metrics
+            .iter()
+            .map(|m| m.knowledge_chunks_retrieved)
+            .sum();
+        let context_warnings = self
+            .message_metrics
+            .iter()
+            .filter(|m| m.context_near_limit)
+            .count();
 
         SessionMetrics {
             session_id: self.session_id.clone(),
@@ -294,18 +319,25 @@ impl MetricsTracker {
     /// Get RAG quality metrics
     pub fn get_rag_quality_metrics(&self) -> RagQualityMetrics {
         let total_queries = self.cache_hits + self.cache_misses;
-        let queries_with_results = self.message_metrics.iter()
+        let queries_with_results = self
+            .message_metrics
+            .iter()
             .filter(|m| m.knowledge_chunks_retrieved > 0)
             .count();
 
-        let total_chunks: usize = self.message_metrics.iter()
+        let total_chunks: usize = self
+            .message_metrics
+            .iter()
             .map(|m| m.knowledge_chunks_retrieved)
             .sum();
-        let total_tokens: usize = self.message_metrics.iter()
+        let total_tokens: usize = self
+            .message_metrics
+            .iter()
             .map(|m| m.knowledge_tokens)
             .sum();
 
-        let mut top_sources: Vec<(String, usize)> = self.source_access_counts
+        let mut top_sources: Vec<(String, usize)> = self
+            .source_access_counts
             .iter()
             .map(|(k, v)| (k.clone(), *v))
             .collect();
@@ -421,21 +453,26 @@ impl<T: Clone> SearchCache<T> {
             self.evict_oldest();
         }
 
-        self.entries.insert(key, CacheEntry {
-            data,
-            created_at: Instant::now(),
-            hits: 0,
-        });
+        self.entries.insert(
+            key,
+            CacheEntry {
+                data,
+                created_at: Instant::now(),
+                hits: 0,
+            },
+        );
     }
 
     /// Remove expired entries
     pub fn cleanup(&mut self) {
-        self.entries.retain(|_, entry| entry.created_at.elapsed() < self.ttl);
+        self.entries
+            .retain(|_, entry| entry.created_at.elapsed() < self.ttl);
     }
 
     /// Evict the oldest entry
     fn evict_oldest(&mut self) {
-        if let Some(oldest_key) = self.entries
+        if let Some(oldest_key) = self
+            .entries
             .iter()
             .min_by_key(|(_, e)| e.created_at)
             .map(|(k, _)| k.clone())
@@ -506,18 +543,25 @@ pub struct TestCaseResult {
 
 impl ConversationTestCase {
     /// Evaluate a response against this test case
-    pub fn evaluate(&self, response: &str, metrics: &MessageMetrics, retrieved_sources: &[String]) -> TestCaseResult {
+    pub fn evaluate(
+        &self,
+        response: &str,
+        metrics: &MessageMetrics,
+        retrieved_sources: &[String],
+    ) -> TestCaseResult {
         let response_lower = response.to_lowercase();
         let mut failure_reasons = Vec::new();
 
         // Check keywords
-        let found_keywords: Vec<String> = self.expected_keywords
+        let found_keywords: Vec<String> = self
+            .expected_keywords
             .iter()
             .filter(|kw| response_lower.contains(&kw.to_lowercase()))
             .cloned()
             .collect();
 
-        let missing_keywords: Vec<String> = self.expected_keywords
+        let missing_keywords: Vec<String> = self
+            .expected_keywords
             .iter()
             .filter(|kw| !response_lower.contains(&kw.to_lowercase()))
             .cloned()
@@ -528,7 +572,8 @@ impl ConversationTestCase {
         }
 
         // Check forbidden keywords
-        let found_forbidden: Vec<String> = self.forbidden_keywords
+        let found_forbidden: Vec<String> = self
+            .forbidden_keywords
             .iter()
             .filter(|kw| response_lower.contains(&kw.to_lowercase()))
             .cloned()
@@ -539,13 +584,15 @@ impl ConversationTestCase {
         }
 
         // Check sources
-        let found_sources: Vec<String> = self.expected_sources
+        let found_sources: Vec<String> = self
+            .expected_sources
             .iter()
             .filter(|s| retrieved_sources.iter().any(|rs| rs.contains(*s)))
             .cloned()
             .collect();
 
-        let missing_sources: Vec<String> = self.expected_sources
+        let missing_sources: Vec<String> = self
+            .expected_sources
             .iter()
             .filter(|s| !retrieved_sources.iter().any(|rs| rs.contains(*s)))
             .cloned()
@@ -637,15 +684,26 @@ impl TestSuite {
         let total = results.len();
         let passed = results.iter().filter(|r| r.passed).count();
         let failed = total - passed;
-        let total_time: u64 = results.iter().map(|r| r.metrics.total_response_time_ms).sum();
+        let total_time: u64 = results
+            .iter()
+            .map(|r| r.metrics.total_response_time_ms)
+            .sum();
 
         TestSuiteResults {
             suite_name: self.name.clone(),
             total_tests: total,
             passed,
             failed,
-            pass_rate: if total > 0 { passed as f64 / total as f64 } else { 0.0 },
-            avg_response_time_ms: if total > 0 { total_time as f64 / total as f64 } else { 0.0 },
+            pass_rate: if total > 0 {
+                passed as f64 / total as f64
+            } else {
+                0.0
+            },
+            avg_response_time_ms: if total > 0 {
+                total_time as f64 / total as f64
+            } else {
+                0.0
+            },
             results,
         }
     }
@@ -736,5 +794,141 @@ mod tests {
         assert_eq!(session.message_count, 1);
         assert_eq!(session.total_input_tokens, 50);
         assert_eq!(session.total_output_tokens, 100);
+    }
+
+    #[test]
+    fn test_session_metrics_aggregation() {
+        let mut tracker = MetricsTracker::new("agg_session");
+
+        // Message 1: input=30, output=60, response_time will be ~0ms in tests
+        tracker.start_message("model-a");
+        if let Some(b) = tracker.current_message_mut() {
+            b.set_input_tokens(30);
+        }
+        tracker.finish_message(60);
+
+        // Message 2: input=70, output=140
+        tracker.start_message("model-a");
+        if let Some(b) = tracker.current_message_mut() {
+            b.set_input_tokens(70);
+        }
+        tracker.finish_message(140);
+
+        // Message 3: input=100, output=200
+        tracker.start_message("model-a");
+        if let Some(b) = tracker.current_message_mut() {
+            b.set_input_tokens(100);
+        }
+        tracker.finish_message(200);
+
+        let session = tracker.get_session_metrics();
+        assert_eq!(session.message_count, 3);
+        assert_eq!(session.total_input_tokens, 200); // 30+70+100
+        assert_eq!(session.total_output_tokens, 400); // 60+140+200
+                                                      // avg_response_time_ms is total_response_time / count; in tests it is near 0
+        assert!(session.avg_response_time_ms >= 0.0);
+    }
+
+    #[test]
+    fn test_rag_quality_metrics() {
+        let mut tracker = MetricsTracker::new("rag_session");
+
+        // Record cache hits and misses
+        tracker.record_cache_hit();
+        tracker.record_cache_hit();
+        tracker.record_cache_hit();
+        tracker.record_cache_miss();
+        tracker.record_cache_miss();
+
+        // Record source accesses
+        tracker.record_source_access("docs/api.md");
+        tracker.record_source_access("docs/api.md");
+        tracker.record_source_access("docs/api.md");
+        tracker.record_source_access("docs/guide.md");
+
+        let rag = tracker.get_rag_quality_metrics();
+
+        // 3 hits out of 5 total queries = 0.6
+        assert_eq!(rag.total_queries, 5);
+        assert!((rag.cache_hit_rate - 0.6).abs() < f64::EPSILON);
+
+        // top_sources should list api.md first (3 accesses), then guide.md (1)
+        assert_eq!(rag.top_sources.len(), 2);
+        assert_eq!(rag.top_sources[0].0, "docs/api.md");
+        assert_eq!(rag.top_sources[0].1, 3);
+        assert_eq!(rag.top_sources[1].0, "docs/guide.md");
+        assert_eq!(rag.top_sources[1].1, 1);
+    }
+
+    #[test]
+    fn test_search_cache_ttl_expiry() {
+        // TTL = 0 seconds means entries expire immediately
+        let mut cache: SearchCache<String> = SearchCache::new(10, 0);
+
+        cache.insert("key1".to_string(), "value1".to_string());
+
+        // Even a tiny sleep ensures Instant::now() has advanced past the 0s TTL
+        std::thread::sleep(std::time::Duration::from_millis(5));
+
+        assert_eq!(
+            cache.get("key1"),
+            None,
+            "Entry with TTL=0 should be expired"
+        );
+    }
+
+    #[test]
+    fn test_search_cache_cleanup() {
+        // TTL = 0 seconds so all entries expire immediately
+        let mut cache: SearchCache<String> = SearchCache::new(10, 0);
+
+        cache.insert("a".to_string(), "va".to_string());
+        cache.insert("b".to_string(), "vb".to_string());
+        cache.insert("c".to_string(), "vc".to_string());
+
+        // Small sleep to ensure entries are past the 0s TTL
+        std::thread::sleep(std::time::Duration::from_millis(5));
+
+        cache.cleanup();
+
+        let (entry_count, _) = cache.stats();
+        assert_eq!(
+            entry_count, 0,
+            "All expired entries should be removed by cleanup"
+        );
+    }
+
+    #[test]
+    fn test_metrics_clear() {
+        let mut tracker = MetricsTracker::new("clear_session");
+
+        // Add some data
+        tracker.start_message("model-x");
+        if let Some(b) = tracker.current_message_mut() {
+            b.set_input_tokens(42);
+        }
+        tracker.finish_message(84);
+
+        tracker.record_cache_hit();
+        tracker.record_cache_miss();
+        tracker.record_source_access("some_source");
+
+        // Verify data is present
+        let session_before = tracker.get_session_metrics();
+        assert_eq!(session_before.message_count, 1);
+
+        // Clear everything
+        tracker.clear();
+
+        // Verify all metrics are reset
+        let session_after = tracker.get_session_metrics();
+        assert_eq!(session_after.message_count, 0);
+        assert_eq!(session_after.total_input_tokens, 0);
+        assert_eq!(session_after.total_output_tokens, 0);
+
+        let rag_after = tracker.get_rag_quality_metrics();
+        assert_eq!(rag_after.total_queries, 0);
+        assert_eq!(rag_after.top_sources.len(), 0);
+        assert!((rag_after.cache_hit_rate - 0.0).abs() < f64::EPSILON);
     }
 }

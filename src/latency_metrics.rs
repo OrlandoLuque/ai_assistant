@@ -28,9 +28,9 @@
 //! println!("P95: {:?}", stats.p95);
 //! ```
 
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant, SystemTime};
-use serde::{Deserialize, Serialize};
 
 /// A single latency record
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,7 +92,11 @@ impl LatencyRecord {
     pub fn tokens_per_second(&self) -> Option<f64> {
         self.tokens.map(|t| {
             let secs = self.latency_ms as f64 / 1000.0;
-            if secs > 0.0 { t as f64 / secs } else { 0.0 }
+            if secs > 0.0 {
+                t as f64 / secs
+            } else {
+                0.0
+            }
         })
     }
 }
@@ -191,16 +195,19 @@ impl ProviderMetrics {
         // Standard deviation
         let std_dev = if latencies.len() > 1 {
             let mean = avg as f64;
-            let variance: f64 = latencies.iter()
+            let variance: f64 = latencies
+                .iter()
                 .map(|&x| (x as f64 - mean).powi(2))
-                .sum::<f64>() / latencies.len() as f64;
+                .sum::<f64>()
+                / latencies.len() as f64;
             variance.sqrt() as u64
         } else {
             0
         };
 
         // Token stats
-        let tps: Vec<f64> = successful.iter()
+        let tps: Vec<f64> = successful
+            .iter()
             .filter_map(|r| r.tokens_per_second())
             .collect();
         let avg_tps = if !tps.is_empty() {
@@ -209,20 +216,24 @@ impl ProviderMetrics {
             None
         };
 
-        let ttfts: Vec<u64> = successful.iter()
-            .filter_map(|r| r.ttft_ms)
-            .collect();
+        let ttfts: Vec<u64> = successful.iter().filter_map(|r| r.ttft_ms).collect();
         let avg_ttft = if !ttfts.is_empty() {
-            Some(Duration::from_millis(ttfts.iter().sum::<u64>() / ttfts.len() as u64))
+            Some(Duration::from_millis(
+                ttfts.iter().sum::<u64>() / ttfts.len() as u64,
+            ))
         } else {
             None
         };
 
         // Time-based counts
-        let last_minute = self.records.iter()
+        let last_minute = self
+            .records
+            .iter()
             .filter(|r| r.timestamp >= one_minute_ago)
             .count();
-        let last_hour = self.records.iter()
+        let last_hour = self
+            .records
+            .iter()
             .filter(|r| r.timestamp >= one_hour_ago)
             .count();
 
@@ -231,7 +242,11 @@ impl ProviderMetrics {
             total_requests: total,
             successful_requests: successful.len(),
             failed_requests: failed,
-            success_rate: if total > 0 { successful.len() as f64 / total as f64 } else { 0.0 },
+            success_rate: if total > 0 {
+                successful.len() as f64 / total as f64
+            } else {
+                0.0
+            },
             min_latency: Duration::from_millis(min),
             max_latency: Duration::from_millis(max),
             avg_latency: Duration::from_millis(avg),
@@ -285,7 +300,8 @@ impl LatencyTracker {
 
     /// Record with full details
     pub fn record_full(&mut self, provider: &str, record: LatencyRecord) -> &LatencyRecord {
-        let metrics = self.providers
+        let metrics = self
+            .providers
             .entry(provider.to_string())
             .or_insert_with(|| ProviderMetrics::new(self.max_records_per_provider));
 
@@ -295,13 +311,15 @@ impl LatencyTracker {
 
     /// Get statistics for a provider
     pub fn stats(&self, provider: &str) -> Option<LatencyStats> {
-        self.providers.get(provider)
+        self.providers
+            .get(provider)
             .map(|m| m.calculate_stats(provider))
     }
 
     /// Get statistics for all providers
     pub fn all_stats(&self) -> Vec<LatencyStats> {
-        self.providers.iter()
+        self.providers
+            .iter()
             .map(|(name, metrics)| metrics.calculate_stats(name))
             .collect()
     }
@@ -328,14 +346,18 @@ impl LatencyTracker {
             return None;
         }
 
-        let recent: Vec<_> = metrics.records.iter()
+        let recent: Vec<_> = metrics
+            .records
+            .iter()
             .rev()
             .take(window)
             .filter(|r| r.success)
             .map(|r| r.latency_ms)
             .collect();
 
-        let older: Vec<_> = metrics.records.iter()
+        let older: Vec<_> = metrics
+            .records
+            .iter()
             .rev()
             .skip(window)
             .take(window)
@@ -355,7 +377,9 @@ impl LatencyTracker {
         Some(if change_percent > 20.0 {
             LatencyTrend::Increasing { change_percent }
         } else if change_percent < -20.0 {
-            LatencyTrend::Decreasing { change_percent: change_percent.abs() }
+            LatencyTrend::Decreasing {
+                change_percent: change_percent.abs(),
+            }
         } else {
             LatencyTrend::Stable
         })
@@ -375,7 +399,11 @@ impl LatencyTracker {
         self.all_stats()
             .into_iter()
             .filter(|s| s.total_requests >= 10) // Minimum sample size
-            .max_by(|a, b| a.success_rate.partial_cmp(&b.success_rate).unwrap_or(std::cmp::Ordering::Equal))
+            .max_by(|a, b| {
+                a.success_rate
+                    .partial_cmp(&b.success_rate)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
             .map(|s| s.provider)
     }
 
@@ -543,8 +571,7 @@ mod tests {
 
     #[test]
     fn test_tokens_per_second() {
-        let record = LatencyRecord::new(Duration::from_secs(2), true)
-            .with_tokens(100);
+        let record = LatencyRecord::new(Duration::from_secs(2), true).with_tokens(100);
 
         assert_eq!(record.tokens_per_second(), Some(50.0));
     }

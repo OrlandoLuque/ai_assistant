@@ -117,12 +117,17 @@ impl ResponseRanker {
 
     /// Rank multiple responses
     pub fn rank(&self, query: &str, candidates: Vec<ResponseCandidate>) -> Vec<RankedResponse> {
-        let mut ranked: Vec<RankedResponse> = candidates.into_iter()
+        let mut ranked: Vec<RankedResponse> = candidates
+            .into_iter()
             .map(|c| self.score_candidate(query, c))
             .collect();
 
         // Sort by score descending
-        ranked.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        ranked.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         // Assign ranks
         for (i, r) in ranked.iter_mut().enumerate() {
@@ -133,7 +138,11 @@ impl ResponseRanker {
     }
 
     /// Select the best response
-    pub fn select_best(&self, query: &str, candidates: Vec<ResponseCandidate>) -> Option<RankedResponse> {
+    pub fn select_best(
+        &self,
+        query: &str,
+        candidates: Vec<ResponseCandidate>,
+    ) -> Option<RankedResponse> {
         self.rank(query, candidates).into_iter().next()
     }
 
@@ -144,12 +153,11 @@ impl ResponseRanker {
         let conciseness = self.score_conciseness(&candidate.content);
         let safety = self.score_safety(&candidate.content);
 
-        let overall =
-            relevance * self.criteria.relevance_weight +
-            coherence * self.criteria.coherence_weight +
-            completeness * self.criteria.completeness_weight +
-            conciseness * self.criteria.conciseness_weight +
-            safety * self.criteria.safety_weight;
+        let overall = relevance * self.criteria.relevance_weight
+            + coherence * self.criteria.coherence_weight
+            + completeness * self.criteria.completeness_weight
+            + conciseness * self.criteria.conciseness_weight
+            + safety * self.criteria.safety_weight;
 
         RankedResponse {
             candidate,
@@ -174,7 +182,8 @@ impl ResponseRanker {
             .collect();
 
         let response_lower = response.to_lowercase();
-        let matches = query_words.iter()
+        let matches = query_words
+            .iter()
             .filter(|w| response_lower.contains(*w))
             .count();
 
@@ -197,7 +206,8 @@ impl ResponseRanker {
         }
 
         // Check sentence structure
-        let sentences: Vec<_> = response.split(|c| c == '.' || c == '!' || c == '?')
+        let sentences: Vec<_> = response
+            .split(|c| c == '.' || c == '!' || c == '?')
             .filter(|s| !s.trim().is_empty())
             .collect();
 
@@ -220,11 +230,15 @@ impl ResponseRanker {
         let query_lower = query.to_lowercase();
         let response_lower = response.to_lowercase();
 
-        if query_lower.contains("how") && (response_lower.contains("step") || response_lower.contains("first")) {
+        if query_lower.contains("how")
+            && (response_lower.contains("step") || response_lower.contains("first"))
+        {
             score += 0.2;
         }
 
-        if query_lower.contains("why") && (response_lower.contains("because") || response_lower.contains("reason")) {
+        if query_lower.contains("why")
+            && (response_lower.contains("because") || response_lower.contains("reason"))
+        {
             score += 0.2;
         }
 
@@ -251,7 +265,8 @@ impl ResponseRanker {
             if diff as usize <= tolerance {
                 return 1.0;
             } else {
-                return (1.0 - (diff as f64 / (self.criteria.preferred_length as f64 * 2.0))).max(0.2);
+                return (1.0 - (diff as f64 / (self.criteria.preferred_length as f64 * 2.0)))
+                    .max(0.2);
             }
         }
 
@@ -386,12 +401,9 @@ mod tests {
 
         let relevant = ResponseCandidate::new(
             "Python is a programming language known for its simplicity.",
-            "model"
+            "model",
         );
-        let irrelevant = ResponseCandidate::new(
-            "The weather is nice today.",
-            "model"
-        );
+        let irrelevant = ResponseCandidate::new("The weather is nice today.", "model");
 
         let query = "Tell me about Python programming";
         let ranked = ranker.rank(query, vec![relevant, irrelevant]);

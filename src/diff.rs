@@ -3,7 +3,6 @@
 //! This module provides tools for comparing text, responses,
 //! and generating visual diffs.
 
-
 /// Type of change in a diff
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChangeType {
@@ -72,8 +71,7 @@ impl DiffResult {
         for hunk in &self.hunks {
             output.push_str(&format!(
                 "@@ -{},{} +{},{} @@\n",
-                hunk.old_start, hunk.old_count,
-                hunk.new_start, hunk.new_count
+                hunk.old_start, hunk.old_count, hunk.new_start, hunk.new_count
             ));
 
             for line in &hunk.lines {
@@ -95,7 +93,10 @@ impl DiffResult {
         let half_width = width / 2 - 2;
         let mut output = String::new();
 
-        output.push_str(&format!("{:^half_width$} | {:^half_width$}\n", "OLD", "NEW"));
+        output.push_str(&format!(
+            "{:^half_width$} | {:^half_width$}\n",
+            "OLD", "NEW"
+        ));
         output.push_str(&format!("{:-<half_width$}-+-{:-<half_width$}\n", "", ""));
 
         for hunk in &self.hunks {
@@ -105,12 +106,8 @@ impl DiffResult {
                         let truncated = truncate_str(&line.content, half_width);
                         (truncated.clone(), truncated)
                     }
-                    ChangeType::Added => {
-                        (String::new(), truncate_str(&line.content, half_width))
-                    }
-                    ChangeType::Removed => {
-                        (truncate_str(&line.content, half_width), String::new())
-                    }
+                    ChangeType::Added => (String::new(), truncate_str(&line.content, half_width)),
+                    ChangeType::Removed => (truncate_str(&line.content, half_width), String::new()),
                     ChangeType::Modified => {
                         (truncate_str(&line.content, half_width), "~".to_string())
                     }
@@ -141,8 +138,7 @@ impl DiffResult {
             html.push_str(r#"<div class="hunk">"#);
             html.push_str(&format!(
                 r#"<div class="hunk-header">@@ -{},{} +{},{} @@</div>"#,
-                hunk.old_start, hunk.old_count,
-                hunk.new_start, hunk.new_count
+                hunk.old_start, hunk.old_count, hunk.new_start, hunk.new_count
             ));
 
             for line in &hunk.lines {
@@ -173,7 +169,9 @@ impl DiffResult {
         } else {
             format!(
                 "{} addition(s), {} deletion(s), {} hunk(s)",
-                self.additions, self.deletions, self.hunks.len()
+                self.additions,
+                self.deletions,
+                self.hunks.len()
             )
         }
     }
@@ -209,11 +207,11 @@ pub fn diff(old: &str, new: &str) -> DiffResult {
 
     while old_idx < old_lines.len() || new_idx < new_lines.len() {
         // Check if current lines match the LCS
-        let in_lcs = lcs_idx < lcs.len() &&
-            old_idx < old_lines.len() &&
-            new_idx < new_lines.len() &&
-            old_lines[old_idx] == lcs[lcs_idx] &&
-            new_lines[new_idx] == lcs[lcs_idx];
+        let in_lcs = lcs_idx < lcs.len()
+            && old_idx < old_lines.len()
+            && new_idx < new_lines.len()
+            && old_lines[old_idx] == lcs[lcs_idx]
+            && new_lines[new_idx] == lcs[lcs_idx];
 
         if in_lcs {
             // Equal line
@@ -263,12 +261,12 @@ pub fn diff(old: &str, new: &str) -> DiffResult {
             }
 
             // Check what kind of change
-            let old_in_lcs = lcs_idx < lcs.len() &&
-                old_idx < old_lines.len() &&
-                old_lines[old_idx] == lcs[lcs_idx];
-            let new_in_lcs = lcs_idx < lcs.len() &&
-                new_idx < new_lines.len() &&
-                new_lines[new_idx] == lcs[lcs_idx];
+            let old_in_lcs = lcs_idx < lcs.len()
+                && old_idx < old_lines.len()
+                && old_lines[old_idx] == lcs[lcs_idx];
+            let new_in_lcs = lcs_idx < lcs.len()
+                && new_idx < new_lines.len()
+                && new_lines[new_idx] == lcs[lcs_idx];
 
             if !old_in_lcs && old_idx < old_lines.len() {
                 // Line removed
@@ -304,7 +302,11 @@ pub fn diff(old: &str, new: &str) -> DiffResult {
 
         // Check if we should close the current hunk
         if current_hunk.is_some() {
-            let consecutive_equals = current_hunk.as_ref().expect("current_hunk verified above").lines.iter()
+            let consecutive_equals = current_hunk
+                .as_ref()
+                .expect("current_hunk verified above")
+                .lines
+                .iter()
                 .rev()
                 .take_while(|l| l.change_type == ChangeType::Equal)
                 .count();
@@ -313,9 +315,19 @@ pub fn diff(old: &str, new: &str) -> DiffResult {
                 // Close hunk and start fresh
                 let mut hunk = current_hunk.take().expect("current_hunk verified above");
                 // Trim trailing context
-                while hunk.lines.len() > 1 &&
-                    hunk.lines.last().map(|l| l.change_type == ChangeType::Equal).unwrap_or(false) &&
-                    hunk.lines.iter().rev().take_while(|l| l.change_type == ChangeType::Equal).count() > context_lines
+                while hunk.lines.len() > 1
+                    && hunk
+                        .lines
+                        .last()
+                        .map(|l| l.change_type == ChangeType::Equal)
+                        .unwrap_or(false)
+                    && hunk
+                        .lines
+                        .iter()
+                        .rev()
+                        .take_while(|l| l.change_type == ChangeType::Equal)
+                        .count()
+                        > context_lines
                 {
                     hunk.lines.pop();
                     hunk.old_count -= 1;
@@ -509,11 +521,11 @@ pub fn inline_word_diff(old_line: &str, new_line: &str) -> InlineWordDiff {
     let mut lcs_idx = 0;
 
     while old_idx < old_words.len() || new_idx < new_words.len() {
-        let in_lcs = lcs_idx < lcs.len() &&
-            old_idx < old_words.len() &&
-            new_idx < new_words.len() &&
-            old_words[old_idx] == lcs[lcs_idx] &&
-            new_words[new_idx] == lcs[lcs_idx];
+        let in_lcs = lcs_idx < lcs.len()
+            && old_idx < old_words.len()
+            && new_idx < new_words.len()
+            && old_words[old_idx] == lcs[lcs_idx]
+            && new_words[new_idx] == lcs[lcs_idx];
 
         if in_lcs {
             segments.push(InlineDiffSegment {
@@ -525,8 +537,8 @@ pub fn inline_word_diff(old_line: &str, new_line: &str) -> InlineWordDiff {
             lcs_idx += 1;
         } else {
             // Check for removed words
-            while old_idx < old_words.len() &&
-                (lcs_idx >= lcs.len() || old_words[old_idx] != lcs[lcs_idx])
+            while old_idx < old_words.len()
+                && (lcs_idx >= lcs.len() || old_words[old_idx] != lcs[lcs_idx])
             {
                 segments.push(InlineDiffSegment {
                     text: old_words[old_idx].to_string(),
@@ -536,8 +548,8 @@ pub fn inline_word_diff(old_line: &str, new_line: &str) -> InlineWordDiff {
             }
 
             // Check for added words
-            while new_idx < new_words.len() &&
-                (lcs_idx >= lcs.len() || new_words[new_idx] != lcs[lcs_idx])
+            while new_idx < new_words.len()
+                && (lcs_idx >= lcs.len() || new_words[new_idx] != lcs[lcs_idx])
             {
                 segments.push(InlineDiffSegment {
                     text: new_words[new_idx].to_string(),
@@ -635,7 +647,9 @@ mod tests {
         let diff = inline_word_diff("hello world", "hello universe");
 
         assert!(!diff.segments.is_empty());
-        let equal_count = diff.segments.iter()
+        let equal_count = diff
+            .segments
+            .iter()
             .filter(|s| s.change_type == ChangeType::Equal)
             .count();
         assert!(equal_count > 0);

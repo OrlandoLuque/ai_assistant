@@ -1,7 +1,8 @@
 //! Advanced RAG features: intelligent chunking, deduplication, re-ranking
 
-use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 // ============================================================================
 // Intelligent Chunking
@@ -84,14 +85,36 @@ pub struct SmartChunk {
     pub language: Option<String>,
 }
 
+/// Type alias for an embedding function callback.
+///
+/// Takes a text string and returns a vector of f32 embeddings.
+pub type EmbeddingFn = Arc<dyn Fn(&str) -> Vec<f32> + Send + Sync>;
+
 /// Intelligent document chunker
 pub struct SmartChunker {
     config: ChunkingConfig,
+    /// Optional embedding function for semantic chunking.
+    embedding_fn: Option<EmbeddingFn>,
 }
 
 impl SmartChunker {
     pub fn new(config: ChunkingConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            embedding_fn: None,
+        }
+    }
+
+    /// Set an embedding function for embedding-based semantic chunking.
+    ///
+    /// When set, the `Semantic` strategy uses cosine similarity of embeddings
+    /// to detect topic boundaries rather than keyword overlap (Jaccard).
+    pub fn with_embedding_fn<F>(mut self, f: F) -> Self
+    where
+        F: Fn(&str) -> Vec<f32> + Send + Sync + 'static,
+    {
+        self.embedding_fn = Some(Arc::new(f));
+        self
     }
 
     /// Estimate tokens in text (rough: ~4 chars per token)
@@ -331,7 +354,9 @@ impl SmartChunker {
             // Check for headers (only outside code blocks)
             if !in_code_block && line.starts_with('#') {
                 // Save previous section
-                if !current.trim().is_empty() && Self::estimate_tokens(&current) >= self.config.min_tokens {
+                if !current.trim().is_empty()
+                    && Self::estimate_tokens(&current) >= self.config.min_tokens
+                {
                     let content = current.trim().to_string();
                     let is_code = content.contains("```");
                     chunks.push(SmartChunk {
@@ -397,11 +422,110 @@ impl SmartChunker {
 
     /// Semantic chunking (keeps related content together)
     fn chunk_semantic(&self, document: &str) -> Vec<SmartChunk> {
-        // For semantic chunking, we use a combination of:
-        // 1. Paragraph boundaries
-        // 2. Topic shifts (detected by keyword changes)
-        // 3. Structural elements (lists, code blocks, etc.)
+        // If we have an embedding function, use embedding-based semantic chunking.
+        if let Some(ref embed_fn) = self.embedding_fn {
+            return self.chunk_semantic_embedding(document, embed_fn);
+        }
 
+        // Fallback: keyword-based (Jaccard) semantic chunking.
+        self.chunk_semantic_keyword(document)
+    }
+
+    /// Embedding-based semantic chunking.
+    ///
+    /// Algorithm:
+    /// 1. Split into sentences
+    /// 2. Embed each sentence
+    /// 3. Compute cosine similarity between consecutive sentences
+    /// 4. Split where similarity drops below threshold (0.5)
+    fn chunk_semantic_embedding(&self, document: &str, embed_fn: &EmbeddingFn) -> Vec<SmartChunk> {
+        let sentences = Self::split_sentences(document);
+        if sentences.is_empty() {
+            return Vec::new();
+        }
+        if sentences.len() == 1 {
+            return vec![SmartChunk {
+                content: sentences[0].to_string(),
+                tokens: Self::estimate_tokens(sentences[0]),
+                start_offset: 0,
+                end_offset: document.len(),
+                index: 0,
+                section: None,
+                is_code: false,
+                language: None,
+            }];
+        }
+
+        // Embed all sentences
+        let embeddings: Vec<Vec<f32>> = sentences.iter().map(|s| embed_fn(s)).collect();
+
+        // Compute consecutive cosine similarities
+        let mut similarities = Vec::new();
+        for i in 0..embeddings.len() - 1 {
+            similarities.push(Self::cosine_similarity(&embeddings[i], &embeddings[i + 1]));
+        }
+
+        // Build chunks by splitting at low-similarity boundaries
+        let threshold = 0.5;
+        let mut chunks = Vec::new();
+        let mut current = String::new();
+        let mut current_start = 0;
+        let mut index = 0;
+
+        for (i, sentence) in sentences.iter().enumerate() {
+            current.push_str(sentence);
+            current.push(' ');
+
+            let at_boundary = if i < similarities.len() {
+                similarities[i] < threshold
+            } else {
+                false
+            };
+
+            let too_large = Self::estimate_tokens(&current) > self.config.target_tokens;
+
+            if (at_boundary || too_large)
+                && Self::estimate_tokens(&current) >= self.config.min_tokens
+            {
+                let content = current.trim().to_string();
+                if !content.is_empty() {
+                    chunks.push(SmartChunk {
+                        content: content.clone(),
+                        tokens: Self::estimate_tokens(&content),
+                        start_offset: current_start,
+                        end_offset: current_start + current.len(),
+                        index,
+                        section: None,
+                        is_code: false,
+                        language: None,
+                    });
+                    index += 1;
+                    current_start += current.len();
+                    current.clear();
+                }
+            }
+        }
+
+        // Final chunk
+        if !current.trim().is_empty() {
+            let content = current.trim().to_string();
+            chunks.push(SmartChunk {
+                content: content.clone(),
+                tokens: Self::estimate_tokens(&content),
+                start_offset: current_start,
+                end_offset: document.len(),
+                index,
+                section: None,
+                is_code: false,
+                language: None,
+            });
+        }
+
+        chunks
+    }
+
+    /// Keyword-based (Jaccard) semantic chunking — the original fallback.
+    fn chunk_semantic_keyword(&self, document: &str) -> Vec<SmartChunk> {
         let mut chunks = Vec::new();
         let paragraphs: Vec<&str> = document.split("\n\n").collect();
 
@@ -428,7 +552,9 @@ impl SmartChunker {
                 || para.starts_with("1. ");
 
             let should_split = Self::estimate_tokens(&current) > self.config.target_tokens
-                || (similarity < 0.2 && !current.is_empty() && Self::estimate_tokens(&current) > self.config.min_tokens)
+                || (similarity < 0.2
+                    && !current.is_empty()
+                    && Self::estimate_tokens(&current) > self.config.min_tokens)
                 || (is_structural_boundary && !current.is_empty());
 
             if should_split {
@@ -471,6 +597,42 @@ impl SmartChunker {
         }
 
         chunks
+    }
+
+    /// Split text into sentences (at '.', '!', '?').
+    fn split_sentences(text: &str) -> Vec<&str> {
+        let mut sentences = Vec::new();
+        let mut start = 0;
+        for (i, c) in text.char_indices() {
+            if c == '.' || c == '!' || c == '?' {
+                let end = i + c.len_utf8();
+                let sentence = text[start..end].trim();
+                if !sentence.is_empty() {
+                    sentences.push(sentence);
+                }
+                start = end;
+            }
+        }
+        // Add trailing text
+        let remainder = text[start..].trim();
+        if !remainder.is_empty() {
+            sentences.push(remainder);
+        }
+        sentences
+    }
+
+    /// Cosine similarity between two f32 vectors.
+    fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+        if a.len() != b.len() || a.is_empty() {
+            return 0.0;
+        }
+        let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+        let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+        if norm_a == 0.0 || norm_b == 0.0 {
+            return 0.0;
+        }
+        dot / (norm_a * norm_b)
     }
 
     /// Adaptive chunking (chooses best strategy based on content)
@@ -588,9 +750,7 @@ impl ChunkDeduplicator {
             return HashSet::new();
         }
 
-        words.windows(n)
-            .map(|w| w.join(" "))
-            .collect()
+        words.windows(n).map(|w| w.join(" ")).collect()
     }
 
     /// Deduplicate a list of chunks
@@ -623,7 +783,8 @@ impl ChunkDeduplicator {
             }
         }
 
-        let deduplicated: Vec<SmartChunk> = chunks.into_iter()
+        let deduplicated: Vec<SmartChunk> = chunks
+            .into_iter()
             .enumerate()
             .filter(|(i, _)| keep_indices.contains(i))
             .map(|(_, c)| c)
@@ -702,7 +863,8 @@ impl ChunkReranker {
         let query_lower = query.to_lowercase();
         let query_words: HashSet<&str> = query_lower.split_whitespace().collect();
 
-        let mut ranked: Vec<RankedChunk<T>> = chunks.into_iter()
+        let mut ranked: Vec<RankedChunk<T>> = chunks
+            .into_iter()
             .map(|(chunk, original_score)| {
                 let content = chunk.as_ref();
                 let content_lower = content.to_lowercase();
@@ -726,12 +888,11 @@ impl ChunkReranker {
                 breakdown.insert("priority".to_string(), priority_score);
 
                 // 4. Section relevance (if query matches section title)
-                let section_score = metadata.section
+                let section_score = metadata
+                    .section
                     .map(|s| {
                         let s_lower = s.to_lowercase();
-                        let matches = query_words.iter()
-                            .filter(|w| s_lower.contains(*w))
-                            .count();
+                        let matches = query_words.iter().filter(|w| s_lower.contains(*w)).count();
                         (matches as f32 / query_words.len().max(1) as f32).min(1.0)
                     })
                     .unwrap_or(0.0);
@@ -747,12 +908,11 @@ impl ChunkReranker {
                 breakdown.insert("length_penalty".to_string(), -length_penalty);
 
                 // Calculate final score
-                let reranked_score =
-                    keyword_score * self.config.keyword_weight +
-                    exact_boost +
-                    priority_score * self.config.priority_weight +
-                    section_score * self.config.section_weight -
-                    length_penalty;
+                let reranked_score = keyword_score * self.config.keyword_weight
+                    + exact_boost
+                    + priority_score * self.config.priority_weight
+                    + section_score * self.config.section_weight
+                    - length_penalty;
 
                 RankedChunk {
                     chunk,
@@ -764,13 +924,21 @@ impl ChunkReranker {
             .collect();
 
         // Sort by reranked score (descending)
-        ranked.sort_by(|a, b| b.reranked_score.partial_cmp(&a.reranked_score).unwrap_or(std::cmp::Ordering::Equal));
+        ranked.sort_by(|a, b| {
+            b.reranked_score
+                .partial_cmp(&a.reranked_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         ranked
     }
 
     /// Simple re-ranking for string chunks
-    pub fn rerank_simple(&self, query: &str, chunks: Vec<(String, f32)>) -> Vec<RankedChunk<String>> {
+    pub fn rerank_simple(
+        &self,
+        query: &str,
+        chunks: Vec<(String, f32)>,
+    ) -> Vec<RankedChunk<String>> {
         self.rerank(query, chunks, |_| ChunkMetadata::default())
     }
 }
@@ -801,7 +969,8 @@ mod tests {
         };
         let chunker = SmartChunker::new(config);
 
-        let document = "# Introduction\n\nThis is the first paragraph.\n\n## Details\n\nThis is more content.";
+        let document =
+            "# Introduction\n\nThis is the first paragraph.\n\n## Details\n\nThis is more content.";
         let chunks = chunker.chunk(document);
 
         assert!(!chunks.is_empty());
@@ -820,6 +989,139 @@ mod tests {
 
         assert!(sim12 > 0.7); // Very similar
         assert!(sim13 < 0.3); // Not similar
+    }
+
+    #[test]
+    fn test_cosine_similarity() {
+        let a = vec![1.0, 0.0, 0.0];
+        let b = vec![1.0, 0.0, 0.0];
+        assert!((SmartChunker::cosine_similarity(&a, &b) - 1.0).abs() < 1e-6);
+
+        let c = vec![0.0, 1.0, 0.0];
+        assert!(SmartChunker::cosine_similarity(&a, &c).abs() < 1e-6);
+
+        let d = vec![-1.0, 0.0, 0.0];
+        assert!((SmartChunker::cosine_similarity(&a, &d) + 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_split_sentences() {
+        let text = "Hello world. How are you? I am fine!";
+        let sentences = SmartChunker::split_sentences(text);
+        assert_eq!(sentences.len(), 3);
+        assert!(sentences[0].contains("Hello"));
+        assert!(sentences[1].contains("How"));
+        assert!(sentences[2].contains("fine"));
+    }
+
+    #[test]
+    fn test_semantic_chunking_with_embeddings() {
+        // Mock embedding: map each word to a distinct dimension
+        let embed_fn = |text: &str| -> Vec<f32> {
+            let words: Vec<&str> = text.split_whitespace().collect();
+            let mut vec = vec![0.0f32; 10];
+            for word in words {
+                let idx = match word.to_lowercase().chars().next().unwrap_or('a') {
+                    'a'..='c' => 0,
+                    'd'..='f' => 1,
+                    'g'..='i' => 2,
+                    'j'..='l' => 3,
+                    'm'..='o' => 4,
+                    'p'..='r' => 5,
+                    's'..='u' => 6,
+                    'v'..='x' => 7,
+                    _ => 8,
+                };
+                vec[idx] += 1.0;
+            }
+            vec
+        };
+
+        let config = ChunkingConfig {
+            strategy: ChunkingStrategy::Semantic,
+            target_tokens: 50,
+            min_tokens: 5,
+            max_tokens: 100,
+            ..Default::default()
+        };
+        let chunker = SmartChunker::new(config).with_embedding_fn(embed_fn);
+
+        let document =
+            "Apple banana cherry. Date elderberry fig. Grape hibiscus iris. Jackfruit kiwi lemon.";
+        let chunks = chunker.chunk(document);
+        assert!(!chunks.is_empty());
+        // All text should be accounted for
+        let all_text: String = chunks
+            .iter()
+            .map(|c| c.content.clone())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(all_text.contains("Apple"));
+        assert!(all_text.contains("lemon"));
+    }
+
+    #[test]
+    fn test_semantic_chunking_fallback_without_embeddings() {
+        let config = ChunkingConfig {
+            strategy: ChunkingStrategy::Semantic,
+            target_tokens: 20,
+            min_tokens: 5,
+            max_tokens: 50,
+            ..Default::default()
+        };
+        let chunker = SmartChunker::new(config);
+
+        let document = "Cats are great pets.\n\nDogs are loyal companions.\n\nFish need aquariums.\n\nBirds can fly high.";
+        let chunks = chunker.chunk(document);
+        assert!(!chunks.is_empty());
+    }
+
+    #[test]
+    fn test_embedding_boundary_detection() {
+        // Embeddings that are similar for first 3 sentences, then very different
+        let call_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let cc = call_count.clone();
+        let embed_fn = move |_text: &str| -> Vec<f32> {
+            let n = cc.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if n < 3 {
+                // Similar embeddings (topic A)
+                vec![1.0, 0.0, 0.0]
+            } else {
+                // Very different (topic B)
+                vec![0.0, 0.0, 1.0]
+            }
+        };
+
+        let config = ChunkingConfig {
+            strategy: ChunkingStrategy::Semantic,
+            target_tokens: 200,
+            min_tokens: 1,
+            max_tokens: 400,
+            ..Default::default()
+        };
+        let chunker = SmartChunker::new(config).with_embedding_fn(embed_fn);
+
+        let document = "Sent one. Sent two. Sent three. Different topic. Another different.";
+        let chunks = chunker.chunk(document);
+        // Should have at least 2 chunks because of the topic shift
+        assert!(
+            chunks.len() >= 2,
+            "Expected >=2 chunks, got {}",
+            chunks.len()
+        );
+    }
+
+    #[test]
+    fn test_cosine_empty_vectors() {
+        assert_eq!(SmartChunker::cosine_similarity(&[], &[]), 0.0);
+        assert_eq!(SmartChunker::cosine_similarity(&[1.0], &[1.0, 2.0]), 0.0);
+    }
+
+    #[test]
+    fn test_cosine_zero_vector() {
+        let zero = vec![0.0, 0.0, 0.0];
+        let nonzero = vec![1.0, 2.0, 3.0];
+        assert_eq!(SmartChunker::cosine_similarity(&zero, &nonzero), 0.0);
     }
 
     #[test]

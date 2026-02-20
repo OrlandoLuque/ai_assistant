@@ -5,6 +5,19 @@ edition = "2021"
 authors = ["Lander"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/lander/ai_assistant"
+homepage = "https://github.com/lander/ai_assistant"
+documentation = "https://docs.rs/ai_assistant"
+readme = "README.md"
+keywords = ["ai", "llm", "assistant", "rag", "agent"]
+categories = ["science", "text-processing", "web-programming"]
+exclude = [
+    "docs/*.html",
+    "docs/*.md",
+    ".claude/",
+    "target/",
+    "PROMPT_MEJORAS.md",
+]
 
 [features]
 # Default: full functionality (code has interdependencies)
@@ -117,6 +130,23 @@ browser = ["autonomous"]
 # Distributed agents: run agents across distributed nodes (DHT, CRDTs, MapReduce)
 distributed-agents = ["autonomous", "distributed-network"]
 
+# AWS Bedrock provider: SigV4 authentication for Bedrock runtime API
+aws-bedrock = ["dep:hmac"]
+
+# pgvector: PostgreSQL vector database backend
+# Note: actual postgres connectivity is via ureq REST or user-supplied connection.
+# The postgres crate is heavy; this feature enables the pgvector SQL generation and types.
+vector-pgvector = []
+
+# OpenTelemetry integration: OTel-compatible tracing for AI operations
+otel = []
+
+# Code sandbox: isolated code execution for AI agents
+code-sandbox = ["autonomous"]
+
+# Cloud connectors: S3 and Google Drive storage integration
+cloud-connectors = []
+
 [dependencies]
 anyhow = "1"
 log = "0.4"
@@ -164,6 +194,8 @@ arrow-array = { version = "57", optional = true }
 arrow-schema = { version = "57", optional = true }
 # Optional futures for async stream collection (LanceDB queries)
 futures = { version = "0.3", optional = true }
+# Optional HMAC for AWS SigV4 authentication (Bedrock, S3)
+hmac = { version = "0.12", optional = true }
 # Optional WASM support via web-sys/js-sys (only useful on wasm32 targets)
 web-sys = { version = "0.3", features = ["console", "Window"], optional = true }
 js-sys = { version = "0.3", optional = true }
@@ -179,8 +211,75 @@ name = "kpkg_tool"
 path = "src/bin/kpkg_tool.rs"
 required-features = ["rag"]
 
+[[bin]]
+name = "ai_assistant_cli"
+path = "src/bin/ai_assistant_cli.rs"
+
+[[example]]
+name = "autonomous_agent"
+required-features = ["autonomous"]
+
+[[example]]
+name = "encrypted_knowledge"
+required-features = ["rag"]
+
+[[example]]
+name = "knowledge_graph"
+required-features = ["rag"]
+
+[[example]]
+name = "mcp_server"
+required-features = ["tools"]
+
+[[example]]
+name = "multi_agent"
+required-features = ["multi-agent"]
+
+[[example]]
+name = "p2p_network"
+required-features = ["p2p"]
+
+[[example]]
+name = "rag_pipeline"
+required-features = ["rag"]
+
+[[example]]
+name = "scheduler_agent"
+required-features = ["scheduler"]
+
+[[example]]
+name = "vector_search"
+required-features = ["embeddings"]
+
+[[example]]
+name = "repl_demo"
+required-features = ["full"]
+
+[[example]]
+name = "ab_testing_demo"
+required-features = ["full"]
+
+[[example]]
+name = "cost_tracking"
+required-features = ["full"]
+
+[[example]]
+name = "multimodal"
+required-features = ["full"]
+
+[[example]]
+name = "ui_hooks_demo"
+
+[[example]]
+name = "agent_graph_demo"
+
 [dev-dependencies]
 tempfile = "3"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "core_benchmarks"
+harness = false
 
 # === Release profile optimizations ===
 [profile.release]

@@ -114,12 +114,17 @@ impl CostConfig {
         if let Some(ref cb) = self.cost_callback {
             return cb(tool_name, arguments);
         }
-        self.tool_costs.get(tool_name).copied().unwrap_or(self.default_cost_per_call)
+        self.tool_costs
+            .get(tool_name)
+            .copied()
+            .unwrap_or(self.default_cost_per_call)
     }
 }
 
 impl Default for CostConfig {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // ============================================================================
@@ -219,7 +224,11 @@ impl AutonomousAgent {
 
         // Notify interaction manager
         if let Some(ref im) = self.interaction {
-            im.notify(&self.config.name, &format!("Starting task: {}", task), NotifyLevel::Info);
+            im.notify(
+                &self.config.name,
+                &format!("Starting task: {}", task),
+                NotifyLevel::Info,
+            );
         }
 
         // Main loop
@@ -254,10 +263,7 @@ impl AutonomousAgent {
                 }
                 IterationOutcome::AskUser(question) => {
                     if let Some(ref im) = self.interaction {
-                        let resp = im.ask(
-                            &self.config.name,
-                            UserQuery::free_text(question),
-                        );
+                        let resp = im.ask(&self.config.name, UserQuery::free_text(question));
                         match resp {
                             UserResponse::Text(text) => {
                                 self.conversation.push(AgentMessage {
@@ -274,7 +280,8 @@ impl AutonomousAgent {
                             }
                         }
                     } else {
-                        self.state = AgentState::Failed("No interaction manager for ask_user".into());
+                        self.state =
+                            AgentState::Failed("No interaction manager for ask_user".into());
                         return Err("No interaction manager for ask_user".into());
                     }
                 }
@@ -331,7 +338,9 @@ impl AutonomousAgent {
         for tc in &parsed {
             // Special case: ask_user
             if tc.name == "ask_user" {
-                let question = tc.arguments.get("question")
+                let question = tc
+                    .arguments
+                    .get("question")
                     .cloned()
                     .unwrap_or_else(|| "What would you like?".into());
                 return IterationOutcome::AskUser(question);
@@ -399,7 +408,8 @@ impl AutonomousAgent {
         // 6. Update task board progress
         if let (Some(ref board), Some(ref task_id)) = (&self.task_board, &self.current_task_id) {
             let progress = self.iteration as f64 / self.config.max_iterations as f64;
-            let action = parsed.last()
+            let action = parsed
+                .last()
                 .map(|tc| format!("Called {}", tc.name))
                 .unwrap_or_default();
             if let Ok(mut b) = board.write() {
@@ -514,7 +524,10 @@ fn try_parse_json_array(text: &str) -> Option<Vec<ParsedToolCall>> {
     for item in &arr {
         if let Some(name) = item.get("name").and_then(|v| v.as_str()) {
             let arguments = extract_arguments(item.get("arguments"));
-            calls.push(ParsedToolCall { name: name.to_string(), arguments });
+            calls.push(ParsedToolCall {
+                name: name.to_string(),
+                arguments,
+            });
         }
     }
     Some(calls)
@@ -544,7 +557,10 @@ fn try_parse_openai_style(text: &str) -> Option<Vec<ParsedToolCall>> {
         } else {
             extract_arguments(func.get("arguments"))
         };
-        calls.push(ParsedToolCall { name: name.to_string(), arguments });
+        calls.push(ParsedToolCall {
+            name: name.to_string(),
+            arguments,
+        });
     }
     Some(calls)
 }
@@ -565,7 +581,11 @@ fn try_parse_xml_tool_use(text: &str) -> Option<Vec<ParsedToolCall>> {
             break;
         }
     }
-    if calls.is_empty() { None } else { Some(calls) }
+    if calls.is_empty() {
+        None
+    } else {
+        Some(calls)
+    }
 }
 
 fn parse_single_xml_tool(block: &str) -> Option<ParsedToolCall> {
@@ -697,9 +717,9 @@ impl AutonomousAgentBuilder {
     }
 
     pub fn build(self) -> AutonomousAgent {
-        let sandbox = self.sandbox.unwrap_or_else(|| {
-            Arc::new(RwLock::new(SandboxValidator::new(self.policy.clone())))
-        });
+        let sandbox = self
+            .sandbox
+            .unwrap_or_else(|| Arc::new(RwLock::new(SandboxValidator::new(self.policy.clone()))));
 
         AutonomousAgent {
             config: AutonomousAgentConfig {
@@ -754,9 +774,7 @@ mod tests {
     use std::sync::Arc;
 
     /// Helper: build a simple agent with the given generator.
-    fn make_agent(
-        gen: Arc<dyn Fn(&[AgentMessage]) -> String + Send + Sync>,
-    ) -> AutonomousAgent {
+    fn make_agent(gen: Arc<dyn Fn(&[AgentMessage]) -> String + Send + Sync>) -> AutonomousAgent {
         let policy = AgentPolicy::autonomous();
         let sandbox = Arc::new(RwLock::new(SandboxValidator::with_approval(
             policy.clone(),
@@ -923,9 +941,8 @@ Let me process the results."#;
     // -----------------------------------------------------------------------
     #[test]
     fn test_sandbox_denies_action() {
-        let gen: Arc<dyn Fn(&[AgentMessage]) -> String + Send + Sync> = Arc::new(|_| {
-            r#"[{"name": "forbidden_tool", "arguments": {}}]"#.to_string()
-        });
+        let gen: Arc<dyn Fn(&[AgentMessage]) -> String + Send + Sync> =
+            Arc::new(|_| r#"[{"name": "forbidden_tool", "arguments": {}}]"#.to_string());
 
         // Policy that denies "forbidden_tool"
         let policy = AgentPolicyBuilder::new()
@@ -950,9 +967,8 @@ Let me process the results."#;
     #[test]
     fn test_max_iterations_limit() {
         // Generator that always returns tool calls, never a final answer
-        let gen: Arc<dyn Fn(&[AgentMessage]) -> String + Send + Sync> = Arc::new(|_| {
-            r#"[{"name": "noop", "arguments": {}}]"#.to_string()
-        });
+        let gen: Arc<dyn Fn(&[AgentMessage]) -> String + Send + Sync> =
+            Arc::new(|_| r#"[{"name": "noop", "arguments": {}}]"#.to_string());
 
         let mut registry = ToolRegistry::new();
         let def = ToolBuilder::new("noop", "Do nothing").build();
@@ -1049,7 +1065,10 @@ Let me process the results."#;
             })
             .unwrap();
             task_id = b.plan().steps[0].id.clone();
-            b.execute_command(BoardCommand::StartTask { id: task_id.clone() }).unwrap();
+            b.execute_command(BoardCommand::StartTask {
+                id: task_id.clone(),
+            })
+            .unwrap();
         }
 
         let policy = AgentPolicy::autonomous();
@@ -1299,9 +1318,15 @@ Let me process the results."#;
         let config = CostConfig {
             default_cost_per_call: 0.001,
             tool_costs: HashMap::new(),
-            cost_callback: Some(Arc::new(|name: &str, _args: &HashMap<String, String>| {
-                if name == "gpt4" { 0.1 } else { 0.01 }
-            })),
+            cost_callback: Some(Arc::new(
+                |name: &str, _args: &HashMap<String, String>| {
+                    if name == "gpt4" {
+                        0.1
+                    } else {
+                        0.01
+                    }
+                },
+            )),
         };
         let args = HashMap::new();
         assert!((config.cost_for("gpt4", &args) - 0.1).abs() < 1e-10);
@@ -1345,6 +1370,9 @@ Let me process the results."#;
             .build();
 
         let result = agent.run("Use both tools").unwrap();
-        assert_eq!(result.tools_called, vec!["tool_a".to_string(), "tool_b".to_string()]);
+        assert_eq!(
+            result.tools_called,
+            vec!["tool_a".to_string(), "tool_b".to_string()]
+        );
     }
 }

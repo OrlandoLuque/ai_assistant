@@ -11,7 +11,7 @@
 //! - **Code block operations**: Extract, move, duplicate blocks
 //! - **Edit suggestions**: Generate edit suggestions with explanations
 
-use crate::edit_operations::{TextEditor, EditError};
+use crate::edit_operations::{EditError, TextEditor};
 
 /// Language configuration for code editing
 #[derive(Debug, Clone)]
@@ -73,7 +73,12 @@ impl LanguageConfig {
             string_delimiters: vec!['"', '\'', '`'],
             indent_size: 2,
             use_tabs: false,
-            extensions: vec!["js".to_string(), "ts".to_string(), "jsx".to_string(), "tsx".to_string()],
+            extensions: vec![
+                "js".to_string(),
+                "ts".to_string(),
+                "jsx".to_string(),
+                "tsx".to_string(),
+            ],
         }
     }
 
@@ -416,7 +421,11 @@ impl CodeEditor {
         // Count leading whitespace
         let leading: String = line.chars().take_while(|c| c.is_whitespace()).collect();
         let to_remove = if self.config.use_tabs {
-            if leading.starts_with('\t') { 1 } else { 0 }
+            if leading.starts_with('\t') {
+                1
+            } else {
+                0
+            }
         } else {
             leading.chars().take(indent_size).count()
         };
@@ -526,8 +535,15 @@ impl CodeEditor {
     }
 
     /// Wrap code in a block comment
-    pub fn wrap_in_block_comment(&mut self, start_line: usize, end_line: usize) -> Result<(), EditError> {
-        let (start_marker, end_marker) = match (&self.config.block_comment_start, &self.config.block_comment_end) {
+    pub fn wrap_in_block_comment(
+        &mut self,
+        start_line: usize,
+        end_line: usize,
+    ) -> Result<(), EditError> {
+        let (start_marker, end_marker) = match (
+            &self.config.block_comment_start,
+            &self.config.block_comment_end,
+        ) {
             (Some(s), Some(e)) => (s.clone(), e.clone()),
             _ => return Ok(()), // No block comments supported
         };
@@ -572,7 +588,8 @@ impl CodeEditor {
         }
 
         // Apply the replacement
-        self.editor.replace_range(offset..end_offset, &suggestion.replacement)
+        self.editor
+            .replace_range(offset..end_offset, &suggestion.replacement)
     }
 
     /// Undo the last edit
@@ -680,10 +697,18 @@ impl CodeSearch {
                 let abs_pos = start + pos;
 
                 if self.whole_word {
-                    let before_ok = abs_pos == 0 ||
-                        !text.chars().nth(abs_pos - 1).map(|c| c.is_alphanumeric() || c == '_').unwrap_or(false);
-                    let after_ok = abs_pos + pattern.len() >= text.len() ||
-                        !text.chars().nth(abs_pos + pattern.len()).map(|c| c.is_alphanumeric() || c == '_').unwrap_or(false);
+                    let before_ok = abs_pos == 0
+                        || !text
+                            .chars()
+                            .nth(abs_pos - 1)
+                            .map(|c| c.is_alphanumeric() || c == '_')
+                            .unwrap_or(false);
+                    let after_ok = abs_pos + pattern.len() >= text.len()
+                        || !text
+                            .chars()
+                            .nth(abs_pos + pattern.len())
+                            .map(|c| c.is_alphanumeric() || c == '_')
+                            .unwrap_or(false);
 
                     if before_ok && after_ok {
                         results.push((abs_pos, abs_pos + pattern.len()));
@@ -783,11 +808,13 @@ mod tests {
     #[test]
     fn test_edit_suggestion() {
         let suggestion = EditSuggestion::new(
-            1, 1,
+            1,
+            1,
             "let x = 5",
             "let x: i32 = 5",
-            "Add explicit type annotation"
-        ).with_category(EditCategory::Style);
+            "Add explicit type annotation",
+        )
+        .with_category(EditCategory::Style);
 
         assert!(suggestion.format().contains("Style"));
         assert!(suggestion.format().contains("type annotation"));

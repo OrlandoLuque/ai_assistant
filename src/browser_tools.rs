@@ -6,9 +6,9 @@
 //! This module implements real CDP communication over a minimal WebSocket client.
 //! It can launch Chrome in headless mode or connect to an existing DevTools endpoint.
 
-use crate::unified_tools::{ToolBuilder, ToolCall, ToolOutput, ToolError, ToolRegistry};
-use crate::agent_sandbox::SandboxValidator;
 use crate::agent_policy::{ActionDescriptor, ActionType};
+use crate::agent_sandbox::SandboxValidator;
+use crate::unified_tools::{ToolBuilder, ToolCall, ToolError, ToolOutput, ToolRegistry};
 use std::sync::{Arc, RwLock};
 
 // ============================================================================
@@ -47,7 +47,10 @@ pub enum BrowserError {
 impl std::fmt::Display for BrowserError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::ChromeNotFound => write!(f, "Chrome/Chromium not found. Set CHROME_BIN env var or install Chrome."),
+            Self::ChromeNotFound => write!(
+                f,
+                "Chrome/Chromium not found. Set CHROME_BIN env var or install Chrome."
+            ),
             Self::LaunchFailed(e) => write!(f, "Failed to launch Chrome: {}", e),
             Self::NotConnected => write!(f, "Not connected to a browser"),
             Self::WebSocketError(e) => write!(f, "WebSocket error: {}", e),
@@ -69,11 +72,15 @@ pub fn find_chrome_binary() -> Option<std::path::PathBuf> {
     // Check env var first
     if let Ok(path) = std::env::var("CHROME_BIN") {
         let p = std::path::PathBuf::from(&path);
-        if p.exists() { return Some(p); }
+        if p.exists() {
+            return Some(p);
+        }
     }
     if let Ok(path) = std::env::var("CHROMIUM_BIN") {
         let p = std::path::PathBuf::from(&path);
-        if p.exists() { return Some(p); }
+        if p.exists() {
+            return Some(p);
+        }
     }
 
     // Common paths by platform
@@ -86,7 +93,9 @@ pub fn find_chrome_binary() -> Option<std::path::PathBuf> {
         ];
         for c in &candidates {
             let p = std::path::PathBuf::from(c);
-            if p.exists() { return Some(p); }
+            if p.exists() {
+                return Some(p);
+            }
         }
     }
     #[cfg(target_os = "macos")]
@@ -97,7 +106,9 @@ pub fn find_chrome_binary() -> Option<std::path::PathBuf> {
         ];
         for c in &candidates {
             let p = std::path::PathBuf::from(c);
-            if p.exists() { return Some(p); }
+            if p.exists() {
+                return Some(p);
+            }
         }
     }
     #[cfg(target_os = "linux")]
@@ -111,7 +122,9 @@ pub fn find_chrome_binary() -> Option<std::path::PathBuf> {
         ];
         for c in &candidates {
             let p = std::path::PathBuf::from(c);
-            if p.exists() { return Some(p); }
+            if p.exists() {
+                return Some(p);
+            }
         }
     }
     None
@@ -120,8 +133,7 @@ pub fn find_chrome_binary() -> Option<std::path::PathBuf> {
 /// Launch Chrome in headless mode with remote debugging.
 /// Returns the child process and the WebSocket debugger URL.
 fn launch_chrome(port: u16) -> Result<(std::process::Child, String), BrowserError> {
-    let chrome_path = find_chrome_binary()
-        .ok_or(BrowserError::ChromeNotFound)?;
+    let chrome_path = find_chrome_binary().ok_or(BrowserError::ChromeNotFound)?;
 
     let user_data_dir = std::env::temp_dir().join(format!("ai_assistant_chrome_{}", port));
     let _ = std::fs::create_dir_all(&user_data_dir);
@@ -150,12 +162,17 @@ fn launch_chrome(port: u16) -> Result<(std::process::Child, String), BrowserErro
 
     loop {
         if start.elapsed() > timeout {
-            return Err(BrowserError::LaunchFailed("Chrome startup timed out".into()));
+            return Err(BrowserError::LaunchFailed(
+                "Chrome startup timed out".into(),
+            ));
         }
         std::thread::sleep(std::time::Duration::from_millis(200));
 
         // Try to connect to the debug endpoint
-        if let Ok(resp) = client.get(&format!("http://127.0.0.1:{}/json/version", port)).call() {
+        if let Ok(resp) = client
+            .get(&format!("http://127.0.0.1:{}/json/version", port))
+            .call()
+        {
             if let Ok(body) = resp.into_string() {
                 if let Ok(val) = serde_json::from_str::<serde_json::Value>(&body) {
                     if let Some(ws_url) = val.get("webSocketDebuggerUrl").and_then(|v| v.as_str()) {
@@ -217,16 +234,18 @@ fn base64_encode(data: &[u8]) -> String {
 /// Parses the ws:// URL, performs TCP connect, sends HTTP upgrade handshake.
 fn ws_connect(ws_url: &str) -> Result<std::net::TcpStream, BrowserError> {
     // Parse ws://host:port/path
-    let url = ws_url.strip_prefix("ws://")
-        .ok_or_else(|| BrowserError::WebSocketError("Invalid WS URL: must start with ws://".into()))?;
-    let (host_port, _path) = url.split_once('/')
-        .unwrap_or((url, ""));
+    let url = ws_url.strip_prefix("ws://").ok_or_else(|| {
+        BrowserError::WebSocketError("Invalid WS URL: must start with ws://".into())
+    })?;
+    let (host_port, _path) = url.split_once('/').unwrap_or((url, ""));
 
     let mut stream = std::net::TcpStream::connect(host_port)
         .map_err(|e| BrowserError::WebSocketError(format!("TCP connect failed: {}", e)))?;
-    stream.set_read_timeout(Some(std::time::Duration::from_secs(30)))
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(30)))
         .map_err(|e| BrowserError::WebSocketError(format!("Set timeout failed: {}", e)))?;
-    stream.set_write_timeout(Some(std::time::Duration::from_secs(10)))
+    stream
+        .set_write_timeout(Some(std::time::Duration::from_secs(10)))
         .map_err(|e| BrowserError::WebSocketError(format!("Set timeout failed: {}", e)))?;
 
     // WebSocket handshake
@@ -239,19 +258,22 @@ fn ws_connect(ws_url: &str) -> Result<std::net::TcpStream, BrowserError> {
         host_port,
         key
     );
-    stream.write_all(handshake.as_bytes())
+    stream
+        .write_all(handshake.as_bytes())
         .map_err(|e| BrowserError::WebSocketError(format!("Handshake write failed: {}", e)))?;
 
     // Read response (verify 101 status)
     use std::io::Read;
     let mut buf = [0u8; 4096];
-    let n = stream.read(&mut buf)
+    let n = stream
+        .read(&mut buf)
         .map_err(|e| BrowserError::WebSocketError(format!("Handshake read failed: {}", e)))?;
     let response = String::from_utf8_lossy(&buf[..n]);
     if !response.contains("101") {
-        return Err(BrowserError::WebSocketError(
-            format!("Handshake failed: {}", response.lines().next().unwrap_or(""))
-        ));
+        return Err(BrowserError::WebSocketError(format!(
+            "Handshake failed: {}",
+            response.lines().next().unwrap_or("")
+        )));
     }
 
     Ok(stream)
@@ -271,7 +293,12 @@ fn ws_send(stream: &mut std::net::TcpStream, data: &str) -> Result<(), BrowserEr
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
-        [(t & 0xFF) as u8, ((t >> 8) & 0xFF) as u8, ((t >> 16) & 0xFF) as u8, ((t >> 24) & 0xFF) as u8]
+        [
+            (t & 0xFF) as u8,
+            ((t >> 8) & 0xFF) as u8,
+            ((t >> 16) & 0xFF) as u8,
+            ((t >> 24) & 0xFF) as u8,
+        ]
     };
 
     if len < 126 {
@@ -292,7 +319,8 @@ fn ws_send(stream: &mut std::net::TcpStream, data: &str) -> Result<(), BrowserEr
         frame.push(b ^ mask_key[i % 4]);
     }
 
-    stream.write_all(&frame)
+    stream
+        .write_all(&frame)
         .map_err(|e| BrowserError::WebSocketError(format!("Send failed: {}", e)))
 }
 
@@ -300,7 +328,8 @@ fn ws_send(stream: &mut std::net::TcpStream, data: &str) -> Result<(), BrowserEr
 fn ws_recv(stream: &mut std::net::TcpStream) -> Result<String, BrowserError> {
     use std::io::Read;
     let mut header = [0u8; 2];
-    stream.read_exact(&mut header)
+    stream
+        .read_exact(&mut header)
         .map_err(|e| BrowserError::WebSocketError(format!("Read header failed: {}", e)))?;
 
     let _fin = header[0] & 0x80 != 0;
@@ -309,19 +338,22 @@ fn ws_recv(stream: &mut std::net::TcpStream) -> Result<String, BrowserError> {
 
     if payload_len == 126 {
         let mut ext = [0u8; 2];
-        stream.read_exact(&mut ext)
+        stream
+            .read_exact(&mut ext)
             .map_err(|e| BrowserError::WebSocketError(format!("Read ext len failed: {}", e)))?;
         payload_len = u16::from_be_bytes(ext) as u64;
     } else if payload_len == 127 {
         let mut ext = [0u8; 8];
-        stream.read_exact(&mut ext)
+        stream
+            .read_exact(&mut ext)
             .map_err(|e| BrowserError::WebSocketError(format!("Read ext len failed: {}", e)))?;
         payload_len = u64::from_be_bytes(ext);
     }
 
     let mask_key = if masked {
         let mut mk = [0u8; 4];
-        stream.read_exact(&mut mk)
+        stream
+            .read_exact(&mut mk)
             .map_err(|e| BrowserError::WebSocketError(format!("Read mask failed: {}", e)))?;
         Some(mk)
     } else {
@@ -329,7 +361,8 @@ fn ws_recv(stream: &mut std::net::TcpStream) -> Result<String, BrowserError> {
     };
 
     let mut payload = vec![0u8; payload_len as usize];
-    stream.read_exact(&mut payload)
+    stream
+        .read_exact(&mut payload)
         .map_err(|e| BrowserError::WebSocketError(format!("Read payload failed: {}", e)))?;
 
     if let Some(mk) = mask_key {
@@ -361,7 +394,10 @@ fn send_cdp_command(
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     loop {
         if std::time::Instant::now() > deadline {
-            return Err(BrowserError::Timeout(format!("CDP command {} timed out", method)));
+            return Err(BrowserError::Timeout(format!(
+                "CDP command {} timed out",
+                method
+            )));
         }
         let raw = ws_recv(stream)?;
         if let Ok(val) = serde_json::from_str::<serde_json::Value>(&raw) {
@@ -369,7 +405,10 @@ fn send_cdp_command(
                 if let Some(err) = val.get("error") {
                     return Err(BrowserError::CdpError(format!("{}", err)));
                 }
-                return Ok(val.get("result").cloned().unwrap_or(serde_json::Value::Null));
+                return Ok(val
+                    .get("result")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null));
             }
             // Otherwise it's an event -- skip it
         }
@@ -416,7 +455,8 @@ impl BrowserSession {
     }
 
     fn next_id(&self) -> u64 {
-        self.next_request_id.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+        self.next_request_id
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Connect to an existing Chrome DevTools endpoint.
@@ -446,34 +486,63 @@ impl BrowserSession {
         let stream = self.ws_stream.as_mut().ok_or(BrowserError::NotConnected)?;
 
         // Navigate
-        send_cdp_command(stream, nav_id, "Page.navigate", serde_json::json!({"url": url}))?;
+        send_cdp_command(
+            stream,
+            nav_id,
+            "Page.navigate",
+            serde_json::json!({"url": url}),
+        )?;
 
         // Wait a bit for page load
         std::thread::sleep(std::time::Duration::from_millis(500));
 
         // Get title
-        let title_result = send_cdp_command(stream, eval_id, "Runtime.evaluate", serde_json::json!({
-            "expression": "document.title"
-        }))?;
+        let title_result = send_cdp_command(
+            stream,
+            eval_id,
+            "Runtime.evaluate",
+            serde_json::json!({
+                "expression": "document.title"
+            }),
+        )?;
         let title = title_result
-            .get("result").and_then(|r| r.get("value")).and_then(|v| v.as_str())
-            .unwrap_or("").to_string();
+            .get("result")
+            .and_then(|r| r.get("value"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
 
         // Get HTML
-        let html_result = send_cdp_command(stream, html_id, "Runtime.evaluate", serde_json::json!({
-            "expression": "document.documentElement.outerHTML"
-        }))?;
+        let html_result = send_cdp_command(
+            stream,
+            html_id,
+            "Runtime.evaluate",
+            serde_json::json!({
+                "expression": "document.documentElement.outerHTML"
+            }),
+        )?;
         let html = html_result
-            .get("result").and_then(|r| r.get("value")).and_then(|v| v.as_str())
-            .unwrap_or("").to_string();
+            .get("result")
+            .and_then(|r| r.get("value"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
 
         // Get text
-        let text_result = send_cdp_command(stream, text_id, "Runtime.evaluate", serde_json::json!({
-            "expression": "document.body ? document.body.innerText : ''"
-        }))?;
+        let text_result = send_cdp_command(
+            stream,
+            text_id,
+            "Runtime.evaluate",
+            serde_json::json!({
+                "expression": "document.body ? document.body.innerText : ''"
+            }),
+        )?;
         let text = text_result
-            .get("result").and_then(|r| r.get("value")).and_then(|v| v.as_str())
-            .unwrap_or("").to_string();
+            .get("result")
+            .and_then(|r| r.get("value"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
 
         self.current_url = Some(url.to_string());
         self.current_title = Some(title.clone());
@@ -495,13 +564,21 @@ impl BrowserSession {
             "(() => {{ const el = document.querySelector('{}'); if (!el) throw new Error('not found'); el.click(); return 'clicked'; }})()",
             selector.replace('\'', "\\'")
         );
-        let result = send_cdp_command(stream, id, "Runtime.evaluate", serde_json::json!({
-            "expression": js,
-            "awaitPromise": false,
-        }))?;
+        let result = send_cdp_command(
+            stream,
+            id,
+            "Runtime.evaluate",
+            serde_json::json!({
+                "expression": js,
+                "awaitPromise": false,
+            }),
+        )?;
         // Check for exception
         if let Some(ex) = result.get("exceptionDetails") {
-            return Err(BrowserError::ElementNotFound(format!("{}: {}", selector, ex)));
+            return Err(BrowserError::ElementNotFound(format!(
+                "{}: {}",
+                selector, ex
+            )));
         }
         Ok(())
     }
@@ -515,11 +592,19 @@ impl BrowserSession {
             selector.replace('\'', "\\'"),
             text.replace('\'', "\\'")
         );
-        let result = send_cdp_command(stream, id, "Runtime.evaluate", serde_json::json!({
-            "expression": js,
-        }))?;
+        let result = send_cdp_command(
+            stream,
+            id,
+            "Runtime.evaluate",
+            serde_json::json!({
+                "expression": js,
+            }),
+        )?;
         if let Some(ex) = result.get("exceptionDetails") {
-            return Err(BrowserError::ElementNotFound(format!("{}: {}", selector, ex)));
+            return Err(BrowserError::ElementNotFound(format!(
+                "{}: {}",
+                selector, ex
+            )));
         }
         Ok(())
     }
@@ -532,30 +617,45 @@ impl BrowserSession {
             "(() => {{ const el = document.querySelector('{}'); if (!el) throw new Error('not found'); return el.textContent || ''; }})()",
             selector.replace('\'', "\\'")
         );
-        let result = send_cdp_command(stream, id, "Runtime.evaluate", serde_json::json!({
-            "expression": js,
-        }))?;
+        let result = send_cdp_command(
+            stream,
+            id,
+            "Runtime.evaluate",
+            serde_json::json!({
+                "expression": js,
+            }),
+        )?;
         if let Some(ex) = result.get("exceptionDetails") {
-            return Err(BrowserError::ElementNotFound(format!("{}: {}", selector, ex)));
+            return Err(BrowserError::ElementNotFound(format!(
+                "{}: {}",
+                selector, ex
+            )));
         }
         Ok(result
-            .get("result").and_then(|r| r.get("value")).and_then(|v| v.as_str())
-            .unwrap_or("").to_string())
+            .get("result")
+            .and_then(|r| r.get("value"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string())
     }
 
     /// Execute JavaScript and return the result as a string.
     pub fn evaluate(&mut self, js: &str) -> Result<String, BrowserError> {
         let id = self.next_id();
         let stream = self.ws_stream.as_mut().ok_or(BrowserError::NotConnected)?;
-        let result = send_cdp_command(stream, id, "Runtime.evaluate", serde_json::json!({
-            "expression": js,
-            "returnByValue": true,
-        }))?;
+        let result = send_cdp_command(
+            stream,
+            id,
+            "Runtime.evaluate",
+            serde_json::json!({
+                "expression": js,
+                "returnByValue": true,
+            }),
+        )?;
         if let Some(ex) = result.get("exceptionDetails") {
             return Err(BrowserError::CdpError(format!("JS error: {}", ex)));
         }
-        let val = result
-            .get("result").and_then(|r| r.get("value"));
+        let val = result.get("result").and_then(|r| r.get("value"));
         match val {
             Some(serde_json::Value::String(s)) => Ok(s.clone()),
             Some(v) => Ok(v.to_string()),
@@ -567,10 +667,19 @@ impl BrowserSession {
     pub fn screenshot(&mut self) -> Result<String, BrowserError> {
         let id = self.next_id();
         let stream = self.ws_stream.as_mut().ok_or(BrowserError::NotConnected)?;
-        let result = send_cdp_command(stream, id, "Page.captureScreenshot", serde_json::json!({
-            "format": "png",
-        }))?;
-        Ok(result.get("data").and_then(|v| v.as_str()).unwrap_or("").to_string())
+        let result = send_cdp_command(
+            stream,
+            id,
+            "Page.captureScreenshot",
+            serde_json::json!({
+                "format": "png",
+            }),
+        )?;
+        Ok(result
+            .get("data")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string())
     }
 
     /// Wait for an element matching the selector to appear in the DOM.
@@ -579,9 +688,10 @@ impl BrowserSession {
         let timeout = std::time::Duration::from_millis(timeout_ms);
         loop {
             if start.elapsed() > timeout {
-                return Err(BrowserError::Timeout(
-                    format!("Element '{}' not found within {}ms", selector, timeout_ms),
-                ));
+                return Err(BrowserError::Timeout(format!(
+                    "Element '{}' not found within {}ms",
+                    selector, timeout_ms
+                )));
             }
             match self.get_text(selector) {
                 Ok(_) => return Ok(()),
@@ -676,21 +786,21 @@ pub fn register_browser_tools(
 
                 // Validate URL with sandbox
                 {
-                    let mut sandbox_guard = sbx.write().map_err(|_| {
-                        ToolError::ExecutionFailed("sandbox lock poisoned".into())
-                    })?;
+                    let mut sandbox_guard = sbx
+                        .write()
+                        .map_err(|_| ToolError::ExecutionFailed("sandbox lock poisoned".into()))?;
                     let action = ActionDescriptor::new(ActionType::HttpRequest, url);
                     sandbox_guard.validate(&action).map_err(|e| {
                         ToolError::ExecutionFailed(format!("Sandbox denied navigation: {}", e))
                     })?;
                 }
 
-                let mut session_guard = sess.write().map_err(|_| {
-                    ToolError::ExecutionFailed("session lock poisoned".into())
-                })?;
-                let content = session_guard.navigate(url).map_err(|e| {
-                    ToolError::ExecutionFailed(format!("Navigation failed: {}", e))
-                })?;
+                let mut session_guard = sess
+                    .write()
+                    .map_err(|_| ToolError::ExecutionFailed("session lock poisoned".into()))?;
+                let content = session_guard
+                    .navigate(url)
+                    .map_err(|e| ToolError::ExecutionFailed(format!("Navigation failed: {}", e)))?;
 
                 Ok(ToolOutput::text(format!(
                     "Navigated to {}\nTitle: {}\nText: {}",
@@ -716,12 +826,12 @@ pub fn register_browser_tools(
                     .get_string("selector")
                     .ok_or_else(|| ToolError::MissingParameter("selector".to_string()))?;
 
-                let mut session_guard = sess.write().map_err(|_| {
-                    ToolError::ExecutionFailed("session lock poisoned".into())
-                })?;
-                session_guard.click(selector).map_err(|e| {
-                    ToolError::ExecutionFailed(format!("Click failed: {}", e))
-                })?;
+                let mut session_guard = sess
+                    .write()
+                    .map_err(|_| ToolError::ExecutionFailed("session lock poisoned".into()))?;
+                session_guard
+                    .click(selector)
+                    .map_err(|e| ToolError::ExecutionFailed(format!("Click failed: {}", e)))?;
 
                 Ok(ToolOutput::text(format!("Clicked element: {}", selector)))
             }),
@@ -748,12 +858,12 @@ pub fn register_browser_tools(
                     .get_string("text")
                     .ok_or_else(|| ToolError::MissingParameter("text".to_string()))?;
 
-                let mut session_guard = sess.write().map_err(|_| {
-                    ToolError::ExecutionFailed("session lock poisoned".into())
-                })?;
-                session_guard.type_text(selector, text).map_err(|e| {
-                    ToolError::ExecutionFailed(format!("Type text failed: {}", e))
-                })?;
+                let mut session_guard = sess
+                    .write()
+                    .map_err(|_| ToolError::ExecutionFailed("session lock poisoned".into()))?;
+                session_guard
+                    .type_text(selector, text)
+                    .map_err(|e| ToolError::ExecutionFailed(format!("Type text failed: {}", e)))?;
 
                 Ok(ToolOutput::text(format!(
                     "Typed '{}' into element: {}",
@@ -765,11 +875,13 @@ pub fn register_browser_tools(
 
     // 4. browser_get_text
     {
-        let def =
-            ToolBuilder::new("browser_get_text", "Get text content of an element by CSS selector")
-                .required_string("selector", "CSS selector of the element")
-                .category("browser")
-                .build();
+        let def = ToolBuilder::new(
+            "browser_get_text",
+            "Get text content of an element by CSS selector",
+        )
+        .required_string("selector", "CSS selector of the element")
+        .category("browser")
+        .build();
 
         let sess = Arc::clone(&session);
 
@@ -780,12 +892,12 @@ pub fn register_browser_tools(
                     .get_string("selector")
                     .ok_or_else(|| ToolError::MissingParameter("selector".to_string()))?;
 
-                let mut session_guard = sess.write().map_err(|_| {
-                    ToolError::ExecutionFailed("session lock poisoned".into())
-                })?;
-                let text = session_guard.get_text(selector).map_err(|e| {
-                    ToolError::ExecutionFailed(format!("Get text failed: {}", e))
-                })?;
+                let mut session_guard = sess
+                    .write()
+                    .map_err(|_| ToolError::ExecutionFailed("session lock poisoned".into()))?;
+                let text = session_guard
+                    .get_text(selector)
+                    .map_err(|e| ToolError::ExecutionFailed(format!("Get text failed: {}", e)))?;
 
                 Ok(ToolOutput::text(text))
             }),
@@ -794,10 +906,13 @@ pub fn register_browser_tools(
 
     // 5. browser_evaluate
     {
-        let def = ToolBuilder::new("browser_evaluate", "Evaluate JavaScript in the browser page")
-            .required_string("js", "JavaScript code to evaluate")
-            .category("browser")
-            .build();
+        let def = ToolBuilder::new(
+            "browser_evaluate",
+            "Evaluate JavaScript in the browser page",
+        )
+        .required_string("js", "JavaScript code to evaluate")
+        .category("browser")
+        .build();
 
         let sess = Arc::clone(&session);
 
@@ -808,12 +923,12 @@ pub fn register_browser_tools(
                     .get_string("js")
                     .ok_or_else(|| ToolError::MissingParameter("js".to_string()))?;
 
-                let mut session_guard = sess.write().map_err(|_| {
-                    ToolError::ExecutionFailed("session lock poisoned".into())
-                })?;
-                let result = session_guard.evaluate(js).map_err(|e| {
-                    ToolError::ExecutionFailed(format!("Evaluate failed: {}", e))
-                })?;
+                let mut session_guard = sess
+                    .write()
+                    .map_err(|_| ToolError::ExecutionFailed("session lock poisoned".into()))?;
+                let result = session_guard
+                    .evaluate(js)
+                    .map_err(|e| ToolError::ExecutionFailed(format!("Evaluate failed: {}", e)))?;
 
                 Ok(ToolOutput::text(result))
             }),
@@ -822,21 +937,24 @@ pub fn register_browser_tools(
 
     // 6. browser_screenshot
     {
-        let def = ToolBuilder::new("browser_screenshot", "Capture a screenshot of the current page")
-            .category("browser")
-            .build();
+        let def = ToolBuilder::new(
+            "browser_screenshot",
+            "Capture a screenshot of the current page",
+        )
+        .category("browser")
+        .build();
 
         let sess = Arc::clone(&session);
 
         registry.register(
             def,
             Arc::new(move |_call: &ToolCall| {
-                let mut session_guard = sess.write().map_err(|_| {
-                    ToolError::ExecutionFailed("session lock poisoned".into())
-                })?;
-                let data = session_guard.screenshot().map_err(|e| {
-                    ToolError::ExecutionFailed(format!("Screenshot failed: {}", e))
-                })?;
+                let mut session_guard = sess
+                    .write()
+                    .map_err(|_| ToolError::ExecutionFailed("session lock poisoned".into()))?;
+                let data = session_guard
+                    .screenshot()
+                    .map_err(|e| ToolError::ExecutionFailed(format!("Screenshot failed: {}", e)))?;
 
                 Ok(ToolOutput::text(data))
             }),
@@ -854,12 +972,12 @@ pub fn register_browser_tools(
         registry.register(
             def,
             Arc::new(move |_call: &ToolCall| {
-                let mut session_guard = sess.write().map_err(|_| {
-                    ToolError::ExecutionFailed("session lock poisoned".into())
-                })?;
-                session_guard.close().map_err(|e| {
-                    ToolError::ExecutionFailed(format!("Close failed: {}", e))
-                })?;
+                let mut session_guard = sess
+                    .write()
+                    .map_err(|_| ToolError::ExecutionFailed("session lock poisoned".into()))?;
+                session_guard
+                    .close()
+                    .map_err(|e| ToolError::ExecutionFailed(format!("Close failed: {}", e)))?;
                 Ok(ToolOutput::text("Browser session closed".to_string()))
             }),
         );
@@ -970,7 +1088,9 @@ mod tests {
         assert!(result.is_err());
         match result {
             Err(BrowserError::WebSocketError(msg)) => {
-                assert!(msg.contains("TCP connect failed") || msg.contains("refused") || msg.len() > 0);
+                assert!(
+                    msg.contains("TCP connect failed") || msg.contains("refused") || msg.len() > 0
+                );
             }
             other => panic!("Expected WebSocketError, got: {:?}", other),
         }

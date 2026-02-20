@@ -208,11 +208,11 @@ impl ConversationSearcher {
         let tokens = Self::tokenize(&message.content);
         for (pos, token) in tokens.iter().enumerate() {
             let token_lower = token.to_lowercase();
-            self.index
-                .term_index
-                .entry(token_lower)
-                .or_default()
-                .push((session.clone(), index, vec![pos]));
+            self.index.term_index.entry(token_lower).or_default().push((
+                session.clone(),
+                index,
+                vec![pos],
+            ));
         }
 
         self.index.messages.push((session, message));
@@ -236,7 +236,11 @@ impl ConversationSearcher {
         }
 
         // Sort by score
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         // Apply limit
         results.truncate(query.max_results);
@@ -244,7 +248,8 @@ impl ConversationSearcher {
         // Add context if requested
         if query.include_context {
             for result in &mut results {
-                result.context = self.get_context(result.index, query.context_size, &result.session_id);
+                result.context =
+                    self.get_context(result.index, query.context_size, &result.session_id);
             }
         }
 
@@ -479,7 +484,12 @@ impl ConversationSearcher {
     }
 
     /// Check if a message matches the query filters
-    fn matches_filters(&self, msg: &ChatMessage, session_id: Option<&str>, query: &SearchQuery) -> bool {
+    fn matches_filters(
+        &self,
+        msg: &ChatMessage,
+        session_id: Option<&str>,
+        query: &SearchQuery,
+    ) -> bool {
         // Message type filter
         if query.user_messages_only && !msg.is_user() {
             return false;
@@ -586,7 +596,9 @@ impl ConversationSearcher {
         SearchStats {
             total_messages: self.index.messages.len(),
             indexed_terms: self.index.term_index.len(),
-            unique_sessions: self.index.messages
+            unique_sessions: self
+                .index
+                .messages
                 .iter()
                 .filter_map(|(s, _)| s.clone())
                 .collect::<std::collections::HashSet<_>>()
@@ -674,9 +686,13 @@ mod tests {
     fn create_test_messages() -> Vec<ChatMessage> {
         vec![
             ChatMessage::user("How do I create a function in Rust?".to_string()),
-            ChatMessage::assistant("To create a function in Rust, use the fn keyword...".to_string()),
+            ChatMessage::assistant(
+                "To create a function in Rust, use the fn keyword...".to_string(),
+            ),
             ChatMessage::user("What about Python functions?".to_string()),
-            ChatMessage::assistant("In Python, you define functions with the def keyword...".to_string()),
+            ChatMessage::assistant(
+                "In Python, you define functions with the def keyword...".to_string(),
+            ),
             ChatMessage::user("Can you show me a Rust example?".to_string()),
         ]
     }

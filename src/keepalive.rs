@@ -29,7 +29,7 @@
 //! ```
 
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 /// Connection state
@@ -326,7 +326,9 @@ impl KeepaliveManager {
                     drop(connections);
                     self.emit_event(KeepaliveEvent::Disconnected {
                         provider: provider.to_string(),
-                        reason: result.error.unwrap_or_else(|| "Heartbeat failed".to_string()),
+                        reason: result
+                            .error
+                            .unwrap_or_else(|| "Heartbeat failed".to_string()),
                     });
                 }
             }
@@ -353,7 +355,10 @@ impl KeepaliveManager {
         if should_reconnect {
             let attempts = {
                 let connections = self.connections.read().unwrap_or_else(|e| e.into_inner());
-                connections.get(provider).map(|c| c.reconnect_attempts).unwrap_or(0)
+                connections
+                    .get(provider)
+                    .map(|c| c.reconnect_attempts)
+                    .unwrap_or(0)
             };
 
             self.emit_event(KeepaliveEvent::Reconnecting {
@@ -389,7 +394,8 @@ impl KeepaliveManager {
     /// Check if any connection needs attention
     pub fn needs_attention(&self) -> Vec<String> {
         let connections = self.connections.read().unwrap_or_else(|e| e.into_inner());
-        connections.iter()
+        connections
+            .iter()
             .filter(|(_, conn)| conn.state.needs_action())
             .map(|(name, _)| name.clone())
             .collect()
@@ -398,7 +404,8 @@ impl KeepaliveManager {
     /// Get healthy connections
     pub fn healthy_connections(&self) -> Vec<String> {
         let connections = self.connections.read().unwrap_or_else(|e| e.into_inner());
-        connections.iter()
+        connections
+            .iter()
             .filter(|(_, conn)| conn.state == ConnectionState::Connected)
             .map(|(name, _)| name.clone())
             .collect()
@@ -629,7 +636,10 @@ mod tests {
         let manager = KeepaliveManager::default();
 
         manager.register("test", "http://localhost:8080");
-        assert_eq!(manager.get_state("test"), Some(ConnectionState::Disconnected));
+        assert_eq!(
+            manager.get_state("test"),
+            Some(ConnectionState::Disconnected)
+        );
 
         manager.mark_connected("test");
         assert_eq!(manager.get_state("test"), Some(ConnectionState::Connected));
@@ -645,12 +655,15 @@ mod tests {
         manager.mark_connected("test");
 
         // Successful heartbeat
-        manager.record_heartbeat("test", HeartbeatResult {
-            success: true,
-            latency: Duration::from_millis(50),
-            error: None,
-            details: None,
-        });
+        manager.record_heartbeat(
+            "test",
+            HeartbeatResult {
+                success: true,
+                latency: Duration::from_millis(50),
+                error: None,
+                details: None,
+            },
+        );
 
         let info = manager.get_info("test").unwrap();
         assert_eq!(info.consecutive_failures, 0);
@@ -668,21 +681,27 @@ mod tests {
         manager.mark_connected("test");
 
         // First failure
-        manager.record_heartbeat("test", HeartbeatResult {
-            success: false,
-            latency: Duration::from_millis(5000),
-            error: Some("timeout".to_string()),
-            details: None,
-        });
+        manager.record_heartbeat(
+            "test",
+            HeartbeatResult {
+                success: false,
+                latency: Duration::from_millis(5000),
+                error: Some("timeout".to_string()),
+                details: None,
+            },
+        );
         assert_eq!(manager.get_state("test"), Some(ConnectionState::Connected));
 
         // Second failure - should mark as failed
-        manager.record_heartbeat("test", HeartbeatResult {
-            success: false,
-            latency: Duration::from_millis(5000),
-            error: Some("timeout".to_string()),
-            details: None,
-        });
+        manager.record_heartbeat(
+            "test",
+            HeartbeatResult {
+                success: false,
+                latency: Duration::from_millis(5000),
+                error: Some("timeout".to_string()),
+                details: None,
+            },
+        );
         assert_eq!(manager.get_state("test"), Some(ConnectionState::Failed));
     }
 

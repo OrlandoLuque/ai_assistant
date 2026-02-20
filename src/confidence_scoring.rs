@@ -304,7 +304,8 @@ impl ConfidenceScorer {
         if certainty_total == 0.0 && uncertainty_total == 0.0 {
             0.5 // Neutral
         } else {
-            let confidence = (certainty_total - uncertainty_total * 0.5) / (certainty_total + uncertainty_total).max(1.0);
+            let confidence = (certainty_total - uncertainty_total * 0.5)
+                / (certainty_total + uncertainty_total).max(1.0);
             (confidence + 1.0) / 2.0 // Normalize to 0-1
         }
     }
@@ -320,9 +321,8 @@ impl ConfidenceScorer {
         let avg_prob = probs.iter().sum::<f64>() / probs.len() as f64;
 
         // Consider variance
-        let variance = probs.iter()
-            .map(|p| (p - avg_prob).powi(2))
-            .sum::<f64>() / probs.len() as f64;
+        let variance =
+            probs.iter().map(|p| (p - avg_prob).powi(2)).sum::<f64>() / probs.len() as f64;
 
         // High variance indicates uncertainty
         let variance_penalty = variance.sqrt() * 0.5;
@@ -359,9 +359,17 @@ impl ConfidenceScorer {
         let bucket = (predicted_confidence * 10.0) as u8;
         self.calibration_data.total += 1;
 
-        *self.calibration_data.total_by_bucket.entry(bucket).or_insert(0) += 1;
+        *self
+            .calibration_data
+            .total_by_bucket
+            .entry(bucket)
+            .or_insert(0) += 1;
         if was_correct {
-            *self.calibration_data.correct_by_bucket.entry(bucket).or_insert(0) += 1;
+            *self
+                .calibration_data
+                .correct_by_bucket
+                .entry(bucket)
+                .or_insert(0) += 1;
         }
     }
 
@@ -387,11 +395,7 @@ impl ConfidenceScorer {
     }
 
     /// Score confidence with multiple samples
-    pub fn score_with_consistency<F>(
-        &self,
-        prompt: &str,
-        generate: F,
-    ) -> ConfidenceScore
+    pub fn score_with_consistency<F>(&self, prompt: &str, generate: F) -> ConfidenceScore
     where
         F: Fn(&str) -> (String, Option<Vec<f64>>),
     {
@@ -414,8 +418,10 @@ impl ConfidenceScorer {
         let consistency = self.calculate_consistency(&responses);
         let avg_score = scores.iter().map(|s| s.overall).sum::<f64>() / scores.len() as f64;
 
-        let mut final_score = scores.into_iter().next().unwrap_or_else(|| {
-            ConfidenceScore {
+        let mut final_score = scores
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| ConfidenceScore {
                 overall: 0.5,
                 token_confidence: None,
                 linguistic_confidence: 0.5,
@@ -429,8 +435,7 @@ impl ConfidenceScorer {
                     qualification_count: 0,
                 },
                 reliability: Reliability::Medium,
-            }
-        });
+            });
 
         final_score.consistency_confidence = Some(consistency);
         final_score.overall = avg_score * 0.7 + consistency * 0.3;
@@ -502,7 +507,9 @@ pub struct ConfidenceConfigBuilder {
 
 impl ConfidenceConfigBuilder {
     pub fn new() -> Self {
-        Self { config: ConfidenceConfig::default() }
+        Self {
+            config: ConfidenceConfig::default(),
+        }
     }
 
     pub fn use_logprobs(mut self, use_it: bool) -> Self {

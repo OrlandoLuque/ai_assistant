@@ -45,11 +45,7 @@ impl UserQuery {
         }
     }
 
-    pub fn choice(
-        question: impl Into<String>,
-        options: Vec<String>,
-        multi_select: bool,
-    ) -> Self {
+    pub fn choice(question: impl Into<String>, options: Vec<String>, multi_select: bool) -> Self {
         Self::Choice {
             question: question.into(),
             options,
@@ -184,7 +180,11 @@ impl UserInteractionHandler for AutoApproveHandler {
     fn ask_user(&self, _agent_name: &str, query: UserQuery) -> UserResponse {
         match query {
             UserQuery::FreeText { .. } => UserResponse::Text(self.default_text.clone()),
-            UserQuery::Choice { options, multi_select, .. } => {
+            UserQuery::Choice {
+                options,
+                multi_select,
+                ..
+            } => {
                 if multi_select {
                     UserResponse::Choices((0..options.len()).collect())
                 } else if !options.is_empty() {
@@ -287,7 +287,10 @@ impl BufferedInteractionHandler {
     /// Get all pending (unanswered) queries.
     pub fn pending_queries(&self) -> Vec<PendingQuery> {
         let qs = self.queries.lock().unwrap_or_else(|e| e.into_inner());
-        qs.iter().filter(|q| q.response.is_none()).cloned().collect()
+        qs.iter()
+            .filter(|q| q.response.is_none())
+            .cloned()
+            .collect()
     }
 
     /// Respond to a pending query by ID.
@@ -308,32 +311,40 @@ impl BufferedInteractionHandler {
 
     /// Get all stored notifications.
     pub fn notifications(&self) -> Vec<StoredNotification> {
-        self.notifications.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.notifications
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Get the latest progress update for each agent+task combination.
     pub fn progress_updates(&self) -> HashMap<String, StoredProgress> {
-        self.progress_updates.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.progress_updates
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Clear all stored notifications.
     pub fn clear_notifications(&self) {
-        self.notifications.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        self.notifications
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
     }
 
     /// Clear all stored progress updates.
     pub fn clear_progress(&self) {
-        self.progress_updates.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        self.progress_updates
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
     }
 }
 
 impl UserInteractionHandler for BufferedInteractionHandler {
     fn ask_user(&self, agent_name: &str, query: UserQuery) -> UserResponse {
-        let id = format!(
-            "q-{}-{}",
-            agent_name,
-            now_millis() % 1_000_000
-        );
+        let id = format!("q-{}-{}", agent_name, now_millis() % 1_000_000);
         let pending = PendingQuery {
             id: id.clone(),
             agent_name: agent_name.to_string(),
@@ -459,14 +470,20 @@ impl InteractionManager {
             created_at: now_millis(),
             response: None,
         };
-        let mut pq = self.pending_queries.lock().unwrap_or_else(|e| e.into_inner());
+        let mut pq = self
+            .pending_queries
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         pq.insert(id.clone(), pending);
         id
     }
 
     /// Respond to a previously submitted async query.
     pub fn respond(&self, query_id: &str, response: UserResponse) -> bool {
-        let mut pq = self.pending_queries.lock().unwrap_or_else(|e| e.into_inner());
+        let mut pq = self
+            .pending_queries
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         if let Some(pending) = pq.get_mut(query_id) {
             let query_clone = pending.query.clone();
             let agent_name = pending.agent_name.clone();
@@ -487,13 +504,19 @@ impl InteractionManager {
 
     /// Get the response for an async query (None if not yet answered).
     pub fn get_response(&self, query_id: &str) -> Option<UserResponse> {
-        let pq = self.pending_queries.lock().unwrap_or_else(|e| e.into_inner());
+        let pq = self
+            .pending_queries
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         pq.get(query_id).and_then(|p| p.response.clone())
     }
 
     /// Get all pending (unanswered) queries.
     pub fn pending_queries(&self) -> Vec<PendingQuery> {
-        let pq = self.pending_queries.lock().unwrap_or_else(|e| e.into_inner());
+        let pq = self
+            .pending_queries
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         pq.values()
             .filter(|q| q.response.is_none())
             .cloned()
@@ -512,7 +535,10 @@ impl InteractionManager {
 
     /// Get the full interaction log.
     pub fn interaction_log(&self) -> Vec<InteractionLogEntry> {
-        self.query_log.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.query_log
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Get the configured timeout.
@@ -522,12 +548,18 @@ impl InteractionManager {
 
     /// Clear the interaction log.
     pub fn clear_log(&self) {
-        self.query_log.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        self.query_log
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
     }
 
     /// Clear all pending queries.
     pub fn clear_pending(&self) {
-        self.pending_queries.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        self.pending_queries
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
     }
 }
 
@@ -607,7 +639,10 @@ mod tests {
         let handler = CallbackInteractionHandler::new(
             |_agent, _query| UserResponse::Text("callback response".into()),
             move |agent, msg, _level| {
-                notif_clone.lock().unwrap().push(format!("{}: {}", agent, msg));
+                notif_clone
+                    .lock()
+                    .unwrap()
+                    .push(format!("{}: {}", agent, msg));
             },
             |_agent, _task, _progress| {},
         );
@@ -617,10 +652,7 @@ mod tests {
 
         handler.notify_user("test-agent", "hello", NotifyLevel::Info);
         assert_eq!(notifications.lock().unwrap().len(), 1);
-        assert_eq!(
-            notifications.lock().unwrap()[0],
-            "test-agent: hello"
-        );
+        assert_eq!(notifications.lock().unwrap()[0], "test-agent: hello");
     }
 
     #[test]
@@ -651,10 +683,7 @@ mod tests {
 
         // Respond
         assert!(mgr.respond(&qid, UserResponse::Text("answer".into())));
-        assert_eq!(
-            mgr.get_response(&qid).unwrap().as_text(),
-            Some("answer")
-        );
+        assert_eq!(mgr.get_response(&qid).unwrap().as_text(), Some("answer"));
 
         // No longer pending
         let pending = mgr.pending_queries();
@@ -686,10 +715,7 @@ mod tests {
             UserQuery::free_text("What file?").question_text(),
             "What file?"
         );
-        assert_eq!(
-            UserQuery::confirmation("Sure?").question_text(),
-            "Sure?"
-        );
+        assert_eq!(UserQuery::confirmation("Sure?").question_text(), "Sure?");
         assert_eq!(
             UserQuery::choice("Pick", vec![], false).question_text(),
             "Pick"
@@ -727,8 +753,7 @@ mod tests {
 
     #[test]
     fn test_auto_approve_custom_file_path() {
-        let handler = AutoApproveHandler::new()
-            .with_default_file_path("/tmp/output");
+        let handler = AutoApproveHandler::new().with_default_file_path("/tmp/output");
         let resp = handler.ask_user("a", UserQuery::file_selection("Pick", None));
         if let UserResponse::File(p) = resp {
             assert_eq!(p, PathBuf::from("/tmp/output"));

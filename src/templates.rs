@@ -3,9 +3,9 @@
 //! This module provides a templating system for creating reusable prompts with
 //! placeholders that can be filled in at runtime.
 
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use anyhow::{Result, anyhow};
 
 /// A prompt template with variable placeholders
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -190,7 +190,8 @@ impl PromptTemplate {
     fn validate_value(&self, name: &str, value: &str, var_type: VariableType) -> Result<()> {
         match var_type {
             VariableType::Number => {
-                value.parse::<f64>()
+                value
+                    .parse::<f64>()
                     .map_err(|_| anyhow!("Variable '{}' must be a number, got: {}", name, value))?;
             }
             VariableType::SingleLine => {
@@ -300,7 +301,8 @@ impl BuiltinTemplates {
     /// Code review template
     pub fn code_review() -> PromptTemplate {
         TemplateBuilder::new("code_review")
-            .content(r#"Please review the following {{language}} code:
+            .content(
+                r#"Please review the following {{language}} code:
 
 ```{{language}}
 {{code}}
@@ -313,21 +315,35 @@ Provide feedback on:
 1. Code quality and best practices
 2. Potential bugs or issues
 3. Performance considerations
-4. Suggestions for improvement"#)
+4. Suggestions for improvement"#,
+            )
             .description("Review code for quality, bugs, and improvements")
             .category("development")
             .tag("code")
             .tag("review")
-            .variable("language", "Programming language", VariableType::SingleLine, true, Some("rust"))
+            .variable(
+                "language",
+                "Programming language",
+                VariableType::SingleLine,
+                true,
+                Some("rust"),
+            )
             .variable("code", "Code to review", VariableType::Code, true, None)
-            .variable("focus_areas", "Areas to focus on", VariableType::Text, false, Some("- Correctness\n- Readability\n- Error handling"))
+            .variable(
+                "focus_areas",
+                "Areas to focus on",
+                VariableType::Text,
+                false,
+                Some("- Correctness\n- Readability\n- Error handling"),
+            )
             .build()
     }
 
     /// Translation template
     pub fn translation() -> PromptTemplate {
         TemplateBuilder::new("translation")
-            .content(r#"Translate the following text from {{source_language}} to {{target_language}}:
+            .content(
+                r#"Translate the following text from {{source_language}} to {{target_language}}:
 
 {{text}}
 
@@ -335,22 +351,42 @@ Requirements:
 - Preserve the original meaning and tone
 - Use natural expressions in the target language
 - Maintain any formatting (markdown, etc.)
-{{additional_instructions}}"#)
+{{additional_instructions}}"#,
+            )
             .description("Translate text between languages")
             .category("translation")
             .tag("translate")
             .tag("language")
-            .variable("source_language", "Source language", VariableType::Language, true, Some("English"))
-            .variable("target_language", "Target language", VariableType::Language, true, None)
+            .variable(
+                "source_language",
+                "Source language",
+                VariableType::Language,
+                true,
+                Some("English"),
+            )
+            .variable(
+                "target_language",
+                "Target language",
+                VariableType::Language,
+                true,
+                None,
+            )
             .variable("text", "Text to translate", VariableType::Text, true, None)
-            .variable("additional_instructions", "Additional instructions", VariableType::Text, false, Some(""))
+            .variable(
+                "additional_instructions",
+                "Additional instructions",
+                VariableType::Text,
+                false,
+                Some(""),
+            )
             .build()
     }
 
     /// Explanation template
     pub fn explain() -> PromptTemplate {
         TemplateBuilder::new("explain")
-            .content(r#"Explain {{topic}} in a way that a {{audience}} can understand.
+            .content(
+                r#"Explain {{topic}} in a way that a {{audience}} can understand.
 
 Level of detail: {{detail_level}}
 
@@ -359,22 +395,42 @@ Level of detail: {{detail_level}}
 Please include:
 - A clear definition
 - Key concepts
-- Examples where appropriate"#)
+- Examples where appropriate"#,
+            )
             .description("Explain a topic for a specific audience")
             .category("education")
             .tag("explain")
             .tag("teach")
             .variable("topic", "Topic to explain", VariableType::Text, true, None)
-            .variable("audience", "Target audience", VariableType::SingleLine, true, Some("beginner"))
-            .variable("detail_level", "Level of detail", VariableType::SingleLine, false, Some("moderate"))
-            .variable("additional_context", "Additional context", VariableType::Text, false, Some(""))
+            .variable(
+                "audience",
+                "Target audience",
+                VariableType::SingleLine,
+                true,
+                Some("beginner"),
+            )
+            .variable(
+                "detail_level",
+                "Level of detail",
+                VariableType::SingleLine,
+                false,
+                Some("moderate"),
+            )
+            .variable(
+                "additional_context",
+                "Additional context",
+                VariableType::Text,
+                false,
+                Some(""),
+            )
             .build()
     }
 
     /// Bug fix template
     pub fn bug_fix() -> PromptTemplate {
         TemplateBuilder::new("bug_fix")
-            .content(r#"I have a bug in my {{language}} code.
+            .content(
+                r#"I have a bug in my {{language}} code.
 
 **Error message:**
 ```
@@ -395,46 +451,98 @@ Please include:
 Please help me:
 1. Identify the root cause
 2. Explain why it's happening
-3. Provide a fix"#)
+3. Provide a fix"#,
+            )
             .description("Help fix a bug in code")
             .category("development")
             .tag("bug")
             .tag("fix")
             .tag("debug")
-            .variable("language", "Programming language", VariableType::SingleLine, true, None)
-            .variable("error_message", "Error message", VariableType::Text, true, None)
+            .variable(
+                "language",
+                "Programming language",
+                VariableType::SingleLine,
+                true,
+                None,
+            )
+            .variable(
+                "error_message",
+                "Error message",
+                VariableType::Text,
+                true,
+                None,
+            )
             .variable("code", "Buggy code", VariableType::Code, true, None)
-            .variable("expected_behavior", "What should happen", VariableType::Text, true, None)
-            .variable("actual_behavior", "What actually happens", VariableType::Text, true, None)
+            .variable(
+                "expected_behavior",
+                "What should happen",
+                VariableType::Text,
+                true,
+                None,
+            )
+            .variable(
+                "actual_behavior",
+                "What actually happens",
+                VariableType::Text,
+                true,
+                None,
+            )
             .build()
     }
 
     /// Summarization template
     pub fn summarize() -> PromptTemplate {
         TemplateBuilder::new("summarize")
-            .content(r#"Summarize the following {{content_type}}:
+            .content(
+                r#"Summarize the following {{content_type}}:
 
 {{content}}
 
 Summary requirements:
 - Length: {{length}}
 - Format: {{format}}
-- Include key points and main takeaways"#)
+- Include key points and main takeaways"#,
+            )
             .description("Summarize content")
             .category("writing")
             .tag("summary")
             .tag("condense")
-            .variable("content_type", "Type of content", VariableType::SingleLine, false, Some("text"))
-            .variable("content", "Content to summarize", VariableType::Text, true, None)
-            .variable("length", "Desired length", VariableType::SingleLine, false, Some("2-3 paragraphs"))
-            .variable("format", "Output format", VariableType::SingleLine, false, Some("prose"))
+            .variable(
+                "content_type",
+                "Type of content",
+                VariableType::SingleLine,
+                false,
+                Some("text"),
+            )
+            .variable(
+                "content",
+                "Content to summarize",
+                VariableType::Text,
+                true,
+                None,
+            )
+            .variable(
+                "length",
+                "Desired length",
+                VariableType::SingleLine,
+                false,
+                Some("2-3 paragraphs"),
+            )
+            .variable(
+                "format",
+                "Output format",
+                VariableType::SingleLine,
+                false,
+                Some("prose"),
+            )
             .build()
     }
 
     /// API documentation template
     pub fn api_docs() -> PromptTemplate {
         TemplateBuilder::new("api_docs")
-            .content(r#"Generate API documentation for the following {{language}} function/method:
+            .content(
+                r#"Generate API documentation for the following {{language}} function/method:
 
 ```{{language}}
 {{code}}
@@ -447,21 +555,35 @@ Documentation should include:
 - Example usage
 - Any important notes or caveats
 
-Format: {{format}}"#)
+Format: {{format}}"#,
+            )
             .description("Generate API documentation")
             .category("development")
             .tag("docs")
             .tag("api")
-            .variable("language", "Programming language", VariableType::SingleLine, true, None)
+            .variable(
+                "language",
+                "Programming language",
+                VariableType::SingleLine,
+                true,
+                None,
+            )
             .variable("code", "Code to document", VariableType::Code, true, None)
-            .variable("format", "Documentation format", VariableType::SingleLine, false, Some("markdown"))
+            .variable(
+                "format",
+                "Documentation format",
+                VariableType::SingleLine,
+                false,
+                Some("markdown"),
+            )
             .build()
     }
 
     /// Refactoring template
     pub fn refactor() -> PromptTemplate {
         TemplateBuilder::new("refactor")
-            .content(r#"Refactor the following {{language}} code:
+            .content(
+                r#"Refactor the following {{language}} code:
 
 ```{{language}}
 {{code}}
@@ -473,14 +595,27 @@ Refactoring goals:
 Constraints:
 - Maintain the same functionality
 - Keep the public API unchanged (unless specified)
-- Follow {{language}} best practices"#)
+- Follow {{language}} best practices"#,
+            )
             .description("Refactor code for better quality")
             .category("development")
             .tag("refactor")
             .tag("improve")
-            .variable("language", "Programming language", VariableType::SingleLine, true, None)
+            .variable(
+                "language",
+                "Programming language",
+                VariableType::SingleLine,
+                true,
+                None,
+            )
             .variable("code", "Code to refactor", VariableType::Code, true, None)
-            .variable("goals", "Refactoring goals", VariableType::Text, false, Some("- Improve readability\n- Reduce complexity\n- Follow SOLID principles"))
+            .variable(
+                "goals",
+                "Refactoring goals",
+                VariableType::Text,
+                false,
+                Some("- Improve readability\n- Reduce complexity\n- Follow SOLID principles"),
+            )
             .build()
     }
 
@@ -571,7 +706,8 @@ impl TemplateManager {
 
     /// Render a template by name
     pub fn render(&self, name: &str, values: &HashMap<String, String>) -> Result<String> {
-        let template = self.get(name)
+        let template = self
+            .get(name)
             .ok_or_else(|| anyhow!("Template not found: {}", name))?;
         template.render(values)
     }
@@ -629,8 +765,12 @@ mod tests {
 
     #[test]
     fn test_template_with_default() {
-        let template = PromptTemplate::new("test", "Language: {{lang}}")
-            .configure_variable("lang", "Programming language", Some("Rust"), false);
+        let template = PromptTemplate::new("test", "Language: {{lang}}").configure_variable(
+            "lang",
+            "Programming language",
+            Some("Rust"),
+            false,
+        );
 
         let result = template.render(&HashMap::new()).unwrap();
         assert_eq!(result, "Language: Rust");
@@ -675,8 +815,20 @@ mod tests {
             .description("A greeting template")
             .category("greetings")
             .tag("hello")
-            .variable("greeting", "The greeting word", VariableType::SingleLine, false, Some("Hello"))
-            .variable("name", "Name to greet", VariableType::SingleLine, true, None)
+            .variable(
+                "greeting",
+                "The greeting word",
+                VariableType::SingleLine,
+                false,
+                Some("Hello"),
+            )
+            .variable(
+                "name",
+                "Name to greet",
+                VariableType::SingleLine,
+                true,
+                None,
+            )
             .build();
 
         assert_eq!(template.name, "custom");

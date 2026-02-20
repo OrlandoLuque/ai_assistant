@@ -3,12 +3,12 @@
 //! This module provides comprehensive export/import capabilities for
 //! conversations, knowledge bases, and configurations.
 
-use std::collections::HashMap;
-use std::path::Path;
-use std::io::{Read, Write};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::io::{Read, Write};
+use std::path::Path;
 
 // ============================================================================
 // Export Formats
@@ -196,8 +196,12 @@ impl ConversationExporter {
         Ok(())
     }
 
-    fn filter_conversations(&self, conversations: &[ExportedConversation]) -> Vec<ExportedConversation> {
-        let mut result: Vec<ExportedConversation> = conversations.iter()
+    fn filter_conversations(
+        &self,
+        conversations: &[ExportedConversation],
+    ) -> Vec<ExportedConversation> {
+        let mut result: Vec<ExportedConversation> = conversations
+            .iter()
             .filter(|c| {
                 if let Some(from) = self.options.date_from {
                     if c.created_at < from {
@@ -237,7 +241,10 @@ impl ConversationExporter {
 
         // Metadata
         if self.options.include_metadata {
-            output.push_str(&format!("*Created: {}*\n\n", conversation.created_at.format("%Y-%m-%d %H:%M")));
+            output.push_str(&format!(
+                "*Created: {}*\n\n",
+                conversation.created_at.format("%Y-%m-%d %H:%M")
+            ));
         }
 
         // Messages
@@ -287,9 +294,7 @@ impl ConversationExporter {
                 continue;
             }
 
-            let timestamp = msg.timestamp
-                .map(|ts| ts.to_rfc3339())
-                .unwrap_or_default();
+            let timestamp = msg.timestamp.map(|ts| ts.to_rfc3339()).unwrap_or_default();
 
             let content = if self.options.redact_sensitive {
                 self.redact_content(&msg.content)
@@ -298,7 +303,8 @@ impl ConversationExporter {
             };
 
             // Escape CSV
-            let escaped_content = format!("\"{}\"", content.replace('"', "\"\"").replace('\n', "\\n"));
+            let escaped_content =
+                format!("\"{}\"", content.replace('"', "\"\"").replace('\n', "\\n"));
 
             output.push_str(&format!("{},{},{}\n", timestamp, msg.role, escaped_content));
         }
@@ -326,8 +332,10 @@ impl ConversationExporter {
         output.push_str(&format!("<h1>{}</h1>\n", conversation.title));
 
         if self.options.include_metadata {
-            output.push_str(&format!("<p class=\"timestamp\">Created: {}</p>\n",
-                conversation.created_at.format("%Y-%m-%d %H:%M")));
+            output.push_str(&format!(
+                "<p class=\"timestamp\">Created: {}</p>\n",
+                conversation.created_at.format("%Y-%m-%d %H:%M")
+            ));
         }
 
         for msg in &conversation.messages {
@@ -343,12 +351,22 @@ impl ConversationExporter {
             };
 
             output.push_str(&format!("<div class=\"message {}\">\n", class));
-            output.push_str(&format!("<div class=\"role\">{}</div>\n",
-                msg.role.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default() + &msg.role[1..]));
+            output.push_str(&format!(
+                "<div class=\"role\">{}</div>\n",
+                msg.role
+                    .chars()
+                    .next()
+                    .map(|c| c.to_uppercase().to_string())
+                    .unwrap_or_default()
+                    + &msg.role[1..]
+            ));
 
             if self.options.include_timestamps {
                 if let Some(ts) = msg.timestamp {
-                    output.push_str(&format!("<div class=\"timestamp\">{}</div>\n", ts.format("%H:%M:%S")));
+                    output.push_str(&format!(
+                        "<div class=\"timestamp\">{}</div>\n",
+                        ts.format("%H:%M:%S")
+                    ));
                 }
             }
 
@@ -400,7 +418,10 @@ impl ConversationExporter {
 
         // Convert inline code
         while result.contains('`') {
-            if let (Some(start), Some(end)) = (result.find('`'), result[result.find('`').expect("char verified above") + 1..].find('`')) {
+            if let (Some(start), Some(end)) = (
+                result.find('`'),
+                result[result.find('`').expect("char verified above") + 1..].find('`'),
+            ) {
                 let code = &result[start + 1..start + 1 + end];
                 let html = format!("<code>{}</code>", html_escape(code));
                 result = format!(
@@ -424,9 +445,7 @@ impl ConversationExporter {
         let mut result = content.to_string();
 
         // Redact email addresses
-        let email_pattern = |s: &str| {
-            s.contains('@') && s.contains('.')
-        };
+        let email_pattern = |s: &str| s.contains('@') && s.contains('.');
 
         for word in content.split_whitespace() {
             if email_pattern(word) {
@@ -436,7 +455,11 @@ impl ConversationExporter {
 
         // Redact potential API keys (long alphanumeric strings)
         for word in content.split_whitespace() {
-            if word.len() > 20 && word.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
+            if word.len() > 20
+                && word
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+            {
                 result = result.replace(word, "[KEY REDACTED]");
             }
         }
@@ -533,9 +556,7 @@ impl ConversationImporter {
 
     /// Import from file
     pub fn import_file(&self, path: &Path) -> Result<(Vec<ExportedConversation>, ImportResult)> {
-        let extension = path.extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
+        let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
         let content = if extension == "gz" {
             use flate2::read::GzDecoder;

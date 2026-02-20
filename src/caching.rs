@@ -217,7 +217,8 @@ impl ResponseCache {
         };
 
         self.entries.insert(fingerprint, entry);
-        self.query_index.insert(self.normalize_query(query), fingerprint);
+        self.query_index
+            .insert(self.normalize_query(query), fingerprint);
         self.stats.total_entries = self.entries.len();
     }
 
@@ -247,7 +248,8 @@ impl ResponseCache {
 
     /// Clear entries by tag
     pub fn clear_by_tag(&mut self, tag: &str) {
-        self.entries.retain(|_, e| !e.tags.contains(&tag.to_string()));
+        self.entries
+            .retain(|_, e| !e.tags.contains(&tag.to_string()));
         self.stats.total_entries = self.entries.len();
     }
 
@@ -263,7 +265,8 @@ impl ResponseCache {
 
     /// Evict the oldest entry
     fn evict_oldest(&mut self) {
-        if let Some((&oldest_fp, _)) = self.entries
+        if let Some((&oldest_fp, _)) = self
+            .entries
             .iter()
             .min_by_key(|(_, e)| e.created_at.map(|t| t.elapsed()).unwrap_or(Duration::MAX))
         {
@@ -528,7 +531,13 @@ mod tests {
     fn test_basic_caching() {
         let mut cache = ResponseCache::default();
 
-        cache.put("What is Rust?", "llama-3", "Rust is a programming language...", 50, None);
+        cache.put(
+            "What is Rust?",
+            "llama-3",
+            "Rust is a programming language...",
+            50,
+            None,
+        );
 
         let result = cache.get("What is Rust?", "llama-3");
         assert!(result.is_some());
@@ -568,7 +577,13 @@ mod tests {
             ..Default::default()
         });
 
-        cache.put("What is the Rust programming language", "llama-3", "Rust is...", 50, None);
+        cache.put(
+            "What is the Rust programming language",
+            "llama-3",
+            "Rust is...",
+            50,
+            None,
+        );
 
         // Similar query should match
         let result = cache.get("What is Rust programming language", "llama-3");

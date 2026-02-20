@@ -5,8 +5,8 @@
 // === Multi-Agent Integration Tests ===
 
 mod multi_agent_integration_tests {
-    use ai_assistant::multi_agent::*;
     use ai_assistant::agent_memory::*;
+    use ai_assistant::multi_agent::*;
 
     #[test]
     fn test_multi_agent_workflow_collaboration() {
@@ -17,59 +17,59 @@ mod multi_agent_integration_tests {
         orchestrator.register_agent(
             Agent::new("coordinator", "Coordinator", AgentRole::Coordinator)
                 .with_capability("coordinate")
-                .with_capability("manage")
+                .with_capability("manage"),
         );
 
         orchestrator.register_agent(
             Agent::new("researcher", "Researcher", AgentRole::Researcher)
                 .with_capability("search")
                 .with_capability("gather")
-                .with_capability("investigate")
+                .with_capability("investigate"),
         );
 
         orchestrator.register_agent(
             Agent::new("analyst", "Analyst", AgentRole::Analyst)
                 .with_capability("analyze")
                 .with_capability("process")
-                .with_capability("evaluate")
+                .with_capability("evaluate"),
         );
 
         orchestrator.register_agent(
             Agent::new("writer", "Writer", AgentRole::Writer)
                 .with_capability("write")
                 .with_capability("draft")
-                .with_capability("compose")
+                .with_capability("compose"),
         );
 
         orchestrator.register_agent(
             Agent::new("reviewer", "Reviewer", AgentRole::Reviewer)
                 .with_capability("review")
                 .with_capability("validate")
-                .with_capability("check")
+                .with_capability("check"),
         );
 
         // Create a pipeline of tasks with dependencies
         orchestrator.add_task(
             AgentTask::new("research", "Search and gather information on AI trends")
-                .with_priority(10)
+                .with_priority(10),
         );
 
         orchestrator.add_task(
             AgentTask::new("analyze", "Analyze the gathered data and extract insights")
                 .with_priority(9)
-                .depends_on("research")
+                .depends_on("research"),
         );
 
         orchestrator.add_task(
             AgentTask::new("write", "Write a comprehensive report based on analysis")
                 .with_priority(8)
-                .depends_on("analyze")
+                .depends_on("analyze"),
         );
 
         orchestrator.add_task(
             AgentTask::new("review", "Review and validate the final report")
                 .with_priority(7)
-                .depends_on("write")
+                .depends_on("write"),
         );
 
         // Execute the workflow
@@ -81,7 +81,9 @@ mod multi_agent_integration_tests {
         assert_eq!(assignments[0].0, "research");
         assert_eq!(assignments[0].1, "researcher");
 
-        orchestrator.complete_task("research", "Found 50 relevant articles on AI trends").unwrap();
+        orchestrator
+            .complete_task("research", "Found 50 relevant articles on AI trends")
+            .unwrap();
         completed_tasks += 1;
 
         // Phase 2: Analysis
@@ -90,7 +92,12 @@ mod multi_agent_integration_tests {
         assert_eq!(assignments[0].0, "analyze");
         assert_eq!(assignments[0].1, "analyst");
 
-        orchestrator.complete_task("analyze", "Identified 5 major trends: LLMs, multimodal, agents, safety, efficiency").unwrap();
+        orchestrator
+            .complete_task(
+                "analyze",
+                "Identified 5 major trends: LLMs, multimodal, agents, safety, efficiency",
+            )
+            .unwrap();
         completed_tasks += 1;
 
         // Phase 3: Writing
@@ -99,7 +106,9 @@ mod multi_agent_integration_tests {
         assert_eq!(assignments[0].0, "write");
         assert_eq!(assignments[0].1, "writer");
 
-        orchestrator.complete_task("write", "20-page report drafted with executive summary").unwrap();
+        orchestrator
+            .complete_task("write", "20-page report drafted with executive summary")
+            .unwrap();
         completed_tasks += 1;
 
         // Phase 4: Review
@@ -108,7 +117,9 @@ mod multi_agent_integration_tests {
         assert_eq!(assignments[0].0, "review");
         assert_eq!(assignments[0].1, "reviewer");
 
-        orchestrator.complete_task("review", "Report validated and approved for publication").unwrap();
+        orchestrator
+            .complete_task("review", "Report validated and approved for publication")
+            .unwrap();
         completed_tasks += 1;
 
         // Verify final state
@@ -133,8 +144,9 @@ mod multi_agent_integration_tests {
             "research_data",
             "Important research findings about AI",
             MemoryType::Result,
-            "agent1"
-        ).share_with("agent2");
+            "agent1",
+        )
+        .share_with("agent2");
 
         let data_id = memory.store(entry1);
 
@@ -148,7 +160,7 @@ mod multi_agent_integration_tests {
             "agent1",
             "agent2",
             "Research complete, please begin analysis",
-            MessageType::Handoff
+            MessageType::Handoff,
         );
         orchestrator.send_message(msg);
 
@@ -163,16 +175,18 @@ mod multi_agent_integration_tests {
 
         // Register multiple workers
         for i in 0..5 {
-            orchestrator.register_agent(
-                Agent::new(&format!("worker_{}", i), &format!("Worker {}", i), AgentRole::Executor)
-            );
+            orchestrator.register_agent(Agent::new(
+                &format!("worker_{}", i),
+                &format!("Worker {}", i),
+                AgentRole::Executor,
+            ));
         }
 
         // Add independent tasks (no dependencies)
         for i in 0..5 {
             orchestrator.add_task(AgentTask::new(
                 &format!("task_{}", i),
-                &format!("Independent task {}", i)
+                &format!("Independent task {}", i),
             ));
         }
 
@@ -182,7 +196,9 @@ mod multi_agent_integration_tests {
 
         // Complete all tasks
         for i in 0..5 {
-            orchestrator.complete_task(&format!("task_{}", i), "Done").unwrap();
+            orchestrator
+                .complete_task(&format!("task_{}", i), "Done")
+                .unwrap();
         }
 
         let status = orchestrator.get_status();
@@ -203,7 +219,9 @@ mod multi_agent_integration_tests {
         orchestrator.assign_task("task1", "primary").unwrap();
 
         // Primary fails
-        orchestrator.fail_task("task1", "Primary agent encountered error").unwrap();
+        orchestrator
+            .fail_task("task1", "Primary agent encountered error")
+            .unwrap();
 
         // Check that primary is marked as failed
         let primary = orchestrator.get_agent("primary").unwrap();
@@ -216,7 +234,9 @@ mod multi_agent_integration_tests {
         // In real scenario, we'd create a new task for backup to handle
         orchestrator.add_task(AgentTask::new("task1_retry", "Important task (retry)"));
         orchestrator.assign_task("task1_retry", "backup").unwrap();
-        orchestrator.complete_task("task1_retry", "Completed by backup").unwrap();
+        orchestrator
+            .complete_task("task1_retry", "Completed by backup")
+            .unwrap();
 
         let backup = orchestrator.get_agent("backup").unwrap();
         assert_eq!(backup.status, AgentStatus::Idle);
@@ -237,7 +257,11 @@ mod multi_agent_integration_tests {
         orchestrator.add_task(AgentTask::new("A", "Task A"));
         orchestrator.add_task(AgentTask::new("B", "Task B").depends_on("A"));
         orchestrator.add_task(AgentTask::new("C", "Task C").depends_on("A"));
-        orchestrator.add_task(AgentTask::new("D", "Task D").depends_on("B").depends_on("C"));
+        orchestrator.add_task(
+            AgentTask::new("D", "Task D")
+                .depends_on("B")
+                .depends_on("C"),
+        );
 
         // Only A is executable initially
         let assignments = orchestrator.auto_assign_tasks();
@@ -280,7 +304,7 @@ mod multi_agent_integration_tests {
             "temp_cache",
             "Cached computation result",
             MemoryType::Temporary,
-            "compute_agent"
+            "compute_agent",
         )
         .with_ttl(std::time::Duration::from_secs(3600))
         .share_with("consumer_agent");
@@ -292,7 +316,7 @@ mod multi_agent_integration_tests {
             "final_result",
             "The final computed result",
             MemoryType::Result,
-            "compute_agent"
+            "compute_agent",
         )
         .with_metadata("computation_time", "150ms")
         .with_metadata("accuracy", "99.5%");
@@ -317,9 +341,12 @@ mod multi_agent_integration_tests {
 // === Chaos Engineering Tests ===
 
 mod chaos_engineering_tests {
-    use ai_assistant::multi_agent::*;
     use ai_assistant::agent_memory::*;
-    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+    use ai_assistant::multi_agent::*;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
     use std::thread;
     use std::time::Duration;
 
@@ -331,14 +358,19 @@ mod chaos_engineering_tests {
 
         // Register many agents
         for i in 0..10 {
-            orchestrator.register_agent(
-                Agent::new(&format!("agent_{}", i), &format!("Agent {}", i), AgentRole::Executor)
-            );
+            orchestrator.register_agent(Agent::new(
+                &format!("agent_{}", i),
+                &format!("Agent {}", i),
+                AgentRole::Executor,
+            ));
         }
 
         // Add many tasks
         for i in 0..20 {
-            orchestrator.add_task(AgentTask::new(&format!("task_{}", i), &format!("Task {}", i)));
+            orchestrator.add_task(AgentTask::new(
+                &format!("task_{}", i),
+                &format!("Task {}", i),
+            ));
         }
 
         // Simulate chaotic execution with random failures
@@ -365,7 +397,10 @@ mod chaos_engineering_tests {
         }
 
         let status = orchestrator.get_status();
-        assert_eq!(status.completed_tasks + status.failed_tasks, completed + failed);
+        assert_eq!(
+            status.completed_tasks + status.failed_tasks,
+            completed + failed
+        );
     }
 
     /// Test concurrent memory access under stress
@@ -416,7 +451,11 @@ mod chaos_engineering_tests {
 
         // Verify operations completed
         let total_ops = ops_count.load(Ordering::SeqCst);
-        assert!(total_ops >= 2000, "Expected at least 2000 ops, got {}", total_ops);
+        assert!(
+            total_ops >= 2000,
+            "Expected at least 2000 ops, got {}",
+            total_ops
+        );
     }
 
     /// Test system behavior with many rapid state transitions
@@ -426,9 +465,11 @@ mod chaos_engineering_tests {
 
         // Register many agents to handle the workload and absorb failures
         for i in 0..100 {
-            orchestrator.register_agent(
-                Agent::new(&format!("agent_{}", i), &format!("Agent {}", i), AgentRole::Executor)
-            );
+            orchestrator.register_agent(Agent::new(
+                &format!("agent_{}", i),
+                &format!("Agent {}", i),
+                AgentRole::Executor,
+            ));
         }
 
         // Add all tasks first
@@ -476,17 +517,24 @@ mod chaos_engineering_tests {
         for i in 1..50 {
             orchestrator.add_task(
                 AgentTask::new(&format!("chain_{}", i), &format!("Chain task {}", i))
-                    .depends_on(&format!("chain_{}", i - 1))
+                    .depends_on(&format!("chain_{}", i - 1)),
             );
         }
 
         // Execute the entire chain
         for i in 0..50 {
             let assignments = orchestrator.auto_assign_tasks();
-            assert_eq!(assignments.len(), 1, "Expected exactly 1 task at iteration {}", i);
+            assert_eq!(
+                assignments.len(),
+                1,
+                "Expected exactly 1 task at iteration {}",
+                i
+            );
             assert_eq!(assignments[0].0, format!("chain_{}", i));
 
-            orchestrator.complete_task(&format!("chain_{}", i), "Done").unwrap();
+            orchestrator
+                .complete_task(&format!("chain_{}", i), "Done")
+                .unwrap();
         }
 
         let status = orchestrator.get_status();
@@ -529,7 +577,10 @@ mod chaos_engineering_tests {
         memory.cleanup_expired();
 
         let stats = memory.stats();
-        assert_eq!(stats.total_entries, 10, "Only permanent entries should remain");
+        assert_eq!(
+            stats.total_entries, 10,
+            "Only permanent entries should remain"
+        );
     }
 
     /// Test orchestrator with agents being registered/unregistered rapidly
@@ -541,9 +592,11 @@ mod chaos_engineering_tests {
         for cycle in 0..10 {
             // Register agents
             for i in 0..5 {
-                orchestrator.register_agent(
-                    Agent::new(&format!("cycle_{}_agent_{}", cycle, i), "Worker", AgentRole::Executor)
-                );
+                orchestrator.register_agent(Agent::new(
+                    &format!("cycle_{}_agent_{}", cycle, i),
+                    "Worker",
+                    AgentRole::Executor,
+                ));
             }
 
             // Add and process tasks
@@ -564,7 +617,10 @@ mod chaos_engineering_tests {
         }
 
         let status = orchestrator.get_status();
-        assert!(status.completed_tasks > 0, "Some tasks should have completed");
+        assert!(
+            status.completed_tasks > 0,
+            "Some tasks should have completed"
+        );
     }
 
     /// Test message flooding between agents
@@ -574,9 +630,11 @@ mod chaos_engineering_tests {
 
         // Register agents
         for i in 0..5 {
-            orchestrator.register_agent(
-                Agent::new(&format!("agent_{}", i), &format!("Agent {}", i), AgentRole::Executor)
-            );
+            orchestrator.register_agent(Agent::new(
+                &format!("agent_{}", i),
+                &format!("Agent {}", i),
+                AgentRole::Executor,
+            ));
         }
 
         // Flood with messages
@@ -617,13 +675,24 @@ mod chaos_engineering_tests {
         let mut memory = SharedMemory::new();
 
         // Create many entries with varied content
-        let keywords = ["rust", "python", "java", "golang", "typescript", "cpp", "csharp"];
+        let keywords = [
+            "rust",
+            "python",
+            "java",
+            "golang",
+            "typescript",
+            "cpp",
+            "csharp",
+        ];
 
         for i in 0..500 {
             let keyword = keywords[i % keywords.len()];
             let entry = MemoryEntry::new(
                 &format!("entry_{}", i),
-                &format!("This entry is about {} programming language number {}", keyword, i),
+                &format!(
+                    "This entry is about {} programming language number {}",
+                    keyword, i
+                ),
                 MemoryType::Fact,
                 "agent",
             );
@@ -651,18 +720,17 @@ mod chaos_engineering_tests {
             Agent::new("generalist", "Generalist", AgentRole::Executor)
                 .with_capability("a")
                 .with_capability("b")
-                .with_capability("c")
+                .with_capability("c"),
         );
 
         orchestrator.register_agent(
-            Agent::new("specialist_a", "Specialist A", AgentRole::Executor)
-                .with_capability("a")
+            Agent::new("specialist_a", "Specialist A", AgentRole::Executor).with_capability("a"),
         );
 
         orchestrator.register_agent(
             Agent::new("specialist_ab", "Specialist AB", AgentRole::Executor)
                 .with_capability("a")
-                .with_capability("b")
+                .with_capability("b"),
         );
 
         // Task that matches 'a' should go to most capable available agent
@@ -705,7 +773,7 @@ mod chaos_engineering_tests {
         for i in 0..5 {
             orchestrator.add_task(
                 AgentTask::new(&format!("branch_{}", i), &format!("Branch {}", i))
-                    .depends_on("root")
+                    .depends_on("root"),
             );
         }
 
@@ -726,7 +794,9 @@ mod chaos_engineering_tests {
         for _ in 0..5 {
             let assignments = orchestrator.auto_assign_tasks();
             if !assignments.is_empty() {
-                orchestrator.complete_task(&assignments[0].0, "Done").unwrap();
+                orchestrator
+                    .complete_task(&assignments[0].0, "Done")
+                    .unwrap();
             }
         }
 
@@ -743,7 +813,11 @@ mod chaos_engineering_tests {
         let memory = ThreadSafeMemory::new();
         let mut orchestrator = AgentOrchestrator::new(OrchestrationStrategy::Sequential);
 
-        orchestrator.register_agent(Agent::new("burst_agent", "Burst Agent", AgentRole::Executor));
+        orchestrator.register_agent(Agent::new(
+            "burst_agent",
+            "Burst Agent",
+            AgentRole::Executor,
+        ));
 
         // Burst of operations
         let start = std::time::Instant::now();
@@ -832,7 +906,10 @@ mod error_tests {
 
 mod progress_tests {
     use ai_assistant::progress::*;
-    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
     use std::time::Duration;
 
     #[test]
@@ -974,9 +1051,18 @@ max_history = 30
 
     #[test]
     fn test_format_detection() {
-        assert_eq!(ConfigFormat::from_content("{\"key\": \"value\"}"), ConfigFormat::Json);
-        assert_eq!(ConfigFormat::from_content("[section]\nkey = \"value\""), ConfigFormat::Toml);
-        assert_eq!(ConfigFormat::from_content("key = \"value\""), ConfigFormat::Toml);
+        assert_eq!(
+            ConfigFormat::from_content("{\"key\": \"value\"}"),
+            ConfigFormat::Json
+        );
+        assert_eq!(
+            ConfigFormat::from_content("[section]\nkey = \"value\""),
+            ConfigFormat::Toml
+        );
+        assert_eq!(
+            ConfigFormat::from_content("key = \"value\""),
+            ConfigFormat::Toml
+        );
     }
 
     #[test]

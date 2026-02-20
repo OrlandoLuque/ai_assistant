@@ -74,7 +74,10 @@ impl TypingIndicator {
     }
 
     pub fn elapsed(&self) -> Option<Duration> {
-        self.started_at.lock().unwrap_or_else(|e| e.into_inner()).map(|t| t.elapsed())
+        self.started_at
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .map(|t| t.elapsed())
     }
 
     pub fn display(&self) -> String {
@@ -212,8 +215,8 @@ impl ProgressIndicator {
         let bar_width = 20;
         let filled = (pct / 100.0 * bar_width as f64) as usize;
 
-        let bar: String = std::iter::repeat('█').take(filled)
-            .chain(std::iter::repeat('░').take(bar_width - filled))
+        let bar: String = std::iter::repeat_n('█', filled)
+            .chain(std::iter::repeat_n('░', bar_width - filled))
             .collect();
 
         format!("{} [{}] {:.1}%", self.message, bar, pct)

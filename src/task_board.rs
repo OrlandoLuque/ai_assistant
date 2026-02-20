@@ -34,7 +34,10 @@ impl CollectingBoardListener {
     }
 
     pub fn events(&self) -> Vec<BoardEvent> {
-        self.events.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.events
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     pub fn event_count(&self) -> usize {
@@ -50,36 +53,51 @@ impl Default for CollectingBoardListener {
 
 impl TaskBoardListener for CollectingBoardListener {
     fn on_task_changed(&self, step_id: &str, old_status: StepStatus, new_status: StepStatus) {
-        self.events.lock().unwrap_or_else(|e| e.into_inner()).push(BoardEvent::TaskChanged {
-            step_id: step_id.to_string(),
-            old_status,
-            new_status,
-        });
+        self.events
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(BoardEvent::TaskChanged {
+                step_id: step_id.to_string(),
+                old_status,
+                new_status,
+            });
     }
 
     fn on_task_added(&self, step_id: &str, title: &str) {
-        self.events.lock().unwrap_or_else(|e| e.into_inner()).push(BoardEvent::TaskAdded {
-            step_id: step_id.to_string(),
-            title: title.to_string(),
-        });
+        self.events
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(BoardEvent::TaskAdded {
+                step_id: step_id.to_string(),
+                title: title.to_string(),
+            });
     }
 
     fn on_task_removed(&self, step_id: &str) {
-        self.events.lock().unwrap_or_else(|e| e.into_inner()).push(BoardEvent::TaskRemoved {
-            step_id: step_id.to_string(),
-        });
+        self.events
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(BoardEvent::TaskRemoved {
+                step_id: step_id.to_string(),
+            });
     }
 
     fn on_progress_update(&self, step_id: &str, progress: f64, action: &str) {
-        self.events.lock().unwrap_or_else(|e| e.into_inner()).push(BoardEvent::ProgressUpdate {
-            step_id: step_id.to_string(),
-            progress,
-            action: action.to_string(),
-        });
+        self.events
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(BoardEvent::ProgressUpdate {
+                step_id: step_id.to_string(),
+                progress,
+                action: action.to_string(),
+            });
     }
 
     fn on_board_reset(&self) {
-        self.events.lock().unwrap_or_else(|e| e.into_inner()).push(BoardEvent::BoardReset);
+        self.events
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(BoardEvent::BoardReset);
     }
 }
 
@@ -316,7 +334,11 @@ impl TaskBoard {
 
             BoardCommand::CompleteTask { id } => {
                 self.plan.complete_step(&id);
-                let new_status = self.plan.find_step(&id).map(|s| s.status.clone()).unwrap_or(StepStatus::Done);
+                let new_status = self
+                    .plan
+                    .find_step(&id)
+                    .map(|s| s.status.clone())
+                    .unwrap_or(StepStatus::Done);
                 if let Some(state) = self.execution_state.get_mut(&id) {
                     state.progress = 1.0;
                 }
@@ -361,13 +383,13 @@ impl TaskBoard {
                 }
             }
 
-            BoardCommand::AssignToAgent { task_id, agent_name } => {
+            BoardCommand::AssignToAgent {
+                task_id,
+                agent_name,
+            } => {
                 self.agent_assignments
                     .insert(task_id.clone(), agent_name.clone());
-                self.execution_state
-                    .entry(task_id)
-                    .or_default()
-                    .agent_name = Some(agent_name);
+                self.execution_state.entry(task_id).or_default().agent_name = Some(agent_name);
                 Ok(())
             }
 
@@ -467,7 +489,9 @@ impl TaskBoard {
                     && s.blocked_by.iter().all(|dep_id| {
                         self.plan
                             .find_step(dep_id)
-                            .map(|d| d.status == StepStatus::Done || d.status == StepStatus::Skipped)
+                            .map(|d| {
+                                d.status == StepStatus::Done || d.status == StepStatus::Skipped
+                            })
                             .unwrap_or(true)
                     })
             })
@@ -520,7 +544,10 @@ impl TaskBoard {
     /// Find a task by partial title match (case-insensitive).
     pub fn find_by_title(&self, query: &str) -> Option<&PlanStep> {
         let lower = query.to_lowercase();
-        self.plan.steps.iter().find(|s| s.title.to_lowercase().contains(&lower))
+        self.plan
+            .steps
+            .iter()
+            .find(|s| s.title.to_lowercase().contains(&lower))
     }
 
     /// Undo the last command that can be reversed.
@@ -532,7 +559,9 @@ impl TaskBoard {
     ///
     /// Returns a description of what was undone, or an error if nothing to undo.
     pub fn undo_last(&mut self) -> Result<String, String> {
-        let (cmd, _ts) = self.command_history.pop()
+        let (cmd, _ts) = self
+            .command_history
+            .pop()
             .ok_or_else(|| "Nothing to undo.".to_string())?;
 
         match cmd {
@@ -608,7 +637,10 @@ impl TaskBoard {
             other => {
                 // Re-push the command since we can't undo it
                 self.command_history.push((other.clone(), now_millis()));
-                Err(format!("Cannot undo {:?}: operation is not reversible", other))
+                Err(format!(
+                    "Cannot undo {:?}: operation is not reversible",
+                    other
+                ))
             }
         }
     }
@@ -650,19 +682,27 @@ impl TaskBoard {
                 .execution_state
                 .get(&step.id)
                 .map(|s| {
-                    let action = s
-                        .current_action
-                        .as_deref()
-                        .unwrap_or("");
+                    let action = s.current_action.as_deref().unwrap_or("");
                     if s.progress > 0.0 && s.progress < 1.0 {
-                        format!(" ({:.0}%{})", s.progress * 100.0, if action.is_empty() { String::new() } else { format!(": {}", action) })
+                        format!(
+                            " ({:.0}%{})",
+                            s.progress * 100.0,
+                            if action.is_empty() {
+                                String::new()
+                            } else {
+                                format!(": {}", action)
+                            }
+                        )
                     } else {
                         String::new()
                     }
                 })
                 .unwrap_or_default();
 
-            lines.push(format!("{} {}{}{}", status_icon, step.title, agent, progress));
+            lines.push(format!(
+                "{} {}{}{}",
+                status_icon, step.title, agent, progress
+            ));
         }
 
         lines.join("\n")
@@ -671,6 +711,63 @@ impl TaskBoard {
     /// Export as markdown.
     pub fn to_markdown(&self) -> String {
         self.plan.to_markdown()
+    }
+
+    pub fn export_json(&self) -> serde_json::Value {
+        let summary = self.summary();
+        let steps: Vec<serde_json::Value> = self
+            .plan()
+            .steps
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "id": s.id,
+                    "title": s.title,
+                    "description": s.description,
+                    "status": format!("{:?}", s.status),
+                    "blocked_by": s.blocked_by,
+                    "priority": format!("{:?}", s.priority),
+                    "tags": s.tags,
+                    "progress": s.progress(),
+                })
+            })
+            .collect();
+
+        let exec_state: serde_json::Map<String, serde_json::Value> = self
+            .execution_state
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    serde_json::json!({
+                        "agent_name": v.agent_name,
+                        "started_at": v.started_at,
+                        "progress": v.progress,
+                        "current_action": v.current_action,
+                        "iterations": v.iterations,
+                        "cost_so_far": v.cost_so_far,
+                    }),
+                )
+            })
+            .collect();
+
+        serde_json::json!({
+            "name": self.name,
+            "summary": serde_json::json!({
+                "total_tasks": summary.total_tasks,
+                "completed": summary.completed,
+                "in_progress": summary.in_progress,
+                "pending": summary.pending,
+                "blocked": summary.blocked,
+                "cancelled": summary.cancelled,
+                "overall_progress": summary.overall_progress,
+                "agents_active": summary.agents_active,
+                "total_cost": summary.total_cost,
+            }),
+            "steps": steps,
+            "agent_assignments": self.agent_assignments,
+            "execution_state": exec_state,
+        })
     }
 
     // --- Notification helpers ---
@@ -769,11 +866,21 @@ mod tests {
         let mut board = sample_board();
         let id = board.plan().steps[0].id.clone();
 
-        board.execute_command(BoardCommand::StartTask { id: id.clone() }).unwrap();
-        assert_eq!(board.plan().find_step(&id).unwrap().status, StepStatus::InProgress);
+        board
+            .execute_command(BoardCommand::StartTask { id: id.clone() })
+            .unwrap();
+        assert_eq!(
+            board.plan().find_step(&id).unwrap().status,
+            StepStatus::InProgress
+        );
 
-        board.execute_command(BoardCommand::CompleteTask { id: id.clone() }).unwrap();
-        assert_eq!(board.plan().find_step(&id).unwrap().status, StepStatus::Done);
+        board
+            .execute_command(BoardCommand::CompleteTask { id: id.clone() })
+            .unwrap();
+        assert_eq!(
+            board.plan().find_step(&id).unwrap().status,
+            StepStatus::Done
+        );
     }
 
     #[test]
@@ -781,12 +888,24 @@ mod tests {
         let mut board = sample_board();
         let id = board.plan().steps[0].id.clone();
 
-        board.execute_command(BoardCommand::StartTask { id: id.clone() }).unwrap();
-        board.execute_command(BoardCommand::PauseTask { id: id.clone() }).unwrap();
-        assert_eq!(board.plan().find_step(&id).unwrap().status, StepStatus::Blocked);
+        board
+            .execute_command(BoardCommand::StartTask { id: id.clone() })
+            .unwrap();
+        board
+            .execute_command(BoardCommand::PauseTask { id: id.clone() })
+            .unwrap();
+        assert_eq!(
+            board.plan().find_step(&id).unwrap().status,
+            StepStatus::Blocked
+        );
 
-        board.execute_command(BoardCommand::ResumeTask { id: id.clone() }).unwrap();
-        assert_eq!(board.plan().find_step(&id).unwrap().status, StepStatus::InProgress);
+        board
+            .execute_command(BoardCommand::ResumeTask { id: id.clone() })
+            .unwrap();
+        assert_eq!(
+            board.plan().find_step(&id).unwrap().status,
+            StepStatus::InProgress
+        );
     }
 
     #[test]
@@ -794,8 +913,13 @@ mod tests {
         let mut board = sample_board();
         let id = board.plan().steps[0].id.clone();
 
-        board.execute_command(BoardCommand::CancelTask { id: id.clone() }).unwrap();
-        assert_eq!(board.plan().find_step(&id).unwrap().status, StepStatus::Skipped);
+        board
+            .execute_command(BoardCommand::CancelTask { id: id.clone() })
+            .unwrap();
+        assert_eq!(
+            board.plan().find_step(&id).unwrap().status,
+            StepStatus::Skipped
+        );
     }
 
     #[test]
@@ -803,14 +927,20 @@ mod tests {
         let mut board = sample_board();
         let id = board.plan().steps[0].id.clone();
 
-        board.execute_command(BoardCommand::RemoveTask { id }).unwrap();
+        board
+            .execute_command(BoardCommand::RemoveTask { id })
+            .unwrap();
         assert_eq!(board.plan().steps.len(), 2);
     }
 
     #[test]
     fn test_remove_nonexistent() {
         let mut board = sample_board();
-        assert!(board.execute_command(BoardCommand::RemoveTask { id: "nonexistent".into() }).is_err());
+        assert!(board
+            .execute_command(BoardCommand::RemoveTask {
+                id: "nonexistent".into()
+            })
+            .is_err());
     }
 
     #[test]
@@ -818,10 +948,12 @@ mod tests {
         let mut board = sample_board();
         let id = board.plan().steps[0].id.clone();
 
-        board.execute_command(BoardCommand::AssignToAgent {
-            task_id: id.clone(),
-            agent_name: "researcher".into(),
-        }).unwrap();
+        board
+            .execute_command(BoardCommand::AssignToAgent {
+                task_id: id.clone(),
+                agent_name: "researcher".into(),
+            })
+            .unwrap();
 
         let tasks = board.agent_tasks("researcher");
         assert_eq!(tasks.len(), 1);
@@ -833,12 +965,16 @@ mod tests {
         let mut board = sample_board();
         let id = board.plan().steps[0].id.clone();
 
-        board.execute_command(BoardCommand::StartTask { id: id.clone() }).unwrap();
-        board.execute_command(BoardCommand::UpdateProgress {
-            task_id: id.clone(),
-            progress: 0.5,
-            action: "Reading files".into(),
-        }).unwrap();
+        board
+            .execute_command(BoardCommand::StartTask { id: id.clone() })
+            .unwrap();
+        board
+            .execute_command(BoardCommand::UpdateProgress {
+                task_id: id.clone(),
+                progress: 0.5,
+                action: "Reading files".into(),
+            })
+            .unwrap();
 
         let state = board.execution_state(&id).unwrap();
         assert!((state.progress - 0.5).abs() < 0.001);
@@ -851,15 +987,21 @@ mod tests {
         let listener = Arc::new(CollectingBoardListener::new());
         board.add_listener(Arc::clone(&listener) as Arc<dyn TaskBoardListener>);
 
-        board.execute_command(BoardCommand::AddTask {
-            title: "Test Task".into(),
-            description: "".into(),
-            priority: StepPriority::Medium,
-        }).unwrap();
+        board
+            .execute_command(BoardCommand::AddTask {
+                title: "Test Task".into(),
+                description: "".into(),
+                priority: StepPriority::Medium,
+            })
+            .unwrap();
 
         let id = board.plan().steps[0].id.clone();
-        board.execute_command(BoardCommand::StartTask { id: id.clone() }).unwrap();
-        board.execute_command(BoardCommand::CompleteTask { id }).unwrap();
+        board
+            .execute_command(BoardCommand::StartTask { id: id.clone() })
+            .unwrap();
+        board
+            .execute_command(BoardCommand::CompleteTask { id })
+            .unwrap();
 
         assert_eq!(listener.event_count(), 3); // added + changed + changed
     }
@@ -872,7 +1014,9 @@ mod tests {
 
         // Start one
         let id = board.plan().steps[0].id.clone();
-        board.execute_command(BoardCommand::StartTask { id }).unwrap();
+        board
+            .execute_command(BoardCommand::StartTask { id })
+            .unwrap();
         // Now 2 are actionable (pending)
         assert_eq!(board.next_actionable().len(), 2);
     }
@@ -901,16 +1045,32 @@ mod tests {
         let id_a = board.plan().steps[0].id.clone();
         let id_b = board.plan().steps[1].id.clone();
 
-        board.execute_command(BoardCommand::StartTask { id: id_a.clone() }).unwrap();
-        board.execute_command(BoardCommand::StartTask { id: id_b.clone() }).unwrap();
+        board
+            .execute_command(BoardCommand::StartTask { id: id_a.clone() })
+            .unwrap();
+        board
+            .execute_command(BoardCommand::StartTask { id: id_b.clone() })
+            .unwrap();
 
         board.execute_command(BoardCommand::PauseAll).unwrap();
-        assert_eq!(board.plan().find_step(&id_a).unwrap().status, StepStatus::Blocked);
-        assert_eq!(board.plan().find_step(&id_b).unwrap().status, StepStatus::Blocked);
+        assert_eq!(
+            board.plan().find_step(&id_a).unwrap().status,
+            StepStatus::Blocked
+        );
+        assert_eq!(
+            board.plan().find_step(&id_b).unwrap().status,
+            StepStatus::Blocked
+        );
 
         board.execute_command(BoardCommand::ResumeAll).unwrap();
-        assert_eq!(board.plan().find_step(&id_a).unwrap().status, StepStatus::InProgress);
-        assert_eq!(board.plan().find_step(&id_b).unwrap().status, StepStatus::InProgress);
+        assert_eq!(
+            board.plan().find_step(&id_a).unwrap().status,
+            StepStatus::InProgress
+        );
+        assert_eq!(
+            board.plan().find_step(&id_b).unwrap().status,
+            StepStatus::InProgress
+        );
     }
 
     #[test]
@@ -951,12 +1111,20 @@ mod tests {
         let mut board = sample_board();
         let id = board.plan().steps[0].id.clone();
 
-        board.execute_command(BoardCommand::StartTask { id: id.clone() }).unwrap();
-        assert_eq!(board.plan().find_step(&id).unwrap().status, StepStatus::InProgress);
+        board
+            .execute_command(BoardCommand::StartTask { id: id.clone() })
+            .unwrap();
+        assert_eq!(
+            board.plan().find_step(&id).unwrap().status,
+            StepStatus::InProgress
+        );
 
         let result = board.undo_last();
         assert!(result.is_ok());
-        assert_eq!(board.plan().find_step(&id).unwrap().status, StepStatus::Pending);
+        assert_eq!(
+            board.plan().find_step(&id).unwrap().status,
+            StepStatus::Pending
+        );
     }
 
     #[test]
@@ -964,13 +1132,23 @@ mod tests {
         let mut board = sample_board();
         let id = board.plan().steps[0].id.clone();
 
-        board.execute_command(BoardCommand::StartTask { id: id.clone() }).unwrap();
-        board.execute_command(BoardCommand::PauseTask { id: id.clone() }).unwrap();
-        assert_eq!(board.plan().find_step(&id).unwrap().status, StepStatus::Blocked);
+        board
+            .execute_command(BoardCommand::StartTask { id: id.clone() })
+            .unwrap();
+        board
+            .execute_command(BoardCommand::PauseTask { id: id.clone() })
+            .unwrap();
+        assert_eq!(
+            board.plan().find_step(&id).unwrap().status,
+            StepStatus::Blocked
+        );
 
         let result = board.undo_last();
         assert!(result.is_ok());
-        assert_eq!(board.plan().find_step(&id).unwrap().status, StepStatus::InProgress);
+        assert_eq!(
+            board.plan().find_step(&id).unwrap().status,
+            StepStatus::InProgress
+        );
     }
 
     #[test]
@@ -978,12 +1156,20 @@ mod tests {
         let mut board = sample_board();
         let id = board.plan().steps[0].id.clone();
 
-        board.execute_command(BoardCommand::CancelTask { id: id.clone() }).unwrap();
-        assert_eq!(board.plan().find_step(&id).unwrap().status, StepStatus::Skipped);
+        board
+            .execute_command(BoardCommand::CancelTask { id: id.clone() })
+            .unwrap();
+        assert_eq!(
+            board.plan().find_step(&id).unwrap().status,
+            StepStatus::Skipped
+        );
 
         let result = board.undo_last();
         assert!(result.is_ok());
-        assert_eq!(board.plan().find_step(&id).unwrap().status, StepStatus::Pending);
+        assert_eq!(
+            board.plan().find_step(&id).unwrap().status,
+            StepStatus::Pending
+        );
     }
 
     #[test]
@@ -999,11 +1185,28 @@ mod tests {
         let mut board = sample_board();
         let id = board.plan().steps[0].id.clone();
 
-        board.execute_command(BoardCommand::StartTask { id: id.clone() }).unwrap();
-        board.execute_command(BoardCommand::CompleteTask { id: id.clone() }).unwrap();
+        board
+            .execute_command(BoardCommand::StartTask { id: id.clone() })
+            .unwrap();
+        board
+            .execute_command(BoardCommand::CompleteTask { id: id.clone() })
+            .unwrap();
 
         let result = board.undo_last();
         assert!(result.is_ok());
-        assert_eq!(board.plan().find_step(&id).unwrap().status, StepStatus::InProgress);
+        assert_eq!(
+            board.plan().find_step(&id).unwrap().status,
+            StepStatus::InProgress
+        );
+    }
+
+    #[test]
+    fn test_task_board_export_json() {
+        let board = TaskBoard::new("test-board");
+        let json = board.export_json();
+        assert_eq!(json["name"], "test-board");
+        assert!(json["summary"]["total_tasks"].as_u64().is_some());
+        assert!(json["steps"].as_array().is_some());
+        assert!(json["agent_assignments"].as_object().is_some());
     }
 }

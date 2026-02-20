@@ -8,7 +8,12 @@
 
   History:
     - feature_matrix_2026-02-19_0853_typical-usage.html  (v1: "typical usage" perspective)
-    - feature_matrix.html                                 (v2: "configurable" perspective, N/A with reasons)
+    - feature_matrix_2026-02-19_1925_pre-21-features.html (v2 snapshot before batch-21 additions)
+    - feature_matrix_2026-02-20_1430_pre-phase8-docs.html (v3 snapshot before Phase 6-8 updates)
+    - feature_matrix_2026-02-20_1800_pre-phase9-docs.html  (v4 snapshot before Phase 9 additions)
+    - feature_matrix_2026-02-20_2330_pre-phase10-update.html (v5 snapshot before Phase 10 additions)
+    - feature_matrix_2026-02-21_0100_pre-phase11-update.html (v6 snapshot before Phase 11 additions)
+    - feature_matrix.html                                 (v7: Phase 11 — UI Framework Hooks, Agent Graph Visualization, 2431 tests, 39/39 roadmap complete)
 -->
 <html lang="es">
 <head>
@@ -711,8 +716,8 @@
 </head>
 <body>
 
-<h1>AI Assistant &mdash; Matriz Casos de Uso vs Tecnologías</h1>
-<p class="subtitle">Haz clic en cualquier celda para editarla. Las celdas modificadas se marcan en rojo.</p>
+<h1>AI Assistant &mdash; Matriz Casos de Uso vs Tecnolog&iacute;as</h1>
+<p class="subtitle">v7 (2026-02-21) &mdash; 2431 tests | 6 benchmarks | 19 examples | ~170K LOC | 0 warnings &mdash; Haz clic en cualquier celda para editarla.</p>
 
 <div class="legend">
   <div class="legend-item"><div class="legend-dot" style="background:var(--core)"></div>Core (siempre activo)</div>
@@ -824,16 +829,16 @@
   <h2>Grupos de tecnolog&iacute;as (filas)</h2>
   <p>Las filas est&aacute;n organizadas en 10 grupos colapsables:</p>
   <ul>
-    <li><strong>Core &amp; Providers</strong> &mdash; Providers de LLM, config, sesiones, HTTP client</li>
-    <li><strong>RAG &amp; Knowledge</strong> &mdash; RAG, embeddings, graphs, documentos, feeds, KPKG</li>
-    <li><strong>Security &amp; Access Control</strong> &mdash; Sanitizaci&oacute;n, PII, moderaci&oacute;n, RBAC, cifrado, signing</li>
+    <li><strong>Core &amp; Providers</strong> &mdash; Providers de LLM, config, sesiones, HTTP client, AWS Bedrock SigV4, provider plugins, model registry</li>
+    <li><strong>RAG &amp; Knowledge</strong> &mdash; RAG, embeddings, graphs, documentos (CSV, PPTX, XLSX, EML), feeds, KPKG, pgvector, semantic chunking</li>
+    <li><strong>Security &amp; Access Control</strong> &mdash; Sanitizaci&oacute;n, PII, moderaci&oacute;n, RBAC, cifrado, SHA-256/HMAC signing</li>
     <li><strong>Tools &amp; Agent</strong> &mdash; Tool registry, agentic loop, MCP, prompt chaining</li>
-    <li><strong>Autonomous Agent</strong> &mdash; Loop aut&oacute;nomo, pol&iacute;ticas, sandbox, OS tools, scheduler, butler, browser CDP</li>
+    <li><strong>Autonomous Agent</strong> &mdash; Loop aut&oacute;nomo, pol&iacute;ticas, sandbox, OS tools, scheduler, butler, browser CDP, code sandbox</li>
     <li><strong>Multi-Agent &amp; Orchestration</strong> &mdash; Orquestador, memoria compartida, task decomposition, agentes distribuidos</li>
     <li><strong>Networking &amp; Distribution</strong> &mdash; DHT, CRDT, MapReduce, QUIC, Merkle sync, P2P manager</li>
-    <li><strong>HTTP Server &amp; API</strong> &mdash; REST server, SSE, WebSocket, OpenAPI, webhooks, colas</li>
-    <li><strong>Analytics &amp; Evaluation</strong> &mdash; M&eacute;tricas, analytics, confianza, alucinaciones, ensembles, A/B testing</li>
-    <li><strong>Cross-Cutting Utilities</strong> &mdash; Adaptive thinking, memoria, event bus, caching, plugins, i18n, WASM, etc.</li>
+    <li><strong>HTTP Server &amp; API</strong> &mdash; REST server, SSE, WebSocket, resumable streaming, OpenAPI, webhooks, colas</li>
+    <li><strong>Analytics &amp; Evaluation</strong> &mdash; M&eacute;tricas, analytics, confianza, alucinaciones, ensembles, A/B testing, LLM-as-judge, forecasting</li>
+    <li><strong>Cross-Cutting Utilities</strong> &mdash; Adaptive thinking, memoria, event bus, caching, plugins, i18n, OTel, cloud connectors, WASM, smart suggestions, etc.</li>
   </ul>
   <p>La etiqueta <span style="color:#fbbf24;font-size:0.75rem">[nombre-flag]</span> junto al nombre de una tecnolog&iacute;a indica qu&eacute; feature flag la activa.</p>
 
@@ -898,13 +903,23 @@
     <tr><td><code>distributed-agents</code></td><td>No</td><td>requiere <code>autonomous</code> + <code>distributed-network</code></td></tr>
     <tr><td><code>p2p</code></td><td>No</td><td>requiere <code>distributed</code></td></tr>
     <tr><td><code>vector-lancedb</code></td><td>No</td><td>lancedb (heavy)</td></tr>
+    <tr><td><code>aws-bedrock</code></td><td>No</td><td>hmac</td></tr>
+    <tr><td><code>vector-pgvector</code></td><td>No</td><td>&mdash;</td></tr>
+    <tr><td><code>otel</code></td><td>No</td><td>&mdash;</td></tr>
+    <tr><td><code>code-sandbox</code></td><td>No</td><td>requiere <code>autonomous</code></td></tr>
+    <tr><td><code>cloud-connectors</code></td><td>No</td><td>&mdash;</td></tr>
     <tr><td><code>wasm</code></td><td>No</td><td>web-sys, js-sys, getrandom (solo wasm32)</td></tr>
   </table>
 
   <h2>Historial de versiones</h2>
   <ul>
     <li><code>feature_matrix_2026-02-19_0853_typical-usage.html</code> &mdash; v1: perspectiva "uso t&iacute;pico" (N/A = no se usa normalmente)</li>
-    <li><code>feature_matrix.html</code> &mdash; v2 (actual): perspectiva "configurable" (N/A = t&eacute;cnicamente imposible)</li>
+    <li><code>feature_matrix_2026-02-19_1925_pre-21-features.html</code> &mdash; v2 snapshot antes de batch-21</li>
+    <li><code>feature_matrix_2026-02-20_1430_pre-phase8-docs.html</code> &mdash; v3 snapshot antes de Phase 6-8</li>
+    <li><code>feature_matrix_2026-02-20_1800_pre-phase9-docs.html</code> &mdash; v4 snapshot antes de Phase 9</li>
+    <li><code>feature_matrix_2026-02-20_2330_pre-phase10-update.html</code> &mdash; v5 snapshot antes de Phase 10</li>
+    <li><code>feature_matrix_2026-02-21_0100_pre-phase11-update.html</code> &mdash; v6 snapshot antes de Phase 11</li>
+    <li><code>feature_matrix.html</code> &mdash; v7 (actual): Phase 11 — UI Framework Hooks, Agent Graph Visualization, 2431 tests, 6 benchmarks, 19 examples, 0 warnings, 39/39 roadmap complete</li>
   </ul>
   <p><strong>Pol&iacute;tica de backups:</strong> antes de cambios significativos, crear copia con formato <code>feature_matrix_YYYY-MM-DD_HHMM_descripcion.html</code>.</p>
 
@@ -1001,19 +1016,31 @@ const GROUPS = [
       { tech: 'Context Window Management', flag: null,
         cells: { basic_chat:'core', rag_chat:'core', kpkg:'available', multi_user:'core', agent_tools:'core', autonomous:'core', multi_agent:'core', http_server:'core', distributed:'available', p2p:'available' },
         typical: ['basic_chat','rag_chat','multi_user','agent_tools','autonomous','multi_agent','http_server'],
-        notes: 'estimate_tokens, ContextUsage, auto-truncation. Siempre compilado; útil en cualquier caso con LLM.' },
+        notes: 'estimate_tokens, ContextUsage, auto-truncation con extractive text summarization para eviction inteligente. Siempre compilado; útil en cualquier caso con LLM.' },
       { tech: 'HTTP Client', flag: null,
         cells: { basic_chat:'core', rag_chat:'core', kpkg:'available', multi_user:'core', agent_tools:'core', autonomous:'core', multi_agent:'core', http_server:'available', distributed:'available', p2p:'available' },
         typical: ['basic_chat','rag_chat','multi_user','agent_tools','autonomous','multi_agent'],
         notes: 'Siempre compilado. Core para providers; Available para otros usos HTTP.' },
-      { tech: 'Cloud Providers (AWS/GCP/Azure)', flag: null,
+      { tech: 'Cloud Providers (AWS/GCP/Azure/Gemini)', flag: null,
         cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
         typical: ['basic_chat','rag_chat','multi_user','agent_tools','autonomous','multi_agent','http_server'],
-        notes: 'Bedrock, Vertex AI, Azure OpenAI. Siempre compilado, se puede usar desde cualquier contexto.' },
+        notes: 'Bedrock, Vertex AI, Azure OpenAI, Gemini. Siempre compilado, se puede usar desde cualquier contexto. AiProvider variants: Gemini, Bedrock{region}.' },
       { tech: 'Async Providers', flag: 'async-runtime',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['http_server','autonomous','multi_agent'],
         notes: 'Feature flag async-runtime. Útil en cualquier caso que use providers de forma async.' },
+      { tech: 'AWS Bedrock (SigV4 Auth)', flag: 'aws-bedrock',
+        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
+        typical: ['basic_chat','rag_chat','agent_tools','autonomous','multi_agent','http_server'],
+        notes: 'Feature flag aws-bedrock (dep: hmac). Autenticación SigV4 para AWS Bedrock Runtime API. Habilita AiProvider::Bedrock{region}.' },
+      { tech: 'Provider Plugins (Groq, Mistral, etc.)', flag: null,
+        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
+        typical: ['basic_chat','rag_chat','agent_tools','autonomous','multi_agent'],
+        notes: 'Siempre compilado. Presets para Groq, Together, Fireworks, DeepSeek, vLLM, Mistral, HuggingFace. Se configuran con provider_plugins.rs.' },
+      { tech: 'Model Registry & Capability Tracking', flag: null,
+        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
+        typical: ['basic_chat','rag_chat','agent_tools','autonomous','multi_agent','http_server'],
+        notes: 'Siempre compilado. Registro de 7 modelos conocidos con context window, vision, tool support y coste por token. ModelRegistry::with_defaults() para auto-poblar.' },
     ]
   },
   {
@@ -1031,6 +1058,14 @@ const GROUPS = [
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['rag_chat','distributed'],
         notes: 'Feature flag vector-lancedb. Upgrade del vector store para cualquier caso que use embeddings.' },
+      { tech: 'pgvector Backend (PostgreSQL)', flag: 'vector-pgvector',
+        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
+        typical: ['rag_chat','multi_user','http_server','distributed'],
+        notes: 'Feature flag vector-pgvector. PostgreSQL vector database backend con pgvector. SQL generation y tipos. VectorDbBackend variants: Pinecone, Chroma, Milvus.' },
+      { tech: 'Semantic Chunking (embedding-based)', flag: 'rag',
+        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
+        typical: ['rag_chat','kpkg'],
+        notes: 'Feature flag rag. Chunking semántico basado en embeddings en rag_advanced.rs. Mejora la calidad de retrieval.' },
       { tech: 'Knowledge Graph', flag: 'rag',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['rag_chat','kpkg'],
@@ -1039,10 +1074,10 @@ const GROUPS = [
         cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
         typical: ['rag_chat','kpkg'],
         notes: 'Siempre compilado. Grafos multi-capa disponibles para cualquier caso de uso.' },
-      { tech: 'Document Parsing (PDF, DOCX, etc.)', flag: 'documents',
+      { tech: 'Document Parsing (PDF, DOCX, CSV, PPTX, XLSX, EML, etc.)', flag: 'documents',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['rag_chat','kpkg','autonomous'],
-        notes: 'Feature flag documents. Un chat podría parsear un documento para alimentar contexto.' },
+        notes: 'Feature flag documents. Soporta PDF, DOCX, CSV, PPTX, XLSX, Email (.eml), image metadata. Un chat podría parsear un documento para alimentar contexto.' },
       { tech: 'Feed Monitor (RSS/Atom)', flag: null,
         cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
         typical: ['rag_chat','autonomous','http_server'],
@@ -1050,7 +1085,7 @@ const GROUPS = [
       { tech: 'Encrypted Knowledge Packages (KPKG)', flag: 'rag',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['kpkg','p2p'],
-        notes: 'Feature flag rag. Un chat puede cargar paquetes de conocimiento cifrados.' },
+        notes: 'Feature flag rag. Paquetes cifrados con SHA-256-based HKDF key derivation. Un chat puede cargar paquetes de conocimiento cifrados.' },
       { tech: 'Query Expansion & Citations', flag: 'rag',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['rag_chat'],
@@ -1059,6 +1094,14 @@ const GROUPS = [
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['rag_chat','kpkg'],
         notes: 'Feature flag rag. Indexación automática de documentos para cualquier caso con conocimiento.' },
+      { tech: 'Neural Reranking (CrossEncoder, RRF, MMR)', flag: 'rag',
+        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
+        typical: ['rag_chat','kpkg','autonomous'],
+        notes: 'Feature flag rag. CrossEncoder neural reranking, Reciprocal Rank Fusion (RRF), Maximal Marginal Relevance (MMR) diversity, cascade pipelines. 15 tests.' },
+      { tech: 'Multi-Modal RAG Pipeline', flag: 'rag',
+        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
+        typical: ['rag_chat','kpkg','autonomous'],
+        notes: 'Feature flag rag. MultiModalRetriever, MultiModalPipeline, ImageCaptionExtractor, ModalityType (Text/Image/Audio/Video/Table). Cross-modal retrieval and fusion. 15 tests.' },
     ]
   },
   {
@@ -1083,15 +1126,15 @@ const GROUPS = [
       { tech: 'Content Encryption (AES-256-GCM)', flag: 'rag',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['kpkg','multi_user','p2p'],
-        notes: 'Feature flag rag (AES real) / XOR fallback sin él. Cifrado de contenido para cualquier dato.' },
+        notes: 'Feature flag rag (AES-256-GCM real) / XOR fallback sin él. SHA-256-based HKDF key derivation. Cifrado de contenido para cualquier dato.' },
       { tech: 'Data Anonymization', flag: 'security',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['multi_user','http_server'],
         notes: 'Feature flag security. Anonimización aplicable a cualquier dato textual.' },
-      { tech: 'Request Signing', flag: null,
+      { tech: 'Request Signing (SHA-256 / HMAC-SHA256)', flag: null,
         cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
         typical: ['multi_user','http_server','distributed','p2p'],
-        notes: 'Siempre compilado. HMAC signing usable para verificar autenticidad en cualquier comunicación.' },
+        notes: 'Siempre compilado. SHA-256 real (FIPS 180-4) y HMAC-SHA256 (RFC 2104) para firmar y verificar requests. Sin dependencias externas.' },
       { tech: 'Log Redaction', flag: null,
         cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
         notes: 'Siempre compilado. Redacción de datos sensibles en logs, siempre útil.' },
@@ -1107,11 +1150,11 @@ const GROUPS = [
       { tech: 'Agentic Loop (tool-using agent)', flag: 'tools',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['agent_tools','autonomous','multi_agent'],
-        notes: 'Feature flag tools. Loop de agente con multi-format parser. Configurable en cualquier caso.' },
-      { tech: 'MCP Protocol', flag: 'tools',
+        notes: 'Feature flag tools. Loop de agente con multi-format parser y response generator callback (Arc&lt;dyn Fn&gt;). Async select() con race de futuros. Configurable en cualquier caso.' },
+      { tech: 'MCP Protocol (2025-03-26)', flag: 'tools',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['agent_tools','autonomous','multi_agent','http_server','distributed','p2p'],
-        notes: 'Feature flag tools. Server y Client MCP completos (JSON-RPC, tools, resources, prompts). Ideal para interoperabilidad entre agentes, nodos y servicios externos.' },
+        notes: 'Feature flag tools. Spec 2025-03-26: tool annotations, cursor-based pagination, Streamable HTTP transport. Server y Client MCP completos (JSON-RPC, tools, resources, prompts).' },
       { tech: 'Prompt Chaining', flag: 'tools',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['agent_tools','autonomous','multi_agent'],
@@ -1168,7 +1211,11 @@ const GROUPS = [
       { tech: 'Browser Tools (CDP)', flag: 'browser',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['autonomous'],
-        notes: 'Feature flag browser (requiere autonomous). CDP para automatización web. Soporta modo headless, usable incluso en nodos P2P o servidores sin entorno gráfico.' },
+        notes: 'Feature flag browser (requiere autonomous). CDP para automatización web, wired en lib.rs y AiAssistant. Soporta modo headless, usable incluso en nodos P2P o servidores sin entorno gráfico.' },
+      { tech: 'Code Sandbox (isolated exec)', flag: 'code-sandbox',
+        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
+        typical: ['autonomous','multi_agent','agent_tools'],
+        notes: 'Feature flag code-sandbox (requiere autonomous). Ejecución aislada de código generado por agentes. Sandbox con timeouts, permisos y limpieza automática.' },
     ]
   },
   {
@@ -1189,7 +1236,7 @@ const GROUPS = [
       { tech: 'Distributed Agents', flag: 'distributed-agents',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['multi_agent','distributed'],
-        notes: 'Feature flag distributed-agents (requiere autonomous + distributed-network). Agentes en nodos remotos.' },
+        notes: 'Feature flag distributed-agents (requiere autonomous + distributed-network). Agentes en nodos remotos, wired en lib.rs y AiAssistant.' },
     ]
   },
   {
@@ -1243,19 +1290,23 @@ const GROUPS = [
       { tech: 'WebSocket Streaming', flag: 'advanced-streaming',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['http_server'],
-        notes: 'Feature flag advanced-streaming. WebSocket RFC 6455 para comunicación bidireccional.' },
+        notes: 'Feature flag advanced-streaming. WebSocket RFC 6455 con SHA-1 (RFC 3174) y base64 implementados desde cero para el handshake. Comunicación bidireccional.' },
+      { tech: 'Resumable Streaming', flag: 'advanced-streaming',
+        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
+        typical: ['http_server','autonomous','multi_agent'],
+        notes: 'Feature flag advanced-streaming. Streaming con reanudación automática tras desconexiones. Checkpoints y replay de chunks perdidos.' },
       { tech: 'OpenAPI Export', flag: null,
         cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
         typical: ['http_server'],
         notes: 'Siempre compilado. Genera spec OpenAPI de cualquier configuración del asistente.' },
-      { tech: 'Webhooks', flag: null,
+      { tech: 'Webhooks (HMAC-SHA256 signed)', flag: null,
         cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
         typical: ['http_server','multi_user','autonomous'],
-        notes: 'Siempre compilado. Notificaciones async, usables en cualquier caso.' },
+        notes: 'Siempre compilado. Notificaciones async con firmas HMAC-SHA256 reales para verificar autenticidad. Usables en cualquier caso.' },
       { tech: 'Request Queue & Priority', flag: null,
         cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
         typical: ['http_server','multi_user'],
-        notes: 'Siempre compilado. Cola de prioridad para gestionar requests en cualquier contexto.' },
+        notes: 'Siempre compilado. Cola de prioridad con process_all, process_batch y process_until_empty para gestionar requests en cualquier contexto.' },
     ]
   },
   {
@@ -1264,7 +1315,7 @@ const GROUPS = [
       { tech: 'Metrics & Telemetry', flag: 'analytics',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['multi_user','autonomous','multi_agent','http_server'],
-        notes: 'Feature flag analytics. Métricas detalladas activables en cualquier caso.' },
+        notes: 'Feature flag analytics. Métricas detalladas con FNV-1a deterministic hash sampling en telemetry. Activables en cualquier caso.' },
       { tech: 'Conversation Analytics', flag: 'analytics',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['multi_user','http_server'],
@@ -1284,11 +1335,27 @@ const GROUPS = [
       { tech: 'Evaluation (A/B, t-test)', flag: 'eval',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['autonomous','multi_agent'],
-        notes: 'Feature flag eval. A/B testing y benchmarking de modelos.' },
+        notes: 'Feature flag eval. A/B testing, Welch t-test con Student t-distribution CDF (Lanczos gamma + incomplete beta) y benchmarking de modelos.' },
+      { tech: 'A/B Testing Framework (ExperimentManager)', flag: 'eval',
+        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
+        typical: ['autonomous','multi_agent','http_server'],
+        notes: 'Feature flag eval. ExperimentManager con VariantAssigner, significance testing, traffic allocation, experiment lifecycle. Comparación side-by-side de prompts y modelos. 20 tests.' },
+      { tech: 'Cost Integration Dashboard', flag: null,
+        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
+        typical: ['autonomous','multi_agent','http_server','multi_user'],
+        notes: 'Siempre compilado. CostDashboard, CostMiddleware, CostAwareConfig, RequestCostEntry. Per-request cost tracking with budget alerts and model-aware pricing. 12 tests.' },
+      { tech: 'LLM-as-Judge Evaluator', flag: 'eval',
+        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
+        typical: ['autonomous','multi_agent','rag_chat'],
+        notes: 'Feature flag eval. Usa un LLM como juez para evaluar calidad de respuestas, coherencia y fidelidad al contexto.' },
       { tech: 'Quality Scoring', flag: 'eval',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['rag_chat','http_server'],
         notes: 'Feature flag eval. Scoring de calidad activable en cualquier respuesta.' },
+      { tech: 'Forecasting & Anomaly Detection', flag: null,
+        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
+        typical: ['autonomous','http_server','multi_user'],
+        notes: 'Siempre compilado. Peak hours data-driven, moving_average, detect_anomalies. Predicción de carga y detección de anomalías en métricas.' },
     ]
   },
   {
@@ -1325,10 +1392,10 @@ const GROUPS = [
         cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
         typical: ['rag_chat','agent_tools'],
         notes: 'Siempre compilado. Extracción de entidades de cualquier texto.' },
-      { tech: 'Structured Output (JSON schema)', flag: null,
+      { tech: 'Structured Output Enforcer (JSON Schema)', flag: null,
         cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
         typical: ['agent_tools','autonomous','multi_agent'],
-        notes: 'Siempre compilado. Forzar schema JSON en respuestas.' },
+        notes: 'Siempre compilado. StructuredOutputEnforcer con validación JSON Schema, retry automático y extracción de datos estructurados de texto libre.' },
       { tech: 'Cost Tracking & Budgets', flag: null,
         cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
         typical: ['multi_user','autonomous','http_server'],
@@ -1337,6 +1404,10 @@ const GROUPS = [
         cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
         typical: ['basic_chat','rag_chat','agent_tools'],
         notes: 'Siempre compilado. Templates y optimización de prompts.' },
+      { tech: 'Smart Suggestions (Jaccard similarity)', flag: null,
+        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
+        typical: ['basic_chat','rag_chat','agent_tools','autonomous'],
+        notes: 'Siempre compilado. Sugerencias inteligentes con Jaccard similarity para relevance scoring contextual.' },
       { tech: 'Plugins', flag: null,
         cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
         typical: ['http_server'],
@@ -1356,6 +1427,14 @@ const GROUPS = [
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['basic_chat','rag_chat','agent_tools'],
         notes: 'Feature flag adapters. Adaptadores de providers externos.' },
+      { tech: 'OpenTelemetry (OTel)', flag: 'otel',
+        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
+        typical: ['http_server','autonomous','multi_agent','distributed','multi_user'],
+        notes: 'Feature flag otel. Tracing OTel-compatible para operaciones AI: spans, métricas, propagación de contexto distribuido.' },
+      { tech: 'Cloud Connectors (S3, Google Drive)', flag: 'cloud-connectors',
+        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
+        typical: ['rag_chat','kpkg','autonomous','http_server'],
+        notes: 'Feature flag cloud-connectors. Integración con S3 y Google Drive para almacenamiento y retrieval de documentos.' },
       { tech: 'WASM Support', flag: 'wasm',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'na', multi_agent:'na', http_server:'na', distributed:'na', p2p:'na' },
         typical: ['basic_chat'],
@@ -1371,9 +1450,25 @@ const GROUPS = [
         cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
         typical: ['basic_chat','autonomous'],
         notes: 'Siempre compilado. Cuantización de modelos locales, útil en cualquier contexto.' },
+      { tech: 'BPE Token Counter', flag: null,
+        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
+        typical: ['basic_chat','rag_chat','autonomous','multi_agent','http_server'],
+        notes: 'Siempre compilado. TokenCounter trait, BpeTokenCounter, ApproximateCounter, ProviderTokenCounter, TokenBudget. Conteo preciso de tokens para gestión de contexto y presupuesto. 15 tests.' },
+      { tech: 'REPL/CLI Engine (interactive shell)', flag: null,
+        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
+        typical: ['basic_chat','rag_chat','agent_tools','autonomous'],
+        notes: 'Siempre compilado. Shell interactivo con history, comandos slash (/help, /clear, /model, /export, etc.), autocompletado, streaming en tiempo real. Binary: ai_assistant_cli. 21 tests.' },
       { tech: 'Debug & Health Check', flag: null,
         cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
         notes: 'Siempre compilado. Debug y health checks siempre útiles.' },
+      { tech: 'UI Framework Hooks', flag: null,
+        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
+        typical: ['basic_chat','rag_chat','autonomous','http_server'],
+        notes: 'Siempre compilado. ChatStreamEvent (8 variantes), ChatHooks (subscriber management), StreamAdapter, ChatSession, ChatStatus, UsageInfo, ChatMessage. Hooks para integración con UI frameworks. 16 tests.' },
+      { tech: 'Agent Graph Visualization', flag: null,
+        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
+        typical: ['autonomous','multi_agent','distributed'],
+        notes: 'Siempre compilado. AgentGraph, AgentNode, AgentEdge, EdgeType, ExecutionTrace, TraceStep, GraphAnalytics (critical path, bottlenecks, utilization). Exportación DOT/Mermaid/JSON. from_dag() conversion. 17 tests.' },
     ]
   },
 ];

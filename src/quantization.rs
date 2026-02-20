@@ -109,11 +109,17 @@ impl QuantFormat {
             Self::INT8 | Self::GGUF_Q8_0 | Self::GPTQ_8bit => 8.0,
             Self::GGUF_Q6_K => 6.0,
             Self::GGUF_Q5_0 | Self::GGUF_Q5_1 | Self::GGUF_Q5_K_S | Self::GGUF_Q5_K_M => 5.0,
-            Self::GGUF_Q4_0 | Self::GGUF_Q4_1 | Self::GGUF_Q4_K_S | Self::GGUF_Q4_K_M
-            | Self::GPTQ_4bit_128g | Self::GPTQ_4bit_32g | Self::AWQ_4bit | Self::INT4 => 4.0,
+            Self::GGUF_Q4_0
+            | Self::GGUF_Q4_1
+            | Self::GGUF_Q4_K_S
+            | Self::GGUF_Q4_K_M
+            | Self::GPTQ_4bit_128g
+            | Self::GPTQ_4bit_32g
+            | Self::AWQ_4bit
+            | Self::INT4 => 4.0,
             Self::GGUF_Q3_K_S | Self::GGUF_Q3_K_M | Self::GGUF_Q3_K_L => 3.0,
             Self::GGUF_Q2_K => 2.0,
-            Self::EXL2 => 4.5, // Variable, average
+            Self::EXL2 => 4.5,     // Variable, average
             Self::Unknown => 16.0, // Assume FP16 as safe default
         }
     }
@@ -172,18 +178,35 @@ impl QuantFormat {
 
     /// Check if format is GGUF compatible
     pub fn is_gguf(&self) -> bool {
-        matches!(self,
-            Self::GGUF_Q2_K | Self::GGUF_Q3_K_S | Self::GGUF_Q3_K_M | Self::GGUF_Q3_K_L |
-            Self::GGUF_Q4_0 | Self::GGUF_Q4_1 | Self::GGUF_Q4_K_S | Self::GGUF_Q4_K_M |
-            Self::GGUF_Q5_0 | Self::GGUF_Q5_1 | Self::GGUF_Q5_K_S | Self::GGUF_Q5_K_M |
-            Self::GGUF_Q6_K | Self::GGUF_Q8_0
+        matches!(
+            self,
+            Self::GGUF_Q2_K
+                | Self::GGUF_Q3_K_S
+                | Self::GGUF_Q3_K_M
+                | Self::GGUF_Q3_K_L
+                | Self::GGUF_Q4_0
+                | Self::GGUF_Q4_1
+                | Self::GGUF_Q4_K_S
+                | Self::GGUF_Q4_K_M
+                | Self::GGUF_Q5_0
+                | Self::GGUF_Q5_1
+                | Self::GGUF_Q5_K_S
+                | Self::GGUF_Q5_K_M
+                | Self::GGUF_Q6_K
+                | Self::GGUF_Q8_0
         )
     }
 
     /// Check if format requires GPU
     pub fn requires_gpu(&self) -> bool {
-        matches!(self, Self::GPTQ_4bit_128g | Self::GPTQ_4bit_32g | Self::GPTQ_8bit |
-                       Self::AWQ_4bit | Self::EXL2)
+        matches!(
+            self,
+            Self::GPTQ_4bit_128g
+                | Self::GPTQ_4bit_32g
+                | Self::GPTQ_8bit
+                | Self::AWQ_4bit
+                | Self::EXL2
+        )
     }
 }
 
@@ -309,10 +332,17 @@ impl ModelSize {
         let s = s.trim();
 
         // Extract number
-        let num_str: String = s.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
-        let multiplier = if s.ends_with('B') { 1_000_000_000u64 }
-                        else if s.ends_with('M') { 1_000_000u64 }
-                        else { 1u64 };
+        let num_str: String = s
+            .chars()
+            .take_while(|c| c.is_ascii_digit() || *c == '.')
+            .collect();
+        let multiplier = if s.ends_with('B') {
+            1_000_000_000u64
+        } else if s.ends_with('M') {
+            1_000_000u64
+        } else {
+            1u64
+        };
 
         let num: f64 = num_str.parse().ok()?;
         let params = (num * multiplier as f64) as u64;
@@ -387,10 +417,9 @@ impl QuantizationDetector {
             (r"(?i)int4|4bit", QuantFormat::INT4),
         ];
 
-        let format_patterns = patterns.into_iter()
-            .filter_map(|(pattern, format)| {
-                regex::Regex::new(pattern).ok().map(|r| (r, format))
-            })
+        let format_patterns = patterns
+            .into_iter()
+            .filter_map(|(pattern, format)| regex::Regex::new(pattern).ok().map(|r| (r, format)))
             .collect();
 
         Self { format_patterns }
@@ -419,7 +448,11 @@ impl QuantizationDetector {
     }
 
     /// Estimate memory for a model size
-    pub fn estimate_memory_for_size(&self, size: ModelSize, format: &QuantFormat) -> MemoryRequirements {
+    pub fn estimate_memory_for_size(
+        &self,
+        size: ModelSize,
+        format: &QuantFormat,
+    ) -> MemoryRequirements {
         let params = size.params() as f64;
         let bits = format.bits_per_weight() as f64;
 
@@ -462,13 +495,21 @@ impl QuantizationDetector {
     }
 
     /// Recommend quantization format for given model size and hardware
-    pub fn recommend_quantization(&self, model_size: &str, hardware: &HardwareProfile) -> QuantRecommendation {
+    pub fn recommend_quantization(
+        &self,
+        model_size: &str,
+        hardware: &HardwareProfile,
+    ) -> QuantRecommendation {
         let size = ModelSize::from_str(model_size).unwrap_or(ModelSize::Medium);
         self.recommend_for_size(size, hardware)
     }
 
     /// Recommend quantization for model size
-    pub fn recommend_for_size(&self, size: ModelSize, hardware: &HardwareProfile) -> QuantRecommendation {
+    pub fn recommend_for_size(
+        &self,
+        size: ModelSize,
+        hardware: &HardwareProfile,
+    ) -> QuantRecommendation {
         let available_memory = if hardware.has_cuda || hardware.has_metal || hardware.has_rocm {
             hardware.vram_gb
         } else {
@@ -537,9 +578,13 @@ impl QuantizationDetector {
             warnings.push("Large model on CPU will be slow, consider smaller model".to_string());
         }
 
-        let confidence = if best_memory.total_gb <= available_memory * 0.7 { 0.95 }
-                        else if best_memory.total_gb <= available_memory * 0.85 { 0.8 }
-                        else { 0.6 };
+        let confidence = if best_memory.total_gb <= available_memory * 0.7 {
+            0.95
+        } else if best_memory.total_gb <= available_memory * 0.85 {
+            0.8
+        } else {
+            0.6
+        };
 
         let reason = format!(
             "{} provides best quality ({:.0}%) that fits in {:.1}GB",
@@ -581,12 +626,21 @@ impl QuantizationDetector {
             QuantFormat::GGUF_Q3_K_S,
             QuantFormat::GGUF_Q2_K,
         ];
-        formats.sort_by(|a, b| b.quality_retention().partial_cmp(&a.quality_retention()).unwrap_or(std::cmp::Ordering::Equal));
+        formats.sort_by(|a, b| {
+            b.quality_retention()
+                .partial_cmp(&a.quality_retention())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         formats
     }
 
     /// Compare two formats
-    pub fn compare_formats(&self, a: &QuantFormat, b: &QuantFormat, size: ModelSize) -> FormatComparison {
+    pub fn compare_formats(
+        &self,
+        a: &QuantFormat,
+        b: &QuantFormat,
+        size: ModelSize,
+    ) -> FormatComparison {
         let mem_a = self.estimate_memory_for_size(size, a);
         let mem_b = self.estimate_memory_for_size(size, b);
 
@@ -596,9 +650,13 @@ impl QuantizationDetector {
             quality_diff: a.quality_retention() - b.quality_retention(),
             memory_diff_gb: mem_a.total_gb - mem_b.total_gb,
             bits_diff: a.bits_per_weight() - b.bits_per_weight(),
-            recommendation: if a.quality_retention() > b.quality_retention() && mem_a.total_gb <= mem_b.total_gb * 1.1 {
+            recommendation: if a.quality_retention() > b.quality_retention()
+                && mem_a.total_gb <= mem_b.total_gb * 1.1
+            {
                 format!("{} is better (higher quality, similar size)", a.name())
-            } else if b.quality_retention() > a.quality_retention() && mem_b.total_gb <= mem_a.total_gb * 1.1 {
+            } else if b.quality_retention() > a.quality_retention()
+                && mem_b.total_gb <= mem_a.total_gb * 1.1
+            {
                 format!("{} is better (higher quality, similar size)", b.name())
             } else if mem_a.total_gb < mem_b.total_gb * 0.8 {
                 format!("{} is smaller but lower quality", a.name())
@@ -676,17 +734,29 @@ impl GgufMetadata {
     fn detect_architecture(name: &str) -> Option<String> {
         let lower = name.to_lowercase();
 
-        if lower.contains("llama") { Some("llama".to_string()) }
-        else if lower.contains("mistral") { Some("mistral".to_string()) }
-        else if lower.contains("mixtral") { Some("mixtral".to_string()) }
-        else if lower.contains("phi") { Some("phi".to_string()) }
-        else if lower.contains("qwen") { Some("qwen".to_string()) }
-        else if lower.contains("gemma") { Some("gemma".to_string()) }
-        else if lower.contains("falcon") { Some("falcon".to_string()) }
-        else if lower.contains("mpt") { Some("mpt".to_string()) }
-        else if lower.contains("starcoder") { Some("starcoder".to_string()) }
-        else if lower.contains("codellama") { Some("codellama".to_string()) }
-        else { None }
+        if lower.contains("llama") {
+            Some("llama".to_string())
+        } else if lower.contains("mistral") {
+            Some("mistral".to_string())
+        } else if lower.contains("mixtral") {
+            Some("mixtral".to_string())
+        } else if lower.contains("phi") {
+            Some("phi".to_string())
+        } else if lower.contains("qwen") {
+            Some("qwen".to_string())
+        } else if lower.contains("gemma") {
+            Some("gemma".to_string())
+        } else if lower.contains("falcon") {
+            Some("falcon".to_string())
+        } else if lower.contains("mpt") {
+            Some("mpt".to_string())
+        } else if lower.contains("starcoder") {
+            Some("starcoder".to_string())
+        } else if lower.contains("codellama") {
+            Some("codellama".to_string())
+        } else {
+            None
+        }
     }
 }
 
@@ -698,17 +768,38 @@ mod tests {
     fn test_detect_format() {
         let detector = QuantizationDetector::new();
 
-        assert_eq!(detector.detect_format("llama-7b-q4_k_m.gguf"), Some(QuantFormat::GGUF_Q4_K_M));
-        assert_eq!(detector.detect_format("mistral-Q5_K_S"), Some(QuantFormat::GGUF_Q5_K_S));
-        assert_eq!(detector.detect_format("model-gptq-4bit"), Some(QuantFormat::GPTQ_4bit_128g));
-        assert_eq!(detector.detect_format("model-awq"), Some(QuantFormat::AWQ_4bit));
+        assert_eq!(
+            detector.detect_format("llama-7b-q4_k_m.gguf"),
+            Some(QuantFormat::GGUF_Q4_K_M)
+        );
+        assert_eq!(
+            detector.detect_format("mistral-Q5_K_S"),
+            Some(QuantFormat::GGUF_Q5_K_S)
+        );
+        assert_eq!(
+            detector.detect_format("model-gptq-4bit"),
+            Some(QuantFormat::GPTQ_4bit_128g)
+        );
+        assert_eq!(
+            detector.detect_format("model-awq"),
+            Some(QuantFormat::AWQ_4bit)
+        );
     }
 
     #[test]
     fn test_model_size_parsing() {
-        assert_eq!(ModelSize::from_str("7B").map(|s| s.params()), Some(7_000_000_000));
-        assert_eq!(ModelSize::from_str("13B").map(|s| s.params()), Some(13_000_000_000));
-        assert_eq!(ModelSize::from_str("70B").map(|s| s.params()), Some(70_000_000_000));
+        assert_eq!(
+            ModelSize::from_str("7B").map(|s| s.params()),
+            Some(7_000_000_000)
+        );
+        assert_eq!(
+            ModelSize::from_str("13B").map(|s| s.params()),
+            Some(13_000_000_000)
+        );
+        assert_eq!(
+            ModelSize::from_str("70B").map(|s| s.params()),
+            Some(70_000_000_000)
+        );
     }
 
     #[test]
@@ -724,8 +815,13 @@ mod tests {
 
     #[test]
     fn test_quality_retention() {
-        assert!(QuantFormat::FP16.quality_retention() > QuantFormat::GGUF_Q4_K_M.quality_retention());
-        assert!(QuantFormat::GGUF_Q4_K_M.quality_retention() > QuantFormat::GGUF_Q2_K.quality_retention());
+        assert!(
+            QuantFormat::FP16.quality_retention() > QuantFormat::GGUF_Q4_K_M.quality_retention()
+        );
+        assert!(
+            QuantFormat::GGUF_Q4_K_M.quality_retention()
+                > QuantFormat::GGUF_Q2_K.quality_retention()
+        );
     }
 
     #[test]

@@ -15,17 +15,32 @@ use std::sync::{Arc, RwLock};
 /// All possible parsed intents from user input.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UserIntent {
-    AddTask { description: String },
-    RemoveTask { identifier: String },
-    PauseTask { identifier: String },
-    ResumeTask { identifier: String },
-    CancelTask { identifier: String },
-    ReprioritizeTask { identifier: String, priority: String },
+    AddTask {
+        description: String,
+    },
+    RemoveTask {
+        identifier: String,
+    },
+    PauseTask {
+        identifier: String,
+    },
+    ResumeTask {
+        identifier: String,
+    },
+    CancelTask {
+        identifier: String,
+    },
+    ReprioritizeTask {
+        identifier: String,
+        priority: String,
+    },
     PauseAll,
     ResumeAll,
     CancelAll,
     ShowStatus,
-    ShowTaskDetail { identifier: String },
+    ShowTaskDetail {
+        identifier: String,
+    },
     Undo,
     Help,
     Unknown(String),
@@ -99,13 +114,25 @@ impl CommandProcessor {
 
         // --- "all" commands (checked first to avoid partial matches) ----------
 
-        if lower == "pause all" || lower == "pausa todo" || lower == "stop all" || lower == "para todo" {
+        if lower == "pause all"
+            || lower == "pausa todo"
+            || lower == "stop all"
+            || lower == "para todo"
+        {
             return UserIntent::PauseAll;
         }
-        if lower == "resume all" || lower == "continua todo" || lower == "sigue todo" || lower == "reanuda todo" {
+        if lower == "resume all"
+            || lower == "continua todo"
+            || lower == "sigue todo"
+            || lower == "reanuda todo"
+        {
             return UserIntent::ResumeAll;
         }
-        if lower == "cancel all" || lower == "cancela todo" || lower == "abort all" || lower == "aborta todo" {
+        if lower == "cancel all"
+            || lower == "cancela todo"
+            || lower == "abort all"
+            || lower == "aborta todo"
+        {
             return UserIntent::CancelAll;
         }
 
@@ -120,10 +147,13 @@ impl CommandProcessor {
 
         // --- Status (may be the entire input or start a phrase) ---------------
 
-        if lower == "status" || lower == "estado"
-            || lower.starts_with("how") || lower.starts_with("cómo va")
+        if lower == "status"
+            || lower == "estado"
+            || lower.starts_with("how")
+            || lower.starts_with("cómo va")
             || lower.starts_with("como va")
-            || lower == "progress" || lower == "progreso"
+            || lower == "progress"
+            || lower == "progreso"
         {
             return UserIntent::ShowStatus;
         }
@@ -131,13 +161,17 @@ impl CommandProcessor {
         // --- Commands with a task identifier ---------------------------------
 
         // Add task
-        if let Some(rest) = strip_keyword(&lower, &["add ", "añade ", "nueva tarea ", "new task "]) {
+        if let Some(rest) = strip_keyword(&lower, &["add ", "añade ", "nueva tarea ", "new task "])
+        {
             let desc = extract_rest(trimmed, rest.len());
             return UserIntent::AddTask { description: desc };
         }
 
         // Remove task
-        if let Some(rest) = strip_keyword(&lower, &["remove ", "elimina ", "quita ", "delete ", "borra "]) {
+        if let Some(rest) = strip_keyword(
+            &lower,
+            &["remove ", "elimina ", "quita ", "delete ", "borra "],
+        ) {
             let id = extract_rest(trimmed, rest.len());
             return UserIntent::RemoveTask { identifier: id };
         }
@@ -161,7 +195,9 @@ impl CommandProcessor {
         }
 
         // Reprioritize task
-        if let Some(rest) = strip_keyword(&lower, &["priority ", "prioridad ", "urgente ", "urgent "]) {
+        if let Some(rest) =
+            strip_keyword(&lower, &["priority ", "prioridad ", "urgente ", "urgent "])
+        {
             let id = extract_rest(trimmed, rest.len());
             // Try to split "task_identifier high" — last word might be the priority
             let parts: Vec<&str> = id.rsplitn(2, ' ').collect();
@@ -286,7 +322,10 @@ impl CommandProcessor {
                 }
             }
 
-            UserIntent::ReprioritizeTask { identifier, priority } => {
+            UserIntent::ReprioritizeTask {
+                identifier,
+                priority,
+            } => {
                 let mut board = match self.task_board.write() {
                     Ok(b) => b,
                     Err(e) => return CommandResult::err(format!("Lock error: {}", e)),
@@ -353,10 +392,7 @@ impl CommandProcessor {
                 match resolved {
                     Some(id) => {
                         if let Some(step) = board.plan().find_step(&id) {
-                            let desc = step
-                                .description
-                                .as_deref()
-                                .unwrap_or("(no description)");
+                            let desc = step.description.as_deref().unwrap_or("(no description)");
                             let detail = format!(
                                 "Task: {}\nID: {}\nStatus: {:?}\nPriority: {:?}\nDescription: {}\nBlocked by: {:?}",
                                 step.title, step.id, step.status, step.priority, desc, step.blocked_by
@@ -403,12 +439,10 @@ Available commands (EN / ES):
                 CommandResult::ok(help_text)
             }
 
-            UserIntent::Unknown(raw) => {
-                CommandResult::err(format!(
-                    "Command not recognized: '{}'. Type 'help' or 'ayuda' for available commands.",
-                    raw
-                ))
-            }
+            UserIntent::Unknown(raw) => CommandResult::err(format!(
+                "Command not recognized: '{}'. Type 'help' or 'ayuda' for available commands.",
+                raw
+            )),
         }
     }
 
@@ -577,9 +611,18 @@ mod tests {
 
     #[test]
     fn test_parse_status() {
-        assert_eq!(CommandProcessor::parse_intent("status"), UserIntent::ShowStatus);
-        assert_eq!(CommandProcessor::parse_intent("estado"), UserIntent::ShowStatus);
-        assert_eq!(CommandProcessor::parse_intent("progress"), UserIntent::ShowStatus);
+        assert_eq!(
+            CommandProcessor::parse_intent("status"),
+            UserIntent::ShowStatus
+        );
+        assert_eq!(
+            CommandProcessor::parse_intent("estado"),
+            UserIntent::ShowStatus
+        );
+        assert_eq!(
+            CommandProcessor::parse_intent("progress"),
+            UserIntent::ShowStatus
+        );
         assert_eq!(
             CommandProcessor::parse_intent("how is it going"),
             UserIntent::ShowStatus
@@ -592,8 +635,14 @@ mod tests {
 
     #[test]
     fn test_parse_cancel_all() {
-        assert_eq!(CommandProcessor::parse_intent("cancel all"), UserIntent::CancelAll);
-        assert_eq!(CommandProcessor::parse_intent("cancela todo"), UserIntent::CancelAll);
+        assert_eq!(
+            CommandProcessor::parse_intent("cancel all"),
+            UserIntent::CancelAll
+        );
+        assert_eq!(
+            CommandProcessor::parse_intent("cancela todo"),
+            UserIntent::CancelAll
+        );
     }
 
     #[test]
@@ -693,18 +742,27 @@ mod tests {
     #[test]
     fn test_unknown_command_passthrough() {
         let intent = CommandProcessor::parse_intent("tell me a joke");
-        assert_eq!(
-            intent,
-            UserIntent::Unknown("tell me a joke".to_string())
-        );
+        assert_eq!(intent, UserIntent::Unknown("tell me a joke".to_string()));
     }
 
     #[test]
     fn test_parse_status_queries() {
-        assert_eq!(CommandProcessor::parse_intent("status"), UserIntent::ShowStatus);
-        assert_eq!(CommandProcessor::parse_intent("how are things"), UserIntent::ShowStatus);
-        assert_eq!(CommandProcessor::parse_intent("estado"), UserIntent::ShowStatus);
-        assert_eq!(CommandProcessor::parse_intent("cómo va todo"), UserIntent::ShowStatus);
+        assert_eq!(
+            CommandProcessor::parse_intent("status"),
+            UserIntent::ShowStatus
+        );
+        assert_eq!(
+            CommandProcessor::parse_intent("how are things"),
+            UserIntent::ShowStatus
+        );
+        assert_eq!(
+            CommandProcessor::parse_intent("estado"),
+            UserIntent::ShowStatus
+        );
+        assert_eq!(
+            CommandProcessor::parse_intent("cómo va todo"),
+            UserIntent::ShowStatus
+        );
     }
 
     #[test]

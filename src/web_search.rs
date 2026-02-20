@@ -131,12 +131,14 @@ impl SearchProvider for DuckDuckGoProvider {
             .call()
             .map_err(|e| SearchError::Network(e.to_string()))?;
 
-        let html = response.into_string()
+        let html = response
+            .into_string()
             .map_err(|e| SearchError::Network(e.to_string()))?;
 
         // Parse results from HTML
         let mut results = Vec::new();
-        let result_pattern = regex::Regex::new(r#"class="result__a"[^>]*href="([^"]*)"[^>]*>([^<]*)</a>"#).ok();
+        let result_pattern =
+            regex::Regex::new(r#"class="result__a"[^>]*href="([^"]*)"[^>]*>([^<]*)</a>"#).ok();
         let snippet_pattern = regex::Regex::new(r#"class="result__snippet"[^>]*>([^<]*)</a>"#).ok();
 
         if let Some(re) = result_pattern {
@@ -149,7 +151,8 @@ impl SearchProvider for DuckDuckGoProvider {
                 let title = cap.get(2).map(|m| m.as_str()).unwrap_or("");
 
                 // Try to find snippet
-                let snippet = snippet_pattern.as_ref()
+                let snippet = snippet_pattern
+                    .as_ref()
                     .and_then(|re| re.captures_iter(&html).nth(i))
                     .and_then(|c| c.get(1))
                     .map(|m| m.as_str())
@@ -209,7 +212,8 @@ impl BraveSearchProvider {
 
 impl SearchProvider for BraveSearchProvider {
     fn search(&self, query: &str, config: &SearchConfig) -> Result<Vec<SearchResult>, SearchError> {
-        let url = format!("{}?q={}&count={}",
+        let url = format!(
+            "{}?q={}&count={}",
             self.base_url,
             urlencoding::encode(query),
             config.max_results
@@ -222,19 +226,27 @@ impl SearchProvider for BraveSearchProvider {
             .call()
             .map_err(|e| SearchError::Network(e.to_string()))?;
 
-        let text = response.into_string()
+        let text = response
+            .into_string()
             .map_err(|e| SearchError::Network(e.to_string()))?;
 
-        let json: serde_json::Value = serde_json::from_str(&text)
-            .map_err(|e| SearchError::Parse(e.to_string()))?;
+        let json: serde_json::Value =
+            serde_json::from_str(&text).map_err(|e| SearchError::Parse(e.to_string()))?;
 
         let mut results = Vec::new();
 
-        if let Some(web) = json.get("web").and_then(|w| w.get("results")).and_then(|r| r.as_array()) {
+        if let Some(web) = json
+            .get("web")
+            .and_then(|w| w.get("results"))
+            .and_then(|r| r.as_array())
+        {
             for item in web {
                 let title = item.get("title").and_then(|t| t.as_str()).unwrap_or("");
                 let url = item.get("url").and_then(|u| u.as_str()).unwrap_or("");
-                let snippet = item.get("description").and_then(|d| d.as_str()).unwrap_or("");
+                let snippet = item
+                    .get("description")
+                    .and_then(|d| d.as_str())
+                    .unwrap_or("");
 
                 results.push(SearchResult::new(title, url, snippet));
             }
@@ -263,7 +275,8 @@ impl SearXNGProvider {
 
 impl SearchProvider for SearXNGProvider {
     fn search(&self, query: &str, config: &SearchConfig) -> Result<Vec<SearchResult>, SearchError> {
-        let url = format!("{}/search?q={}&format=json",
+        let url = format!(
+            "{}/search?q={}&format=json",
             self.instance_url,
             urlencoding::encode(query)
         );
@@ -273,11 +286,12 @@ impl SearchProvider for SearXNGProvider {
             .call()
             .map_err(|e| SearchError::Network(e.to_string()))?;
 
-        let text = response.into_string()
+        let text = response
+            .into_string()
             .map_err(|e| SearchError::Network(e.to_string()))?;
 
-        let json: serde_json::Value = serde_json::from_str(&text)
-            .map_err(|e| SearchError::Parse(e.to_string()))?;
+        let json: serde_json::Value =
+            serde_json::from_str(&text).map_err(|e| SearchError::Parse(e.to_string()))?;
 
         let mut results = Vec::new();
 
@@ -335,7 +349,8 @@ impl WebSearchManager {
         for provider in &self.providers {
             match provider.search(query, &self.config) {
                 Ok(results) if !results.is_empty() => {
-                    self.cache.insert(cache_key, (results.clone(), std::time::Instant::now()));
+                    self.cache
+                        .insert(cache_key, (results.clone(), std::time::Instant::now()));
                     return Ok(results);
                 }
                 _ => continue,
@@ -346,7 +361,11 @@ impl WebSearchManager {
     }
 
     /// Search and format results for AI context
-    pub fn search_for_context(&mut self, query: &str, max_chars: usize) -> Result<String, SearchError> {
+    pub fn search_for_context(
+        &mut self,
+        query: &str,
+        max_chars: usize,
+    ) -> Result<String, SearchError> {
         let results = self.search(query)?;
 
         let mut context = format!("Web search results for '{}':\n\n", query);

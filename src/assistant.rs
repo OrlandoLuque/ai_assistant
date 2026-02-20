@@ -1,55 +1,64 @@
 //! Main AI Assistant implementation
 
+use anyhow::Result;
+use std::path::Path;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::path::Path;
-use anyhow::Result;
 
+use crate::adaptive_thinking::{
+    AdaptiveThinkingConfig, QueryClassifier, ThinkingParseResult, ThinkingStrategy,
+    ThinkingTagParser,
+};
+use crate::api_key_rotation::{ApiKey, ApiKeyManager, RotationConfig};
 use crate::config::{AiConfig, AiProvider};
-use crate::messages::{AiResponse, ChatMessage};
-use crate::models::ModelInfo;
-use crate::session::{ChatSession, ChatSessionStore, UserPreferences, ResponseStyle};
-use crate::context::{ContextUsage, estimate_tokens, get_model_context_size_cached};
-use crate::providers::{
-    fetch_ollama_models, fetch_openai_compatible_models, fetch_kobold_models,
-    build_system_prompt, build_system_prompt_with_notes, generate_response_streaming, generate_response,
-    generate_response_streaming_cancellable, fetch_model_context_size,
+use crate::context::{estimate_tokens, get_model_context_size_cached, ContextUsage};
+use crate::conversation_compaction::{
+    CompactableMessage, CompactionConfig, CompactionResult, ConversationCompactor,
 };
 use crate::conversation_control::CancellationToken;
-use crate::adaptive_thinking::{
-    AdaptiveThinkingConfig, QueryClassifier, ThinkingStrategy,
-    ThinkingTagParser, ThinkingParseResult,
+use crate::messages::{AiResponse, ChatMessage};
+use crate::models::ModelInfo;
+use crate::providers::{
+    build_system_prompt, build_system_prompt_with_notes, fetch_kobold_models,
+    fetch_model_context_size, fetch_ollama_models, fetch_openai_compatible_models,
+    generate_response, generate_response_streaming, generate_response_streaming_cancellable,
 };
-use crate::conversation_compaction::{
-    ConversationCompactor, CompactionConfig, CompactableMessage, CompactionResult,
-};
-use crate::api_key_rotation::{ApiKeyManager, ApiKey, RotationConfig};
+use crate::session::{ChatSession, ChatSessionStore, ResponseStyle, UserPreferences};
 
-#[cfg(feature = "autonomous")]
-use crate::mode_manager::{OperationMode, ModeManager};
 #[cfg(feature = "autonomous")]
 use crate::agent_profiles::ProfileRegistry;
 #[cfg(feature = "autonomous")]
-use crate::user_interaction::{InteractionManager, UserInteractionHandler, AutoApproveHandler as AutoApproveInteraction};
+use crate::agent_sandbox::SandboxValidator;
 #[cfg(feature = "autonomous")]
 use crate::autonomous_loop::{AutonomousAgent, AutonomousAgentBuilder};
 #[cfg(feature = "autonomous")]
+use crate::mode_manager::{ModeManager, OperationMode};
+#[cfg(feature = "autonomous")]
 use crate::os_tools::register_os_tools;
 #[cfg(feature = "autonomous")]
-use crate::agent_sandbox::SandboxValidator;
+use crate::user_interaction::{
+    AutoApproveHandler as AutoApproveInteraction, InteractionManager, UserInteractionHandler,
+};
 #[cfg(feature = "autonomous")]
 use std::sync::RwLock;
 
+#[cfg(feature = "browser")]
+use crate::browser_tools::BrowserSession;
 #[cfg(feature = "butler")]
 use crate::butler::Butler;
+#[cfg(feature = "distributed-agents")]
+use crate::distributed_agents::DistributedAgentManager;
 #[cfg(feature = "scheduler")]
 use crate::scheduler::Scheduler;
 #[cfg(feature = "scheduler")]
 use crate::trigger_system::TriggerManager;
 
 #[cfg(feature = "rag")]
-use crate::rag::{RagDb, RagConfig, KnowledgeUsage, build_knowledge_context, build_conversation_context, DEFAULT_USER_ID};
+use crate::rag::{
+    build_conversation_context, build_knowledge_context, KnowledgeUsage, RagConfig, RagDb,
+    DEFAULT_USER_ID,
+};
 #[cfg(feature = "rag")]
 use std::collections::HashMap;
 
@@ -72,7 +81,11 @@ pub struct IndexingResult {
 #[derive(Debug, Clone)]
 pub enum IndexingProgress {
     /// Starting to index a document
-    Starting { source: String, total_documents: usize, current: usize },
+    Starting {
+        source: String,
+        total_documents: usize,
+        current: usize,
+    },
     /// Document indexed successfully
     Completed(IndexingResult),
     /// All documents finished
@@ -249,7 +262,6 @@ pub struct AiAssistant {
     pub event_bus: crate::events::EventBus,
 
     // === Autonomous agent support (optional feature) ===
-
     #[cfg(feature = "autonomous")]
     /// Mode manager for operation mode escalation/de-escalation.
     pub mode_manager: ModeManager,
@@ -264,12 +276,30 @@ pub struct AiAssistant {
     /// Butler for environment auto-detection and configuration suggestions.
     butler: Option<Butler>,
 
+    #[cfg(feature = "browser")]
+    /// Browser session for CDP-based browser automation.
+    browser_session: Option<BrowserSession>,
+
     #[cfg(feature = "scheduler")]
     /// Scheduler for cron-like agent/tool execution.
     scheduler: Option<Scheduler>,
     #[cfg(feature = "scheduler")]
     /// Trigger manager for event-driven actions.
     trigger_manager: Option<TriggerManager>,
+
+    #[cfg(feature = "distributed-agents")]
+    /// Distributed agent manager for multi-node agent execution.
+    distributed_agent_manager: Option<DistributedAgentManager>,
+
+    #[cfg(feature = "eval")]
+    /// A/B testing experiment manager.
+    experiment_manager: Option<crate::ab_testing::ExperimentManager>,
+
+    /// Cost tracking dashboard for session-level cost monitoring.
+    cost_dashboard: Option<crate::cost_integration::CostDashboard>,
+
+    /// Chat hooks for UI framework event streaming.
+    chat_hooks: Option<crate::ui_hooks::ChatHooks>,
 }
 
 impl Default for AiAssistant {
@@ -293,14 +323,15 @@ fn try_generate_with_fallback(
     last_provider: &Arc<Mutex<Option<String>>>,
 ) {
     let primary_result = match cancel_token {
-        Some(token) => generate_response_streaming_cancellable(
-            config, conversation, system_prompt, tx, token,
-        ),
+        Some(token) => {
+            generate_response_streaming_cancellable(config, conversation, system_prompt, tx, token)
+        }
         None => generate_response_streaming(config, conversation, system_prompt, tx),
     };
 
     if primary_result.is_ok() {
-        *last_provider.lock().unwrap_or_else(|e| e.into_inner()) = Some(config.provider.display_name().to_string());
+        *last_provider.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some(config.provider.display_name().to_string());
         return;
     }
 
@@ -331,7 +362,11 @@ fn try_generate_with_fallback(
 
         let fb_result = match cancel_token {
             Some(token) => generate_response_streaming_cancellable(
-                &fb_config, conversation, system_prompt, tx, token,
+                &fb_config,
+                conversation,
+                system_prompt,
+                tx,
+                token,
             ),
             None => generate_response_streaming(&fb_config, conversation, system_prompt, tx),
         };
@@ -429,10 +464,23 @@ impl AiAssistant {
             #[cfg(feature = "butler")]
             butler: None,
 
+            #[cfg(feature = "browser")]
+            browser_session: None,
+
             #[cfg(feature = "scheduler")]
             scheduler: None,
             #[cfg(feature = "scheduler")]
             trigger_manager: None,
+
+            #[cfg(feature = "distributed-agents")]
+            distributed_agent_manager: None,
+
+            #[cfg(feature = "eval")]
+            experiment_manager: None,
+
+            cost_dashboard: None,
+
+            chat_hooks: None,
         }
     }
 
@@ -510,7 +558,9 @@ impl AiAssistant {
         }
 
         // Initialize thinking tag parser if configured for transparent parsing
-        if self.adaptive_thinking.parse_thinking_tags && self.adaptive_thinking.transparent_thinking_parse {
+        if self.adaptive_thinking.parse_thinking_tags
+            && self.adaptive_thinking.transparent_thinking_parse
+        {
             self.thinking_parser = Some(ThinkingTagParser::new(
                 self.adaptive_thinking.strip_thinking_from_response,
             ));
@@ -594,7 +644,9 @@ impl AiAssistant {
         let system_tokens = estimate_tokens(&self.system_prompt_base);
 
         // Estimate conversation history tokens
-        let conversation_tokens: usize = self.conversation.iter()
+        let conversation_tokens: usize = self
+            .conversation
+            .iter()
             .map(|msg| estimate_tokens(&msg.content))
             .sum();
 
@@ -707,12 +759,15 @@ impl AiAssistant {
             }
 
             // Try LM Studio
-            if let Ok(models) = fetch_openai_compatible_models(&lm_studio_url, AiProvider::LMStudio) {
+            if let Ok(models) = fetch_openai_compatible_models(&lm_studio_url, AiProvider::LMStudio)
+            {
                 all_models.extend(models);
             }
 
             // Try text-generation-webui
-            if let Ok(models) = fetch_openai_compatible_models(&text_gen_webui_url, AiProvider::TextGenWebUI) {
+            if let Ok(models) =
+                fetch_openai_compatible_models(&text_gen_webui_url, AiProvider::TextGenWebUI)
+            {
                 all_models.extend(models);
             }
 
@@ -800,7 +855,10 @@ impl AiAssistant {
     /// Updated asynchronously by background generation threads.
     /// Returns `None` before the first response completes.
     pub fn last_provider_used(&self) -> Option<String> {
-        self.fallback_last_provider.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.fallback_last_provider
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     // === Conversation Compaction ===
@@ -835,28 +893,30 @@ impl AiAssistant {
     pub fn compact_conversation(&mut self) -> CompactionResult {
         let compactor = ConversationCompactor::new(self.compaction_config.clone());
 
-        let compactable: Vec<CompactableMessage> = self.conversation.iter().map(|m| {
-            CompactableMessage::new(&m.role, &m.content)
-        }).collect();
+        let compactable: Vec<CompactableMessage> = self
+            .conversation
+            .iter()
+            .map(|m| CompactableMessage::new(&m.role, &m.content))
+            .collect();
 
         let result = compactor.compact(compactable);
 
         // Replace conversation with compacted messages
-        self.conversation = result.messages.iter().map(|m| {
-            match m.role.as_str() {
+        self.conversation = result
+            .messages
+            .iter()
+            .map(|m| match m.role.as_str() {
                 "user" => ChatMessage::user(&m.content),
                 "assistant" => ChatMessage::assistant(&m.content),
                 _ => ChatMessage::system(&m.content),
-            }
-        }).collect();
+            })
+            .collect();
 
         // Insert summary after the first message if available
         if let Some(ref summary) = result.summary {
             if !summary.is_empty() && !self.conversation.is_empty() {
-                self.conversation.insert(
-                    1.min(self.conversation.len()),
-                    ChatMessage::system(summary),
-                );
+                self.conversation
+                    .insert(1.min(self.conversation.len()), ChatMessage::system(summary));
             }
         }
 
@@ -893,7 +953,10 @@ impl AiAssistant {
             self.api_key_manager = Some(ApiKeyManager::default());
         }
         let api_key = ApiKey::new(key_id, key_value, provider);
-        self.api_key_manager.as_mut().expect("api_key_manager must be initialized").add_key(api_key);
+        self.api_key_manager
+            .as_mut()
+            .expect("api_key_manager must be initialized")
+            .add_key(api_key);
     }
 
     /// Get the current API key for a provider (round-robin, skips rate-limited keys).
@@ -947,8 +1010,13 @@ impl AiAssistant {
 
         thread::spawn(move || {
             try_generate_with_fallback(
-                &config, &conversation, &system_prompt, &tx,
-                &fallback_providers, None, &last_provider,
+                &config,
+                &conversation,
+                &system_prompt,
+                &tx,
+                &fallback_providers,
+                None,
+                &last_provider,
             );
         });
     }
@@ -987,7 +1055,10 @@ impl AiAssistant {
     ) {
         let context = self.knowledge_context.clone();
         // Debug: Log context size to verify knowledge is being used
-        println!("[AI DEBUG] send_message_auto_with_notes: knowledge_context size = {} bytes", context.len());
+        println!(
+            "[AI DEBUG] send_message_auto_with_notes: knowledge_context size = {} bytes",
+            context.len()
+        );
         if context.is_empty() {
             println!("[AI DEBUG] WARNING: knowledge_context is EMPTY!");
         } else {
@@ -1051,8 +1122,13 @@ impl AiAssistant {
 
         thread::spawn(move || {
             try_generate_with_fallback(
-                &config, &conversation, &system_prompt, &tx,
-                &fallback_providers, None, &last_provider,
+                &config,
+                &conversation,
+                &system_prompt,
+                &tx,
+                &fallback_providers,
+                None,
+                &last_provider,
             );
         });
     }
@@ -1061,7 +1137,11 @@ impl AiAssistant {
     ///
     /// Supports provider fallback: if the primary provider fails and fallback
     /// is enabled, tries each fallback provider in order.
-    pub fn generate_sync(&mut self, user_message: String, knowledge_context: &str) -> Result<String> {
+    pub fn generate_sync(
+        &mut self,
+        user_message: String,
+        knowledge_context: &str,
+    ) -> Result<String> {
         self.conversation.push(ChatMessage::user(&user_message));
 
         let system_prompt = build_system_prompt(
@@ -1073,7 +1153,10 @@ impl AiAssistant {
         // Try primary provider
         let response = match generate_response(&self.config, &self.conversation, &system_prompt) {
             Ok(r) => {
-                *self.fallback_last_provider.lock().unwrap_or_else(|e| e.into_inner()) =
+                *self
+                    .fallback_last_provider
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()) =
                     Some(self.config.provider.display_name().to_string());
                 r
             }
@@ -1090,7 +1173,10 @@ impl AiAssistant {
                     fb_config.selected_model = model.clone();
                     match generate_response(&fb_config, &self.conversation, &system_prompt) {
                         Ok(r) => {
-                            *self.fallback_last_provider.lock().unwrap_or_else(|e| e.into_inner()) =
+                            *self
+                                .fallback_last_provider
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner()) =
                                 Some(provider.display_name().to_string());
                             found = Some(r);
                             break;
@@ -1113,7 +1199,11 @@ impl AiAssistant {
     /// Send a message with cancellation support
     ///
     /// Returns a CancellationToken that can be used to cancel the generation
-    pub fn send_message_cancellable(&mut self, user_message: String, knowledge_context: &str) -> CancellationToken {
+    pub fn send_message_cancellable(
+        &mut self,
+        user_message: String,
+        knowledge_context: &str,
+    ) -> CancellationToken {
         self.conversation.push(ChatMessage::user(&user_message));
         self.maybe_compact_conversation();
         self.is_generating = true;
@@ -1143,8 +1233,13 @@ impl AiAssistant {
 
         thread::spawn(move || {
             try_generate_with_fallback(
-                &config, &conversation, &system_prompt, &tx,
-                &fallback_providers, Some(&token), &last_provider,
+                &config,
+                &conversation,
+                &system_prompt,
+                &tx,
+                &fallback_providers,
+                Some(&token),
+                &last_provider,
             );
         });
 
@@ -1172,7 +1267,12 @@ impl AiAssistant {
         knowledge_notes: &str,
     ) -> CancellationToken {
         let context = self.knowledge_context.clone();
-        self.send_message_cancellable_with_notes(user_message, &context, session_notes, knowledge_notes)
+        self.send_message_cancellable_with_notes(
+            user_message,
+            &context,
+            session_notes,
+            knowledge_notes,
+        )
     }
 
     /// Send a message with full context and cancellation support
@@ -1219,10 +1319,11 @@ impl AiAssistant {
         let (system_prompt, config) = self.apply_adaptive_thinking(&user_message, system_prompt);
 
         // Emit provider attempt event
-        self.event_bus.emit(crate::events::AiEvent::ProviderAttempt {
-            provider: config.provider.display_name().to_string(),
-            model: config.selected_model.clone(),
-        });
+        self.event_bus
+            .emit(crate::events::AiEvent::ProviderAttempt {
+                provider: config.provider.display_name().to_string(),
+                model: config.selected_model.clone(),
+            });
 
         let conversation = self.conversation.clone();
         let fallback_providers = if self.fallback_enabled {
@@ -1235,8 +1336,13 @@ impl AiAssistant {
         let token = cancel_token.clone();
         thread::spawn(move || {
             try_generate_with_fallback(
-                &config, &conversation, &system_prompt, &tx,
-                &fallback_providers, Some(&token), &last_provider,
+                &config,
+                &conversation,
+                &system_prompt,
+                &tx,
+                &fallback_providers,
+                Some(&token),
+                &last_provider,
             );
         });
 
@@ -1301,9 +1407,10 @@ impl AiAssistant {
                                 let _ = self.store_message_in_rag(&msg, true);
                             }
 
-                            self.event_bus.emit(crate::events::AiEvent::ResponseComplete {
-                                response_length: self.current_response.len(),
-                            });
+                            self.event_bus
+                                .emit(crate::events::AiEvent::ResponseComplete {
+                                    response_length: self.current_response.len(),
+                                });
                             return Some(AiResponse::Complete(self.current_response.clone()));
                         }
                         AiResponse::Cancelled(partial) => {
@@ -1312,9 +1419,10 @@ impl AiAssistant {
                             self.rx_response = None;
                             self.cancel_token = None;
                             self.thinking_parser = None;
-                            self.event_bus.emit(crate::events::AiEvent::ResponseCancelled {
-                                partial_length: partial.len(),
-                            });
+                            self.event_bus
+                                .emit(crate::events::AiEvent::ResponseCancelled {
+                                    partial_length: partial.len(),
+                                });
                             return Some(AiResponse::Cancelled(partial));
                         }
                         AiResponse::Chunk(chunk) => {
@@ -1337,9 +1445,8 @@ impl AiAssistant {
                             self.rx_response = None;
                             self.cancel_token = None;
                             self.thinking_parser = None;
-                            self.event_bus.emit(crate::events::AiEvent::ResponseError {
-                                error: e.clone(),
-                            });
+                            self.event_bus
+                                .emit(crate::events::AiEvent::ResponseError { error: e.clone() });
                             return Some(AiResponse::Error(e));
                         }
                         other => {
@@ -1368,7 +1475,9 @@ impl AiAssistant {
                 // Detect response style preference
                 if content_lower.contains("be brief") || content_lower.contains("short answer") {
                     self.preferences.response_style = ResponseStyle::Concise;
-                } else if content_lower.contains("explain in detail") || content_lower.contains("detailed") {
+                } else if content_lower.contains("explain in detail")
+                    || content_lower.contains("detailed")
+                {
                     self.preferences.response_style = ResponseStyle::Detailed;
                 } else if content_lower.contains("technical") {
                     self.preferences.response_style = ResponseStyle::Technical;
@@ -1417,7 +1526,8 @@ impl AiAssistant {
         self.current_session = Some(session);
         self.conversation.clear();
         self.current_response.clear();
-        self.event_bus.emit(crate::events::AiEvent::SessionCreated { session_id });
+        self.event_bus
+            .emit(crate::events::AiEvent::SessionCreated { session_id });
     }
 
     /// Save the current conversation to session
@@ -1546,7 +1656,10 @@ impl AiAssistant {
         let system_tokens = estimate_tokens(&self.system_prompt_base);
         let knowledge_tokens = estimate_tokens(knowledge);
 
-        let history_start = self.conversation.len().saturating_sub(self.config.max_history_messages);
+        let history_start = self
+            .conversation
+            .len()
+            .saturating_sub(self.config.max_history_messages);
         let conversation_tokens: usize = self.conversation[history_start..]
             .iter()
             .map(|msg| estimate_tokens(&msg.content) + 4) // +4 for role tokens
@@ -1556,7 +1669,12 @@ impl AiAssistant {
             fetch_model_context_size(&self.config, name)
         });
 
-        ContextUsage::calculate(system_tokens, knowledge_tokens, conversation_tokens, max_tokens)
+        ContextUsage::calculate(
+            system_tokens,
+            knowledge_tokens,
+            conversation_tokens,
+            max_tokens,
+        )
     }
 
     /// Get dynamic max history based on knowledge size
@@ -1632,7 +1750,9 @@ impl AiAssistant {
         }
 
         // Check for previous summary
-        let previous_summary = self.conversation.first()
+        let previous_summary = self
+            .conversation
+            .first()
             .filter(|msg| msg.role == "system" && msg.content.starts_with("[Conversation summary:"))
             .map(|msg| {
                 msg.content
@@ -1642,7 +1762,8 @@ impl AiAssistant {
             });
 
         let skip_count = if previous_summary.is_some() { 1 } else { 0 };
-        let messages_to_summarize: Vec<ChatMessage> = self.conversation
+        let messages_to_summarize: Vec<ChatMessage> = self
+            .conversation
             .iter()
             .skip(skip_count)
             .take(to_summarize - skip_count)
@@ -1662,7 +1783,11 @@ impl AiAssistant {
         self.pending_summary_count = 0;
 
         thread::spawn(move || {
-            let result = generate_conversation_summary(&config, &messages_to_summarize, previous_summary.as_deref());
+            let result = generate_conversation_summary(
+                &config,
+                &messages_to_summarize,
+                previous_summary.as_deref(),
+            );
             match result {
                 Ok(summary) => {
                     let _ = tx.send(SummaryResult {
@@ -1671,7 +1796,8 @@ impl AiAssistant {
                     });
                 }
                 Err(_) => {
-                    let fallback = create_simple_summary(&messages_to_summarize, previous_summary.as_deref());
+                    let fallback =
+                        create_simple_summary(&messages_to_summarize, previous_summary.as_deref());
                     let _ = tx.send(SummaryResult {
                         summary: fallback,
                         messages_summarized: to_summarize,
@@ -1688,16 +1814,14 @@ impl AiAssistant {
                 Ok(result) => {
                     let keep_start = result.messages_summarized;
                     if self.conversation.len() > keep_start {
-                        let kept_messages: Vec<ChatMessage> = self.conversation
-                            .iter()
-                            .skip(keep_start)
-                            .cloned()
-                            .collect();
+                        let kept_messages: Vec<ChatMessage> =
+                            self.conversation.iter().skip(keep_start).cloned().collect();
 
                         self.conversation.clear();
-                        self.conversation.push(ChatMessage::system(
-                            format!("[Conversation summary: {}]", result.summary)
-                        ));
+                        self.conversation.push(ChatMessage::system(format!(
+                            "[Conversation summary: {}]",
+                            result.summary
+                        )));
                         self.conversation.extend(kept_messages);
                     }
 
@@ -1804,7 +1928,8 @@ impl AiAssistant {
     /// assistant.send_message("Help me understand the guide".to_string(), "");
     /// ```
     pub fn register_knowledge_document(&mut self, source: &str, content: &str) {
-        self.pending_documents.insert(source.to_string(), content.to_string());
+        self.pending_documents
+            .insert(source.to_string(), content.to_string());
         if !self.registered_sources.contains(&source.to_string()) {
             self.registered_sources.push(source.to_string());
         }
@@ -1933,7 +2058,8 @@ impl AiAssistant {
     /// More efficient than calling `register_knowledge_document` multiple times.
     pub fn register_documents(&mut self, documents: Vec<DocumentInfo>) {
         for doc in documents {
-            self.pending_documents.insert(doc.source.clone(), doc.content);
+            self.pending_documents
+                .insert(doc.source.clone(), doc.content);
             if !self.registered_sources.contains(&doc.source) {
                 self.registered_sources.push(doc.source);
             }
@@ -2086,7 +2212,9 @@ impl AiAssistant {
             }
         }
 
-        on_progress(IndexingProgress::AllComplete { results: results.clone() });
+        on_progress(IndexingProgress::AllComplete {
+            results: results.clone(),
+        });
         results
     }
 
@@ -2319,7 +2447,8 @@ impl AiAssistant {
 
             // Conversation RAG
             if self.rag_config.conversation_rag_enabled {
-                let session_id = self.current_session
+                let session_id = self
+                    .current_session
                     .as_ref()
                     .map(|s| s.id.as_str())
                     .unwrap_or("default");
@@ -2363,7 +2492,10 @@ impl AiAssistant {
     /// as a third element of the tuple.
     ///
     /// Returns (knowledge_context, conversation_context, knowledge_usage)
-    pub fn build_rag_context_with_tracking(&mut self, query: &str) -> (String, String, Option<KnowledgeUsage>) {
+    pub fn build_rag_context_with_tracking(
+        &mut self,
+        query: &str,
+    ) -> (String, String, Option<KnowledgeUsage>) {
         let (knowledge_context, conversation_context) = self.build_rag_context(query);
         let usage = self.last_knowledge_usage.clone();
         (knowledge_context, conversation_context, usage)
@@ -2484,7 +2616,8 @@ impl AiAssistant {
 
             // Conversation RAG (same as regular build_rag_context)
             if self.rag_config.conversation_rag_enabled {
-                let session_id = self.current_session
+                let session_id = self
+                    .current_session
                     .as_ref()
                     .map(|s| s.id.as_str())
                     .unwrap_or("default");
@@ -2555,7 +2688,8 @@ impl AiAssistant {
     pub fn store_message_in_rag(&mut self, msg: &ChatMessage, in_context: bool) -> Result<()> {
         if self.ensure_rag_initialized() {
             if let Some(ref db) = self.rag_db {
-                let session_id = self.current_session
+                let session_id = self
+                    .current_session
                     .as_ref()
                     .map(|s| s.id.clone())
                     .unwrap_or_else(|| "default".to_string());
@@ -2579,7 +2713,8 @@ impl AiAssistant {
 
         if self.ensure_rag_initialized() {
             if let Some(ref db) = self.rag_db {
-                let session_id = self.current_session
+                let session_id = self
+                    .current_session
                     .as_ref()
                     .map(|s| s.id.clone())
                     .unwrap_or_else(|| "default".to_string());
@@ -2597,7 +2732,8 @@ impl AiAssistant {
     pub fn get_conversation_rag_stats(&mut self) -> Result<(usize, usize, usize)> {
         if self.ensure_rag_initialized() {
             if let Some(ref db) = self.rag_db {
-                let session_id = self.current_session
+                let session_id = self
+                    .current_session
                     .as_ref()
                     .map(|s| s.id.as_str())
                     .unwrap_or("default");
@@ -2787,11 +2923,13 @@ impl AiAssistant {
     pub fn get_rag_session_notes(&mut self) -> String {
         if self.ensure_rag_initialized() {
             if let Some(ref db) = self.rag_db {
-                let session_id = self.current_session
+                let session_id = self
+                    .current_session
                     .as_ref()
                     .map(|s| s.id.as_str())
                     .unwrap_or("default");
-                return db.get_session_notes(&self.user_id, session_id)
+                return db
+                    .get_session_notes(&self.user_id, session_id)
                     .ok()
                     .flatten()
                     .unwrap_or_default();
@@ -2805,7 +2943,8 @@ impl AiAssistant {
     pub fn set_rag_session_notes(&mut self, notes: &str) -> Result<()> {
         if self.ensure_rag_initialized() {
             if let Some(ref db) = self.rag_db {
-                let session_id = self.current_session
+                let session_id = self
+                    .current_session
                     .as_ref()
                     .map(|s| s.id.clone())
                     .unwrap_or_else(|| "default".to_string());
@@ -2843,7 +2982,11 @@ impl AiAssistant {
     /// * `replace` - If true, clears existing knowledge first. If false, merges.
     ///
     /// Returns the number of chunks imported.
-    pub fn import_knowledge_from_file(&mut self, path: &std::path::Path, replace: bool) -> Result<usize> {
+    pub fn import_knowledge_from_file(
+        &mut self,
+        path: &std::path::Path,
+        replace: bool,
+    ) -> Result<usize> {
         if self.ensure_rag_initialized() {
             if let Some(ref db) = self.rag_db {
                 return db.import_knowledge_from_file(path, replace);
@@ -2872,7 +3015,11 @@ impl AiAssistant {
     /// # Arguments
     /// * `data` - The knowledge export data
     /// * `replace` - If true, clears existing knowledge first. If false, merges.
-    pub fn import_knowledge(&mut self, data: &crate::rag::KnowledgeExport, replace: bool) -> Result<usize> {
+    pub fn import_knowledge(
+        &mut self,
+        data: &crate::rag::KnowledgeExport,
+        replace: bool,
+    ) -> Result<usize> {
         if self.ensure_rag_initialized() {
             if let Some(ref db) = self.rag_db {
                 return db.import_knowledge(data, replace);
@@ -2973,7 +3120,9 @@ impl AiAssistant {
     /// Set the operation mode (respects allowed_max ceiling).
     #[cfg(feature = "autonomous")]
     pub fn set_operation_mode(&mut self, mode: OperationMode) -> Result<()> {
-        self.mode_manager.set_mode(mode).map_err(|e| anyhow::anyhow!(e))
+        self.mode_manager
+            .set_mode(mode)
+            .map_err(|e| anyhow::anyhow!(e))
     }
 
     /// Escalate to next operation mode.
@@ -3020,17 +3169,18 @@ impl AiAssistant {
     pub fn create_agent(
         &self,
         profile_name: &str,
-        response_generator: Arc<dyn Fn(&[crate::agentic_loop::AgentMessage]) -> String + Send + Sync>,
+        response_generator: Arc<
+            dyn Fn(&[crate::agentic_loop::AgentMessage]) -> String + Send + Sync,
+        >,
     ) -> Result<AutonomousAgent> {
-        let profile = self.profile_registry.get_agent_profile(profile_name)
+        let profile = self
+            .profile_registry
+            .get_agent_profile(profile_name)
             .ok_or_else(|| anyhow::anyhow!("Agent profile '{}' not found", profile_name))?;
 
-        let mut builder = AutonomousAgentBuilder::new(
-            &profile.name,
-            response_generator,
-        )
-        .policy(profile.policy.clone())
-        .mode(profile.mode);
+        let mut builder = AutonomousAgentBuilder::new(&profile.name, response_generator)
+            .policy(profile.policy.clone())
+            .mode(profile.mode);
 
         if let Some(ref prompt) = profile.system_prompt {
             builder = builder.system_prompt(prompt.clone());
@@ -3059,12 +3209,16 @@ impl AiAssistant {
     pub fn create_agent_headless(
         &self,
         profile_name: &str,
-        response_generator: Arc<dyn Fn(&[crate::agentic_loop::AgentMessage]) -> String + Send + Sync>,
+        response_generator: Arc<
+            dyn Fn(&[crate::agentic_loop::AgentMessage]) -> String + Send + Sync,
+        >,
     ) -> Result<AutonomousAgent> {
         let handler: Arc<dyn UserInteractionHandler> = Arc::new(AutoApproveInteraction::new());
         let im = Arc::new(InteractionManager::new(handler, 300));
 
-        let profile = self.profile_registry.get_agent_profile(profile_name)
+        let profile = self
+            .profile_registry
+            .get_agent_profile(profile_name)
             .ok_or_else(|| anyhow::anyhow!("Agent profile '{}' not found", profile_name))?;
 
         let policy = profile.policy.clone();
@@ -3156,6 +3310,118 @@ impl AiAssistant {
     pub fn trigger_manager_mut(&mut self) -> Option<&mut TriggerManager> {
         self.trigger_manager.as_mut()
     }
+
+    // === Browser ===
+
+    /// Initialize the browser session for CDP-based browser automation.
+    #[cfg(feature = "browser")]
+    pub fn init_browser(&mut self) {
+        self.browser_session = Some(BrowserSession::new());
+    }
+
+    /// Get the browser session (if initialized).
+    #[cfg(feature = "browser")]
+    pub fn browser_session(&self) -> Option<&BrowserSession> {
+        self.browser_session.as_ref()
+    }
+
+    /// Get the browser session mutably (if initialized).
+    #[cfg(feature = "browser")]
+    pub fn browser_session_mut(&mut self) -> Option<&mut BrowserSession> {
+        self.browser_session.as_mut()
+    }
+
+    // === Distributed Agents ===
+
+    /// Initialize the distributed agent manager for multi-node agent execution.
+    #[cfg(feature = "distributed-agents")]
+    pub fn init_distributed_agents(&mut self, local_node_id: crate::distributed::NodeId) {
+        self.distributed_agent_manager = Some(DistributedAgentManager::new(local_node_id));
+    }
+
+    /// Get the distributed agent manager (if initialized).
+    #[cfg(feature = "distributed-agents")]
+    pub fn distributed_agents(&self) -> Option<&DistributedAgentManager> {
+        self.distributed_agent_manager.as_ref()
+    }
+
+    /// Get the distributed agent manager mutably (if initialized).
+    #[cfg(feature = "distributed-agents")]
+    pub fn distributed_agents_mut(&mut self) -> Option<&mut DistributedAgentManager> {
+        self.distributed_agent_manager.as_mut()
+    }
+
+    // === A/B Testing ===
+
+    /// Initialize the experiment manager for A/B testing.
+    #[cfg(feature = "eval")]
+    pub fn init_experiment_manager(&mut self) {
+        if self.experiment_manager.is_none() {
+            self.experiment_manager = Some(crate::ab_testing::ExperimentManager::new());
+        }
+    }
+
+    /// Get the experiment manager (if initialized).
+    #[cfg(feature = "eval")]
+    pub fn experiment_manager(&self) -> Option<&crate::ab_testing::ExperimentManager> {
+        self.experiment_manager.as_ref()
+    }
+
+    /// Get the experiment manager mutably (if initialized).
+    #[cfg(feature = "eval")]
+    pub fn experiment_manager_mut(&mut self) -> Option<&mut crate::ab_testing::ExperimentManager> {
+        self.experiment_manager.as_mut()
+    }
+
+    // === Cost Dashboard ===
+
+    /// Initialize cost tracking with default settings.
+    pub fn init_cost_tracking(&mut self) {
+        if self.cost_dashboard.is_none() {
+            self.cost_dashboard = Some(crate::cost_integration::CostDashboard::new());
+        }
+    }
+
+    /// Get reference to cost dashboard.
+    pub fn cost_dashboard(&self) -> Option<&crate::cost_integration::CostDashboard> {
+        self.cost_dashboard.as_ref()
+    }
+
+    /// Get mutable reference to cost dashboard.
+    pub fn cost_dashboard_mut(&mut self) -> Option<&mut crate::cost_integration::CostDashboard> {
+        self.cost_dashboard.as_mut()
+    }
+
+    /// Get formatted cost report.
+    pub fn cost_report(&self) -> Option<String> {
+        self.cost_dashboard.as_ref().map(|d| d.format_report())
+    }
+
+    // === Chat Hooks ===
+
+    /// Initialize chat hooks for UI framework event streaming.
+    pub fn init_chat_hooks(&mut self) {
+        if self.chat_hooks.is_none() {
+            self.chat_hooks = Some(crate::ui_hooks::ChatHooks::new());
+        }
+    }
+
+    /// Get the chat hooks (if initialized).
+    pub fn chat_hooks(&self) -> Option<&crate::ui_hooks::ChatHooks> {
+        self.chat_hooks.as_ref()
+    }
+
+    /// Get the chat hooks mutably (if initialized).
+    pub fn chat_hooks_mut(&mut self) -> Option<&mut crate::ui_hooks::ChatHooks> {
+        self.chat_hooks.as_mut()
+    }
+
+    /// Emit a chat event to all subscribers (if hooks are initialized).
+    pub fn emit_chat_event(&mut self, event: crate::ui_hooks::ChatStreamEvent) {
+        if let Some(ref mut hooks) = self.chat_hooks {
+            hooks.emit(event);
+        }
+    }
 }
 
 /// Generate a conversation summary using the AI model
@@ -3166,7 +3432,11 @@ fn generate_conversation_summary(
 ) -> Result<String> {
     let mut conversation_text = String::new();
     for msg in messages {
-        let role = if msg.role == "user" { "User" } else { "Assistant" };
+        let role = if msg.role == "user" {
+            "User"
+        } else {
+            "Assistant"
+        };
         conversation_text.push_str(&format!("{}: {}\n\n", role, msg.content));
     }
 
@@ -3180,11 +3450,20 @@ fn generate_conversation_summary(
             700
         )
     } else if message_count <= 4 {
-        ("Write a brief summary (3-4 sentences) capturing the main points.", 150)
+        (
+            "Write a brief summary (3-4 sentences) capturing the main points.",
+            150,
+        )
     } else if message_count <= 8 {
-        ("Write a comprehensive summary (5-8 sentences) covering all key topics.", 300)
+        (
+            "Write a comprehensive summary (5-8 sentences) covering all key topics.",
+            300,
+        )
     } else {
-        ("Write a detailed summary (8-12 sentences) preserving all important context.", 500)
+        (
+            "Write a detailed summary (8-12 sentences) preserving all important context.",
+            500,
+        )
     };
 
     let summary_prompt = if let Some(prev) = previous_summary {
@@ -3356,7 +3635,8 @@ mod tests {
 
         // Add 20 messages
         for i in 0..20 {
-            ai.conversation.push(ChatMessage::user(&format!("Message {}", i)));
+            ai.conversation
+                .push(ChatMessage::user(&format!("Message {}", i)));
         }
         assert_eq!(ai.conversation.len(), 20);
 
@@ -3395,13 +3675,19 @@ mod tests {
         ai.add_api_key("openai", "key2", "sk-second");
 
         // First key should be returned
-        assert_eq!(ai.get_current_api_key("openai"), Some("sk-first".to_string()));
+        assert_eq!(
+            ai.get_current_api_key("openai"),
+            Some("sk-first".to_string())
+        );
 
         // Mark first key as rate-limited
         ai.mark_key_rate_limited("openai", "key1");
 
         // Should rotate to second key
-        assert_eq!(ai.get_current_api_key("openai"), Some("sk-second".to_string()));
+        assert_eq!(
+            ai.get_current_api_key("openai"),
+            Some("sk-second".to_string())
+        );
     }
 
     #[test]

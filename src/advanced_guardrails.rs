@@ -8,8 +8,8 @@
 //! - Output steering and constraint enforcement
 //! - Red-team attack detection
 
-use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 
 /// Constitutional AI principle
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -162,28 +162,49 @@ impl ConstitutionalAI {
     }
 
     /// Get applicable principles for a response
-    pub fn get_applicable_principles(&self, categories: &[String]) -> Vec<&ConstitutionalPrinciple> {
-        self.config.principles.iter()
+    pub fn get_applicable_principles(
+        &self,
+        categories: &[String],
+    ) -> Vec<&ConstitutionalPrinciple> {
+        self.config
+            .principles
+            .iter()
             .filter(|p| p.priority >= self.config.min_priority)
             .filter(|p| {
                 if self.config.focus_categories.is_empty() {
                     true
                 } else {
-                    p.categories.iter().any(|c| self.config.focus_categories.contains(c))
-                        || self.config.focus_categories.iter().any(|c| categories.contains(c))
+                    p.categories
+                        .iter()
+                        .any(|c| self.config.focus_categories.contains(c))
+                        || self
+                            .config
+                            .focus_categories
+                            .iter()
+                            .any(|c| categories.contains(c))
                 }
             })
             .collect()
     }
 
     /// Generate critique prompt for a response
-    pub fn generate_critique_prompt(&self, response: &str, principle: &ConstitutionalPrinciple) -> String {
+    pub fn generate_critique_prompt(
+        &self,
+        response: &str,
+        principle: &ConstitutionalPrinciple,
+    ) -> String {
         principle.critique_prompt.replace("{response}", response)
     }
 
     /// Generate revision prompt
-    pub fn generate_revision_prompt(&self, response: &str, critique: &str, principle: &ConstitutionalPrinciple) -> String {
-        principle.revision_prompt
+    pub fn generate_revision_prompt(
+        &self,
+        response: &str,
+        critique: &str,
+        principle: &ConstitutionalPrinciple,
+    ) -> String {
+        principle
+            .revision_prompt
             .replace("{response}", response)
             .replace("{critique}", critique)
     }
@@ -212,7 +233,9 @@ impl ConstitutionalAI {
         evaluation.overall_score = if evaluation.violations.is_empty() {
             1.0
         } else {
-            let max_severity = evaluation.violations.iter()
+            let max_severity = evaluation
+                .violations
+                .iter()
                 .map(|v| v.severity)
                 .fold(0.0f32, f32::max);
             1.0 - max_severity
@@ -221,26 +244,30 @@ impl ConstitutionalAI {
         evaluation
     }
 
-    fn check_principle_violation(&self, response: &str, principle: &ConstitutionalPrinciple) -> f32 {
+    fn check_principle_violation(
+        &self,
+        response: &str,
+        principle: &ConstitutionalPrinciple,
+    ) -> f32 {
         let lower = response.to_lowercase();
 
         // Rule-based checks for common violations
         match principle.id.as_str() {
             "harmlessness" | "no_violence" => {
                 let violence_patterns = [
-                    "kill", "murder", "attack", "bomb", "weapon",
-                    "hurt", "harm", "destroy", "explode", "shoot"
+                    "kill", "murder", "attack", "bomb", "weapon", "hurt", "harm", "destroy",
+                    "explode", "shoot",
                 ];
-                let matches = violence_patterns.iter()
+                let matches = violence_patterns
+                    .iter()
                     .filter(|p| lower.contains(*p))
                     .count();
                 (matches as f32 * 0.2).min(1.0)
             }
             "honesty" => {
-                let deception_patterns = [
-                    "fake", "lie", "deceive", "trick", "scam", "fraud"
-                ];
-                let matches = deception_patterns.iter()
+                let deception_patterns = ["fake", "lie", "deceive", "trick", "scam", "fraud"];
+                let matches = deception_patterns
+                    .iter()
                     .filter(|p| lower.contains(*p))
                     .count();
                 (matches as f32 * 0.15).min(1.0)
@@ -248,35 +275,45 @@ impl ConstitutionalAI {
             "no_bias" => {
                 // Check for stereotypical language
                 let bias_patterns = [
-                    "all men", "all women", "typical male", "typical female",
-                    "always", "never", "every single"
+                    "all men",
+                    "all women",
+                    "typical male",
+                    "typical female",
+                    "always",
+                    "never",
+                    "every single",
                 ];
-                let matches = bias_patterns.iter()
-                    .filter(|p| lower.contains(*p))
-                    .count();
+                let matches = bias_patterns.iter().filter(|p| lower.contains(*p)).count();
                 (matches as f32 * 0.25).min(1.0)
             }
             "privacy" => {
                 let privacy_patterns = [
-                    "social security", "credit card", "password", "bank account",
-                    "home address", "phone number"
+                    "social security",
+                    "credit card",
+                    "password",
+                    "bank account",
+                    "home address",
+                    "phone number",
                 ];
-                let matches = privacy_patterns.iter()
+                let matches = privacy_patterns
+                    .iter()
                     .filter(|p| lower.contains(*p))
                     .count();
                 (matches as f32 * 0.3).min(1.0)
             }
             "legal" => {
                 let legal_patterns = [
-                    "illegal", "crime", "steal", "hack into", "bypass security",
-                    "without permission"
+                    "illegal",
+                    "crime",
+                    "steal",
+                    "hack into",
+                    "bypass security",
+                    "without permission",
                 ];
-                let matches = legal_patterns.iter()
-                    .filter(|p| lower.contains(*p))
-                    .count();
+                let matches = legal_patterns.iter().filter(|p| lower.contains(*p)).count();
                 (matches as f32 * 0.2).min(1.0)
             }
-            _ => 0.0
+            _ => 0.0,
         }
     }
 
@@ -398,46 +435,58 @@ impl BiasDetector {
 
     fn init_patterns(&mut self) {
         // Gender bias patterns
-        self.dimension_patterns.insert(BiasDimension::Gender, vec![
-            "women can't".to_string(),
-            "men can't".to_string(),
-            "typical woman".to_string(),
-            "typical man".to_string(),
-            "like a girl".to_string(),
-            "man up".to_string(),
-            "bossy".to_string(),
-            "hysterical".to_string(),
-            "emotional woman".to_string(),
-        ]);
+        self.dimension_patterns.insert(
+            BiasDimension::Gender,
+            vec![
+                "women can't".to_string(),
+                "men can't".to_string(),
+                "typical woman".to_string(),
+                "typical man".to_string(),
+                "like a girl".to_string(),
+                "man up".to_string(),
+                "bossy".to_string(),
+                "hysterical".to_string(),
+                "emotional woman".to_string(),
+            ],
+        );
 
         // Age bias patterns
-        self.dimension_patterns.insert(BiasDimension::Age, vec![
-            "too old".to_string(),
-            "too young".to_string(),
-            "ok boomer".to_string(),
-            "millennials are".to_string(),
-            "gen z always".to_string(),
-            "elderly can't".to_string(),
-            "kids these days".to_string(),
-        ]);
+        self.dimension_patterns.insert(
+            BiasDimension::Age,
+            vec![
+                "too old".to_string(),
+                "too young".to_string(),
+                "ok boomer".to_string(),
+                "millennials are".to_string(),
+                "gen z always".to_string(),
+                "elderly can't".to_string(),
+                "kids these days".to_string(),
+            ],
+        );
 
         // Race/ethnicity patterns (careful, context-dependent)
-        self.dimension_patterns.insert(BiasDimension::Race, vec![
-            "all black people".to_string(),
-            "all white people".to_string(),
-            "all asian people".to_string(),
-            "typical latino".to_string(),
-            "those people".to_string(),
-        ]);
+        self.dimension_patterns.insert(
+            BiasDimension::Race,
+            vec![
+                "all black people".to_string(),
+                "all white people".to_string(),
+                "all asian people".to_string(),
+                "typical latino".to_string(),
+                "those people".to_string(),
+            ],
+        );
 
         // Religion patterns
-        self.dimension_patterns.insert(BiasDimension::Religion, vec![
-            "all muslims".to_string(),
-            "all christians".to_string(),
-            "all jews".to_string(),
-            "religious people are".to_string(),
-            "atheists are".to_string(),
-        ]);
+        self.dimension_patterns.insert(
+            BiasDimension::Religion,
+            vec![
+                "all muslims".to_string(),
+                "all christians".to_string(),
+                "all jews".to_string(),
+                "religious people are".to_string(),
+                "atheists are".to_string(),
+            ],
+        );
 
         // Add custom patterns
         for (dim, patterns) in &self.config.custom_patterns {
@@ -479,13 +528,15 @@ impl BiasDetector {
             result.overall_bias_score = 0.0;
         } else {
             let total_severity: f32 = result.occurrences.iter().map(|o| o.severity).sum();
-            result.overall_bias_score = (total_severity / result.occurrences.len() as f32)
-                .min(1.0);
+            result.overall_bias_score = (total_severity / result.occurrences.len() as f32).min(1.0);
         }
 
         // Group by dimension
         for occurrence in &result.occurrences {
-            *result.dimension_scores.entry(occurrence.dimension).or_insert(0.0) += occurrence.severity;
+            *result
+                .dimension_scores
+                .entry(occurrence.dimension)
+                .or_insert(0.0) += occurrence.severity;
         }
 
         result
@@ -505,13 +556,15 @@ impl BiasDetector {
     fn calculate_severity(&self, pattern: &str) -> f32 {
         // Higher severity for more explicit patterns
         let base = 0.5;
-        let modifier = if pattern.contains("can't") || pattern.contains("always") || pattern.contains("never") {
-            0.3
-        } else if pattern.contains("typical") || pattern.contains("all") {
-            0.2
-        } else {
-            0.0
-        };
+        let modifier =
+            if pattern.contains("can't") || pattern.contains("always") || pattern.contains("never")
+            {
+                0.3
+            } else if pattern.contains("typical") || pattern.contains("all") {
+                0.2
+            } else {
+                0.0
+            };
         (base + modifier) * self.config.sensitivity
     }
 
@@ -648,49 +701,64 @@ impl ToxicityDetector {
 
     fn init_patterns(&mut self) {
         // Threat patterns
-        self.category_patterns.insert(ToxicityCategory::Threat, vec![
-            "i will kill".to_string(),
-            "going to hurt".to_string(),
-            "watch your back".to_string(),
-            "you'll regret".to_string(),
-            "i'll find you".to_string(),
-        ]);
+        self.category_patterns.insert(
+            ToxicityCategory::Threat,
+            vec![
+                "i will kill".to_string(),
+                "going to hurt".to_string(),
+                "watch your back".to_string(),
+                "you'll regret".to_string(),
+                "i'll find you".to_string(),
+            ],
+        );
 
         // Violence patterns
-        self.category_patterns.insert(ToxicityCategory::Violence, vec![
-            "beat you".to_string(),
-            "punch".to_string(),
-            "stab".to_string(),
-            "shoot".to_string(),
-            "blood".to_string(),
-        ]);
+        self.category_patterns.insert(
+            ToxicityCategory::Violence,
+            vec![
+                "beat you".to_string(),
+                "punch".to_string(),
+                "stab".to_string(),
+                "shoot".to_string(),
+                "blood".to_string(),
+            ],
+        );
 
         // Insult patterns
-        self.category_patterns.insert(ToxicityCategory::Insult, vec![
-            "idiot".to_string(),
-            "stupid".to_string(),
-            "moron".to_string(),
-            "dumb".to_string(),
-            "pathetic".to_string(),
-            "loser".to_string(),
-        ]);
+        self.category_patterns.insert(
+            ToxicityCategory::Insult,
+            vec![
+                "idiot".to_string(),
+                "stupid".to_string(),
+                "moron".to_string(),
+                "dumb".to_string(),
+                "pathetic".to_string(),
+                "loser".to_string(),
+            ],
+        );
 
         // Self-harm patterns
-        self.category_patterns.insert(ToxicityCategory::SelfHarm, vec![
-            "kill myself".to_string(),
-            "want to die".to_string(),
-            "end my life".to_string(),
-            "suicide".to_string(),
-            "self harm".to_string(),
-        ]);
+        self.category_patterns.insert(
+            ToxicityCategory::SelfHarm,
+            vec![
+                "kill myself".to_string(),
+                "want to die".to_string(),
+                "end my life".to_string(),
+                "suicide".to_string(),
+                "self harm".to_string(),
+            ],
+        );
 
         // Harassment patterns
-        self.category_patterns.insert(ToxicityCategory::Harassment, vec![
-            "leave you alone".to_string(),
-            "won't stop".to_string(),
-            "keep messaging".to_string(),
-            "following you".to_string(),
-        ]);
+        self.category_patterns.insert(
+            ToxicityCategory::Harassment,
+            vec![
+                "leave you alone".to_string(),
+                "won't stop".to_string(),
+                "keep messaging".to_string(),
+                "following you".to_string(),
+            ],
+        );
     }
 
     /// Detect toxicity in text
@@ -708,7 +776,9 @@ impl ToxicityDetector {
         // Check category patterns
         for category in &self.config.categories {
             if let Some(patterns) = self.category_patterns.get(category) {
-                let sensitivity = self.config.category_sensitivity
+                let sensitivity = self
+                    .config
+                    .category_sensitivity
                     .get(category)
                     .copied()
                     .unwrap_or(0.5);
@@ -724,8 +794,12 @@ impl ToxicityDetector {
                 }
 
                 if !matches.is_empty() {
-                    result.category_scores.insert(*category, category_score.min(1.0));
-                    result.matches.extend(matches.into_iter().map(|m| (*category, m)));
+                    result
+                        .category_scores
+                        .insert(*category, category_score.min(1.0));
+                    result
+                        .matches
+                        .extend(matches.into_iter().map(|m| (*category, m)));
                 }
             }
         }
@@ -905,7 +979,9 @@ impl AttackDetector {
 
         // Calculate risk score
         if !result.detected_attacks.is_empty() {
-            let max_confidence = result.detected_attacks.iter()
+            let max_confidence = result
+                .detected_attacks
+                .iter()
                 .map(|a| a.confidence)
                 .fold(0.0f32, f32::max);
             result.risk_score = max_confidence;
@@ -916,7 +992,8 @@ impl AttackDetector {
 
     fn detect_encoding_evasion(&self, input: &str) -> bool {
         // Check for base64-like patterns
-        let base64_chars: usize = input.chars()
+        let base64_chars: usize = input
+            .chars()
             .filter(|c| c.is_ascii_alphanumeric() || *c == '+' || *c == '/' || *c == '=')
             .count();
 
@@ -962,7 +1039,9 @@ impl AttackDetectionResult {
     }
 
     pub fn has_attack_type(&self, attack_type: AttackType) -> bool {
-        self.detected_attacks.iter().any(|a| a.attack_type == attack_type)
+        self.detected_attacks
+            .iter()
+            .any(|a| a.attack_type == attack_type)
     }
 }
 
@@ -1033,9 +1112,7 @@ impl GuardrailsManager {
         let bias = self.bias_detector.detect(output);
         let toxicity = self.toxicity_detector.detect(output);
 
-        let is_safe = constitutional.is_compliant()
-            && !bias.is_biased(0.5)
-            && !toxicity.is_toxic;
+        let is_safe = constitutional.is_compliant() && !bias.is_biased(0.5) && !toxicity.is_toxic;
 
         OutputCheckResult {
             is_safe,
@@ -1101,11 +1178,8 @@ mod tests {
 
     #[test]
     fn test_constitutional_principle() {
-        let principle = ConstitutionalPrinciple::new(
-            "test",
-            "Test Principle",
-            "Be helpful"
-        ).with_priority(80);
+        let principle =
+            ConstitutionalPrinciple::new("test", "Test Principle", "Be helpful").with_priority(80);
 
         assert_eq!(principle.id, "test");
         assert_eq!(principle.priority, 80);
@@ -1212,7 +1286,7 @@ mod tests {
         let manager = GuardrailsManager::default();
         let result = manager.full_check(
             "Write a poem about flowers",
-            "Roses are red, violets are blue..."
+            "Roses are red, violets are blue...",
         );
 
         assert!(result.overall_safe);
@@ -1224,7 +1298,7 @@ mod tests {
         ai.add_principle(ConstitutionalPrinciple::new(
             "custom",
             "Custom Rule",
-            "Always be polite"
+            "Always be polite",
         ));
 
         assert!(ai.config.principles.len() > default_principles().len());
@@ -1237,9 +1311,14 @@ mod tests {
 
         let result = detector.detect("The typical woman in this study...");
         // Pattern should be skipped due to allowlist
-        assert!(result.occurrences.iter()
-            .filter(|o| o.pattern == "typical woman")
-            .count() == 0);
+        assert!(
+            result
+                .occurrences
+                .iter()
+                .filter(|o| o.pattern == "typical woman")
+                .count()
+                == 0
+        );
     }
 
     #[test]
@@ -1250,6 +1329,8 @@ mod tests {
         let detector = ToxicityDetector::new(config);
         let result = detector.detect("This contains custom_bad_word");
 
-        assert!(result.blocklist_matches.contains(&"custom_bad_word".to_string()));
+        assert!(result
+            .blocklist_matches
+            .contains(&"custom_bad_word".to_string()));
     }
 }

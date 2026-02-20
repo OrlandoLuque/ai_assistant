@@ -4,9 +4,9 @@
 //! inspecting AI assistant operations in detail.
 
 use std::collections::VecDeque;
+use std::fmt::Write as FmtWrite;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use std::fmt::Write as FmtWrite;
 
 /// Debug verbosity level
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -226,14 +226,22 @@ impl DebugLogger {
 
         // Check component filter
         if !config.component_filter.is_empty()
-            && !config.component_filter.iter().any(|c| entry.component.contains(c)) {
+            && !config
+                .component_filter
+                .iter()
+                .any(|c| entry.component.contains(c))
+        {
             return;
         }
 
         // Log to stderr if enabled
         if config.log_to_stderr {
             let formatted = if config.include_timestamps {
-                format!("[{:.3}s] {}", self.start_time.elapsed().as_secs_f64(), entry.format())
+                format!(
+                    "[{:.3}s] {}",
+                    self.start_time.elapsed().as_secs_f64(),
+                    entry.format()
+                )
             } else {
                 entry.format()
             };
@@ -276,7 +284,12 @@ impl DebugLogger {
 
     /// Start a timed operation
     pub fn start_timer(&self, component: &str, operation: &str) -> TimerGuard<'_> {
-        if self.config.read().unwrap_or_else(|e| e.into_inner()).enable_timing {
+        if self
+            .config
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .enable_timing
+        {
             self.trace(component, format!("Starting: {}", operation));
         }
         TimerGuard {
@@ -295,12 +308,19 @@ impl DebugLogger {
 
     /// Get all entries
     pub fn all_entries(&self) -> Vec<DebugEntry> {
-        self.entries.lock().unwrap_or_else(|e| e.into_inner()).iter().cloned().collect()
+        self.entries
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .cloned()
+            .collect()
     }
 
     /// Get entries by level
     pub fn entries_by_level(&self, level: DebugLevel) -> Vec<DebugEntry> {
-        self.entries.lock().unwrap_or_else(|e| e.into_inner())
+        self.entries
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
             .iter()
             .filter(|e| e.level == level)
             .cloned()
@@ -309,7 +329,9 @@ impl DebugLogger {
 
     /// Get entries by component
     pub fn entries_by_component(&self, component: &str) -> Vec<DebugEntry> {
-        self.entries.lock().unwrap_or_else(|e| e.into_inner())
+        self.entries
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
             .iter()
             .filter(|e| e.component.contains(component))
             .cloned()
@@ -318,7 +340,10 @@ impl DebugLogger {
 
     /// Clear all entries
     pub fn clear(&self) {
-        self.entries.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        self.entries
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
     }
 
     /// Get entry count
@@ -332,7 +357,8 @@ impl DebugLogger {
 
         let mut errors = 0;
         let mut warnings = 0;
-        let mut by_component: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        let mut by_component: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
         let mut total_duration = Duration::ZERO;
         let mut timed_ops = 0;
 
@@ -376,9 +402,18 @@ impl DebugLogger {
         if report.timed_operations > 0 {
             writeln!(s, "\nTimed Operations:").ok();
             writeln!(s, "  Count: {}", report.timed_operations).ok();
-            writeln!(s, "  Total: {:.2}ms", report.total_timed_duration.as_secs_f64() * 1000.0).ok();
-            writeln!(s, "  Avg: {:.2}ms",
-                report.total_timed_duration.as_secs_f64() * 1000.0 / report.timed_operations as f64).ok();
+            writeln!(
+                s,
+                "  Total: {:.2}ms",
+                report.total_timed_duration.as_secs_f64() * 1000.0
+            )
+            .ok();
+            writeln!(
+                s,
+                "  Avg: {:.2}ms",
+                report.total_timed_duration.as_secs_f64() * 1000.0 / report.timed_operations as f64
+            )
+            .ok();
         }
 
         if !report.entries_by_component.is_empty() {
@@ -405,8 +440,12 @@ pub struct TimerGuard<'a> {
 impl<'a> Drop for TimerGuard<'a> {
     fn drop(&mut self) {
         let duration = self.start.elapsed();
-        let entry = DebugEntry::new(DebugLevel::Debug, &self.component, format!("Completed: {}", self.operation))
-            .with_duration(duration);
+        let entry = DebugEntry::new(
+            DebugLevel::Debug,
+            &self.component,
+            format!("Completed: {}", self.operation),
+        )
+        .with_duration(duration);
         self.logger.log(entry);
     }
 }
@@ -472,9 +511,19 @@ impl RequestInspector {
             prompt.to_string()
         };
 
-        self.logger.debug("RequestInspector",
-            format!("Request to {} ({}): {}", provider, model,
-                if prompt.len() > 100 { &prompt[..100] } else { prompt }));
+        self.logger.debug(
+            "RequestInspector",
+            format!(
+                "Request to {} ({}): {}",
+                provider,
+                model,
+                if prompt.len() > 100 {
+                    &prompt[..100]
+                } else {
+                    prompt
+                }
+            ),
+        );
 
         RequestHandle {
             inspector: self,
@@ -495,12 +544,18 @@ impl RequestInspector {
 
     /// Get captured requests
     pub fn get_requests(&self) -> Vec<CapturedRequest> {
-        self.requests.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.requests
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Clear captured requests
     pub fn clear_requests(&self) {
-        self.requests.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        self.requests
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
     }
 
     fn store_request(&self, request: CapturedRequest) {
@@ -525,20 +580,22 @@ impl<'a> RequestHandle<'a> {
     /// Complete with success
     pub fn complete(mut self, response: &str) {
         self.request.duration = Some(self.start.elapsed());
-        self.request.response_preview = Some(
-            if response.len() > self.inspector.max_body_length {
-                format!("{}...", &response[..self.inspector.max_body_length])
-            } else {
-                response.to_string()
-            }
-        );
+        self.request.response_preview = Some(if response.len() > self.inspector.max_body_length {
+            format!("{}...", &response[..self.inspector.max_body_length])
+        } else {
+            response.to_string()
+        });
         self.request.response_tokens = Some(response.split_whitespace().count());
 
-        self.inspector.logger.debug("RequestInspector",
-            format!("Response from {} ({:.2}ms): {} tokens",
+        self.inspector.logger.debug(
+            "RequestInspector",
+            format!(
+                "Response from {} ({:.2}ms): {} tokens",
                 self.request.provider,
                 self.request.duration.unwrap_or_default().as_secs_f64() * 1000.0,
-                self.request.response_tokens.unwrap_or(0)));
+                self.request.response_tokens.unwrap_or(0)
+            ),
+        );
 
         self.inspector.store_request(self.request);
     }
@@ -548,8 +605,10 @@ impl<'a> RequestHandle<'a> {
         self.request.duration = Some(self.start.elapsed());
         self.request.error = Some(error.to_string());
 
-        self.inspector.logger.error("RequestInspector",
-            format!("Request to {} failed: {}", self.request.provider, error));
+        self.inspector.logger.error(
+            "RequestInspector",
+            format!("Request to {} failed: {}", self.request.provider, error),
+        );
 
         self.inspector.store_request(self.request);
     }
@@ -560,7 +619,9 @@ static GLOBAL_DEBUG: std::sync::OnceLock<Arc<DebugLogger>> = std::sync::OnceLock
 
 /// Get or initialize the global debug logger
 pub fn global_debug() -> Arc<DebugLogger> {
-    GLOBAL_DEBUG.get_or_init(|| Arc::new(DebugLogger::default())).clone()
+    GLOBAL_DEBUG
+        .get_or_init(|| Arc::new(DebugLogger::default()))
+        .clone()
 }
 
 /// Configure the global debug logger

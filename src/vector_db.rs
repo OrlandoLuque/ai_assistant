@@ -27,10 +27,10 @@
 //! let results = db.search(&[0.1, 0.2, 0.3], 5, None).unwrap();
 //! ```
 
-use std::collections::HashMap;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use serde::{Deserialize, Serialize};
+use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 
 use crate::error::{AiError, AiResult};
 
@@ -82,7 +82,10 @@ pub fn migrate_vectors(
     let vectors = source.export_all()?;
     let count = vectors.len();
     let imported = target.import_bulk(vectors)?;
-    Ok(VectorMigrationResult { exported: count, imported })
+    Ok(VectorMigrationResult {
+        exported: count,
+        imported,
+    })
 }
 
 /// Convert a string ID to a deterministic u64 (for backends that need numeric IDs)
@@ -149,22 +152,14 @@ impl DistanceMetric {
                     1.0 - (dot / (norm_a * norm_b))
                 }
             }
-            DistanceMetric::Euclidean => {
-                a.iter()
-                    .zip(b.iter())
-                    .map(|(x, y)| (x - y).powi(2))
-                    .sum::<f32>()
-                    .sqrt()
-            }
-            DistanceMetric::DotProduct => {
-                -a.iter().zip(b.iter()).map(|(x, y)| x * y).sum::<f32>()
-            }
-            DistanceMetric::Manhattan => {
-                a.iter()
-                    .zip(b.iter())
-                    .map(|(x, y)| (x - y).abs())
-                    .sum()
-            }
+            DistanceMetric::Euclidean => a
+                .iter()
+                .zip(b.iter())
+                .map(|(x, y)| (x - y).powi(2))
+                .sum::<f32>()
+                .sqrt(),
+            DistanceMetric::DotProduct => -a.iter().zip(b.iter()).map(|(x, y)| x * y).sum::<f32>(),
+            DistanceMetric::Manhattan => a.iter().zip(b.iter()).map(|(x, y)| (x - y).abs()).sum(),
         }
     }
 
@@ -269,7 +264,10 @@ pub trait VectorDb: Send + Sync {
     fn insert(&mut self, id: &str, vector: Vec<f32>, metadata: serde_json::Value) -> AiResult<()>;
 
     /// Insert multiple vectors in a batch
-    fn insert_batch(&mut self, vectors: Vec<(String, Vec<f32>, serde_json::Value)>) -> AiResult<usize>;
+    fn insert_batch(
+        &mut self,
+        vectors: Vec<(String, Vec<f32>, serde_json::Value)>,
+    ) -> AiResult<usize>;
 
     /// Search for similar vectors
     fn search(
@@ -302,7 +300,9 @@ pub trait VectorDb: Send + Sync {
     /// Export all stored vectors (for migration between backends).
     /// Not all backends support this — check `backend_info().supports_export`.
     fn export_all(&self) -> AiResult<Vec<StoredVector>> {
-        Err(AiError::Other("export_all not supported by this backend".into()))
+        Err(AiError::Other(
+            "export_all not supported by this backend".into(),
+        ))
     }
 
     /// Import vectors in bulk (for migration). Default impl calls insert() in a loop.
@@ -386,7 +386,10 @@ impl VectorDb for InMemoryVectorDb {
         Ok(())
     }
 
-    fn insert_batch(&mut self, vectors: Vec<(String, Vec<f32>, serde_json::Value)>) -> AiResult<usize> {
+    fn insert_batch(
+        &mut self,
+        vectors: Vec<(String, Vec<f32>, serde_json::Value)>,
+    ) -> AiResult<usize> {
         let mut inserted = 0;
         for (id, vector, metadata) in vectors {
             if self.insert(&id, vector, metadata).is_ok() {
@@ -545,10 +548,12 @@ impl QdrantClient {
                     message: body,
                 }))
             }
-            Err(e) => Err(AiError::Network(crate::error::NetworkError::ConnectionFailed {
-                url,
-                reason: e.to_string(),
-            })),
+            Err(e) => Err(AiError::Network(
+                crate::error::NetworkError::ConnectionFailed {
+                    url,
+                    reason: e.to_string(),
+                },
+            )),
         }
     }
 
@@ -594,7 +599,10 @@ impl VectorDb for QdrantClient {
         Ok(())
     }
 
-    fn insert_batch(&mut self, vectors: Vec<(String, Vec<f32>, serde_json::Value)>) -> AiResult<usize> {
+    fn insert_batch(
+        &mut self,
+        vectors: Vec<(String, Vec<f32>, serde_json::Value)>,
+    ) -> AiResult<usize> {
         if vectors.is_empty() {
             return Ok(0);
         }
@@ -662,8 +670,11 @@ impl VectorDb for QdrantClient {
         let endpoint = format!("/collections/{}/points/search", self.config.collection_name);
         let response = self.request("POST", &endpoint, Some(&body.to_string()))?;
 
-        let parsed: serde_json::Value = serde_json::from_str(&response)
-            .map_err(|e| AiError::Serialization(crate::error::SerializationError::json_deserialize(e.to_string())))?;
+        let parsed: serde_json::Value = serde_json::from_str(&response).map_err(|e| {
+            AiError::Serialization(crate::error::SerializationError::json_deserialize(
+                e.to_string(),
+            ))
+        })?;
 
         let results = parsed["result"]
             .as_array()
@@ -689,8 +700,11 @@ impl VectorDb for QdrantClient {
 
         match self.request("GET", &endpoint, None) {
             Ok(response) => {
-                let parsed: serde_json::Value = serde_json::from_str(&response)
-                    .map_err(|e| AiError::Serialization(crate::error::SerializationError::json_deserialize(e.to_string())))?;
+                let parsed: serde_json::Value = serde_json::from_str(&response).map_err(|e| {
+                    AiError::Serialization(crate::error::SerializationError::json_deserialize(
+                        e.to_string(),
+                    ))
+                })?;
 
                 if let Some(result) = parsed.get("result") {
                     let vector: Vec<f32> = result["vector"]
@@ -729,9 +743,7 @@ impl VectorDb for QdrantClient {
 
         if let Ok(response) = self.request("GET", &endpoint, None) {
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&response) {
-                return parsed["result"]["points_count"]
-                    .as_u64()
-                    .unwrap_or(0) as usize;
+                return parsed["result"]["points_count"].as_u64().unwrap_or(0) as usize;
             }
         }
         0
@@ -780,8 +792,11 @@ impl VectorDb for QdrantClient {
             let endpoint = format!("/collections/{}/points/scroll", self.config.collection_name);
             let response = self.request("POST", &endpoint, Some(&body.to_string()))?;
 
-            let parsed: serde_json::Value = serde_json::from_str(&response)
-                .map_err(|e| AiError::Serialization(crate::error::SerializationError::json_deserialize(e.to_string())))?;
+            let parsed: serde_json::Value = serde_json::from_str(&response).map_err(|e| {
+                AiError::Serialization(crate::error::SerializationError::json_deserialize(
+                    e.to_string(),
+                ))
+            })?;
 
             let points = match parsed["result"]["points"].as_array() {
                 Some(pts) => pts,
@@ -793,7 +808,8 @@ impl VectorDb for QdrantClient {
             }
 
             for point in points {
-                let id = point["id"].as_str()
+                let id = point["id"]
+                    .as_str()
                     .or_else(|| point["id"].as_u64().map(|_| ""))
                     .unwrap_or_default();
                 let id_str = if id.is_empty() {
@@ -851,6 +867,18 @@ pub enum VectorDbBackend {
     /// LanceDB embedded (Tier 2) — requires `vector-lancedb` feature
     #[cfg(feature = "vector-lancedb")]
     Lance,
+    /// Pinecone cloud vector DB (Tier 4)
+    Pinecone,
+    /// Chroma vector DB (Tier 3)
+    Chroma,
+    /// Milvus vector DB (Tier 3)
+    Milvus,
+    /// Weaviate vector DB (Tier 3)
+    Weaviate,
+    /// Redis Vector (RediSearch) (Tier 3)
+    RedisVector,
+    /// Elasticsearch kNN (Tier 3)
+    Elasticsearch,
 }
 
 impl VectorDbBuilder {
@@ -918,6 +946,61 @@ impl VectorDbBuilder {
         self
     }
 
+    /// Use Pinecone cloud backend (Tier 4).
+    ///
+    /// Requires a Pinecone API key and index host URL.
+    pub fn pinecone(mut self, host: impl Into<String>, api_key: impl Into<String>) -> Self {
+        self.config.qdrant_url = Some(host.into()); // reuse url field
+        self.config.qdrant_api_key = Some(api_key.into()); // reuse api_key field
+        self.backend = VectorDbBackend::Pinecone;
+        self
+    }
+
+    /// Use Chroma backend (Tier 3).
+    ///
+    /// Connects to a Chroma server.
+    pub fn chroma(mut self, url: impl Into<String>) -> Self {
+        self.config.qdrant_url = Some(url.into());
+        self.backend = VectorDbBackend::Chroma;
+        self
+    }
+
+    /// Use Milvus backend (Tier 3).
+    ///
+    /// Connects to a Milvus REST API.
+    pub fn milvus(mut self, url: impl Into<String>) -> Self {
+        self.config.qdrant_url = Some(url.into());
+        self.backend = VectorDbBackend::Milvus;
+        self
+    }
+
+    /// Use Weaviate backend (Tier 3).
+    ///
+    /// Connects to a Weaviate REST API.
+    pub fn weaviate(mut self, url: impl Into<String>) -> Self {
+        self.config.qdrant_url = Some(url.into());
+        self.backend = VectorDbBackend::Weaviate;
+        self
+    }
+
+    /// Use Redis Vector backend (Tier 3).
+    ///
+    /// Connects to a Redis REST gateway with vector search support.
+    pub fn redis_vector(mut self, url: impl Into<String>) -> Self {
+        self.config.qdrant_url = Some(url.into());
+        self.backend = VectorDbBackend::RedisVector;
+        self
+    }
+
+    /// Use Elasticsearch backend (Tier 3).
+    ///
+    /// Connects to an Elasticsearch cluster with kNN support.
+    pub fn elasticsearch(mut self, url: impl Into<String>) -> Self {
+        self.config.qdrant_url = Some(url.into());
+        self.backend = VectorDbBackend::Elasticsearch;
+        self
+    }
+
     /// Build the vector database
     pub fn build(self) -> AiResult<Box<dyn VectorDb>> {
         match self.backend {
@@ -932,11 +1015,55 @@ impl VectorDbBuilder {
                 let path = self.lance_path.ok_or_else(|| {
                     AiError::Config(crate::error::ConfigError::MissingValue {
                         field: "lance_path".to_string(),
-                        description: "LanceDB path is required. Use .lance(path) on the builder.".to_string(),
+                        description: "LanceDB path is required. Use .lance(path) on the builder."
+                            .to_string(),
                     })
                 })?;
                 let db = crate::vector_db_lance::LanceVectorDb::new(&path, self.config)?;
                 Ok(Box::new(db))
+            }
+            VectorDbBackend::Pinecone => {
+                let host = self.config.qdrant_url.clone().ok_or_else(|| {
+                    AiError::Other(
+                        "Pinecone host URL is required. Use .pinecone(host, api_key).".into(),
+                    )
+                })?;
+                let api_key = self
+                    .config
+                    .qdrant_api_key
+                    .clone()
+                    .ok_or_else(|| AiError::Other("Pinecone API key is required.".into()))?;
+                Ok(Box::new(PineconeClient::new(host, api_key, self.config)))
+            }
+            VectorDbBackend::Chroma => {
+                let url = self.config.qdrant_url.clone().ok_or_else(|| {
+                    AiError::Other("Chroma URL is required. Use .chroma(url).".into())
+                })?;
+                Ok(Box::new(ChromaClient::new(url, self.config)))
+            }
+            VectorDbBackend::Milvus => {
+                let url = self.config.qdrant_url.clone().ok_or_else(|| {
+                    AiError::Other("Milvus URL is required. Use .milvus(url).".into())
+                })?;
+                Ok(Box::new(MilvusClient::new(url, self.config)))
+            }
+            VectorDbBackend::Weaviate => {
+                let url = self.config.qdrant_url.clone().ok_or_else(|| {
+                    AiError::Other("Weaviate URL is required. Use .weaviate(url).".into())
+                })?;
+                Ok(Box::new(WeaviateClient::new(url, self.config)))
+            }
+            VectorDbBackend::RedisVector => {
+                let url = self.config.qdrant_url.clone().ok_or_else(|| {
+                    AiError::Other("Redis URL is required. Use .redis_vector(url).".into())
+                })?;
+                Ok(Box::new(RedisVectorClient::new(url, self.config)))
+            }
+            VectorDbBackend::Elasticsearch => {
+                let url = self.config.qdrant_url.clone().ok_or_else(|| {
+                    AiError::Other("Elasticsearch URL is required. Use .elasticsearch(url).".into())
+                })?;
+                Ok(Box::new(ElasticsearchClient::new(url, self.config)))
             }
         }
     }
@@ -1108,7 +1235,11 @@ impl<V: VectorDb> DistributedVectorDb<V> {
         }
 
         // Sort by score (descending) and take top limit
-        all_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        all_results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         all_results.truncate(limit);
 
         Ok(all_results)
@@ -1118,7 +1249,9 @@ impl<V: VectorDb> DistributedVectorDb<V> {
     ///
     /// Returns the number of nodes the vector was sent to.
     pub fn replicate_vector(&self, id: &str) -> AiResult<usize> {
-        let stored = self.local.get(id)?
+        let stored = self
+            .local
+            .get(id)?
             .ok_or_else(|| AiError::Other(format!("Vector {} not found locally", id)))?;
 
         let data = serde_json::to_vec(&stored)
@@ -1168,7 +1301,10 @@ impl<V: VectorDb> VectorDb for DistributedVectorDb<V> {
         self.local.insert(id, vector, metadata)
     }
 
-    fn insert_batch(&mut self, vectors: Vec<(String, Vec<f32>, serde_json::Value)>) -> AiResult<usize> {
+    fn insert_batch(
+        &mut self,
+        vectors: Vec<(String, Vec<f32>, serde_json::Value)>,
+    ) -> AiResult<usize> {
         self.local.insert_batch(vectors)
     }
 
@@ -1215,6 +1351,1280 @@ impl<V: VectorDb> VectorDb for DistributedVectorDb<V> {
         self.local.import_bulk(vectors)
     }
 }
+
+// ============================================================================
+// Pinecone Cloud Vector DB
+// ============================================================================
+
+/// Pinecone cloud vector DB client.
+///
+/// Uses Pinecone REST API v1 for vector operations.
+pub struct PineconeClient {
+    host: String,
+    api_key: String,
+    config: VectorDbConfig,
+    /// Local cache for get/count operations (Pinecone is append-heavy)
+    cache: HashMap<String, StoredVector>,
+}
+
+impl PineconeClient {
+    pub fn new(host: String, api_key: String, config: VectorDbConfig) -> Self {
+        Self {
+            host,
+            api_key,
+            config,
+            cache: HashMap::new(),
+        }
+    }
+
+    fn pinecone_url(&self, path: &str) -> String {
+        format!("{}{}", self.host.trim_end_matches('/'), path)
+    }
+}
+
+impl VectorDb for PineconeClient {
+    fn insert(&mut self, id: &str, vector: Vec<f32>, metadata: serde_json::Value) -> AiResult<()> {
+        let url = self.pinecone_url("/vectors/upsert");
+        let body = serde_json::json!({
+            "vectors": [{
+                "id": id,
+                "values": vector,
+                "metadata": metadata
+            }]
+        });
+        let resp = ureq::post(&url)
+            .set("Api-Key", &self.api_key)
+            .set("Content-Type", "application/json")
+            .send_json(&body);
+        match resp {
+            Ok(_) => {
+                self.cache.insert(
+                    id.to_string(),
+                    StoredVector {
+                        id: id.to_string(),
+                        vector,
+                        metadata,
+                        timestamp: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs(),
+                    },
+                );
+                Ok(())
+            }
+            Err(e) => Err(AiError::Other(format!("Pinecone upsert failed: {}", e))),
+        }
+    }
+
+    fn insert_batch(
+        &mut self,
+        vectors: Vec<(String, Vec<f32>, serde_json::Value)>,
+    ) -> AiResult<usize> {
+        let pinecone_vectors: Vec<serde_json::Value> = vectors
+            .iter()
+            .map(|(id, vec, meta)| serde_json::json!({ "id": id, "values": vec, "metadata": meta }))
+            .collect();
+        let url = self.pinecone_url("/vectors/upsert");
+        let body = serde_json::json!({ "vectors": pinecone_vectors });
+        let resp = ureq::post(&url)
+            .set("Api-Key", &self.api_key)
+            .set("Content-Type", "application/json")
+            .send_json(&body);
+        match resp {
+            Ok(_) => {
+                let count = vectors.len();
+                for (id, vec, meta) in vectors {
+                    self.cache.insert(
+                        id.clone(),
+                        StoredVector {
+                            id,
+                            vector: vec,
+                            metadata: meta,
+                            timestamp: std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs(),
+                        },
+                    );
+                }
+                Ok(count)
+            }
+            Err(e) => Err(AiError::Other(format!(
+                "Pinecone batch upsert failed: {}",
+                e
+            ))),
+        }
+    }
+
+    fn search(
+        &self,
+        query: &[f32],
+        limit: usize,
+        _filter: Option<&[MetadataFilter]>,
+    ) -> AiResult<Vec<VectorSearchResult>> {
+        let url = self.pinecone_url("/query");
+        let mut body = serde_json::json!({
+            "vector": query,
+            "topK": limit,
+            "includeMetadata": true
+        });
+        if !self.config.collection_name.is_empty() {
+            body["namespace"] = serde_json::json!(self.config.collection_name);
+        }
+        let resp = ureq::post(&url)
+            .set("Api-Key", &self.api_key)
+            .set("Content-Type", "application/json")
+            .send_json(&body)
+            .map_err(|e| AiError::Other(format!("Pinecone query failed: {}", e)))?;
+        let json: serde_json::Value = resp
+            .into_json()
+            .map_err(|e| AiError::Other(format!("Pinecone response parse failed: {}", e)))?;
+
+        let mut results = Vec::new();
+        if let Some(matches) = json.get("matches").and_then(|m| m.as_array()) {
+            for m in matches {
+                let id = m
+                    .get("id")
+                    .and_then(|i| i.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let score = m.get("score").and_then(|s| s.as_f64()).unwrap_or(0.0) as f32;
+                let metadata = m.get("metadata").cloned().unwrap_or(serde_json::json!({}));
+                results.push(VectorSearchResult {
+                    id,
+                    score,
+                    metadata,
+                    vector: None,
+                });
+            }
+        }
+        Ok(results)
+    }
+
+    fn get(&self, id: &str) -> AiResult<Option<StoredVector>> {
+        Ok(self.cache.get(id).cloned())
+    }
+
+    fn delete(&mut self, id: &str) -> AiResult<bool> {
+        let url = self.pinecone_url("/vectors/delete");
+        let body = serde_json::json!({ "ids": [id] });
+        let _ = ureq::post(&url)
+            .set("Api-Key", &self.api_key)
+            .set("Content-Type", "application/json")
+            .send_json(&body);
+        Ok(self.cache.remove(id).is_some())
+    }
+
+    fn count(&self) -> usize {
+        self.cache.len()
+    }
+
+    fn clear(&mut self) -> AiResult<()> {
+        let url = self.pinecone_url("/vectors/delete");
+        let body = serde_json::json!({ "deleteAll": true });
+        let _ = ureq::post(&url)
+            .set("Api-Key", &self.api_key)
+            .set("Content-Type", "application/json")
+            .send_json(&body);
+        self.cache.clear();
+        Ok(())
+    }
+
+    fn health_check(&self) -> AiResult<bool> {
+        let url = self.pinecone_url("/describe_index_stats");
+        match ureq::post(&url)
+            .set("Api-Key", &self.api_key)
+            .set("Content-Type", "application/json")
+            .send_json(&serde_json::json!({}))
+        {
+            Ok(_) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    }
+
+    fn backend_info(&self) -> BackendInfo {
+        BackendInfo {
+            name: "Pinecone",
+            tier: 4,
+            supports_persistence: true,
+            supports_filtering: true,
+            supports_export: false,
+            max_recommended_vectors: None,
+        }
+    }
+}
+
+// ============================================================================
+// Chroma Vector DB
+// ============================================================================
+
+/// Chroma vector DB client.
+///
+/// Uses Chroma REST API for vector operations.
+pub struct ChromaClient {
+    base_url: String,
+    config: VectorDbConfig,
+    collection_id: Option<String>,
+    cache: HashMap<String, StoredVector>,
+}
+
+impl ChromaClient {
+    pub fn new(base_url: String, config: VectorDbConfig) -> Self {
+        Self {
+            base_url: base_url.trim_end_matches('/').to_string(),
+            config,
+            collection_id: None,
+            cache: HashMap::new(),
+        }
+    }
+
+    fn ensure_collection(&mut self) -> AiResult<String> {
+        if let Some(ref id) = self.collection_id {
+            return Ok(id.clone());
+        }
+        let name = &self.config.collection_name;
+        let url = format!("{}/api/v1/collections", self.base_url);
+        let body = serde_json::json!({ "name": name, "get_or_create": true });
+        let resp = ureq::post(&url)
+            .set("Content-Type", "application/json")
+            .send_json(&body)
+            .map_err(|e| AiError::Other(format!("Chroma create collection failed: {}", e)))?;
+        let json: serde_json::Value = resp
+            .into_json()
+            .map_err(|e| AiError::Other(format!("Chroma response parse failed: {}", e)))?;
+        let id = json
+            .get("id")
+            .and_then(|i| i.as_str())
+            .unwrap_or(name)
+            .to_string();
+        self.collection_id = Some(id.clone());
+        Ok(id)
+    }
+}
+
+impl VectorDb for ChromaClient {
+    fn insert(&mut self, id: &str, vector: Vec<f32>, metadata: serde_json::Value) -> AiResult<()> {
+        let coll_id = self.ensure_collection()?;
+        let url = format!("{}/api/v1/collections/{}/add", self.base_url, coll_id);
+        let body = serde_json::json!({
+            "ids": [id],
+            "embeddings": [vector],
+            "metadatas": [metadata]
+        });
+        ureq::post(&url)
+            .set("Content-Type", "application/json")
+            .send_json(&body)
+            .map_err(|e| AiError::Other(format!("Chroma add failed: {}", e)))?;
+        self.cache.insert(
+            id.to_string(),
+            StoredVector {
+                id: id.to_string(),
+                vector,
+                metadata,
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            },
+        );
+        Ok(())
+    }
+
+    fn insert_batch(
+        &mut self,
+        vectors: Vec<(String, Vec<f32>, serde_json::Value)>,
+    ) -> AiResult<usize> {
+        let coll_id = self.ensure_collection()?;
+        let ids: Vec<&str> = vectors.iter().map(|(id, _, _)| id.as_str()).collect();
+        let embeddings: Vec<&Vec<f32>> = vectors.iter().map(|(_, v, _)| v).collect();
+        let metadatas: Vec<&serde_json::Value> = vectors.iter().map(|(_, _, m)| m).collect();
+        let url = format!("{}/api/v1/collections/{}/add", self.base_url, coll_id);
+        let body = serde_json::json!({
+            "ids": ids,
+            "embeddings": embeddings,
+            "metadatas": metadatas
+        });
+        ureq::post(&url)
+            .set("Content-Type", "application/json")
+            .send_json(&body)
+            .map_err(|e| AiError::Other(format!("Chroma batch add failed: {}", e)))?;
+        let count = vectors.len();
+        for (id, vec, meta) in vectors {
+            self.cache.insert(
+                id.clone(),
+                StoredVector {
+                    id,
+                    vector: vec,
+                    metadata: meta,
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                },
+            );
+        }
+        Ok(count)
+    }
+
+    fn search(
+        &self,
+        query: &[f32],
+        limit: usize,
+        _filter: Option<&[MetadataFilter]>,
+    ) -> AiResult<Vec<VectorSearchResult>> {
+        let coll_id = self
+            .collection_id
+            .as_deref()
+            .unwrap_or(&self.config.collection_name);
+        let url = format!("{}/api/v1/collections/{}/query", self.base_url, coll_id);
+        let body = serde_json::json!({
+            "query_embeddings": [query],
+            "n_results": limit,
+            "include": ["metadatas", "distances"]
+        });
+        let resp = ureq::post(&url)
+            .set("Content-Type", "application/json")
+            .send_json(&body)
+            .map_err(|e| AiError::Other(format!("Chroma query failed: {}", e)))?;
+        let json: serde_json::Value = resp
+            .into_json()
+            .map_err(|e| AiError::Other(format!("Chroma response parse failed: {}", e)))?;
+
+        let mut results = Vec::new();
+        let ids = json
+            .get("ids")
+            .and_then(|i| i.as_array())
+            .and_then(|a| a.first())
+            .and_then(|a| a.as_array());
+        let distances = json
+            .get("distances")
+            .and_then(|d| d.as_array())
+            .and_then(|a| a.first())
+            .and_then(|a| a.as_array());
+        let metadatas = json
+            .get("metadatas")
+            .and_then(|m| m.as_array())
+            .and_then(|a| a.first())
+            .and_then(|a| a.as_array());
+        if let (Some(ids), Some(distances)) = (ids, distances) {
+            for (i, id) in ids.iter().enumerate() {
+                let id_str = id.as_str().unwrap_or("").to_string();
+                let dist = distances.get(i).and_then(|d| d.as_f64()).unwrap_or(1.0) as f32;
+                let score = 1.0 - dist; // Chroma returns distances, convert to similarity
+                let metadata = metadatas
+                    .and_then(|m| m.get(i))
+                    .cloned()
+                    .unwrap_or(serde_json::json!({}));
+                results.push(VectorSearchResult {
+                    id: id_str,
+                    score,
+                    metadata,
+                    vector: None,
+                });
+            }
+        }
+        Ok(results)
+    }
+
+    fn get(&self, id: &str) -> AiResult<Option<StoredVector>> {
+        Ok(self.cache.get(id).cloned())
+    }
+
+    fn delete(&mut self, id: &str) -> AiResult<bool> {
+        if let Some(ref coll_id) = self.collection_id {
+            let url = format!("{}/api/v1/collections/{}/delete", self.base_url, coll_id);
+            let body = serde_json::json!({ "ids": [id] });
+            let _ = ureq::post(&url)
+                .set("Content-Type", "application/json")
+                .send_json(&body);
+        }
+        Ok(self.cache.remove(id).is_some())
+    }
+
+    fn count(&self) -> usize {
+        self.cache.len()
+    }
+
+    fn clear(&mut self) -> AiResult<()> {
+        self.cache.clear();
+        Ok(())
+    }
+
+    fn health_check(&self) -> AiResult<bool> {
+        let url = format!("{}/api/v1/heartbeat", self.base_url);
+        match ureq::get(&url).call() {
+            Ok(_) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    }
+
+    fn backend_info(&self) -> BackendInfo {
+        BackendInfo {
+            name: "Chroma",
+            tier: 3,
+            supports_persistence: true,
+            supports_filtering: true,
+            supports_export: false,
+            max_recommended_vectors: None,
+        }
+    }
+}
+
+// ============================================================================
+// Milvus Vector DB
+// ============================================================================
+
+/// Milvus vector DB client.
+///
+/// Uses Milvus REST API v2 for vector operations.
+pub struct MilvusClient {
+    base_url: String,
+    config: VectorDbConfig,
+    cache: HashMap<String, StoredVector>,
+}
+
+impl MilvusClient {
+    pub fn new(base_url: String, config: VectorDbConfig) -> Self {
+        Self {
+            base_url: base_url.trim_end_matches('/').to_string(),
+            config,
+            cache: HashMap::new(),
+        }
+    }
+
+    fn collection_name(&self) -> &str {
+        &self.config.collection_name
+    }
+}
+
+impl VectorDb for MilvusClient {
+    fn insert(&mut self, id: &str, vector: Vec<f32>, metadata: serde_json::Value) -> AiResult<()> {
+        let url = format!("{}/v2/vectordb/entities/insert", self.base_url);
+        let mut data = metadata.clone();
+        if let Some(obj) = data.as_object_mut() {
+            obj.insert("id".to_string(), serde_json::json!(id));
+            obj.insert("vector".to_string(), serde_json::json!(vector));
+        }
+        let body = serde_json::json!({
+            "collectionName": self.collection_name(),
+            "data": [data]
+        });
+        ureq::post(&url)
+            .set("Content-Type", "application/json")
+            .send_json(&body)
+            .map_err(|e| AiError::Other(format!("Milvus insert failed: {}", e)))?;
+        self.cache.insert(
+            id.to_string(),
+            StoredVector {
+                id: id.to_string(),
+                vector,
+                metadata,
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            },
+        );
+        Ok(())
+    }
+
+    fn insert_batch(
+        &mut self,
+        vectors: Vec<(String, Vec<f32>, serde_json::Value)>,
+    ) -> AiResult<usize> {
+        let url = format!("{}/v2/vectordb/entities/insert", self.base_url);
+        let data: Vec<serde_json::Value> = vectors
+            .iter()
+            .map(|(id, vec, meta)| {
+                let mut d = meta.clone();
+                if let Some(obj) = d.as_object_mut() {
+                    obj.insert("id".to_string(), serde_json::json!(id));
+                    obj.insert("vector".to_string(), serde_json::json!(vec));
+                }
+                d
+            })
+            .collect();
+        let body = serde_json::json!({
+            "collectionName": self.collection_name(),
+            "data": data
+        });
+        ureq::post(&url)
+            .set("Content-Type", "application/json")
+            .send_json(&body)
+            .map_err(|e| AiError::Other(format!("Milvus batch insert failed: {}", e)))?;
+        let count = vectors.len();
+        for (id, vec, meta) in vectors {
+            self.cache.insert(
+                id.clone(),
+                StoredVector {
+                    id,
+                    vector: vec,
+                    metadata: meta,
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                },
+            );
+        }
+        Ok(count)
+    }
+
+    fn search(
+        &self,
+        query: &[f32],
+        limit: usize,
+        _filter: Option<&[MetadataFilter]>,
+    ) -> AiResult<Vec<VectorSearchResult>> {
+        let url = format!("{}/v2/vectordb/entities/search", self.base_url);
+        let body = serde_json::json!({
+            "collectionName": self.collection_name(),
+            "data": [query],
+            "limit": limit,
+            "outputFields": ["*"]
+        });
+        let resp = ureq::post(&url)
+            .set("Content-Type", "application/json")
+            .send_json(&body)
+            .map_err(|e| AiError::Other(format!("Milvus search failed: {}", e)))?;
+        let json: serde_json::Value = resp
+            .into_json()
+            .map_err(|e| AiError::Other(format!("Milvus response parse failed: {}", e)))?;
+
+        let mut results = Vec::new();
+        if let Some(data) = json.get("data").and_then(|d| d.as_array()) {
+            for item in data {
+                let id = item
+                    .get("id")
+                    .and_then(|i| i.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let score = item.get("distance").and_then(|s| s.as_f64()).unwrap_or(0.0) as f32;
+                let metadata = item.clone();
+                results.push(VectorSearchResult {
+                    id,
+                    score,
+                    metadata,
+                    vector: None,
+                });
+            }
+        }
+        Ok(results)
+    }
+
+    fn get(&self, id: &str) -> AiResult<Option<StoredVector>> {
+        Ok(self.cache.get(id).cloned())
+    }
+
+    fn delete(&mut self, id: &str) -> AiResult<bool> {
+        let url = format!("{}/v2/vectordb/entities/delete", self.base_url);
+        let body = serde_json::json!({
+            "collectionName": self.collection_name(),
+            "filter": format!("id == \"{}\"", id)
+        });
+        let _ = ureq::post(&url)
+            .set("Content-Type", "application/json")
+            .send_json(&body);
+        Ok(self.cache.remove(id).is_some())
+    }
+
+    fn count(&self) -> usize {
+        self.cache.len()
+    }
+
+    fn clear(&mut self) -> AiResult<()> {
+        self.cache.clear();
+        Ok(())
+    }
+
+    fn health_check(&self) -> AiResult<bool> {
+        let url = format!("{}/v2/vectordb/collections/list", self.base_url);
+        match ureq::post(&url)
+            .set("Content-Type", "application/json")
+            .send_json(&serde_json::json!({}))
+        {
+            Ok(_) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    }
+
+    fn backend_info(&self) -> BackendInfo {
+        BackendInfo {
+            name: "Milvus",
+            tier: 3,
+            supports_persistence: true,
+            supports_filtering: true,
+            supports_export: false,
+            max_recommended_vectors: None,
+        }
+    }
+}
+
+// ============================================================================
+// Weaviate Vector DB
+// ============================================================================
+
+/// Weaviate vector DB client.
+///
+/// Uses Weaviate REST API v1 for vector operations.
+pub struct WeaviateClient {
+    base_url: String,
+    config: VectorDbConfig,
+    cache: HashMap<String, StoredVector>,
+}
+
+impl WeaviateClient {
+    pub fn new(base_url: String, config: VectorDbConfig) -> Self {
+        Self {
+            base_url: base_url.trim_end_matches('/').to_string(),
+            config,
+            cache: HashMap::new(),
+        }
+    }
+
+    /// Returns the Weaviate class name derived from the collection name.
+    /// Weaviate class names must start with an uppercase letter.
+    fn class_name(&self) -> String {
+        let name = &self.config.collection_name;
+        if name.is_empty() {
+            return "Default".to_string();
+        }
+        let mut chars = name.chars();
+        match chars.next() {
+            Some(c) => c.to_uppercase().to_string() + chars.as_str(),
+            None => "Default".to_string(),
+        }
+    }
+}
+
+impl VectorDb for WeaviateClient {
+    fn insert(&mut self, id: &str, vector: Vec<f32>, metadata: serde_json::Value) -> AiResult<()> {
+        let url = format!("{}/v1/objects", self.base_url);
+        let body = serde_json::json!({
+            "class": self.class_name(),
+            "id": id,
+            "properties": metadata,
+            "vector": vector
+        });
+        ureq::post(&url)
+            .set("Content-Type", "application/json")
+            .send_json(&body)
+            .map_err(|e| AiError::Other(format!("Weaviate insert failed: {}", e)))?;
+        self.cache.insert(
+            id.to_string(),
+            StoredVector {
+                id: id.to_string(),
+                vector,
+                metadata,
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            },
+        );
+        Ok(())
+    }
+
+    fn insert_batch(
+        &mut self,
+        vectors: Vec<(String, Vec<f32>, serde_json::Value)>,
+    ) -> AiResult<usize> {
+        let url = format!("{}/v1/batch/objects", self.base_url);
+        let objects: Vec<serde_json::Value> = vectors
+            .iter()
+            .map(|(id, vec, meta)| {
+                serde_json::json!({
+                    "class": self.class_name(),
+                    "id": id,
+                    "properties": meta,
+                    "vector": vec
+                })
+            })
+            .collect();
+        let body = serde_json::json!({ "objects": objects });
+        ureq::post(&url)
+            .set("Content-Type", "application/json")
+            .send_json(&body)
+            .map_err(|e| AiError::Other(format!("Weaviate batch insert failed: {}", e)))?;
+        let count = vectors.len();
+        for (id, vec, meta) in vectors {
+            self.cache.insert(
+                id.clone(),
+                StoredVector {
+                    id,
+                    vector: vec,
+                    metadata: meta,
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                },
+            );
+        }
+        Ok(count)
+    }
+
+    fn search(
+        &self,
+        query: &[f32],
+        limit: usize,
+        _filter: Option<&[MetadataFilter]>,
+    ) -> AiResult<Vec<VectorSearchResult>> {
+        let url = format!("{}/v1/graphql", self.base_url);
+        let class = self.class_name();
+        let vector_str = format!("{:?}", query);
+        let graphql_query = format!(
+            "{{ Get {{ {}(nearVector: {{vector: {}, certainty: 0.7}}, limit: {}) {{ _additional {{ id distance }} }} }} }}",
+            class, vector_str, limit
+        );
+        let body = serde_json::json!({ "query": graphql_query });
+        let resp = ureq::post(&url)
+            .set("Content-Type", "application/json")
+            .send_json(&body)
+            .map_err(|e| AiError::Other(format!("Weaviate search failed: {}", e)))?;
+        let json: serde_json::Value = resp
+            .into_json()
+            .map_err(|e| AiError::Other(format!("Weaviate response parse failed: {}", e)))?;
+
+        let mut results = Vec::new();
+        if let Some(items) = json
+            .get("data")
+            .and_then(|d| d.get("Get"))
+            .and_then(|g| g.get(&class))
+            .and_then(|c| c.as_array())
+        {
+            for item in items {
+                let additional = item.get("_additional").unwrap_or(item);
+                let id = additional
+                    .get("id")
+                    .and_then(|i| i.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let distance = additional
+                    .get("distance")
+                    .and_then(|d| d.as_f64())
+                    .unwrap_or(1.0) as f32;
+                let score = 1.0 - distance;
+                results.push(VectorSearchResult {
+                    id,
+                    score,
+                    metadata: item.clone(),
+                    vector: None,
+                });
+            }
+        }
+        Ok(results)
+    }
+
+    fn get(&self, id: &str) -> AiResult<Option<StoredVector>> {
+        if let Some(cached) = self.cache.get(id) {
+            return Ok(Some(cached.clone()));
+        }
+        let url = format!("{}/v1/objects/{}/{}", self.base_url, self.class_name(), id);
+        match ureq::get(&url).call() {
+            Ok(resp) => {
+                let json: serde_json::Value = resp
+                    .into_json()
+                    .map_err(|e| AiError::Other(format!("Weaviate get parse failed: {}", e)))?;
+                let vector: Vec<f32> = json
+                    .get("vector")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|x| x.as_f64().map(|f| f as f32))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let metadata = json
+                    .get("properties")
+                    .cloned()
+                    .unwrap_or(serde_json::json!({}));
+                Ok(Some(StoredVector {
+                    id: id.to_string(),
+                    vector,
+                    metadata,
+                    timestamp: 0,
+                }))
+            }
+            Err(_) => Ok(None),
+        }
+    }
+
+    fn delete(&mut self, id: &str) -> AiResult<bool> {
+        let url = format!("{}/v1/objects/{}/{}", self.base_url, self.class_name(), id);
+        let _ = ureq::delete(&url).call();
+        Ok(self.cache.remove(id).is_some())
+    }
+
+    fn count(&self) -> usize {
+        self.cache.len()
+    }
+
+    fn clear(&mut self) -> AiResult<()> {
+        self.cache.clear();
+        Ok(())
+    }
+
+    fn health_check(&self) -> AiResult<bool> {
+        let url = format!("{}/v1/.well-known/ready", self.base_url);
+        match ureq::get(&url).call() {
+            Ok(_) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    }
+
+    fn backend_info(&self) -> BackendInfo {
+        BackendInfo {
+            name: "Weaviate",
+            tier: 3,
+            supports_persistence: true,
+            supports_filtering: true,
+            supports_export: false,
+            max_recommended_vectors: None,
+        }
+    }
+}
+
+// ============================================================================
+// Redis Vector DB
+// ============================================================================
+
+/// Redis Vector DB client.
+///
+/// Uses a Redis REST gateway (e.g. redis-rest or RedisJSON HTTP) for vector operations.
+pub struct RedisVectorClient {
+    base_url: String,
+    #[allow(dead_code)]
+    config: VectorDbConfig,
+    index_name: String,
+    cache: HashMap<String, StoredVector>,
+}
+
+impl RedisVectorClient {
+    pub fn new(base_url: String, config: VectorDbConfig) -> Self {
+        let index_name = config.collection_name.clone();
+        Self {
+            base_url: base_url.trim_end_matches('/').to_string(),
+            config,
+            index_name,
+            cache: HashMap::new(),
+        }
+    }
+
+    /// Returns the index name used for vector search.
+    fn index_name(&self) -> &str {
+        &self.index_name
+    }
+}
+
+impl VectorDb for RedisVectorClient {
+    fn insert(&mut self, id: &str, vector: Vec<f32>, metadata: serde_json::Value) -> AiResult<()> {
+        let url = format!("{}/set/{}", self.base_url, id);
+        let body = serde_json::json!({
+            "index": self.index_name(),
+            "vector": vector,
+            "metadata": metadata
+        });
+        ureq::post(&url)
+            .set("Content-Type", "application/json")
+            .send_json(&body)
+            .map_err(|e| AiError::Other(format!("Redis vector insert failed: {}", e)))?;
+        self.cache.insert(
+            id.to_string(),
+            StoredVector {
+                id: id.to_string(),
+                vector,
+                metadata,
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            },
+        );
+        Ok(())
+    }
+
+    fn insert_batch(
+        &mut self,
+        vectors: Vec<(String, Vec<f32>, serde_json::Value)>,
+    ) -> AiResult<usize> {
+        let count = vectors.len();
+        for (id, vector, metadata) in vectors {
+            let url = format!("{}/set/{}", self.base_url, id);
+            let body = serde_json::json!({
+                "index": self.index_name(),
+                "vector": vector,
+                "metadata": metadata
+            });
+            ureq::post(&url)
+                .set("Content-Type", "application/json")
+                .send_json(&body)
+                .map_err(|e| AiError::Other(format!("Redis vector batch insert failed: {}", e)))?;
+            self.cache.insert(
+                id.clone(),
+                StoredVector {
+                    id,
+                    vector,
+                    metadata,
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                },
+            );
+        }
+        Ok(count)
+    }
+
+    fn search(
+        &self,
+        query: &[f32],
+        limit: usize,
+        _filter: Option<&[MetadataFilter]>,
+    ) -> AiResult<Vec<VectorSearchResult>> {
+        let url = format!("{}/search", self.base_url);
+        let body = serde_json::json!({
+            "index": self.index_name(),
+            "query_vector": query,
+            "k": limit
+        });
+        let resp = ureq::post(&url)
+            .set("Content-Type", "application/json")
+            .send_json(&body)
+            .map_err(|e| AiError::Other(format!("Redis vector search failed: {}", e)))?;
+        let json: serde_json::Value = resp
+            .into_json()
+            .map_err(|e| AiError::Other(format!("Redis vector response parse failed: {}", e)))?;
+
+        let mut results = Vec::new();
+        if let Some(items) = json.get("results").and_then(|r| r.as_array()) {
+            for item in items {
+                let id = item
+                    .get("id")
+                    .and_then(|i| i.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let score = item.get("score").and_then(|s| s.as_f64()).unwrap_or(0.0) as f32;
+                let metadata = item
+                    .get("metadata")
+                    .cloned()
+                    .unwrap_or(serde_json::json!({}));
+                results.push(VectorSearchResult {
+                    id,
+                    score,
+                    metadata,
+                    vector: None,
+                });
+            }
+        }
+        Ok(results)
+    }
+
+    fn get(&self, id: &str) -> AiResult<Option<StoredVector>> {
+        if let Some(cached) = self.cache.get(id) {
+            return Ok(Some(cached.clone()));
+        }
+        let url = format!("{}/get/{}", self.base_url, id);
+        match ureq::get(&url).call() {
+            Ok(resp) => {
+                let json: serde_json::Value = resp
+                    .into_json()
+                    .map_err(|e| AiError::Other(format!("Redis vector get parse failed: {}", e)))?;
+                let vector: Vec<f32> = json
+                    .get("vector")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|x| x.as_f64().map(|f| f as f32))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let metadata = json
+                    .get("metadata")
+                    .cloned()
+                    .unwrap_or(serde_json::json!({}));
+                Ok(Some(StoredVector {
+                    id: id.to_string(),
+                    vector,
+                    metadata,
+                    timestamp: 0,
+                }))
+            }
+            Err(_) => Ok(None),
+        }
+    }
+
+    fn delete(&mut self, id: &str) -> AiResult<bool> {
+        let url = format!("{}/del/{}", self.base_url, id);
+        let _ = ureq::post(&url)
+            .set("Content-Type", "application/json")
+            .send_json(&serde_json::json!({}));
+        Ok(self.cache.remove(id).is_some())
+    }
+
+    fn count(&self) -> usize {
+        self.cache.len()
+    }
+
+    fn clear(&mut self) -> AiResult<()> {
+        self.cache.clear();
+        Ok(())
+    }
+
+    fn health_check(&self) -> AiResult<bool> {
+        let url = format!("{}/ping", self.base_url);
+        match ureq::get(&url).call() {
+            Ok(_) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    }
+
+    fn backend_info(&self) -> BackendInfo {
+        BackendInfo {
+            name: "Redis Vector",
+            tier: 3,
+            supports_persistence: true,
+            supports_filtering: true,
+            supports_export: false,
+            max_recommended_vectors: None,
+        }
+    }
+}
+
+// ============================================================================
+// Elasticsearch Vector DB
+// ============================================================================
+
+/// Elasticsearch vector DB client.
+///
+/// Uses Elasticsearch REST API with kNN search for vector operations.
+pub struct ElasticsearchClient {
+    base_url: String,
+    #[allow(dead_code)]
+    config: VectorDbConfig,
+    index_name: String,
+    cache: HashMap<String, StoredVector>,
+}
+
+impl ElasticsearchClient {
+    pub fn new(base_url: String, config: VectorDbConfig) -> Self {
+        let index_name = config.collection_name.to_lowercase();
+        Self {
+            base_url: base_url.trim_end_matches('/').to_string(),
+            config,
+            index_name,
+            cache: HashMap::new(),
+        }
+    }
+
+    /// Returns the index name (lowercased collection name).
+    fn index_name(&self) -> &str {
+        &self.index_name
+    }
+}
+
+impl VectorDb for ElasticsearchClient {
+    fn insert(&mut self, id: &str, vector: Vec<f32>, metadata: serde_json::Value) -> AiResult<()> {
+        let url = format!("{}/{}/_doc/{}", self.base_url, self.index_name(), id);
+        let body = serde_json::json!({
+            "vector": vector,
+            "metadata": metadata
+        });
+        ureq::put(&url)
+            .set("Content-Type", "application/json")
+            .send_json(&body)
+            .map_err(|e| AiError::Other(format!("Elasticsearch insert failed: {}", e)))?;
+        self.cache.insert(
+            id.to_string(),
+            StoredVector {
+                id: id.to_string(),
+                vector,
+                metadata,
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            },
+        );
+        Ok(())
+    }
+
+    fn insert_batch(
+        &mut self,
+        vectors: Vec<(String, Vec<f32>, serde_json::Value)>,
+    ) -> AiResult<usize> {
+        // Elasticsearch bulk API uses newline-delimited JSON
+        let mut bulk_body = String::new();
+        for (id, vector, metadata) in &vectors {
+            let action = serde_json::json!({"index": {"_index": self.index_name(), "_id": id}});
+            let doc = serde_json::json!({"vector": vector, "metadata": metadata});
+            bulk_body.push_str(&action.to_string());
+            bulk_body.push('\n');
+            bulk_body.push_str(&doc.to_string());
+            bulk_body.push('\n');
+        }
+        let url = format!("{}/_bulk", self.base_url);
+        ureq::post(&url)
+            .set("Content-Type", "application/x-ndjson")
+            .send_string(&bulk_body)
+            .map_err(|e| AiError::Other(format!("Elasticsearch bulk insert failed: {}", e)))?;
+        let count = vectors.len();
+        for (id, vector, metadata) in vectors {
+            self.cache.insert(
+                id.clone(),
+                StoredVector {
+                    id,
+                    vector,
+                    metadata,
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                },
+            );
+        }
+        Ok(count)
+    }
+
+    fn search(
+        &self,
+        query: &[f32],
+        limit: usize,
+        _filter: Option<&[MetadataFilter]>,
+    ) -> AiResult<Vec<VectorSearchResult>> {
+        let url = format!("{}/{}/_search", self.base_url, self.index_name());
+        let body = serde_json::json!({
+            "knn": {
+                "field": "vector",
+                "query_vector": query,
+                "k": limit,
+                "num_candidates": limit * 2
+            },
+            "size": limit
+        });
+        let resp = ureq::post(&url)
+            .set("Content-Type", "application/json")
+            .send_json(&body)
+            .map_err(|e| AiError::Other(format!("Elasticsearch search failed: {}", e)))?;
+        let json: serde_json::Value = resp
+            .into_json()
+            .map_err(|e| AiError::Other(format!("Elasticsearch response parse failed: {}", e)))?;
+
+        let mut results = Vec::new();
+        if let Some(hits) = json
+            .get("hits")
+            .and_then(|h| h.get("hits"))
+            .and_then(|h| h.as_array())
+        {
+            for hit in hits {
+                let id = hit
+                    .get("_id")
+                    .and_then(|i| i.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let score = hit.get("_score").and_then(|s| s.as_f64()).unwrap_or(0.0) as f32;
+                let metadata = hit
+                    .get("_source")
+                    .and_then(|s| s.get("metadata"))
+                    .cloned()
+                    .unwrap_or(serde_json::json!({}));
+                results.push(VectorSearchResult {
+                    id,
+                    score,
+                    metadata,
+                    vector: None,
+                });
+            }
+        }
+        Ok(results)
+    }
+
+    fn get(&self, id: &str) -> AiResult<Option<StoredVector>> {
+        if let Some(cached) = self.cache.get(id) {
+            return Ok(Some(cached.clone()));
+        }
+        let url = format!("{}/{}/_doc/{}", self.base_url, self.index_name(), id);
+        match ureq::get(&url).call() {
+            Ok(resp) => {
+                let json: serde_json::Value = resp.into_json().map_err(|e| {
+                    AiError::Other(format!("Elasticsearch get parse failed: {}", e))
+                })?;
+                if let Some(source) = json.get("_source") {
+                    let vector: Vec<f32> = source
+                        .get("vector")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|x| x.as_f64().map(|f| f as f32))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let metadata = source
+                        .get("metadata")
+                        .cloned()
+                        .unwrap_or(serde_json::json!({}));
+                    Ok(Some(StoredVector {
+                        id: id.to_string(),
+                        vector,
+                        metadata,
+                        timestamp: 0,
+                    }))
+                } else {
+                    Ok(None)
+                }
+            }
+            Err(_) => Ok(None),
+        }
+    }
+
+    fn delete(&mut self, id: &str) -> AiResult<bool> {
+        let url = format!("{}/{}/_doc/{}", self.base_url, self.index_name(), id);
+        let _ = ureq::delete(&url).call();
+        Ok(self.cache.remove(id).is_some())
+    }
+
+    fn count(&self) -> usize {
+        self.cache.len()
+    }
+
+    fn clear(&mut self) -> AiResult<()> {
+        self.cache.clear();
+        Ok(())
+    }
+
+    fn health_check(&self) -> AiResult<bool> {
+        let url = format!("{}/_cluster/health", self.base_url);
+        match ureq::get(&url).call() {
+            Ok(_) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    }
+
+    fn backend_info(&self) -> BackendInfo {
+        BackendInfo {
+            name: "Elasticsearch",
+            tier: 3,
+            supports_persistence: true,
+            supports_filtering: true,
+            supports_export: false,
+            max_recommended_vectors: None,
+        }
+    }
+}
+
+// Implement Send + Sync for new backends
+unsafe impl Send for PineconeClient {}
+unsafe impl Sync for PineconeClient {}
+unsafe impl Send for ChromaClient {}
+unsafe impl Sync for ChromaClient {}
+unsafe impl Send for MilvusClient {}
+unsafe impl Sync for MilvusClient {}
+unsafe impl Send for WeaviateClient {}
+unsafe impl Sync for WeaviateClient {}
+unsafe impl Send for RedisVectorClient {}
+unsafe impl Sync for RedisVectorClient {}
+unsafe impl Send for ElasticsearchClient {}
+unsafe impl Sync for ElasticsearchClient {}
 
 #[cfg(test)]
 mod tests {
@@ -1277,12 +2687,24 @@ mod tests {
         };
         let mut db = InMemoryVectorDb::new(config);
 
-        db.insert("v1", vec![1.0, 0.0, 0.0], serde_json::json!({"type": "a", "score": 10}))
-            .unwrap();
-        db.insert("v2", vec![0.9, 0.1, 0.0], serde_json::json!({"type": "b", "score": 20}))
-            .unwrap();
-        db.insert("v3", vec![0.8, 0.2, 0.0], serde_json::json!({"type": "a", "score": 30}))
-            .unwrap();
+        db.insert(
+            "v1",
+            vec![1.0, 0.0, 0.0],
+            serde_json::json!({"type": "a", "score": 10}),
+        )
+        .unwrap();
+        db.insert(
+            "v2",
+            vec![0.9, 0.1, 0.0],
+            serde_json::json!({"type": "b", "score": 20}),
+        )
+        .unwrap();
+        db.insert(
+            "v3",
+            vec![0.8, 0.2, 0.0],
+            serde_json::json!({"type": "a", "score": 30}),
+        )
+        .unwrap();
 
         // Filter by type
         let filter = vec![MetadataFilter {
@@ -1332,11 +2754,14 @@ mod tests {
         };
         let mut db = InMemoryVectorDb::new(config);
 
-        db.insert("v1", vec![1.0, 0.0, 0.0], serde_json::json!({})).unwrap();
+        db.insert("v1", vec![1.0, 0.0, 0.0], serde_json::json!({}))
+            .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(10));
-        db.insert("v2", vec![0.0, 1.0, 0.0], serde_json::json!({})).unwrap();
+        db.insert("v2", vec![0.0, 1.0, 0.0], serde_json::json!({}))
+            .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(10));
-        db.insert("v3", vec![0.0, 0.0, 1.0], serde_json::json!({})).unwrap();
+        db.insert("v3", vec![0.0, 0.0, 1.0], serde_json::json!({}))
+            .unwrap();
 
         // Should have evicted oldest (v1)
         assert_eq!(db.count(), 2);
@@ -1370,20 +2795,537 @@ mod tests {
         };
         let mut db = InMemoryVectorDb::new(config);
 
-        db.insert("v1", vec![1.0, 0.0, 0.0], serde_json::json!({"text": "hello world"}))
-            .unwrap();
-        db.insert("v2", vec![0.9, 0.1, 0.0], serde_json::json!({"text": "hello there"}))
-            .unwrap();
-        db.insert("v3", vec![0.0, 1.0, 0.0], serde_json::json!({"text": "goodbye world"}))
-            .unwrap();
+        db.insert(
+            "v1",
+            vec![1.0, 0.0, 0.0],
+            serde_json::json!({"text": "hello world"}),
+        )
+        .unwrap();
+        db.insert(
+            "v2",
+            vec![0.9, 0.1, 0.0],
+            serde_json::json!({"text": "hello there"}),
+        )
+        .unwrap();
+        db.insert(
+            "v3",
+            vec![0.0, 1.0, 0.0],
+            serde_json::json!({"text": "goodbye world"}),
+        )
+        .unwrap();
 
         let hybrid = HybridVectorSearch::new(db).with_weights(0.5, 0.5);
 
-        let results = hybrid
-            .search(&[1.0, 0.0, 0.0], "hello", 3, None)
-            .unwrap();
+        let results = hybrid.search(&[1.0, 0.0, 0.0], "hello", 3, None).unwrap();
 
         // v1 and v2 should rank higher due to "hello" keyword match
         assert!(!results.is_empty());
+    }
+
+    // ====================================================================
+    // Pinecone backend tests (unit-level, no network)
+    // ====================================================================
+
+    #[test]
+    fn test_pinecone_client_creation() {
+        let config = VectorDbConfig {
+            dimensions: 768,
+            collection_name: "my-namespace".to_string(),
+            ..Default::default()
+        };
+        let client = PineconeClient::new(
+            "https://my-index-abc123.svc.pinecone.io".to_string(),
+            "pc-test-key".to_string(),
+            config,
+        );
+        assert_eq!(
+            client.pinecone_url("/vectors/upsert"),
+            "https://my-index-abc123.svc.pinecone.io/vectors/upsert"
+        );
+        assert_eq!(
+            client.pinecone_url("/query"),
+            "https://my-index-abc123.svc.pinecone.io/query"
+        );
+    }
+
+    #[test]
+    fn test_pinecone_backend_info() {
+        let config = VectorDbConfig {
+            dimensions: 768,
+            ..Default::default()
+        };
+        let client = PineconeClient::new("https://x.pinecone.io".into(), "key".into(), config);
+        let info = client.backend_info();
+        assert_eq!(info.name, "Pinecone");
+        assert_eq!(info.tier, 4);
+        assert!(info.supports_persistence);
+        assert!(info.supports_filtering);
+        assert!(!info.supports_export); // cloud-only, no local export
+        assert!(info.max_recommended_vectors.is_none());
+    }
+
+    #[test]
+    fn test_pinecone_cache_operations() {
+        let config = VectorDbConfig {
+            dimensions: 3,
+            ..Default::default()
+        };
+        let mut client = PineconeClient::new("https://x.pinecone.io".into(), "key".into(), config);
+        // Cache starts empty
+        assert_eq!(client.count(), 0);
+        assert!(client.get("nonexistent").unwrap().is_none());
+        // Manually insert into cache (simulates successful upsert)
+        client.cache.insert(
+            "v1".to_string(),
+            StoredVector {
+                id: "v1".to_string(),
+                vector: vec![1.0, 0.0, 0.0],
+                metadata: serde_json::json!({"topic": "test"}),
+                timestamp: 1000,
+            },
+        );
+        assert_eq!(client.count(), 1);
+        let v = client.get("v1").unwrap().unwrap();
+        assert_eq!(v.id, "v1");
+        assert_eq!(v.metadata["topic"], "test");
+    }
+
+    #[test]
+    fn test_pinecone_url_trailing_slash() {
+        let config = VectorDbConfig {
+            dimensions: 768,
+            ..Default::default()
+        };
+        let client = PineconeClient::new(
+            "https://my-index.svc.pinecone.io/".to_string(),
+            "key".into(),
+            config,
+        );
+        assert_eq!(
+            client.pinecone_url("/query"),
+            "https://my-index.svc.pinecone.io/query"
+        );
+    }
+
+    // ====================================================================
+    // Chroma backend tests (unit-level, no network)
+    // ====================================================================
+
+    #[test]
+    fn test_chroma_client_creation() {
+        let config = VectorDbConfig {
+            dimensions: 384,
+            collection_name: "my_collection".to_string(),
+            ..Default::default()
+        };
+        let client = ChromaClient::new("http://localhost:8000".to_string(), config);
+        // base_url should be stored without trailing slash
+        assert_eq!(client.base_url, "http://localhost:8000");
+    }
+
+    #[test]
+    fn test_chroma_backend_info() {
+        let config = VectorDbConfig {
+            dimensions: 384,
+            ..Default::default()
+        };
+        let client = ChromaClient::new("http://localhost:8000".into(), config);
+        let info = client.backend_info();
+        assert_eq!(info.name, "Chroma");
+        assert_eq!(info.tier, 3);
+        assert!(info.supports_persistence);
+        assert!(info.supports_filtering);
+    }
+
+    #[test]
+    fn test_chroma_cache_operations() {
+        let config = VectorDbConfig {
+            dimensions: 3,
+            ..Default::default()
+        };
+        let mut client = ChromaClient::new("http://localhost:8000".into(), config);
+        assert_eq!(client.count(), 0);
+        client.cache.insert(
+            "c1".to_string(),
+            StoredVector {
+                id: "c1".to_string(),
+                vector: vec![0.0, 1.0, 0.0],
+                metadata: serde_json::json!({}),
+                timestamp: 2000,
+            },
+        );
+        assert_eq!(client.count(), 1);
+        assert!(client.get("c1").unwrap().is_some());
+        assert!(client.get("c2").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_chroma_url_trailing_slash_stripped() {
+        let config = VectorDbConfig {
+            dimensions: 384,
+            collection_name: "docs".to_string(),
+            ..Default::default()
+        };
+        let client = ChromaClient::new("http://chroma-server:8080/".to_string(), config);
+        // Trailing slash should be stripped during construction
+        assert_eq!(client.base_url, "http://chroma-server:8080");
+    }
+
+    // ====================================================================
+    // Milvus backend tests (unit-level, no network)
+    // ====================================================================
+
+    #[test]
+    fn test_milvus_client_creation() {
+        let config = VectorDbConfig {
+            dimensions: 128,
+            collection_name: "vectors".to_string(),
+            ..Default::default()
+        };
+        let client = MilvusClient::new("http://localhost:19530".to_string(), config);
+        assert_eq!(client.base_url, "http://localhost:19530");
+    }
+
+    #[test]
+    fn test_milvus_backend_info() {
+        let config = VectorDbConfig {
+            dimensions: 128,
+            ..Default::default()
+        };
+        let client = MilvusClient::new("http://localhost:19530".into(), config);
+        let info = client.backend_info();
+        assert_eq!(info.name, "Milvus");
+        assert_eq!(info.tier, 3);
+        assert!(info.supports_persistence);
+        assert!(info.supports_filtering);
+        assert!(info.max_recommended_vectors.is_none());
+    }
+
+    #[test]
+    fn test_milvus_cache_operations() {
+        let config = VectorDbConfig {
+            dimensions: 3,
+            ..Default::default()
+        };
+        let mut client = MilvusClient::new("http://localhost:19530".into(), config);
+        assert_eq!(client.count(), 0);
+        client.cache.insert(
+            "m1".to_string(),
+            StoredVector {
+                id: "m1".to_string(),
+                vector: vec![1.0, 1.0, 0.0],
+                metadata: serde_json::json!({"source": "doc"}),
+                timestamp: 3000,
+            },
+        );
+        assert_eq!(client.count(), 1);
+        let v = client.get("m1").unwrap().unwrap();
+        assert_eq!(v.metadata["source"], "doc");
+    }
+
+    #[test]
+    fn test_milvus_url_trailing_slash_stripped() {
+        let config = VectorDbConfig {
+            dimensions: 128,
+            ..Default::default()
+        };
+        let client = MilvusClient::new("http://milvus:19530/".to_string(), config);
+        assert_eq!(client.base_url, "http://milvus:19530");
+    }
+
+    // ====================================================================
+    // VectorDbBuilder tests for new backends
+    // ====================================================================
+
+    #[test]
+    fn test_builder_pinecone() {
+        let builder = VectorDbBuilder::new()
+            .dimensions(768)
+            .pinecone("https://my-index.svc.pinecone.io", "pc-key-123");
+        let db = builder.build().unwrap();
+        assert_eq!(db.backend_info().name, "Pinecone");
+        assert_eq!(db.count(), 0);
+    }
+
+    #[test]
+    fn test_builder_chroma() {
+        let builder = VectorDbBuilder::new()
+            .dimensions(384)
+            .chroma("http://localhost:8000");
+        let db = builder.build().unwrap();
+        assert_eq!(db.backend_info().name, "Chroma");
+    }
+
+    #[test]
+    fn test_builder_milvus() {
+        let builder = VectorDbBuilder::new()
+            .dimensions(128)
+            .milvus("http://localhost:19530");
+        let db = builder.build().unwrap();
+        assert_eq!(db.backend_info().name, "Milvus");
+    }
+
+    #[test]
+    fn test_vector_db_backend_variants() {
+        // Ensure all new backend variants exist
+        let _p = VectorDbBackend::Pinecone;
+        let _c = VectorDbBackend::Chroma;
+        let _m = VectorDbBackend::Milvus;
+        let _w = VectorDbBackend::Weaviate;
+        let _r = VectorDbBackend::RedisVector;
+        let _e = VectorDbBackend::Elasticsearch;
+    }
+
+    // ====================================================================
+    // Weaviate backend tests (unit-level, no network)
+    // ====================================================================
+
+    #[test]
+    fn test_weaviate_client_creation() {
+        let config = VectorDbConfig {
+            dimensions: 384,
+            collection_name: "documents".to_string(),
+            ..Default::default()
+        };
+        let client = WeaviateClient::new("http://localhost:8080".to_string(), config);
+        assert_eq!(client.base_url, "http://localhost:8080");
+    }
+
+    #[test]
+    fn test_weaviate_url_building() {
+        let config = VectorDbConfig {
+            dimensions: 384,
+            collection_name: "documents".to_string(),
+            ..Default::default()
+        };
+        let client = WeaviateClient::new("http://localhost:8080/".to_string(), config);
+        // Trailing slash should be stripped
+        assert_eq!(client.base_url, "http://localhost:8080");
+        // class_name should capitalize first letter
+        assert_eq!(client.class_name(), "Documents");
+    }
+
+    #[test]
+    fn test_weaviate_backend_info() {
+        let config = VectorDbConfig {
+            dimensions: 384,
+            ..Default::default()
+        };
+        let client = WeaviateClient::new("http://localhost:8080".into(), config);
+        let info = client.backend_info();
+        assert_eq!(info.name, "Weaviate");
+        assert_eq!(info.tier, 3);
+        assert!(info.supports_persistence);
+        assert!(info.supports_filtering);
+        assert!(!info.supports_export);
+        assert!(info.max_recommended_vectors.is_none());
+    }
+
+    #[test]
+    fn test_weaviate_cache_operations() {
+        let config = VectorDbConfig {
+            dimensions: 3,
+            ..Default::default()
+        };
+        let mut client = WeaviateClient::new("http://localhost:8080".into(), config);
+        assert_eq!(client.count(), 0);
+        assert!(client.get("nonexistent").unwrap().is_none());
+        // Manually insert into cache (simulates successful insert)
+        client.cache.insert(
+            "w1".to_string(),
+            StoredVector {
+                id: "w1".to_string(),
+                vector: vec![1.0, 0.0, 0.0],
+                metadata: serde_json::json!({"class": "Document"}),
+                timestamp: 1000,
+            },
+        );
+        assert_eq!(client.count(), 1);
+        let v = client.get("w1").unwrap().unwrap();
+        assert_eq!(v.id, "w1");
+        assert_eq!(v.metadata["class"], "Document");
+        // Delete from cache
+        assert!(client.delete("w1").unwrap());
+        assert_eq!(client.count(), 0);
+    }
+
+    #[test]
+    fn test_weaviate_builder() {
+        let builder = VectorDbBuilder::new()
+            .dimensions(384)
+            .collection_name("articles")
+            .weaviate("http://localhost:8080");
+        let db = builder.build().unwrap();
+        assert_eq!(db.backend_info().name, "Weaviate");
+        assert_eq!(db.count(), 0);
+    }
+
+    // ====================================================================
+    // Redis Vector backend tests (unit-level, no network)
+    // ====================================================================
+
+    #[test]
+    fn test_redis_vector_client_creation() {
+        let config = VectorDbConfig {
+            dimensions: 768,
+            collection_name: "embeddings".to_string(),
+            ..Default::default()
+        };
+        let client = RedisVectorClient::new("http://localhost:6379".to_string(), config);
+        assert_eq!(client.base_url, "http://localhost:6379");
+        assert_eq!(client.index_name(), "embeddings");
+    }
+
+    #[test]
+    fn test_redis_url_building() {
+        let config = VectorDbConfig {
+            dimensions: 768,
+            collection_name: "my_vectors".to_string(),
+            ..Default::default()
+        };
+        let client = RedisVectorClient::new("http://redis-gateway:8080/".to_string(), config);
+        // Trailing slash should be stripped
+        assert_eq!(client.base_url, "http://redis-gateway:8080");
+        assert_eq!(client.index_name(), "my_vectors");
+    }
+
+    #[test]
+    fn test_redis_backend_info() {
+        let config = VectorDbConfig {
+            dimensions: 768,
+            ..Default::default()
+        };
+        let client = RedisVectorClient::new("http://localhost:6379".into(), config);
+        let info = client.backend_info();
+        assert_eq!(info.name, "Redis Vector");
+        assert_eq!(info.tier, 3);
+        assert!(info.supports_persistence);
+        assert!(info.supports_filtering);
+        assert!(!info.supports_export);
+        assert!(info.max_recommended_vectors.is_none());
+    }
+
+    #[test]
+    fn test_redis_cache_operations() {
+        let config = VectorDbConfig {
+            dimensions: 3,
+            ..Default::default()
+        };
+        let mut client = RedisVectorClient::new("http://localhost:6379".into(), config);
+        assert_eq!(client.count(), 0);
+        assert!(client.get("nonexistent").unwrap().is_none());
+        // Manually insert into cache
+        client.cache.insert(
+            "r1".to_string(),
+            StoredVector {
+                id: "r1".to_string(),
+                vector: vec![0.5, 0.5, 0.0],
+                metadata: serde_json::json!({"source": "redis"}),
+                timestamp: 2000,
+            },
+        );
+        assert_eq!(client.count(), 1);
+        let v = client.get("r1").unwrap().unwrap();
+        assert_eq!(v.id, "r1");
+        assert_eq!(v.metadata["source"], "redis");
+        // Delete from cache
+        assert!(client.delete("r1").unwrap());
+        assert_eq!(client.count(), 0);
+    }
+
+    #[test]
+    fn test_redis_builder() {
+        let builder = VectorDbBuilder::new()
+            .dimensions(768)
+            .collection_name("vectors")
+            .redis_vector("http://localhost:6379");
+        let db = builder.build().unwrap();
+        assert_eq!(db.backend_info().name, "Redis Vector");
+        assert_eq!(db.count(), 0);
+    }
+
+    // ====================================================================
+    // Elasticsearch backend tests (unit-level, no network)
+    // ====================================================================
+
+    #[test]
+    fn test_elasticsearch_client_creation() {
+        let config = VectorDbConfig {
+            dimensions: 512,
+            collection_name: "SearchIndex".to_string(),
+            ..Default::default()
+        };
+        let client = ElasticsearchClient::new("http://localhost:9200".to_string(), config);
+        assert_eq!(client.base_url, "http://localhost:9200");
+        // index_name should be lowercased
+        assert_eq!(client.index_name(), "searchindex");
+    }
+
+    #[test]
+    fn test_elasticsearch_url_building() {
+        let config = VectorDbConfig {
+            dimensions: 512,
+            collection_name: "MyDocuments".to_string(),
+            ..Default::default()
+        };
+        let client = ElasticsearchClient::new("http://es-cluster:9200/".to_string(), config);
+        // Trailing slash should be stripped
+        assert_eq!(client.base_url, "http://es-cluster:9200");
+        assert_eq!(client.index_name(), "mydocuments");
+    }
+
+    #[test]
+    fn test_elasticsearch_backend_info() {
+        let config = VectorDbConfig {
+            dimensions: 512,
+            ..Default::default()
+        };
+        let client = ElasticsearchClient::new("http://localhost:9200".into(), config);
+        let info = client.backend_info();
+        assert_eq!(info.name, "Elasticsearch");
+        assert_eq!(info.tier, 3);
+        assert!(info.supports_persistence);
+        assert!(info.supports_filtering);
+        assert!(!info.supports_export);
+        assert!(info.max_recommended_vectors.is_none());
+    }
+
+    #[test]
+    fn test_elasticsearch_cache_operations() {
+        let config = VectorDbConfig {
+            dimensions: 3,
+            ..Default::default()
+        };
+        let mut client = ElasticsearchClient::new("http://localhost:9200".into(), config);
+        assert_eq!(client.count(), 0);
+        assert!(client.get("nonexistent").unwrap().is_none());
+        // Manually insert into cache
+        client.cache.insert(
+            "e1".to_string(),
+            StoredVector {
+                id: "e1".to_string(),
+                vector: vec![0.1, 0.2, 0.3],
+                metadata: serde_json::json!({"type": "article"}),
+                timestamp: 3000,
+            },
+        );
+        assert_eq!(client.count(), 1);
+        let v = client.get("e1").unwrap().unwrap();
+        assert_eq!(v.id, "e1");
+        assert_eq!(v.metadata["type"], "article");
+        // Delete from cache
+        assert!(client.delete("e1").unwrap());
+        assert_eq!(client.count(), 0);
+    }
+
+    #[test]
+    fn test_elasticsearch_builder() {
+        let builder = VectorDbBuilder::new()
+            .dimensions(512)
+            .collection_name("documents")
+            .elasticsearch("http://localhost:9200");
+        let db = builder.build().unwrap();
+        assert_eq!(db.backend_info().name, "Elasticsearch");
+        assert_eq!(db.count(), 0);
     }
 }

@@ -7,9 +7,9 @@
 //! - Hyperparameter configuration
 //! - Training job monitoring
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
-use serde::{Deserialize, Serialize};
 
 /// Training data format
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -145,7 +145,10 @@ impl TrainingDataset {
     }
 
     /// Add a completion example
-    pub fn add_completion_example(&mut self, example: CompletionTrainingExample) -> Result<(), DatasetError> {
+    pub fn add_completion_example(
+        &mut self,
+        example: CompletionTrainingExample,
+    ) -> Result<(), DatasetError> {
         if self.format != TrainingFormat::OpenAICompletion {
             return Err(DatasetError::FormatMismatch {
                 expected: TrainingFormat::OpenAICompletion,
@@ -157,7 +160,10 @@ impl TrainingDataset {
     }
 
     /// Add an Alpaca example
-    pub fn add_alpaca_example(&mut self, example: AlpacaTrainingExample) -> Result<(), DatasetError> {
+    pub fn add_alpaca_example(
+        &mut self,
+        example: AlpacaTrainingExample,
+    ) -> Result<(), DatasetError> {
         if self.format != TrainingFormat::Alpaca {
             return Err(DatasetError::FormatMismatch {
                 expected: TrainingFormat::Alpaca,
@@ -200,7 +206,11 @@ impl TrainingDataset {
     }
 
     /// Load from JSONL string
-    pub fn from_jsonl(name: &str, format: TrainingFormat, jsonl: &str) -> Result<Self, DatasetError> {
+    pub fn from_jsonl(
+        name: &str,
+        format: TrainingFormat,
+        jsonl: &str,
+    ) -> Result<Self, DatasetError> {
         let mut dataset = Self::new(name, format);
 
         for (line_num, line) in jsonl.lines().enumerate() {
@@ -209,8 +219,8 @@ impl TrainingDataset {
                 continue;
             }
 
-            let value: serde_json::Value = serde_json::from_str(line)
-                .map_err(|e| DatasetError::ParseError {
+            let value: serde_json::Value =
+                serde_json::from_str(line).map_err(|e| DatasetError::ParseError {
                     line: line_num + 1,
                     error: e.to_string(),
                 })?;
@@ -271,7 +281,8 @@ impl TrainingDataset {
     }
 
     fn validate_chat_example(&self, example: &serde_json::Value) -> Result<(), String> {
-        let messages = example.get("messages")
+        let messages = example
+            .get("messages")
             .ok_or("Missing 'messages' field")?
             .as_array()
             .ok_or("'messages' must be an array")?;
@@ -282,7 +293,8 @@ impl TrainingDataset {
 
         let mut has_assistant = false;
         for msg in messages {
-            let role = msg.get("role")
+            let role = msg
+                .get("role")
                 .and_then(|r| r.as_str())
                 .ok_or("Message missing 'role'")?;
 
@@ -323,7 +335,8 @@ impl TrainingDataset {
     }
 
     fn validate_sharegpt_example(&self, example: &serde_json::Value) -> Result<(), String> {
-        let conversations = example.get("conversations")
+        let conversations = example
+            .get("conversations")
             .ok_or("Missing 'conversations' field")?
             .as_array()
             .ok_or("'conversations' must be an array")?;
@@ -556,7 +569,10 @@ impl OpenAIFineTuneClient {
     }
 
     /// Upload a training file
-    pub fn upload_file(&self, dataset: &TrainingDataset) -> Result<FileUploadResponse, FineTuneApiError> {
+    pub fn upload_file(
+        &self,
+        dataset: &TrainingDataset,
+    ) -> Result<FileUploadResponse, FineTuneApiError> {
         let jsonl = dataset.to_jsonl();
 
         let mut request = ureq::post(&format!("{}/files", self.base_url))
@@ -576,7 +592,8 @@ impl OpenAIFineTuneClient {
             }))
             .map_err(|e| FineTuneApiError::NetworkError(e.to_string()))?;
 
-        let result: serde_json::Value = response.into_json()
+        let result: serde_json::Value = response
+            .into_json()
             .map_err(|e| FineTuneApiError::ParseError(e.to_string()))?;
 
         Ok(FileUploadResponse {
@@ -589,7 +606,10 @@ impl OpenAIFineTuneClient {
     }
 
     /// Create a fine-tuning job
-    pub fn create_job(&self, request: CreateFineTuneRequest) -> Result<FineTuneJob, FineTuneApiError> {
+    pub fn create_job(
+        &self,
+        request: CreateFineTuneRequest,
+    ) -> Result<FineTuneJob, FineTuneApiError> {
         let mut req = ureq::post(&format!("{}/fine_tuning/jobs", self.base_url))
             .set("Authorization", &format!("Bearer {}", self.api_key))
             .set("Content-Type", "application/json");
@@ -610,10 +630,12 @@ impl OpenAIFineTuneClient {
             "suffix": request.suffix,
         });
 
-        let response = req.send_json(body)
+        let response = req
+            .send_json(body)
             .map_err(|e| FineTuneApiError::NetworkError(e.to_string()))?;
 
-        let result: FineTuneJob = response.into_json()
+        let result: FineTuneJob = response
+            .into_json()
             .map_err(|e| FineTuneApiError::ParseError(e.to_string()))?;
 
         Ok(result)
@@ -628,10 +650,12 @@ impl OpenAIFineTuneClient {
             req = req.set("OpenAI-Organization", org);
         }
 
-        let response = req.call()
+        let response = req
+            .call()
             .map_err(|e| FineTuneApiError::NetworkError(e.to_string()))?;
 
-        let result: FineTuneJob = response.into_json()
+        let result: FineTuneJob = response
+            .into_json()
             .map_err(|e| FineTuneApiError::ParseError(e.to_string()))?;
 
         Ok(result)
@@ -644,17 +668,18 @@ impl OpenAIFineTuneClient {
             None => format!("{}/fine_tuning/jobs", self.base_url),
         };
 
-        let mut req = ureq::get(&url)
-            .set("Authorization", &format!("Bearer {}", self.api_key));
+        let mut req = ureq::get(&url).set("Authorization", &format!("Bearer {}", self.api_key));
 
         if let Some(ref org) = self.organization {
             req = req.set("OpenAI-Organization", org);
         }
 
-        let response = req.call()
+        let response = req
+            .call()
             .map_err(|e| FineTuneApiError::NetworkError(e.to_string()))?;
 
-        let result: serde_json::Value = response.into_json()
+        let result: serde_json::Value = response
+            .into_json()
             .map_err(|e| FineTuneApiError::ParseError(e.to_string()))?;
 
         let jobs: Vec<FineTuneJob> = serde_json::from_value(result["data"].clone())
@@ -665,17 +690,22 @@ impl OpenAIFineTuneClient {
 
     /// Cancel a fine-tuning job
     pub fn cancel_job(&self, job_id: &str) -> Result<FineTuneJob, FineTuneApiError> {
-        let mut req = ureq::post(&format!("{}/fine_tuning/jobs/{}/cancel", self.base_url, job_id))
-            .set("Authorization", &format!("Bearer {}", self.api_key));
+        let mut req = ureq::post(&format!(
+            "{}/fine_tuning/jobs/{}/cancel",
+            self.base_url, job_id
+        ))
+        .set("Authorization", &format!("Bearer {}", self.api_key));
 
         if let Some(ref org) = self.organization {
             req = req.set("OpenAI-Organization", org);
         }
 
-        let response = req.call()
+        let response = req
+            .call()
             .map_err(|e| FineTuneApiError::NetworkError(e.to_string()))?;
 
-        let result: FineTuneJob = response.into_json()
+        let result: FineTuneJob = response
+            .into_json()
             .map_err(|e| FineTuneApiError::ParseError(e.to_string()))?;
 
         Ok(result)
@@ -683,17 +713,22 @@ impl OpenAIFineTuneClient {
 
     /// List events for a fine-tuning job
     pub fn list_events(&self, job_id: &str) -> Result<Vec<FineTuneEvent>, FineTuneApiError> {
-        let mut req = ureq::get(&format!("{}/fine_tuning/jobs/{}/events", self.base_url, job_id))
-            .set("Authorization", &format!("Bearer {}", self.api_key));
+        let mut req = ureq::get(&format!(
+            "{}/fine_tuning/jobs/{}/events",
+            self.base_url, job_id
+        ))
+        .set("Authorization", &format!("Bearer {}", self.api_key));
 
         if let Some(ref org) = self.organization {
             req = req.set("OpenAI-Organization", org);
         }
 
-        let response = req.call()
+        let response = req
+            .call()
             .map_err(|e| FineTuneApiError::NetworkError(e.to_string()))?;
 
-        let result: serde_json::Value = response.into_json()
+        let result: serde_json::Value = response
+            .into_json()
             .map_err(|e| FineTuneApiError::ParseError(e.to_string()))?;
 
         let events: Vec<FineTuneEvent> = serde_json::from_value(result["data"].clone())
@@ -807,7 +842,9 @@ impl DatasetConverter {
                 ],
             };
 
-            chat_dataset.examples.push(serde_json::to_value(chat_example)?);
+            chat_dataset
+                .examples
+                .push(serde_json::to_value(chat_example)?);
         }
 
         Ok(chat_dataset)
@@ -827,7 +864,8 @@ impl DatasetConverter {
         for example in &dataset.examples {
             let sharegpt: ShareGPTExample = serde_json::from_value(example.clone())?;
 
-            let messages: Vec<ChatTrainingMessage> = sharegpt.conversations
+            let messages: Vec<ChatTrainingMessage> = sharegpt
+                .conversations
                 .iter()
                 .map(|turn| {
                     let role = match turn.from.as_str() {
@@ -846,14 +884,19 @@ impl DatasetConverter {
                 .collect();
 
             let chat_example = ChatTrainingExample { messages };
-            chat_dataset.examples.push(serde_json::to_value(chat_example)?);
+            chat_dataset
+                .examples
+                .push(serde_json::to_value(chat_example)?);
         }
 
         Ok(chat_dataset)
     }
 
     /// Convert Completion to Chat format
-    pub fn completion_to_chat(dataset: &TrainingDataset, system_prompt: Option<&str>) -> Result<TrainingDataset, DatasetError> {
+    pub fn completion_to_chat(
+        dataset: &TrainingDataset,
+        system_prompt: Option<&str>,
+    ) -> Result<TrainingDataset, DatasetError> {
         if dataset.format != TrainingFormat::OpenAICompletion {
             return Err(DatasetError::FormatMismatch {
                 expected: TrainingFormat::OpenAICompletion,
@@ -876,7 +919,9 @@ impl DatasetConverter {
             messages.push(ChatTrainingMessage::assistant(&completion.completion));
 
             let chat_example = ChatTrainingExample { messages };
-            chat_dataset.examples.push(serde_json::to_value(chat_example)?);
+            chat_dataset
+                .examples
+                .push(serde_json::to_value(chat_example)?);
         }
 
         Ok(chat_dataset)
@@ -936,10 +981,7 @@ impl Default for LoraConfig {
             rank: 8,
             alpha: 16.0,
             dropout: 0.1,
-            target_modules: vec![
-                "q_proj".to_string(),
-                "v_proj".to_string(),
-            ],
+            target_modules: vec!["q_proj".to_string(), "v_proj".to_string()],
             bias: LoraBias::None,
             task_type: LoraTaskType::CausalLM,
         }
@@ -1064,7 +1106,9 @@ impl LoraManager {
 
     /// Get active adapter
     pub fn active(&self) -> Option<&LoraAdapter> {
-        self.active_adapter.as_ref().and_then(|n| self.adapters.get(n))
+        self.active_adapter
+            .as_ref()
+            .and_then(|n| self.adapters.get(n))
     }
 
     /// Clear active adapter
@@ -1104,7 +1148,9 @@ pub trait TrainingCallback: Send + Sync {
     fn on_step(&mut self, metrics: &TrainingMetrics);
     fn on_epoch_end(&mut self, epoch: u32, metrics: &TrainingMetrics);
     fn on_eval(&mut self, metrics: &TrainingMetrics);
-    fn should_stop(&self) -> bool { false }
+    fn should_stop(&self) -> bool {
+        false
+    }
 }
 
 /// Simple logging callback
@@ -1129,10 +1175,7 @@ impl TrainingCallback for LoggingCallback {
     }
 
     fn on_epoch_end(&mut self, epoch: u32, metrics: &TrainingMetrics) {
-        println!(
-            "Epoch {} complete: loss={:.4}",
-            epoch, metrics.loss
-        );
+        println!("Epoch {} complete: loss={:.4}", epoch, metrics.loss);
     }
 
     fn on_eval(&mut self, metrics: &TrainingMetrics) {
@@ -1274,13 +1317,18 @@ mod tests {
     fn test_dataset_jsonl() {
         let mut dataset = TrainingDataset::new("test", TrainingFormat::OpenAIChat);
 
-        dataset.examples.push(serde_json::json!({"messages": [{"role": "user", "content": "a"}]}));
-        dataset.examples.push(serde_json::json!({"messages": [{"role": "user", "content": "b"}]}));
+        dataset
+            .examples
+            .push(serde_json::json!({"messages": [{"role": "user", "content": "a"}]}));
+        dataset
+            .examples
+            .push(serde_json::json!({"messages": [{"role": "user", "content": "b"}]}));
 
         let jsonl = dataset.to_jsonl();
         assert!(jsonl.contains('\n'));
 
-        let loaded = TrainingDataset::from_jsonl("loaded", TrainingFormat::OpenAIChat, &jsonl).unwrap();
+        let loaded =
+            TrainingDataset::from_jsonl("loaded", TrainingFormat::OpenAIChat, &jsonl).unwrap();
         assert_eq!(loaded.len(), 2);
     }
 
@@ -1308,7 +1356,8 @@ mod tests {
             "completion": "A: 4"
         }));
 
-        let chat = DatasetConverter::completion_to_chat(&dataset, Some("You are a math tutor")).unwrap();
+        let chat =
+            DatasetConverter::completion_to_chat(&dataset, Some("You are a math tutor")).unwrap();
         assert_eq!(chat.format, TrainingFormat::OpenAIChat);
 
         let example = &chat.examples[0];
@@ -1318,8 +1367,7 @@ mod tests {
 
     #[test]
     fn test_hyperparameters() {
-        let params = Hyperparameters::default()
-            .with_lora(16, 32.0, 0.05);
+        let params = Hyperparameters::default().with_lora(16, 32.0, 0.05);
 
         assert_eq!(params.lora_rank, Some(16));
         assert_eq!(params.lora_alpha, Some(32.0));
@@ -1394,16 +1442,31 @@ mod tests {
         let mut callback = EarlyStoppingCallback::new(3, 0.01);
 
         // Improving
-        callback.on_eval(&TrainingMetrics { eval_loss: Some(1.0), ..Default::default() });
+        callback.on_eval(&TrainingMetrics {
+            eval_loss: Some(1.0),
+            ..Default::default()
+        });
         assert!(!callback.should_stop());
 
-        callback.on_eval(&TrainingMetrics { eval_loss: Some(0.9), ..Default::default() });
+        callback.on_eval(&TrainingMetrics {
+            eval_loss: Some(0.9),
+            ..Default::default()
+        });
         assert!(!callback.should_stop());
 
         // Not improving
-        callback.on_eval(&TrainingMetrics { eval_loss: Some(0.9), ..Default::default() });
-        callback.on_eval(&TrainingMetrics { eval_loss: Some(0.91), ..Default::default() });
-        callback.on_eval(&TrainingMetrics { eval_loss: Some(0.92), ..Default::default() });
+        callback.on_eval(&TrainingMetrics {
+            eval_loss: Some(0.9),
+            ..Default::default()
+        });
+        callback.on_eval(&TrainingMetrics {
+            eval_loss: Some(0.91),
+            ..Default::default()
+        });
+        callback.on_eval(&TrainingMetrics {
+            eval_loss: Some(0.92),
+            ..Default::default()
+        });
 
         assert!(callback.should_stop());
     }
@@ -1415,9 +1478,17 @@ mod tests {
             dataset.examples.push(serde_json::json!({"id": i}));
         }
 
-        let original: Vec<_> = dataset.examples.iter().map(|e| e["id"].as_i64().unwrap()).collect();
+        let original: Vec<_> = dataset
+            .examples
+            .iter()
+            .map(|e| e["id"].as_i64().unwrap())
+            .collect();
         dataset.shuffle(42);
-        let shuffled: Vec<_> = dataset.examples.iter().map(|e| e["id"].as_i64().unwrap()).collect();
+        let shuffled: Vec<_> = dataset
+            .examples
+            .iter()
+            .map(|e| e["id"].as_i64().unwrap())
+            .collect();
 
         // Should be different order
         assert_ne!(original, shuffled);

@@ -3,10 +3,10 @@
 //! This module provides support for image inputs to vision-capable models,
 //! including image encoding, resizing, and multi-image messages.
 
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 use std::fs;
-use anyhow::{Result, anyhow};
+use std::path::Path;
 
 /// An image input for vision models
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,8 +68,8 @@ impl ImageInput {
 
     /// Create from a URL
     pub fn from_url(url: &str) -> Self {
-        let media_type = Self::detect_media_type_from_url(url)
-            .unwrap_or_else(|| "image/jpeg".to_string());
+        let media_type =
+            Self::detect_media_type_from_url(url).unwrap_or_else(|| "image/jpeg".to_string());
 
         Self {
             data: ImageData::Url(url.to_string()),
@@ -95,7 +95,8 @@ impl ImageInput {
 
     /// Detect media type from file extension
     fn detect_media_type(path: &Path) -> Result<String> {
-        let ext = path.extension()
+        let ext = path
+            .extension()
             .and_then(|e| e.to_str())
             .ok_or_else(|| anyhow!("Could not determine file extension"))?
             .to_lowercase();
@@ -108,7 +109,8 @@ impl ImageInput {
             "bmp" => "image/bmp",
             "svg" => "image/svg+xml",
             _ => return Err(anyhow!("Unsupported image format: {}", ext)),
-        }.to_string())
+        }
+        .to_string())
     }
 
     /// Detect media type from URL
@@ -261,7 +263,8 @@ impl VisionMessage {
         });
 
         if !self.images.is_empty() {
-            let images: Vec<serde_json::Value> = self.images
+            let images: Vec<serde_json::Value> = self
+                .images
                 .iter()
                 .map(|img| img.to_ollama_format())
                 .collect();
@@ -537,8 +540,8 @@ mod tests {
 
     #[test]
     fn test_openai_format() {
-        let image = ImageInput::from_url("https://example.com/image.jpg")
-            .with_detail(ImageDetail::High);
+        let image =
+            ImageInput::from_url("https://example.com/image.jpg").with_detail(ImageDetail::High);
 
         let format = image.to_openai_format();
 
@@ -548,9 +551,10 @@ mod tests {
 
     #[test]
     fn test_vision_message() {
-        let message = VisionMessage::user("What's in this image?", vec![
-            ImageInput::from_url("https://example.com/cat.jpg"),
-        ]);
+        let message = VisionMessage::user(
+            "What's in this image?",
+            vec![ImageInput::from_url("https://example.com/cat.jpg")],
+        );
 
         let format = message.to_openai_format();
 
@@ -606,12 +610,12 @@ mod tests {
 
     #[test]
     fn test_token_estimation() {
-        let image = ImageInput::from_url("https://example.com/image.jpg")
-            .with_detail(ImageDetail::Low);
+        let image =
+            ImageInput::from_url("https://example.com/image.jpg").with_detail(ImageDetail::Low);
         assert_eq!(image.estimate_tokens(), 85);
 
-        let image = ImageInput::from_url("https://example.com/image.jpg")
-            .with_detail(ImageDetail::High);
+        let image =
+            ImageInput::from_url("https://example.com/image.jpg").with_detail(ImageDetail::High);
         assert_eq!(image.estimate_tokens(), 765);
     }
 }

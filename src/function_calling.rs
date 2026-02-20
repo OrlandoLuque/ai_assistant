@@ -3,10 +3,10 @@
 //! This module provides function calling capabilities compatible with
 //! OpenAI's function calling API and similar implementations.
 
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
-use anyhow::{Result, anyhow};
 
 /// A function definition for the AI to call
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -183,7 +183,8 @@ impl FunctionCall {
 
     /// Get a string argument
     pub fn get_string(&self, key: &str) -> Option<String> {
-        self.get_value(key).and_then(|v| v.as_str().map(|s| s.to_string()))
+        self.get_value(key)
+            .and_then(|v| v.as_str().map(|s| s.to_string()))
     }
 
     /// Get a number argument
@@ -202,7 +203,8 @@ impl FunctionCall {
             Value::Object(map) => map.get(key),
             Value::String(s) => {
                 // Try to parse if it's a JSON string
-                serde_json::from_str::<Value>(s).ok()
+                serde_json::from_str::<Value>(s)
+                    .ok()
                     .and_then(|v| v.get(key).cloned())
                     .as_ref()
                     .map(|_| &Value::Null) // Can't return reference to temporary
@@ -282,7 +284,10 @@ impl FunctionBuilder {
 
     /// Add a parameter
     pub fn param(mut self, name: &str, property: ParameterProperty, required: bool) -> Self {
-        self.function.parameters.properties.insert(name.to_string(), property);
+        self.function
+            .parameters
+            .properties
+            .insert(name.to_string(), property);
         if required {
             self.function.parameters.required.push(name.to_string());
         }
@@ -316,7 +321,11 @@ impl FunctionBuilder {
 
     /// Add an enum parameter
     pub fn required_enum(self, name: &str, description: &str, values: Vec<&str>) -> Self {
-        self.param(name, ParameterProperty::enum_type(description, values), true)
+        self.param(
+            name,
+            ParameterProperty::enum_type(description, values),
+            true,
+        )
     }
 
     /// Build the function definition
@@ -454,7 +463,9 @@ pub fn parse_function_calls(response: &Value) -> Vec<FunctionCall> {
     if let Some(tool_calls) = response.get("tool_calls").and_then(|v| v.as_array()) {
         for call in tool_calls {
             if let (Some(name), Some(arguments)) = (
-                call.get("function").and_then(|f| f.get("name")).and_then(|n| n.as_str()),
+                call.get("function")
+                    .and_then(|f| f.get("name"))
+                    .and_then(|n| n.as_str()),
                 call.get("function").and_then(|f| f.get("arguments")),
             ) {
                 calls.push(FunctionCall {
@@ -590,10 +601,9 @@ mod tests {
     fn test_openai_format() {
         let mut registry = FunctionRegistry::new();
 
-        registry.register(
-            builtins::get_current_time(),
-            |_| FunctionResult::success("get_current_time", "2024-01-01 00:00:00"),
-        );
+        registry.register(builtins::get_current_time(), |_| {
+            FunctionResult::success("get_current_time", "2024-01-01 00:00:00")
+        });
 
         let format = registry.to_openai_format();
         assert!(!format.is_empty());
@@ -635,7 +645,11 @@ mod tests {
         assert_eq!(param.param_type, "string");
         assert_eq!(
             param.enum_values,
-            Some(vec!["red".to_string(), "green".to_string(), "blue".to_string()])
+            Some(vec![
+                "red".to_string(),
+                "green".to_string(),
+                "blue".to_string()
+            ])
         );
     }
 }

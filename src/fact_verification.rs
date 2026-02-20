@@ -127,7 +127,10 @@ impl FactVerifier {
         let mut relevant_sources: Vec<&FactSource> = Vec::new();
 
         for (topic, sources) in &self.knowledge_base {
-            if keywords.iter().any(|k| topic.contains(k) || k.contains(topic)) {
+            if keywords
+                .iter()
+                .any(|k| topic.contains(k) || k.contains(topic))
+            {
                 relevant_sources.extend(sources.iter());
             }
         }
@@ -169,7 +172,8 @@ impl FactVerifier {
             total_reliability,
         );
 
-        let explanation = self.generate_explanation(status, supports, contradicts, relevant_sources.len());
+        let explanation =
+            self.generate_explanation(status, supports, contradicts, relevant_sources.len());
 
         VerifiedFact {
             claim: claim.to_string(),
@@ -215,21 +219,29 @@ impl FactVerifier {
         let source_words: Vec<_> = source_lower.split_whitespace().collect();
 
         // Count word overlap
-        let overlap = claim_words.iter()
+        let overlap = claim_words
+            .iter()
             .filter(|w| w.len() > 3)
-            .filter(|w| source_words.iter().any(|sw| sw.contains(*w) || w.contains(sw)))
+            .filter(|w| {
+                source_words
+                    .iter()
+                    .any(|sw| sw.contains(*w) || w.contains(sw))
+            })
             .count();
 
         let overlap_ratio = overlap as f64 / claim_words.len().max(1) as f64;
 
         // Check for negation patterns
-        let has_negation = source_lower.contains("not ") || source_lower.contains("never ") ||
-                          source_lower.contains("false") || source_lower.contains("incorrect");
+        let has_negation = source_lower.contains("not ")
+            || source_lower.contains("never ")
+            || source_lower.contains("false")
+            || source_lower.contains("incorrect");
 
         let claim_has_negation = claim.contains("not ") || claim.contains("never ");
 
         // If both or neither have negation, they might agree
-        let contradicts = (has_negation && !claim_has_negation) || (!has_negation && claim_has_negation);
+        let contradicts =
+            (has_negation && !claim_has_negation) || (!has_negation && claim_has_negation);
 
         let matches = overlap_ratio > 0.3 && !contradicts;
         let contradicts_claim = overlap_ratio > 0.3 && contradicts;
@@ -256,8 +268,9 @@ impl FactVerifier {
             0.0
         };
 
-        let confidence = (support_ratio * (1.0 - self.config.reliability_weight) +
-                         avg_reliability * self.config.reliability_weight).clamp(0.0, 1.0);
+        let confidence = (support_ratio * (1.0 - self.config.reliability_weight)
+            + avg_reliability * self.config.reliability_weight)
+            .clamp(0.0, 1.0);
 
         if supports >= self.config.min_sources && confidence >= self.config.min_confidence {
             if contradict_ratio > 0.3 {
@@ -289,14 +302,13 @@ impl FactVerifier {
                 format!("Contradicted by {} of {} sources", contradicts, total)
             }
             VerificationStatus::PartiallySupported => {
-                format!("Partially supported: {} support, {} contradict", supports, contradicts)
+                format!(
+                    "Partially supported: {} support, {} contradict",
+                    supports, contradicts
+                )
             }
-            VerificationStatus::Unverified => {
-                "Unable to verify - no matching sources".to_string()
-            }
-            VerificationStatus::Outdated => {
-                "Information may be outdated".to_string()
-            }
+            VerificationStatus::Unverified => "Unable to verify - no matching sources".to_string(),
+            VerificationStatus::Outdated => "Information may be outdated".to_string(),
         }
     }
 
@@ -316,8 +328,7 @@ impl FactVerifier {
 
         // Check for factual indicators
         let factual_patterns = [
-            "is ", "are ", "was ", "were ", "has ", "have ",
-            "can ", "will ", "the ", "there ",
+            "is ", "are ", "was ", "were ", "has ", "have ", "can ", "will ", "the ", "there ",
         ];
 
         factual_patterns.iter().any(|p| lower.contains(p))
@@ -382,11 +393,14 @@ mod tests {
     fn test_verification() {
         let mut verifier = FactVerifier::default();
 
-        verifier.add_source("python", FactSource::new(
-            "wiki",
-            "Wikipedia",
-            "Python is a high-level programming language created by Guido van Rossum."
-        ));
+        verifier.add_source(
+            "python",
+            FactSource::new(
+                "wiki",
+                "Wikipedia",
+                "Python is a high-level programming language created by Guido van Rossum.",
+            ),
+        );
 
         let result = verifier.verify("Python is a programming language");
         assert_eq!(result.status, VerificationStatus::Verified);

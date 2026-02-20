@@ -413,7 +413,11 @@ fn extract_categorical_answer(response: &str) -> String {
     }
 
     // Try first word
-    trimmed.split_whitespace().next().unwrap_or("").to_uppercase()
+    trimmed
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_uppercase()
 }
 
 /// Builder for consistency configuration

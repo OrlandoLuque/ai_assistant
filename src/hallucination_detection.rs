@@ -10,8 +10,8 @@
 //! - **Confidence markers**: Identify hedging language
 //! - **Source attribution**: Track unsourced claims
 
-use std::collections::{HashMap, HashSet};
 use regex::Regex;
+use std::collections::{HashMap, HashSet};
 
 /// Configuration for hallucination detection
 #[derive(Debug, Clone)]
@@ -244,7 +244,8 @@ impl HallucinationDetector {
         let mut claims = Vec::new();
 
         // Extract sentences as claims
-        let sentences: Vec<_> = text.split(|c| c == '.' || c == '!' || c == '?')
+        let sentences: Vec<_> = text
+            .split(|c| c == '.' || c == '!' || c == '?')
             .filter(|s| !s.trim().is_empty())
             .collect();
 
@@ -279,9 +280,10 @@ impl HallucinationDetector {
             .unwrap_or(false)
         {
             ClaimType::Statistic
-        } else if lower.contains("in ") && Regex::new(r"\b\d{4}\b")
-            .map(|re| re.is_match(&lower))
-            .unwrap_or(false)
+        } else if lower.contains("in ")
+            && Regex::new(r"\b\d{4}\b")
+                .map(|re| re.is_match(&lower))
+                .unwrap_or(false)
         {
             ClaimType::Temporal
         } else if lower.starts_with("i think")
@@ -400,13 +402,20 @@ impl HallucinationDetector {
     ) -> Vec<HallucinationDetection> {
         let mut detections = Vec::new();
         let context_words: HashSet<_> = context
-            .map(|c| c.to_lowercase().split_whitespace().map(|s| s.to_string()).collect())
+            .map(|c| {
+                c.to_lowercase()
+                    .split_whitespace()
+                    .map(|s| s.to_string())
+                    .collect()
+            })
             .unwrap_or_default();
 
         for claim in claims {
             if claim.claim_type == ClaimType::Factual && !claim.supported {
                 // Check if claim relates to context
-                let claim_words: HashSet<_> = claim.text.to_lowercase()
+                let claim_words: HashSet<_> = claim
+                    .text
+                    .to_lowercase()
                     .split_whitespace()
                     .map(|s| s.to_string())
                     .collect();
@@ -435,7 +444,9 @@ impl HallucinationDetector {
         let mut detections = Vec::new();
 
         // Look for quotes with attribution
-        let quote_pattern = Regex::new(r#""([^"]+)"\s*(?:-|,|said|stated|wrote)\s*(\w+(?:\s+\w+)?)"#).expect("valid regex");
+        let quote_pattern =
+            Regex::new(r#""([^"]+)"\s*(?:-|,|said|stated|wrote)\s*(\w+(?:\s+\w+)?)"#)
+                .expect("valid regex");
 
         for cap in quote_pattern.captures_iter(text) {
             let quote = cap.get(1).map(|m| m.as_str()).unwrap_or("");
@@ -469,7 +480,10 @@ impl HallucinationDetector {
                     if num > 100.0 && !text.contains("increase") && !text.contains("growth") {
                         detections.push(HallucinationDetection {
                             hallucination_type: HallucinationType::IncorrectStatistic,
-                            text: cap.get(0).map(|m| m.as_str().to_string()).unwrap_or_default(),
+                            text: cap
+                                .get(0)
+                                .map(|m| m.as_str().to_string())
+                                .unwrap_or_default(),
                             position: cap.get(0).map(|m| m.start()).unwrap_or(0),
                             confidence: 0.7,
                             reason: "Percentage over 100% may be incorrect".to_string(),
@@ -484,7 +498,11 @@ impl HallucinationDetector {
     }
 
     /// Calculate overall reliability score
-    fn calculate_reliability(&self, claims: &[Claim], detections: &[HallucinationDetection]) -> f64 {
+    fn calculate_reliability(
+        &self,
+        claims: &[Claim],
+        detections: &[HallucinationDetection],
+    ) -> f64 {
         if claims.is_empty() {
             return 1.0;
         }
@@ -493,7 +511,9 @@ impl HallucinationDetector {
         let supported_claims = claims.iter().filter(|c| c.supported).count() as f64;
         let detection_penalty = detections.len() as f64 * 0.1;
 
-        ((supported_claims / total_claims) - detection_penalty).max(0.0).min(1.0)
+        ((supported_claims / total_claims) - detection_penalty)
+            .max(0.0)
+            .min(1.0)
     }
 }
 
@@ -510,7 +530,9 @@ pub struct HallucinationConfigBuilder {
 
 impl HallucinationConfigBuilder {
     pub fn new() -> Self {
-        Self { config: HallucinationConfig::default() }
+        Self {
+            config: HallucinationConfig::default(),
+        }
     }
 
     pub fn min_confidence(mut self, conf: f64) -> Self {
@@ -567,7 +589,9 @@ mod tests {
             None,
         );
 
-        let quote_detections = result.detections.iter()
+        let quote_detections = result
+            .detections
+            .iter()
             .filter(|d| d.hallucination_type == HallucinationType::FabricatedQuote)
             .count();
 
@@ -579,7 +603,9 @@ mod tests {
         let detector = HallucinationDetector::default();
         let result = detector.detect("150% of people agree with this statement.", None);
 
-        let stat_issues = result.detections.iter()
+        let stat_issues = result
+            .detections
+            .iter()
             .filter(|d| d.hallucination_type == HallucinationType::IncorrectStatistic)
             .count();
 

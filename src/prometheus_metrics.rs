@@ -11,7 +11,7 @@
 //! - **Labels**: Per-model, per-provider metrics
 
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 /// A Prometheus-style counter
@@ -34,7 +34,8 @@ impl Counter {
 
     /// Increment counter with labels
     pub fn inc_with_labels(&self, labels: &[(&str, &str)]) {
-        let key: Vec<_> = labels.iter()
+        let key: Vec<_> = labels
+            .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
 
@@ -55,7 +56,8 @@ impl Counter {
 
     /// Add to counter with labels
     pub fn add_with_labels(&self, n: u64, labels: &[(&str, &str)]) {
-        let key: Vec<_> = labels.iter()
+        let key: Vec<_> = labels
+            .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
 
@@ -66,11 +68,13 @@ impl Counter {
 
     /// Get counter value
     pub fn get(&self, labels: &[(&str, &str)]) -> u64 {
-        let key: Vec<_> = labels.iter()
+        let key: Vec<_> = labels
+            .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
 
-        self.values.read()
+        self.values
+            .read()
             .map(|v| *v.get(&key).unwrap_or(&0))
             .unwrap_or(0)
     }
@@ -95,7 +99,8 @@ impl Counter {
         if labels.is_empty() {
             String::new()
         } else {
-            let parts: Vec<_> = labels.iter()
+            let parts: Vec<_> = labels
+                .iter()
                 .map(|(k, v)| format!("{}=\"{}\"", k, v))
                 .collect();
             format!("{{{}}}", parts.join(","))
@@ -128,7 +133,8 @@ impl Gauge {
 
     /// Set gauge value with labels
     pub fn set_with_labels(&self, value: f64, labels: &[(&str, &str)]) {
-        let key: Vec<_> = labels.iter()
+        let key: Vec<_> = labels
+            .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
 
@@ -154,7 +160,8 @@ impl Gauge {
 
     /// Add to gauge with labels
     pub fn add_with_labels(&self, n: f64, labels: &[(&str, &str)]) {
-        let key: Vec<_> = labels.iter()
+        let key: Vec<_> = labels
+            .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
 
@@ -165,11 +172,13 @@ impl Gauge {
 
     /// Get gauge value
     pub fn get(&self, labels: &[(&str, &str)]) -> f64 {
-        let key: Vec<_> = labels.iter()
+        let key: Vec<_> = labels
+            .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
 
-        self.values.read()
+        self.values
+            .read()
             .map(|v| *v.get(&key).unwrap_or(&0.0))
             .unwrap_or(0.0)
     }
@@ -194,7 +203,8 @@ impl Gauge {
         if labels.is_empty() {
             String::new()
         } else {
-            let parts: Vec<_> = labels.iter()
+            let parts: Vec<_> = labels
+                .iter()
                 .map(|(k, v)| format!("{}=\"{}\"", k, v))
                 .collect();
             format!("{{{}}}", parts.join(","))
@@ -224,12 +234,18 @@ impl Histogram {
         Self::with_buckets(
             name,
             help,
-            vec![0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
+            vec![
+                0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
+            ],
         )
     }
 
     /// Create a histogram with custom buckets
-    pub fn with_buckets(name: impl Into<String>, help: impl Into<String>, buckets: Vec<f64>) -> Self {
+    pub fn with_buckets(
+        name: impl Into<String>,
+        help: impl Into<String>,
+        buckets: Vec<f64>,
+    ) -> Self {
         Self {
             name: name.into(),
             help: help.into(),
@@ -245,7 +261,8 @@ impl Histogram {
 
     /// Observe a value with labels
     pub fn observe_with_labels(&self, value: f64, labels: &[(&str, &str)]) {
-        let key: Vec<_> = labels.iter()
+        let key: Vec<_> = labels
+            .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
 
@@ -281,7 +298,8 @@ impl Histogram {
 
     /// Start a timer with labels
     pub fn start_timer_with_labels(&self, labels: &[(&str, &str)]) -> HistogramTimer {
-        let label_vec: Vec<_> = labels.iter()
+        let label_vec: Vec<_> = labels
+            .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
 
@@ -307,7 +325,8 @@ impl Histogram {
                     let bucket_label = if labels.is_empty() {
                         format!("{{le=\"{}\"}}", bucket)
                     } else {
-                        let parts: Vec<_> = labels.iter()
+                        let parts: Vec<_> = labels
+                            .iter()
                             .map(|(k, v)| format!("{}=\"{}\"", k, v))
                             .chain(std::iter::once(format!("le=\"{}\"", bucket)))
                             .collect();
@@ -323,7 +342,8 @@ impl Histogram {
                 let inf_label = if labels.is_empty() {
                     "{le=\"+Inf\"}".to_string()
                 } else {
-                    let parts: Vec<_> = labels.iter()
+                    let parts: Vec<_> = labels
+                        .iter()
                         .map(|(k, v)| format!("{}=\"{}\"", k, v))
                         .chain(std::iter::once("le=\"+Inf\"".to_string()))
                         .collect();
@@ -331,12 +351,17 @@ impl Histogram {
                 };
                 output.push_str(&format!(
                     "{}_bucket{} {}\n",
-                    self.name, inf_label, data.bucket_counts[self.buckets.len()]
+                    self.name,
+                    inf_label,
+                    data.bucket_counts[self.buckets.len()]
                 ));
 
                 // Sum and count
                 output.push_str(&format!("{}_sum{} {}\n", self.name, label_str, data.sum));
-                output.push_str(&format!("{}_count{} {}\n", self.name, label_str, data.count));
+                output.push_str(&format!(
+                    "{}_count{} {}\n",
+                    self.name, label_str, data.count
+                ));
             }
         }
 
@@ -347,7 +372,8 @@ impl Histogram {
         if labels.is_empty() {
             String::new()
         } else {
-            let parts: Vec<_> = labels.iter()
+            let parts: Vec<_> = labels
+                .iter()
                 .map(|(k, v)| format!("{}=\"{}\"", k, v))
                 .collect();
             format!("{{{}}}", parts.join(","))
@@ -366,7 +392,9 @@ impl HistogramTimer {
     /// Stop the timer and record observation
     pub fn observe(self) {
         let elapsed = self.start.elapsed().as_secs_f64();
-        let labels: Vec<_> = self.labels.iter()
+        let labels: Vec<_> = self
+            .labels
+            .iter()
             .map(|(k, v)| (k.as_str(), v.as_str()))
             .collect();
         self.histogram.observe_with_labels(elapsed, &labels);
@@ -407,10 +435,7 @@ impl AiMetricsRegistry {
     /// Create a new metrics registry
     pub fn new() -> Self {
         Self {
-            requests_total: Counter::new(
-                "ai_requests_total",
-                "Total number of AI requests",
-            ),
+            requests_total: Counter::new("ai_requests_total", "Total number of AI requests"),
             request_errors_total: Counter::new(
                 "ai_request_errors_total",
                 "Total number of AI request errors",
@@ -433,32 +458,21 @@ impl AiMetricsRegistry {
                 "Token generation rate",
                 vec![1.0, 5.0, 10.0, 20.0, 50.0, 100.0],
             ),
-            cache_hits_total: Counter::new(
-                "ai_cache_hits_total",
-                "Total cache hits",
-            ),
-            cache_misses_total: Counter::new(
-                "ai_cache_misses_total",
-                "Total cache misses",
-            ),
+            cache_hits_total: Counter::new("ai_cache_hits_total", "Total cache hits"),
+            cache_misses_total: Counter::new("ai_cache_misses_total", "Total cache misses"),
             model_load_duration_seconds: Histogram::with_buckets(
                 "ai_model_load_duration_seconds",
                 "Model loading duration in seconds",
                 vec![0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0],
             ),
-            queue_size: Gauge::new(
-                "ai_queue_size",
-                "Current request queue size",
-            ),
+            queue_size: Gauge::new("ai_queue_size", "Current request queue size"),
         }
     }
 
     /// Record a request
     pub fn record_request(&self, model: &str, provider: &str) {
-        self.requests_total.inc_with_labels(&[
-            ("model", model),
-            ("provider", provider),
-        ]);
+        self.requests_total
+            .inc_with_labels(&[("model", model), ("provider", provider)]);
         self.active_requests.inc();
     }
 
@@ -475,10 +489,8 @@ impl AiMetricsRegistry {
 
         let labels = &[("model", model), ("provider", provider)];
 
-        self.request_duration_seconds.observe_with_labels(
-            duration.as_secs_f64(),
-            labels,
-        );
+        self.request_duration_seconds
+            .observe_with_labels(duration.as_secs_f64(), labels);
 
         self.tokens_processed_total.add_with_labels(tokens, labels);
 

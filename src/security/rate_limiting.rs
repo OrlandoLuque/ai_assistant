@@ -1,8 +1,8 @@
 //! Rate limiting for controlling request frequency
 
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
-use serde::{Deserialize, Serialize};
 
 /// Configuration for rate limiting
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,10 +67,20 @@ impl RateLimiter {
         }
 
         // Clean old entries
-        while self.request_times.front().map(|t| *t < one_minute_ago).unwrap_or(false) {
+        while self
+            .request_times
+            .front()
+            .map(|t| *t < one_minute_ago)
+            .unwrap_or(false)
+        {
             self.request_times.pop_front();
         }
-        while self.token_counts.front().map(|(t, _)| *t < one_minute_ago).unwrap_or(false) {
+        while self
+            .token_counts
+            .front()
+            .map(|(t, _)| *t < one_minute_ago)
+            .unwrap_or(false)
+        {
             self.token_counts.pop_front();
         }
 
@@ -125,7 +135,8 @@ impl RateLimiter {
     }
 
     fn trigger_cooldown(&mut self) {
-        self.cooldown_until = Some(Instant::now() + Duration::from_secs(self.config.cooldown_seconds));
+        self.cooldown_until =
+            Some(Instant::now() + Duration::from_secs(self.config.cooldown_seconds));
     }
 
     /// Get current usage statistics
@@ -133,8 +144,14 @@ impl RateLimiter {
         let now = Instant::now();
         let one_minute_ago = now - Duration::from_secs(60);
 
-        let requests = self.request_times.iter().filter(|t| **t >= one_minute_ago).count();
-        let tokens: usize = self.token_counts.iter()
+        let requests = self
+            .request_times
+            .iter()
+            .filter(|t| **t >= one_minute_ago)
+            .count();
+        let tokens: usize = self
+            .token_counts
+            .iter()
             .filter(|(t, _)| *t >= one_minute_ago)
             .map(|(_, tok)| *tok)
             .sum();
@@ -155,8 +172,14 @@ impl RateLimiter {
         let now = Instant::now();
         let one_minute_ago = now - Duration::from_secs(60);
 
-        let requests = self.request_times.iter().filter(|t| **t >= one_minute_ago).count();
-        let tokens: usize = self.token_counts.iter()
+        let requests = self
+            .request_times
+            .iter()
+            .filter(|t| **t >= one_minute_ago)
+            .count();
+        let tokens: usize = self
+            .token_counts
+            .iter()
             .filter(|(t, _)| *t >= one_minute_ago)
             .map(|(_, tok)| *tok)
             .sum();
@@ -266,5 +289,129 @@ mod tests {
 
         // Now second should be allowed
         assert!(limiter.check_allowed().is_allowed());
+    }
+
+    #[test]
+    fn test_rpm_enforcement() {
+        let config = RateLimitConfig {
+            requests_per_minute: 2,
+            tokens_per_minute: 10000,
+            max_concurrent: 10,
+            cooldown_seconds: 5,
+        };
+        let mut limiter = RateLimiter::new(config);
+
+        // First request allowed
+        assert!(limiter.check_allowed().is_allowed());
+        limiter.record_request_start();
+        limiter.record_request_end(1);
+
+        // Second request allowed
+        assert!(limiter.check_allowed().is_allowed());
+        limiter.record_request_start();
+        limiter.record_request_end(1);
+
+        // Third request denied (2 RPM limit exceeded)
+        let result = limiter.check_allowed();
+        assert!(!result.is_allowed());
+        match result {
+            RateLimitResult::Denied { reason, .. } => {
+                assert_eq!(reason, RateLimitReason::TooManyRequests);
+            }
+            _ => panic!("Expected Denied result"),
+        }
+    }
+
+    #[test]
+    fn test_tpm_enforcement() {
+        let config = RateLimitConfig {
+            requests_per_minute: 100,
+            tokens_per_minute: 50,
+            max_concurrent: 10,
+            cooldown_seconds: 5,
+        };
+        let mut limiter = RateLimiter::new(config);
+
+        // First request: 30 tokens
+        assert!(limiter.check_allowed().is_allowed());
+        limiter.record_request_start();
+        limiter.record_request_end(30);
+
+        // Second request: 30 tokens (total 60, exceeds 50 TPM)
+        assert!(limiter.check_allowed().is_allowed());
+        limiter.record_request_start();
+        limiter.record_request_end(30);
+
+        // Third request should be denied due to token limit
+        let result = limiter.check_allowed();
+        assert!(!result.is_allowed());
+        match result {
+            RateLimitResult::Denied { reason, .. } => {
+                assert_eq!(reason, RateLimitReason::TooManyTokens);
+            }
+            _ => panic!("Expected Denied result"),
+        }
+    }
+
+    #[test]
+    fn test_cooldown_behavior() {
+        let config = RateLimitConfig {
+            requests_per_minute: 1,
+            tokens_per_minute: 10000,
+            max_concurrent: 10,
+            cooldown_seconds: 60,
+        };
+        let mut limiter = RateLimiter::new(config);
+
+        // Use up the single allowed request
+        assert!(limiter.check_allowed().is_allowed());
+        limiter.record_request_start();
+        limiter.record_request_end(1);
+
+        // This triggers cooldown
+        let result = limiter.check_allowed();
+        assert!(!result.is_allowed());
+
+        // Verify we are now in cooldown via usage stats
+        let usage = limiter.get_usage();
+        assert!(usage.in_cooldown);
+
+        // Subsequent check should report Cooldown reason
+        let result2 = limiter.check_allowed();
+        match result2 {
+            RateLimitResult::Denied { reason, .. } => {
+                assert_eq!(reason, RateLimitReason::Cooldown);
+            }
+            _ => panic!("Expected Cooldown denial"),
+        }
+    }
+
+    #[test]
+    fn test_get_usage_stats() {
+        let config = RateLimitConfig {
+            requests_per_minute: 10,
+            tokens_per_minute: 1000,
+            max_concurrent: 5,
+            cooldown_seconds: 30,
+        };
+        let mut limiter = RateLimiter::new(config);
+
+        // Record two requests, one still active
+        limiter.record_request_start();
+        limiter.record_request_end(25);
+
+        limiter.record_request_start();
+        limiter.record_request_end(35);
+
+        // Start a third that is still in-flight
+        limiter.record_request_start();
+
+        let usage = limiter.get_usage();
+        assert_eq!(usage.requests_used, 3);
+        assert_eq!(usage.tokens_used, 60); // 25 + 35
+        assert_eq!(usage.concurrent_active, 1); // one still in-flight
+        assert_eq!(usage.requests_limit, 10);
+        assert_eq!(usage.tokens_limit, 1000);
+        assert!(!usage.in_cooldown);
     }
 }

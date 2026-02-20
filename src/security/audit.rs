@@ -1,8 +1,8 @@
 //! Audit logging for tracking all AI assistant operations
 
-use std::collections::{HashMap, VecDeque};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, VecDeque};
 
 /// Type of audit event
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -115,7 +115,7 @@ impl Default for AuditConfig {
             enabled: true,
             max_events: 1000,
             log_message_content: false, // Privacy by default
-            event_filter: Vec::new(), // Log all
+            event_filter: Vec::new(),   // Log all
         }
     }
 }
@@ -168,21 +168,24 @@ impl AuditLogger {
 
     /// Get events of a specific type
     pub fn get_events_by_type(&self, event_type: AuditEventType) -> Vec<&AuditEvent> {
-        self.events.iter()
+        self.events
+            .iter()
             .filter(|e| e.event_type == event_type)
             .collect()
     }
 
     /// Get events for a specific session
     pub fn get_session_events(&self, session_id: &str) -> Vec<&AuditEvent> {
-        self.events.iter()
+        self.events
+            .iter()
             .filter(|e| e.session_id.as_deref() == Some(session_id))
             .collect()
     }
 
     /// Get events in a time range
     pub fn get_events_in_range(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Vec<&AuditEvent> {
-        self.events.iter()
+        self.events
+            .iter()
             .filter(|e| e.timestamp >= from && e.timestamp <= to)
             .collect()
     }
@@ -194,9 +197,7 @@ impl AuditLogger {
 
     /// Get error events
     pub fn get_errors(&self) -> Vec<&AuditEvent> {
-        self.events.iter()
-            .filter(|e| !e.success)
-            .collect()
+        self.events.iter().filter(|e| !e.success).collect()
     }
 
     /// Get event count by type
@@ -225,8 +226,14 @@ impl AuditLogger {
         let errors = self.events.iter().filter(|e| !e.success).count();
         let by_type = self.count_by_type();
 
-        let messages_sent = by_type.get(&AuditEventType::MessageSent).copied().unwrap_or(0);
-        let responses = by_type.get(&AuditEventType::ResponseReceived).copied().unwrap_or(0);
+        let messages_sent = by_type
+            .get(&AuditEventType::MessageSent)
+            .copied()
+            .unwrap_or(0);
+        let responses = by_type
+            .get(&AuditEventType::ResponseReceived)
+            .copied()
+            .unwrap_or(0);
 
         AuditStats {
             total_events: total,
@@ -257,15 +264,118 @@ mod tests {
         let config = AuditConfig::default();
         let mut logger = AuditLogger::new(config);
 
-        logger.log(AuditEvent::new(AuditEventType::MessageSent)
-            .with_user("test_user")
-            .with_detail("content_length", "100"));
+        logger.log(
+            AuditEvent::new(AuditEventType::MessageSent)
+                .with_user("test_user")
+                .with_detail("content_length", "100"),
+        );
 
-        logger.log(AuditEvent::new(AuditEventType::ResponseReceived)
-            .with_user("test_user"));
+        logger.log(AuditEvent::new(AuditEventType::ResponseReceived).with_user("test_user"));
 
         let stats = logger.get_stats();
         assert_eq!(stats.total_events, 2);
         assert_eq!(stats.messages_sent, 1);
+    }
+
+    #[test]
+    fn test_event_filtering() {
+        let config = AuditConfig {
+            enabled: true,
+            max_events: 100,
+            log_message_content: false,
+            event_filter: vec![AuditEventType::Error, AuditEventType::RateLimitHit],
+        };
+        let mut logger = AuditLogger::new(config);
+
+        // Log events of various types
+        logger.log(AuditEvent::new(AuditEventType::MessageSent));
+        logger.log(AuditEvent::new(AuditEventType::Error).with_error("something failed"));
+        logger.log(AuditEvent::new(AuditEventType::RateLimitHit));
+        logger.log(AuditEvent::new(AuditEventType::SessionCreated));
+
+        // Only Error and RateLimitHit should have been stored
+        assert_eq!(logger.get_events().len(), 2);
+        assert_eq!(logger.get_events_by_type(AuditEventType::Error).len(), 1);
+        assert_eq!(
+            logger
+                .get_events_by_type(AuditEventType::RateLimitHit)
+                .len(),
+            1
+        );
+        assert_eq!(
+            logger.get_events_by_type(AuditEventType::MessageSent).len(),
+            0
+        );
+    }
+
+    #[test]
+    fn test_circular_buffer_eviction() {
+        let config = AuditConfig {
+            enabled: true,
+            max_events: 3,
+            log_message_content: false,
+            event_filter: Vec::new(),
+        };
+        let mut logger = AuditLogger::new(config);
+
+        // Log 5 events
+        for _ in 0..5 {
+            logger.log_simple(AuditEventType::MessageSent);
+        }
+
+        // Only 3 should remain (the most recent 3)
+        assert_eq!(logger.get_events().len(), 3);
+    }
+
+    #[test]
+    fn test_stats_aggregation() {
+        let config = AuditConfig::default();
+        let mut logger = AuditLogger::new(config);
+
+        logger.log_simple(AuditEventType::MessageSent);
+        logger.log_simple(AuditEventType::MessageSent);
+        logger.log_simple(AuditEventType::ResponseReceived);
+        logger.log(AuditEvent::new(AuditEventType::Error).with_error("oops"));
+        logger.log(AuditEvent::new(AuditEventType::Error).with_error("again"));
+
+        let stats = logger.get_stats();
+        assert_eq!(stats.total_events, 5);
+        assert_eq!(stats.error_count, 2);
+        assert_eq!(stats.messages_sent, 2);
+        assert_eq!(stats.responses_received, 1);
+        assert_eq!(
+            *stats.events_by_type.get(&AuditEventType::Error).unwrap(),
+            2
+        );
+        assert_eq!(
+            *stats
+                .events_by_type
+                .get(&AuditEventType::MessageSent)
+                .unwrap(),
+            2
+        );
+    }
+
+    #[test]
+    fn test_get_events_by_type() {
+        let config = AuditConfig::default();
+        let mut logger = AuditLogger::new(config);
+
+        logger.log(AuditEvent::new(AuditEventType::SessionCreated).with_session("s1"));
+        logger.log(AuditEvent::new(AuditEventType::MessageSent).with_session("s1"));
+        logger.log(AuditEvent::new(AuditEventType::SessionCreated).with_session("s2"));
+        logger.log(AuditEvent::new(AuditEventType::ResponseReceived).with_session("s1"));
+
+        let created = logger.get_events_by_type(AuditEventType::SessionCreated);
+        assert_eq!(created.len(), 2);
+        // Verify the sessions match
+        assert_eq!(created[0].session_id.as_deref(), Some("s1"));
+        assert_eq!(created[1].session_id.as_deref(), Some("s2"));
+
+        let sent = logger.get_events_by_type(AuditEventType::MessageSent);
+        assert_eq!(sent.len(), 1);
+
+        let deleted = logger.get_events_by_type(AuditEventType::SessionDeleted);
+        assert_eq!(deleted.len(), 0);
     }
 }

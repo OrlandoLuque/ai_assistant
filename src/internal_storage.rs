@@ -27,10 +27,10 @@
 //! assert_eq!(data, loaded);
 //! ```
 
-use std::path::{Path, PathBuf};
+use anyhow::{Context, Result};
+use serde::{de::DeserializeOwned, Serialize};
 use std::io::{Read, Write};
-use anyhow::{Result, Context};
-use serde::{Serialize, de::DeserializeOwned};
+use std::path::{Path, PathBuf};
 
 /// Detected storage format of a file or byte buffer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -150,8 +150,8 @@ pub fn save_internal<T: Serialize>(data: &T, path: &Path) -> Result<()> {
 /// Transparently reads both bincode+gzip (binary) and JSON (legacy) files.
 /// This ensures backward compatibility when migrating from JSON to binary storage.
 pub fn load_internal<T: DeserializeOwned>(path: &Path) -> Result<T> {
-    let bytes = std::fs::read(path)
-        .with_context(|| format!("Failed to read file: {}", path.display()))?;
+    let bytes =
+        std::fs::read(path).with_context(|| format!("Failed to read file: {}", path.display()))?;
     deserialize_internal(&bytes)
         .with_context(|| format!("Failed to deserialize file: {}", path.display()))
 }
@@ -165,8 +165,7 @@ pub fn load_internal<T: DeserializeOwned>(path: &Path) -> Result<T> {
 /// Useful for inspecting binary files: `dump_as_json::<ChatSessionStore>(path)`
 pub fn dump_as_json<T: Serialize + DeserializeOwned>(path: &Path) -> Result<String> {
     let data: T = load_internal(path)?;
-    serde_json::to_string_pretty(&data)
-        .context("Failed to serialize to JSON")
+    serde_json::to_string_pretty(&data).context("Failed to serialize to JSON")
 }
 
 /// Convert an internal file (binary or JSON) to a `.debug.json` file alongside it.
@@ -199,8 +198,8 @@ pub fn convert_json_to_binary<T: Serialize + DeserializeOwned>(
 /// Reports format, size on disk, and (for binary files) uncompressed size and
 /// compression ratio.
 pub fn file_info(path: &Path) -> Result<InternalFileInfo> {
-    let bytes = std::fs::read(path)
-        .with_context(|| format!("Failed to read file: {}", path.display()))?;
+    let bytes =
+        std::fs::read(path).with_context(|| format!("Failed to read file: {}", path.display()))?;
     let size_bytes = bytes.len() as u64;
     let format = detect_format(&bytes);
 
@@ -262,15 +261,13 @@ macro_rules! debug_dump {
 
 #[cfg(feature = "binary-storage")]
 fn serialize_impl<T: Serialize>(data: &T) -> Result<Vec<u8>> {
-    let bincode_bytes = bincode::serialize(data)
-        .context("bincode serialization failed")?;
+    let bincode_bytes = bincode::serialize(data).context("bincode serialization failed")?;
     compress_gzip(&bincode_bytes)
 }
 
 #[cfg(not(feature = "binary-storage"))]
 fn serialize_impl<T: Serialize>(data: &T) -> Result<Vec<u8>> {
-    let json = serde_json::to_string_pretty(data)
-        .context("JSON serialization failed")?;
+    let json = serde_json::to_string_pretty(data).context("JSON serialization failed")?;
     Ok(json.into_bytes())
 }
 
@@ -301,25 +298,22 @@ fn deserialize_binary<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
 }
 
 fn deserialize_json<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
-    serde_json::from_slice(bytes)
-        .context("Failed to deserialize JSON data")
+    serde_json::from_slice(bytes).context("Failed to deserialize JSON data")
 }
 
 fn compress_gzip(data: &[u8]) -> Result<Vec<u8>> {
-    let mut encoder = flate2::write::GzEncoder::new(
-        Vec::new(),
-        flate2::Compression::default(),
-    );
-    encoder.write_all(data)
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder
+        .write_all(data)
         .context("gzip compression write failed")?;
-    encoder.finish()
-        .context("gzip compression finish failed")
+    encoder.finish().context("gzip compression finish failed")
 }
 
 fn decompress_gzip(data: &[u8]) -> Result<Vec<u8>> {
     let mut decoder = flate2::read::GzDecoder::new(data);
     let mut decompressed = Vec::new();
-    decoder.read_to_end(&mut decompressed)
+    decoder
+        .read_to_end(&mut decompressed)
         .context("gzip decompression failed")?;
     Ok(decompressed)
 }
@@ -354,7 +348,7 @@ fn append_extension(path: &Path, ext: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde::{Serialize, Deserialize};
+    use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     struct TestData {
@@ -373,7 +367,10 @@ mod tests {
         TestData {
             name: "test_data".to_string(),
             values: vec![1, 2, 3, 42, 100],
-            nested: Some(TestNested { flag: true, score: 0.95 }),
+            nested: Some(TestNested {
+                flag: true,
+                score: 0.95,
+            }),
         }
     }
 
@@ -430,7 +427,10 @@ mod tests {
 
     #[test]
     fn test_detect_format_gzip() {
-        assert_eq!(detect_format(&[0x1F, 0x8B, 0x08, 0x00]), StorageFormat::Binary);
+        assert_eq!(
+            detect_format(&[0x1F, 0x8B, 0x08, 0x00]),
+            StorageFormat::Binary
+        );
     }
 
     #[test]
@@ -564,7 +564,10 @@ mod tests {
         let data = TestData {
             name: "x".repeat(10000),
             values: (0..1000).collect(),
-            nested: Some(TestNested { flag: false, score: 3.14159 }),
+            nested: Some(TestNested {
+                flag: false,
+                score: 3.14159,
+            }),
         };
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("large.bin");

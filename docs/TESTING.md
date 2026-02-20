@@ -6,14 +6,16 @@ The project has two testing layers:
 
 | Layer | Tests | Run Command |
 |-------|-------|-------------|
-| Unit tests (`#[test]`) | 1418 | `cargo test --lib --features full` |
+| Unit tests (`#[test]`) | 2393 | `cargo test --lib --features full` |
 | Integration tests | 38 | `cargo test --test integration_tests --features full` |
-| Test harness (CLI) | 420 | `cargo run --bin ai_test_harness -- --all` |
-| Distributed networking tests | 113 | `cargo test --features "full,distributed-network"` (1531 total) |
-| P2P tests | 19 | `cargo test --features "full,p2p" --lib -- p2p::` |
-| Autonomous agent tests | 255 | `cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents"` (1786 total) |
+| Test harness (CLI) | ~436 | `cargo run --bin ai_test_harness -- --all` (sin P2P) |
+| Distributed networking tests | 115 | `cargo test --features "full,distributed-network"` |
+| P2P tests | 32 | `cargo test --features "full,p2p" --lib -- p2p::` |
+| Autonomous agent tests | 255 | `cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents"` |
+| Test harness P2P categories | 16 | `cargo run --bin ai_test_harness --features "full,p2p" -- --category=p2p_nat` |
+| Benchmarks | 6 | `cargo bench --bench core_benchmarks --features full` |
 
-**Total: 1,786+ tests** (1418 base + 113 distributed networking + 255 autonomous agent system)
+**Total: 2,431 tests** (2393 lib + 38 integration, verified with `cargo test --features "full,p2p,distributed-network,autonomous,scheduler,butler,browser,distributed-agents"`)
 
 ## Quick Start
 
@@ -32,6 +34,9 @@ cargo run --bin ai_test_harness -- --list
 
 # CI mode (no ANSI colors)
 cargo run --bin ai_test_harness -- --all --no-color
+
+# Run benchmarks
+cargo bench --bench core_benchmarks --features full
 ```
 
 ## Unit Tests (`cargo test`)
@@ -76,7 +81,7 @@ Unit tests live inside each source file in `crates/ai_assistant/src/` using `#[c
 
 **Distributed Networking** (feature `distributed-network`):
 - `consistent_hash.rs` - ConsistentHashRing, vnodes, key distribution, add/remove nodes (12 tests)
-- `failure_detector.rs` - PhiAccrualDetector, HeartbeatManager, phi calculation, node status (14 tests)
+- `failure_detector.rs` - PhiAccrualDetector, HeartbeatManager, phi calculation, node status, is_suspicious, get_suspicious_nodes (15 tests)
 - `merkle_sync.rs` - MerkleTree, SHA-256 hashing, diff, proofs, AntiEntropySync (13 tests)
 - `node_security.rs` - CertificateManager, JoinToken, ChallengeResponse, secure RNG, constant-time eq (27 tests)
 - `distributed_network.rs` - NetworkNode, QUIC transport, replication, LAN discovery, peer exchange, anti-entropy, join validation, reputation (47 tests)
@@ -89,7 +94,7 @@ Unit tests live inside each source file in `crates/ai_assistant/src/` using `#[c
 - `content_encryption.rs` - Real AES-256-GCM with `rag` feature, random nonces (4 new tests, 7 total)
 - `websocket_streaming.rs` - SHA-1 (RFC 3174), base64 (RFC 4648), RFC 6455 WebSocket handshake (4 new tests, 10 total)
 - `agentic_loop.rs` - Response generator callback, cleaned simulate comments (3 new tests, 35 total)
-- `p2p.rs` - STUN/UPnP/NAT-PMP NAT traversal, ICE connectivity, TCP bootstrap, knowledge broadcast/query, consensus (14 new tests, 19 total)
+- `p2p.rs` - STUN/UPnP/NAT-PMP NAT traversal, ICE connectivity, TCP bootstrap, knowledge broadcast/query, consensus, reputation, manager lifecycle (28 new tests, 32 total)
 - `wasm.rs` - Three-variant cfg for WASM: real web-sys/js-sys/getrandom when `wasm` feature active (4 new tests, 9 total)
 
 **Autonomous Agent System** (features `autonomous`, `scheduler`, `butler`, `browser`, `distributed-agents`):
@@ -108,12 +113,71 @@ Unit tests live inside each source file in `crates/ai_assistant/src/` using `#[c
 - `browser_tools.rs` - Real CDP via WebSocket, Chrome process management, base64 encoder (19 tests)
 - `distributed_agents.rs` - Task distribution, node management, heartbeats, MapReduce (17 tests)
 
+**Providers & Persistence** (Phase 7-8):
+- `providers.rs` - Provider configuration, model fetching, response generation
+- `persistence.rs` - Session persistence, file I/O, round-trip serialization
+- `metrics.rs` - Metrics collection, counters, histograms, aggregation
+- `error.rs` - Error types, error propagation, Display/Debug impls
+
+**REPL, Reranking & A/B Testing** (Phase 9):
+- `repl.rs` - ReplEngine, command parsing, history, session management, completions, theming (21 tests)
+- `reranker.rs` - CrossEncoderReranker, ReciprocalRankFusion, DiversityReranker (MMR), CascadeReranker, RerankerPipeline (15 tests)
+- `ab_testing.rs` - ExperimentManager, VariantAssigner (FNV-1a), SignificanceCalculator (Welch's t-test, chi-square), EarlyStopping (20 tests)
+
+**Token Counting, Cost Integration & Multi-Modal RAG** (Phase 10):
+- `token_counter.rs` - TokenCounter trait, BpeTokenCounter (pure Rust BPE), ApproximateCounter, ProviderTokenCounter, TokenBudget, TokenAllocation (15 tests)
+- `cost_integration.rs` - CostDashboard, CostMiddleware, DefaultCostMiddleware, CostAwareConfig, RequestCostEntry, RequestType, CostDecision (12 tests)
+- `multimodal_rag.rs` - ModalityType, MultiModalChunk, MultiModalDocument, MultiModalRetriever, MultiModalPipeline, MultiModalResult, ImageCaptionExtractor (15 tests)
+
+**UI Framework Hooks & Agent Graph Visualization** (Phase 11):
+- `ui_hooks.rs` — 16 tests (ChatStreamEvent, ChatHooks, StreamAdapter, ChatSession, status transitions)
+- `agent_graph.rs` — 17 tests (AgentGraph CRUD, topological sort, cycle detection, DOT/Mermaid/JSON export, from_dag, ExecutionTrace, GraphAnalytics)
+
+**Analysis & NLP** (Phase 7-8):
+- `analysis.rs` - Text analysis, topic extraction, summarization
+- `embeddings.rs` - LocalEmbedder, cosine similarity, batch embedding
+- `rate_limiting.rs` - Rate limit enforcement, sliding window, token bucket
+- `intent.rs` - IntentClassifier, intent categories, confidence scoring
+- `response_effectiveness.rs` - Response quality metrics, effectiveness scoring
+- `conversation_compaction.rs` - Conversation compaction strategies, importance scoring
+
+**Security & Templates** (Phase 7-8):
+- `security.rs` - Input validation, injection detection, sanitization integration
+- `templates.rs` - PromptTemplate, variable rendering, template categories, bulk rendering
+
 **Formatting & Templates**:
 - `formatting.rs` - Response parsing, code block extraction
 - `templates.rs` - PromptTemplate, variable rendering
 - `diff.rs` - Text diff computation
 - `streaming.rs` - StreamBuffer operations
 - `cache_compression.rs` - Compress/decompress roundtrips
+
+## Benchmarks (`cargo bench`)
+
+The project includes a Criterion benchmark suite with 6 benchmarks covering core operations:
+
+```bash
+# Run all benchmarks
+cargo bench --bench core_benchmarks --features full
+```
+
+| Benchmark | What it measures |
+|-----------|-----------------|
+| `intent_classification` | IntentClassifier over 8 representative sentences |
+| `conversation_compaction_100_msgs` | ConversationCompactor over 100 messages |
+| `prompt_shortener` | PromptShortener with a 500-word text |
+| `sentiment_analysis` | SentimentAnalyzer over multiple sentences |
+| `request_signing_hmac_sha256` | RequestSigner HMAC-SHA256 signature generation |
+| `template_rendering` | TemplateCategory rendering with variable substitution |
+
+Results are output in Criterion's HTML report format under `target/criterion/`.
+
+## Integration Test Notes
+
+- **BestFit determinism fix**: The `BestFit` allocation strategy in integration tests was updated to produce deterministic results regardless of platform or HashMap iteration order.
+- **Required-features in Cargo.toml**: All examples now declare `required-features` in `[[example]]` sections, so `cargo build --examples` correctly skips examples whose features are not enabled.
+
+---
 
 ## CLI Test Harness (`ai_test_harness`)
 
@@ -128,8 +192,9 @@ The test harness is a standalone binary that tests the `ai_assistant` crate's pu
 | Chain (3-4 module) | 10 | 10 | Multi-step processing |
 | Pipeline (5-6 module) | 8 | 9 | End-to-end workflows |
 | Stress & Edge-case | 13 | 98 | Empty inputs, unicode, large data, errors, boundaries, concurrency, memory, regression, performance, fuzzing, api_contracts, serialization, chaos |
+| P2P (feature=p2p) | 3 | 16 | NAT traversal, reputation, P2P manager |
 
-### All 108 Categories
+### All 111 Categories (108 base + 3 P2P)
 
 **Core**: core, session, context, security, analysis, formatting, templates, export, streaming, memory, tools, cost, embeddings, llm
 
@@ -144,6 +209,36 @@ The test harness is a standalone binary that tests the `ai_assistant` crate's pu
 **RAG (feature=rag)**: rag_tiers, knowledge_graph
 
 **Stress & Edge-case**: stress_empty_inputs, stress_unicode, stress_large_inputs, stress_error_paths, stress_boundaries, stress_concurrency, stress_memory, stress_regression, stress_performance, stress_fuzzing, stress_api_contracts, stress_serialization, stress_chaos
+
+**P2P (feature=p2p)**: p2p_nat, p2p_reputation, p2p_manager
+
+### P2P Testing
+
+The P2P module requires the `p2p` feature flag (which also activates `distributed`). P2P tests are designed to work without real network access.
+
+**Running P2P tests:**
+
+```bash
+# Unit tests (32 tests)
+cargo test --features "full,p2p" --lib -- p2p::
+
+# Test harness P2P categories (16 tests across 3 categories)
+cargo run --bin ai_test_harness --features "full,p2p" -- --category=p2p_nat
+cargo run --bin ai_test_harness --features "full,p2p" -- --category=p2p_reputation
+cargo run --bin ai_test_harness --features "full,p2p" -- --category=p2p_manager
+```
+
+**Network-dependent test strategy:**
+
+P2P code interacts with the network (STUN servers, UPnP gateways, TCP sockets). Tests cover this code without requiring real network infrastructure:
+
+| Strategy | Example | What it tests |
+|----------|---------|---------------|
+| Disabled paths | `enable_upnp: false` | Error handling when feature is off |
+| Empty configs | `stun_servers: vec![]` | Graceful handling of missing configuration |
+| Unreachable addresses | RFC 5737 TEST-NET (`198.51.100.1:3478`) | Timeout and error paths |
+| Synthetic data | Manual `PeerReputation` construction | Pure logic without I/O |
+| State assertions | `manager.start()` then `manager.stats()` | Manager lifecycle without peers |
 
 ### RustRover Configuration
 

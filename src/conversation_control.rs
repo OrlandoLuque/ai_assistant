@@ -1,10 +1,10 @@
 //! Conversation control: cancellation, regeneration, editing, branching
 
+use crate::messages::ChatMessage;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use serde::{Deserialize, Serialize};
-use chrono::{DateTime, Utc};
-use crate::messages::ChatMessage;
 
 // ============================================================================
 // Cancellation Token
@@ -134,8 +134,7 @@ impl MessageOperations {
     /// Returns None if there's no assistant message to regenerate.
     pub fn prepare_regeneration(conversation: &mut Vec<ChatMessage>) -> Option<RegenerateResult> {
         // Find the last assistant message
-        let last_assistant_idx = conversation.iter()
-            .rposition(|m| m.role == "assistant")?;
+        let last_assistant_idx = conversation.iter().rposition(|m| m.role == "assistant")?;
 
         // Find the user message that prompted it
         let user_prompt = conversation[..last_assistant_idx]
@@ -164,7 +163,10 @@ impl MessageOperations {
     /// Count messages by role
     pub fn count_by_role(conversation: &[ChatMessage]) -> (usize, usize, usize) {
         let user = conversation.iter().filter(|m| m.role == "user").count();
-        let assistant = conversation.iter().filter(|m| m.role == "assistant").count();
+        let assistant = conversation
+            .iter()
+            .filter(|m| m.role == "assistant")
+            .count();
         let system = conversation.iter().filter(|m| m.role == "system").count();
         (user, assistant, system)
     }
@@ -210,7 +212,8 @@ impl BranchPoint {
 
         while let Some(parent_id) = current {
             lineage.push(parent_id.clone());
-            current = branches.iter()
+            current = branches
+                .iter()
                 .find(|b| b.id == parent_id)
                 .and_then(|b| b.parent_branch.clone());
         }
@@ -289,7 +292,8 @@ impl BranchManager {
 
     /// Get the currently active branch
     pub fn get_active_branch(&self) -> Option<&BranchPoint> {
-        self.active_branch.as_ref()
+        self.active_branch
+            .as_ref()
             .and_then(|id| self.branches.iter().find(|b| &b.id == id))
     }
 
@@ -317,7 +321,9 @@ impl BranchManager {
         self.branches.retain(|b| b.id != branch_id);
 
         // Also delete child branches
-        let children: Vec<String> = self.branches.iter()
+        let children: Vec<String> = self
+            .branches
+            .iter()
             .filter(|b| b.parent_branch.as_deref() == Some(branch_id))
             .map(|b| b.id.clone())
             .collect();
@@ -351,7 +357,8 @@ impl BranchManager {
 
     /// Get branches that stem from a specific index
     pub fn get_branches_at_index(&self, index: usize) -> Vec<&BranchPoint> {
-        self.branches.iter()
+        self.branches
+            .iter()
             .filter(|b| b.branch_index == index)
             .collect()
     }
@@ -439,7 +446,8 @@ impl VariantManager {
             is_selected: false,
         };
 
-        self.variants.entry(message_index)
+        self.variants
+            .entry(message_index)
             .or_insert_with(Vec::new)
             .push(variant);
     }
@@ -463,7 +471,8 @@ impl VariantManager {
 
     /// Get selected variant for a message
     pub fn get_selected_variant(&self, message_index: usize) -> Option<&ResponseVariant> {
-        self.variants.get(&message_index)
+        self.variants
+            .get(&message_index)
             .and_then(|vars| vars.iter().find(|v| v.is_selected))
     }
 
@@ -480,7 +489,10 @@ impl VariantManager {
 
     /// Get variant count for a message
     pub fn variant_count(&self, message_index: usize) -> usize {
-        self.variants.get(&message_index).map(|v| v.len()).unwrap_or(0)
+        self.variants
+            .get(&message_index)
+            .map(|v| v.len())
+            .unwrap_or(0)
     }
 
     /// Check if message has multiple variants
@@ -528,12 +540,8 @@ mod tests {
             ChatMessage::assistant("I'm doing well!"),
         ];
 
-        let result = MessageOperations::edit_user_message(
-            &mut conversation,
-            2,
-            "What's your name?",
-            true,
-        );
+        let result =
+            MessageOperations::edit_user_message(&mut conversation, 2, "What's your name?", true);
 
         assert!(result.is_some());
         let result = result.unwrap();

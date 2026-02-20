@@ -121,10 +121,7 @@ impl StepType {
             || lower.contains("conclude")
         {
             StepType::Inference
-        } else if lower.contains("verify")
-            || lower.contains("check")
-            || lower.contains("confirm")
-        {
+        } else if lower.contains("verify") || lower.contains("check") || lower.contains("confirm") {
             StepType::Verification
         } else if lower.contains("final answer")
             || lower.contains("the answer is")
@@ -138,7 +135,11 @@ impl StepType {
 }
 
 fn contains_calculation(s: &str) -> bool {
-    s.contains(" = ") || s.contains(" + ") || s.contains(" - ") || s.contains(" * ") || s.contains(" / ")
+    s.contains(" = ")
+        || s.contains(" + ")
+        || s.contains(" - ")
+        || s.contains(" * ")
+        || s.contains(" / ")
 }
 
 /// Result of CoT parsing
@@ -246,9 +247,11 @@ impl CotParser {
             let trimmed = line.trim();
 
             // Check if line starts with a marker
-            let is_new_step = self.config.step_markers.iter().any(|m| {
-                trimmed.to_lowercase().starts_with(&m.to_lowercase())
-            });
+            let is_new_step = self
+                .config
+                .step_markers
+                .iter()
+                .any(|m| trimmed.to_lowercase().starts_with(&m.to_lowercase()));
 
             if is_new_step {
                 // Save previous step
@@ -407,7 +410,8 @@ fn extract_math_ops(text: &str) -> Vec<String> {
     let mut ops = Vec::new();
 
     // Match mathematical expressions
-    let math_re = regex::Regex::new(r"\d+\s*[+\-*/×÷=]\s*\d+(?:\s*[+\-*/×÷=]\s*\d+)*").expect("valid regex");
+    let math_re =
+        regex::Regex::new(r"\d+\s*[+\-*/×÷=]\s*\d+(?:\s*[+\-*/×÷=]\s*\d+)*").expect("valid regex");
     for m in math_re.find_iter(text) {
         ops.push(m.as_str().to_string());
     }

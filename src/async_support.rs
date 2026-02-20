@@ -284,7 +284,9 @@ impl<T> AsyncSender<T> {
 
 impl<T> Clone for AsyncSender<T> {
     fn clone(&self) -> Self {
-        Self { tx: self.tx.clone() }
+        Self {
+            tx: self.tx.clone(),
+        }
     }
 }
 
@@ -341,7 +343,9 @@ pub fn async_channel<T: Send + 'static>() -> (AsyncSender<T>, AsyncReceiver<T>) 
     let (tx, rx) = std::sync::mpsc::channel();
     (
         AsyncSender { tx },
-        AsyncReceiver { rx: Arc::new(Mutex::new(rx)) },
+        AsyncReceiver {
+            rx: Arc::new(Mutex::new(rx)),
+        },
     )
 }
 
@@ -401,7 +405,10 @@ impl<T> AsyncMutex<T> {
 
     /// Try to lock without blocking
     pub fn try_lock(&self) -> Option<AsyncMutexGuard<'_, T>> {
-        self.inner.try_lock().ok().map(|guard| AsyncMutexGuard { guard })
+        self.inner
+            .try_lock()
+            .ok()
+            .map(|guard| AsyncMutexGuard { guard })
     }
 }
 
@@ -467,16 +474,43 @@ where
 /// Select the first future to complete
 ///
 /// Returns the result of whichever future completes first.
-/// Note: This is a simplified implementation that just awaits the first future.
-/// For proper concurrent selection, use an async runtime like tokio.
-pub async fn select<A, B, R>(a: A, _b: B) -> R
+/// Both futures are polled concurrently; as soon as one is ready, its value is returned.
+pub async fn select<A, B, R>(a: A, b: B) -> R
 where
     A: Future<Output = R>,
     B: Future<Output = R>,
 {
-    // Simplified: just await first one
-    // Real implementation would poll both concurrently
-    a.await
+    Select { a, b }.await
+}
+
+/// Internal future combinator that races two futures.
+struct Select<A, B> {
+    a: A,
+    b: B,
+}
+
+impl<A, B, R> Future for Select<A, B>
+where
+    A: Future<Output = R>,
+    B: Future<Output = R>,
+{
+    type Output = R;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<R> {
+        // SAFETY: we never move the inner futures after pinning
+        unsafe {
+            let this = self.get_unchecked_mut();
+            // Poll a first
+            if let Poll::Ready(val) = Pin::new_unchecked(&mut this.a).poll(cx) {
+                return Poll::Ready(val);
+            }
+            // Poll b
+            if let Poll::Ready(val) = Pin::new_unchecked(&mut this.b).poll(cx) {
+                return Poll::Ready(val);
+            }
+            Poll::Pending
+        }
+    }
 }
 
 // ============================================================================
@@ -595,10 +629,33 @@ mod tests {
 
     #[test]
     fn test_join() {
-        let result = block_on(join(
-            async { 1 },
-            async { 2 },
-        ));
+        let result = block_on(join(async { 1 }, async { 2 }));
         assert_eq!(result, (1, 2));
+    }
+
+    #[test]
+    fn test_select_returns_first_ready() {
+        // One future is immediately ready, the other never completes.
+        // select should return the ready one.
+        let result = block_on(select(
+            std::future::ready(42),
+            std::future::pending::<i32>(),
+        ));
+        assert_eq!(result, 42);
+
+        // Same test but with the ready future as the second argument
+        let result = block_on(select(
+            std::future::pending::<i32>(),
+            std::future::ready(99),
+        ));
+        assert_eq!(result, 99);
+    }
+
+    #[test]
+    fn test_select_both_ready() {
+        // Both futures are immediately ready. select polls `a` first, so it
+        // should return `a`'s value.
+        let result = block_on(select(std::future::ready(1), std::future::ready(2)));
+        assert_eq!(result, 1);
     }
 }

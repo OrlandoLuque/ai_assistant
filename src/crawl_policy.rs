@@ -80,8 +80,7 @@ impl ParsedRobotsTxt {
 
     /// Get the crawl delay for the specified user-agent.
     pub fn crawl_delay(&self, user_agent: &str) -> Option<f64> {
-        self.get_directives(user_agent)
-            .and_then(|d| d.crawl_delay)
+        self.get_directives(user_agent).and_then(|d| d.crawl_delay)
     }
 
     /// Collect all sitemaps from global declarations and all user-agent sections.
@@ -349,27 +348,27 @@ impl CrawlPolicy {
                     in_agent_section = true;
 
                     // Ensure entry exists
-                    directives.entry(agent.clone()).or_insert_with(|| {
-                        RobotsDirectives {
+                    directives
+                        .entry(agent.clone())
+                        .or_insert_with(|| RobotsDirectives {
                             user_agent: agent,
                             rules: Vec::new(),
                             crawl_delay: None,
                             sitemaps: Vec::new(),
-                        }
-                    });
+                        });
                 }
                 "allow" => {
                     in_agent_section = true;
                     if current_agents.is_empty() {
                         current_agents.push("*".to_string());
-                        directives.entry("*".to_string()).or_insert_with(|| {
-                            RobotsDirectives {
+                        directives
+                            .entry("*".to_string())
+                            .or_insert_with(|| RobotsDirectives {
                                 user_agent: "*".to_string(),
                                 rules: Vec::new(),
                                 crawl_delay: None,
                                 sitemaps: Vec::new(),
-                            }
-                        });
+                            });
                     }
                     let rule = RobotsRule {
                         path: value,
@@ -385,14 +384,14 @@ impl CrawlPolicy {
                     in_agent_section = true;
                     if current_agents.is_empty() {
                         current_agents.push("*".to_string());
-                        directives.entry("*".to_string()).or_insert_with(|| {
-                            RobotsDirectives {
+                        directives
+                            .entry("*".to_string())
+                            .or_insert_with(|| RobotsDirectives {
                                 user_agent: "*".to_string(),
                                 rules: Vec::new(),
                                 crawl_delay: None,
                                 sitemaps: Vec::new(),
-                            }
-                        });
+                            });
                     }
                     let rule = RobotsRule {
                         path: value,
@@ -477,9 +476,7 @@ impl CrawlPolicy {
                     None => continue, // Skip entries without a <loc>
                 };
 
-                let last_modified = lastmod_re
-                    .captures(block)
-                    .map(|c| c[1].to_string());
+                let last_modified = lastmod_re.captures(block).map(|c| c[1].to_string());
 
                 let change_frequency = changefreq_re
                     .captures(block)
@@ -553,13 +550,14 @@ impl CrawlPolicy {
         }
 
         // Update state after waiting
-        let state = self.rate_state.entry(domain.to_string()).or_insert_with(|| {
-            DomainRateState {
+        let state = self
+            .rate_state
+            .entry(domain.to_string())
+            .or_insert_with(|| DomainRateState {
                 last_request: Instant::now(),
                 delay,
                 request_count: 0,
-            }
-        });
+            });
         state.last_request = Instant::now();
         state.delay = delay;
         state.request_count += 1;
@@ -596,7 +594,11 @@ impl CrawlPolicy {
             if let Some((_, fetched_at)) = self.robots_cache.get(domain) {
                 if now.duration_since(*fetched_at) < self.config.robots_cache_ttl() {
                     // Cache is still valid - return reference
-                    return Ok(&self.robots_cache.get(domain).expect("domain just verified").0);
+                    return Ok(&self
+                        .robots_cache
+                        .get(domain)
+                        .expect("domain just verified")
+                        .0);
                 }
             }
         }
@@ -624,7 +626,11 @@ impl CrawlPolicy {
         self.robots_cache
             .insert(domain.to_string(), (parsed, Instant::now()));
 
-        Ok(&self.robots_cache.get(domain).expect("domain just inserted").0)
+        Ok(&self
+            .robots_cache
+            .get(domain)
+            .expect("domain just inserted")
+            .0)
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -795,15 +801,24 @@ Disallow: /blocked/
         ));
 
         // End-of-string anchor
-        assert!(ParsedRobotsTxt::path_matches_pattern("/page.html", "*.html$"));
+        assert!(ParsedRobotsTxt::path_matches_pattern(
+            "/page.html",
+            "*.html$"
+        ));
         assert!(!ParsedRobotsTxt::path_matches_pattern(
             "/page.html?query=1",
             "*.html$"
         ));
 
         // Simple prefix matching
-        assert!(ParsedRobotsTxt::path_matches_pattern("/admin/page", "/admin/"));
-        assert!(!ParsedRobotsTxt::path_matches_pattern("/public/page", "/admin/"));
+        assert!(ParsedRobotsTxt::path_matches_pattern(
+            "/admin/page",
+            "/admin/"
+        ));
+        assert!(!ParsedRobotsTxt::path_matches_pattern(
+            "/public/page",
+            "/admin/"
+        ));
     }
 
     #[test]
@@ -865,8 +880,14 @@ Disallow: /blocked/
         assert!(parsed.is_index);
         assert!(parsed.entries.is_empty());
         assert_eq!(parsed.sub_sitemaps.len(), 2);
-        assert_eq!(parsed.sub_sitemaps[0], "https://example.com/sitemap-posts.xml");
-        assert_eq!(parsed.sub_sitemaps[1], "https://example.com/sitemap-pages.xml");
+        assert_eq!(
+            parsed.sub_sitemaps[0],
+            "https://example.com/sitemap-posts.xml"
+        );
+        assert_eq!(
+            parsed.sub_sitemaps[1],
+            "https://example.com/sitemap-pages.xml"
+        );
     }
 
     #[test]
@@ -902,10 +923,7 @@ Disallow: /blocked/
             CrawlPolicy::extract_path("https://example.com/path/to/page?q=1"),
             "/path/to/page?q=1"
         );
-        assert_eq!(
-            CrawlPolicy::extract_path("https://example.com"),
-            "/"
-        );
+        assert_eq!(CrawlPolicy::extract_path("https://example.com"), "/");
     }
 
     #[test]
@@ -998,6 +1016,9 @@ Sitemap: https://example.com/sitemap2.xml
             .insert("veryslow.com".to_string(), (parsed_huge, Instant::now()));
 
         // Should be clamped to max_delay (5s)
-        assert_eq!(policy.get_delay("veryslow.com"), Duration::from_millis(5000));
+        assert_eq!(
+            policy.get_delay("veryslow.com"),
+            Duration::from_millis(5000)
+        );
     }
 }

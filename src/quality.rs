@@ -3,8 +3,8 @@
 //! This module provides tools to evaluate the quality of AI responses
 //! including coherence, relevance, fluency, and factual consistency.
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 // ============================================================================
 // Quality Metrics
@@ -235,7 +235,8 @@ impl QualityAnalyzer {
             return 0.8;
         }
 
-        let matches: usize = query_words.iter()
+        let matches: usize = query_words
+            .iter()
             .filter(|w| response_lower.contains(*w))
             .count();
 
@@ -261,13 +262,35 @@ impl QualityAnalyzer {
         }
 
         // Check for transition words between sentences
-        let transition_words = ["however", "therefore", "moreover", "furthermore",
-            "additionally", "also", "thus", "hence", "consequently", "because",
-            "since", "although", "while", "but", "and", "so", "then", "first",
-            "second", "finally", "in conclusion", "for example", "specifically"];
+        let transition_words = [
+            "however",
+            "therefore",
+            "moreover",
+            "furthermore",
+            "additionally",
+            "also",
+            "thus",
+            "hence",
+            "consequently",
+            "because",
+            "since",
+            "although",
+            "while",
+            "but",
+            "and",
+            "so",
+            "then",
+            "first",
+            "second",
+            "finally",
+            "in conclusion",
+            "for example",
+            "specifically",
+        ];
 
         let response_lower = response.to_lowercase();
-        let transition_count = transition_words.iter()
+        let transition_count = transition_words
+            .iter()
             .filter(|w| response_lower.contains(*w))
             .count();
 
@@ -285,7 +308,8 @@ impl QualityAnalyzer {
         }
 
         // Check average word length (reasonable is 4-8)
-        let avg_word_len: f32 = words.iter().map(|w| w.len() as f32).sum::<f32>() / words.len() as f32;
+        let avg_word_len: f32 =
+            words.iter().map(|w| w.len() as f32).sum::<f32>() / words.len() as f32;
         let word_len_score = if avg_word_len >= 3.0 && avg_word_len <= 10.0 {
             1.0
         } else {
@@ -363,7 +387,8 @@ impl QualityAnalyzer {
             return 0.8;
         }
 
-        let matches: usize = context_words.iter()
+        let matches: usize = context_words
+            .iter()
             .filter(|w| response_lower.contains(*w))
             .count();
 
@@ -373,7 +398,12 @@ impl QualityAnalyzer {
     }
 
     /// Find quality issues
-    fn find_issues(&self, query: &str, response: &str, _context: Option<&str>) -> Vec<QualityIssue> {
+    fn find_issues(
+        &self,
+        query: &str,
+        response: &str,
+        _context: Option<&str>,
+    ) -> Vec<QualityIssue> {
         let mut issues = Vec::new();
 
         // Check response length
@@ -542,8 +572,11 @@ impl QualityAnalyzer {
 
         // Check for potentially problematic patterns
         let concerning_patterns = [
-            "i cannot help", "i can't help", "i am unable",
-            "as an ai", "as a language model",
+            "i cannot help",
+            "i can't help",
+            "i am unable",
+            "as an ai",
+            "as a language model",
         ];
 
         for pattern in concerning_patterns {
@@ -576,7 +609,13 @@ impl QualityAnalyzer {
         }
 
         // Check for explanations
-        let explanation_words = ["because", "since", "therefore", "this means", "in other words"];
+        let explanation_words = [
+            "because",
+            "since",
+            "therefore",
+            "this means",
+            "in other words",
+        ];
         let response_lower = response.to_lowercase();
         if explanation_words.iter().any(|w| response_lower.contains(w)) {
             strengths.push("Provides clear explanations".to_string());
@@ -613,16 +652,26 @@ pub struct ResponseComparison {
 }
 
 /// Compare multiple candidate responses
-pub fn compare_responses(query: &str, responses: &[&str], context: Option<&str>) -> ResponseComparison {
+pub fn compare_responses(
+    query: &str,
+    responses: &[&str],
+    context: Option<&str>,
+) -> ResponseComparison {
     let analyzer = QualityAnalyzer::new(QualityConfig::default());
 
-    let scores: Vec<QualityScore> = responses.iter()
+    let scores: Vec<QualityScore> = responses
+        .iter()
         .map(|r| analyzer.analyze(query, r, context))
         .collect();
 
-    let best_index = scores.iter()
+    let best_index = scores
+        .iter()
         .enumerate()
-        .max_by(|(_, a), (_, b)| a.overall.partial_cmp(&b.overall).unwrap_or(std::cmp::Ordering::Equal))
+        .max_by(|(_, a), (_, b)| {
+            a.overall
+                .partial_cmp(&b.overall)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
         .map(|(i, _)| i)
         .unwrap_or(0);
 
@@ -632,7 +681,10 @@ pub fn compare_responses(query: &str, responses: &[&str], context: Option<&str>)
         "Best response is #{} with score {:.2}. Quality: {}",
         best_index + 1,
         best_score,
-        scores.get(best_index).map(|s| s.quality_level()).unwrap_or("Unknown")
+        scores
+            .get(best_index)
+            .map(|s| s.quality_level())
+            .unwrap_or("Unknown")
     );
 
     ResponseComparison {
@@ -673,7 +725,10 @@ mod tests {
         let score = analyzer.analyze(query, response, None);
 
         assert!(score.completeness < 0.5);
-        assert!(score.issues.iter().any(|i| i.issue_type == QualityIssueType::TerseResponse));
+        assert!(score
+            .issues
+            .iter()
+            .any(|i| i.issue_type == QualityIssueType::TerseResponse));
     }
 
     #[test]
@@ -685,7 +740,10 @@ mod tests {
 
         let score = analyzer.analyze(query, response, None);
 
-        assert!(score.issues.iter().any(|i| i.issue_type == QualityIssueType::CodeError));
+        assert!(score
+            .issues
+            .iter()
+            .any(|i| i.issue_type == QualityIssueType::CodeError));
     }
 
     #[test]

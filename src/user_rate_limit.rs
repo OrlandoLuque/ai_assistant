@@ -57,9 +57,12 @@ impl UserUsage {
     fn cleanup(&mut self) {
         let now = Instant::now();
 
-        self.minute_requests.retain(|t| now.duration_since(*t) < Duration::from_secs(60));
-        self.hour_requests.retain(|t| now.duration_since(*t) < Duration::from_secs(3600));
-        self.day_requests.retain(|t| now.duration_since(*t) < Duration::from_secs(86400));
+        self.minute_requests
+            .retain(|t| now.duration_since(*t) < Duration::from_secs(60));
+        self.hour_requests
+            .retain(|t| now.duration_since(*t) < Duration::from_secs(3600));
+        self.day_requests
+            .retain(|t| now.duration_since(*t) < Duration::from_secs(86400));
 
         if now.duration_since(self.last_minute_reset) >= Duration::from_secs(60) {
             self.minute_tokens = 0;
@@ -109,16 +112,23 @@ impl UserRateLimiter {
 
     #[allow(dead_code)]
     fn get_config(&self, user_id: &str) -> &UserRateLimitConfig {
-        self.custom_configs.get(user_id).unwrap_or(&self.default_config)
+        self.custom_configs
+            .get(user_id)
+            .unwrap_or(&self.default_config)
     }
 
     pub fn check(&mut self, user_id: &str, tokens: u64) -> RateLimitCheckResult {
         // Clone config to avoid borrow issues
-        let config = self.custom_configs.get(user_id)
+        let config = self
+            .custom_configs
+            .get(user_id)
             .unwrap_or(&self.default_config)
             .clone();
 
-        let usage = self.users.entry(user_id.to_string()).or_insert_with(UserUsage::new);
+        let usage = self
+            .users
+            .entry(user_id.to_string())
+            .or_insert_with(UserUsage::new);
         usage.cleanup();
 
         let minute_count = usage.minute_requests.len() as u32;
@@ -193,7 +203,10 @@ impl UserRateLimiter {
     }
 
     pub fn record(&mut self, user_id: &str, tokens: u64) {
-        let usage = self.users.entry(user_id.to_string()).or_insert_with(UserUsage::new);
+        let usage = self
+            .users
+            .entry(user_id.to_string())
+            .or_insert_with(UserUsage::new);
         let now = Instant::now();
 
         usage.minute_requests.push(now);
@@ -233,5 +246,71 @@ mod tests {
         limiter.record("user1", 100);
 
         assert!(!limiter.check("user1", 100).allowed);
+    }
+
+    #[test]
+    fn test_burst_allowance() {
+        // RPM=2 with burst_allowance=1 means 3 total requests allowed in the minute window
+        let mut limiter = UserRateLimiter::new(UserRateLimitConfig {
+            requests_per_minute: 2,
+            burst_allowance: 1,
+            ..Default::default()
+        });
+
+        // First two within normal RPM
+        assert!(limiter.check("user1", 10).allowed);
+        limiter.record("user1", 10);
+        assert!(limiter.check("user1", 10).allowed);
+        limiter.record("user1", 10);
+
+        // Third allowed by burst (burst_allowance=1 extra beyond RPM)
+        assert!(limiter.check("user1", 10).allowed);
+        limiter.record("user1", 10);
+
+        // Fourth should be denied (2 RPM + 1 burst = 3 total)
+        let result = limiter.check("user1", 10);
+        assert!(!result.allowed);
+        assert!(result.reason.unwrap().contains("Minute"));
+    }
+
+    #[test]
+    fn test_token_limit_enforcement() {
+        let mut limiter = UserRateLimiter::new(UserRateLimitConfig {
+            requests_per_minute: 100, // high RPM so we don't hit request limit
+            tokens_per_minute: 500,
+            burst_allowance: 0,
+            ..Default::default()
+        });
+
+        // First request with 400 tokens - allowed
+        assert!(limiter.check("user1", 400).allowed);
+        limiter.record("user1", 400);
+
+        // Second request with 200 tokens would exceed 500 TPM - denied
+        let result = limiter.check("user1", 200);
+        assert!(!result.allowed);
+        assert!(result.reason.unwrap().contains("token"));
+
+        // But a small request under the remaining budget is still allowed
+        assert!(limiter.check("user1", 50).allowed);
+    }
+
+    #[test]
+    fn test_multi_user_isolation() {
+        let mut limiter = UserRateLimiter::new(UserRateLimitConfig {
+            requests_per_minute: 2,
+            burst_allowance: 0,
+            ..Default::default()
+        });
+
+        // Exhaust user1's limit
+        limiter.record("user1", 10);
+        limiter.record("user1", 10);
+        assert!(!limiter.check("user1", 10).allowed);
+
+        // user2 should still have full quota
+        assert!(limiter.check("user2", 10).allowed);
+        limiter.record("user2", 10);
+        assert!(limiter.check("user2", 10).allowed);
     }
 }

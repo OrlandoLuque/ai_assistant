@@ -546,12 +546,7 @@ mod tests {
     #[test]
     fn test_map_reduce_results() {
         let mut mgr = make_manager();
-        let id = mgr.submit_map_reduce(
-            vec!["a".into(), "b".into()],
-            "mapper",
-            "reduce",
-            "reducer",
-        );
+        let id = mgr.submit_map_reduce(vec!["a".into(), "b".into()], "mapper", "reduce", "reducer");
 
         assert!(!mgr.is_map_phase_complete(&id));
 
@@ -569,12 +564,7 @@ mod tests {
     #[test]
     fn test_map_reduce_reduce() {
         let mut mgr = make_manager();
-        let id = mgr.submit_map_reduce(
-            vec!["x".into()],
-            "mapper",
-            "combine",
-            "reducer",
-        );
+        let id = mgr.submit_map_reduce(vec!["x".into()], "mapper", "combine", "reducer");
 
         mgr.record_map_result(&id, "x", "mapped-x");
         assert!(mgr.complete_reduce(&id, "final-result"));
@@ -643,7 +633,9 @@ mod tests {
         // task-b has priority 2, task-c has priority 3 — claim gets highest first
         // After first claim: task-c is assigned (priority 3)
         // Complete whichever was claimed
-        let claimed_id = mgr.list_tasks().iter()
+        let claimed_id = mgr
+            .list_tasks()
+            .iter()
             .find(|t| matches!(t.status, TaskDistributionStatus::Assigned))
             .map(|t| t.id.clone())
             .unwrap();
@@ -651,7 +643,9 @@ mod tests {
 
         // Claim and complete another
         mgr.claim_task(&worker);
-        let claimed_id2 = mgr.list_tasks().iter()
+        let claimed_id2 = mgr
+            .list_tasks()
+            .iter()
             .find(|t| matches!(t.status, TaskDistributionStatus::Assigned))
             .map(|t| t.id.clone())
             .unwrap();

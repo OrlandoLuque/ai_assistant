@@ -65,6 +65,28 @@ pub struct FlowAnalysis {
     pub conversation_balance: f64,
 }
 
+impl FlowAnalysis {
+    /// Export the analysis as JSON for visualization.
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "current_state": format!("{:?}", self.current_state),
+            "topic_coherence": self.topic_coherence,
+            "engagement_score": self.engagement_score,
+            "depth_score": self.depth_score,
+            "topics": self.topics,
+            "transitions": self.transitions.iter().map(|t| serde_json::json!({
+                "from_topic": t.from_topic,
+                "to_topic": t.to_topic,
+                "turn_index": t.turn_index,
+                "smoothness": t.smoothness,
+            })).collect::<Vec<_>>(),
+            "turn_distribution": self.turn_distribution,
+            "average_turn_length": self.average_turn_length,
+            "conversation_balance": self.conversation_balance,
+        })
+    }
+}
+
 /// Conversation flow analyzer
 pub struct FlowAnalyzer {
     turns: Vec<ConversationTurn>,
@@ -119,7 +141,8 @@ impl FlowAnalyzer {
 
         // Check for stalled conversation
         if recent.len() >= 2 {
-            let avg_length: f64 = recent.iter().map(|t| t.token_count as f64).sum::<f64>() / recent.len() as f64;
+            let avg_length: f64 =
+                recent.iter().map(|t| t.token_count as f64).sum::<f64>() / recent.len() as f64;
             if avg_length < 5.0 {
                 return FlowState::Stalled;
             }
@@ -133,11 +156,16 @@ impl FlowAnalyzer {
                 return FlowState::Conclusion;
             }
 
-            if lower.contains("?") && (lower.contains("what do you mean") || lower.contains("clarify")) {
+            if lower.contains("?")
+                && (lower.contains("what do you mean") || lower.contains("clarify"))
+            {
                 return FlowState::Clarification;
             }
 
-            if lower.contains("tell me more") || lower.contains("explain") || lower.contains("elaborate") {
+            if lower.contains("tell me more")
+                || lower.contains("explain")
+                || lower.contains("elaborate")
+            {
                 return FlowState::Elaboration;
             }
 
@@ -165,16 +193,14 @@ impl FlowAnalyzer {
         }
 
         // Get top topics
-        let mut topics: Vec<_> = topic_counts.into_iter()
+        let mut topics: Vec<_> = topic_counts
+            .into_iter()
             .filter(|(_, count)| *count >= 2)
             .collect();
 
         topics.sort_by(|a, b| b.1.cmp(&a.1));
 
-        topics.into_iter()
-            .take(5)
-            .map(|(word, _)| word)
-            .collect()
+        topics.into_iter().take(5).map(|(word, _)| word).collect()
     }
 
     fn analyze_transitions(&self, topics: &[String]) -> Vec<TopicTransition> {
@@ -183,17 +209,20 @@ impl FlowAnalyzer {
         for (i, turn) in self.turns.iter().enumerate().skip(1) {
             let prev_turn = &self.turns[i - 1];
 
-            let prev_topics: Vec<_> = topics.iter()
+            let prev_topics: Vec<_> = topics
+                .iter()
                 .filter(|t| prev_turn.content.to_lowercase().contains(*t))
                 .collect();
 
-            let curr_topics: Vec<_> = topics.iter()
+            let curr_topics: Vec<_> = topics
+                .iter()
                 .filter(|t| turn.content.to_lowercase().contains(*t))
                 .collect();
 
             // Check for topic change
             if !prev_topics.is_empty() && !curr_topics.is_empty() {
-                let overlap = prev_topics.iter()
+                let overlap = prev_topics
+                    .iter()
                     .filter(|t| curr_topics.contains(t))
                     .count();
 
@@ -201,8 +230,14 @@ impl FlowAnalyzer {
 
                 if smoothness < 0.5 {
                     transitions.push(TopicTransition {
-                        from_topic: prev_topics.first().map(|s| s.to_string()).unwrap_or_default(),
-                        to_topic: curr_topics.first().map(|s| s.to_string()).unwrap_or_default(),
+                        from_topic: prev_topics
+                            .first()
+                            .map(|s| s.to_string())
+                            .unwrap_or_default(),
+                        to_topic: curr_topics
+                            .first()
+                            .map(|s| s.to_string())
+                            .unwrap_or_default(),
                         turn_index: i,
                         smoothness,
                     });
@@ -238,16 +273,17 @@ impl FlowAnalyzer {
         let mut score = 0.5;
 
         // Questions indicate engagement
-        let questions = self.turns.iter()
+        let questions = self
+            .turns
+            .iter()
             .filter(|t| t.content.contains("?"))
             .count();
 
         score += (questions as f64 / self.turns.len() as f64) * 0.3;
 
         // Longer responses indicate engagement
-        let avg_length: f64 = self.turns.iter()
-            .map(|t| t.token_count as f64)
-            .sum::<f64>() / self.turns.len() as f64;
+        let avg_length: f64 =
+            self.turns.iter().map(|t| t.token_count as f64).sum::<f64>() / self.turns.len() as f64;
 
         if avg_length > 20.0 {
             score += 0.2;
@@ -262,8 +298,14 @@ impl FlowAnalyzer {
         }
 
         let depth_indicators = [
-            "because", "therefore", "however", "specifically",
-            "in detail", "for example", "furthermore", "moreover",
+            "because",
+            "therefore",
+            "however",
+            "specifically",
+            "in detail",
+            "for example",
+            "furthermore",
+            "moreover",
         ];
 
         let mut indicator_count = 0;
@@ -295,9 +337,7 @@ impl FlowAnalyzer {
             return 0.0;
         }
 
-        self.turns.iter()
-            .map(|t| t.token_count as f64)
-            .sum::<f64>() / self.turns.len() as f64
+        self.turns.iter().map(|t| t.token_count as f64).sum::<f64>() / self.turns.len() as f64
     }
 
     fn calculate_balance(&self) -> f64 {
@@ -321,13 +361,17 @@ impl FlowAnalyzer {
 
         match analysis.current_state {
             FlowState::Opening => "Gather information about user needs".to_string(),
-            FlowState::InformationGathering => "Provide relevant information or ask clarifying questions".to_string(),
+            FlowState::InformationGathering => {
+                "Provide relevant information or ask clarifying questions".to_string()
+            }
             FlowState::ProblemSolving => "Continue working on the solution".to_string(),
             FlowState::Clarification => "Provide clearer explanation".to_string(),
             FlowState::Elaboration => "Expand on the topic with more details".to_string(),
             FlowState::Conclusion => "Summarize and offer further assistance".to_string(),
             FlowState::OffTopic => "Gently redirect to the main topic".to_string(),
-            FlowState::Stalled => "Ask an engaging question to restart the conversation".to_string(),
+            FlowState::Stalled => {
+                "Ask an engaging question to restart the conversation".to_string()
+            }
         }
     }
 }
@@ -354,8 +398,14 @@ mod tests {
         let mut analyzer = FlowAnalyzer::new();
 
         analyzer.add_turn(ConversationTurn::new("user", "Hello!"));
-        analyzer.add_turn(ConversationTurn::new("assistant", "Hi! How can I help you today?"));
-        analyzer.add_turn(ConversationTurn::new("user", "I need help with Python programming"));
+        analyzer.add_turn(ConversationTurn::new(
+            "assistant",
+            "Hi! How can I help you today?",
+        ));
+        analyzer.add_turn(ConversationTurn::new(
+            "user",
+            "I need help with Python programming",
+        ));
 
         let analysis = analyzer.analyze();
         assert!(analysis.engagement_score > 0.0);
@@ -366,5 +416,24 @@ mod tests {
         let analyzer = FlowAnalyzer::new();
         let analysis = analyzer.analyze();
         assert_eq!(analysis.current_state, FlowState::Opening);
+    }
+
+    #[test]
+    fn test_flow_analysis_to_json() {
+        let analysis = FlowAnalysis {
+            current_state: FlowState::Opening,
+            topic_coherence: 0.8,
+            engagement_score: 0.7,
+            depth_score: 0.6,
+            topics: vec!["rust".to_string()],
+            transitions: vec![],
+            turn_distribution: std::collections::HashMap::new(),
+            average_turn_length: 50.0,
+            conversation_balance: 0.5,
+        };
+        let json = analysis.to_json();
+        assert_eq!(json["current_state"], "Opening");
+        assert_eq!(json["topic_coherence"], 0.8);
+        assert_eq!(json["topics"].as_array().unwrap().len(), 1);
     }
 }

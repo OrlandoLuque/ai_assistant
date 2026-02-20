@@ -191,15 +191,12 @@ impl FeedParser {
             .ok_or_else(|| anyhow!("No <channel> element found in RSS feed"))?;
 
         // Parse channel metadata
-        let title = Self::extract_tag_content(&channel, "title")
-            .unwrap_or_default();
-        let description = Self::extract_tag_content(&channel, "description")
-            .unwrap_or_default();
-        let link = Self::extract_tag_content(&channel, "link")
-            .unwrap_or_default();
+        let title = Self::extract_tag_content(&channel, "title").unwrap_or_default();
+        let description = Self::extract_tag_content(&channel, "description").unwrap_or_default();
+        let link = Self::extract_tag_content(&channel, "link").unwrap_or_default();
         let language = Self::extract_tag_content(&channel, "language");
-        let last_build_date = Self::extract_tag_content(&channel, "lastBuildDate")
-            .and_then(|d| Self::parse_date(&d));
+        let last_build_date =
+            Self::extract_tag_content(&channel, "lastBuildDate").and_then(|d| Self::parse_date(&d));
 
         let metadata = FeedMetadata {
             title,
@@ -216,16 +213,14 @@ impl FeedParser {
         let mut entries = Vec::new();
 
         for item_xml in &items_xml {
-            let item_title = Self::extract_tag_content(item_xml, "title")
-                .unwrap_or_default();
-            let item_link = Self::extract_tag_content(item_xml, "link")
-                .unwrap_or_default();
-            let item_description = Self::extract_tag_content(item_xml, "description")
-                .unwrap_or_default();
-            let pub_date = Self::extract_tag_content(item_xml, "pubDate")
-                .and_then(|d| Self::parse_date(&d));
-            let guid = Self::extract_tag_content(item_xml, "guid")
-                .unwrap_or_else(|| item_link.clone());
+            let item_title = Self::extract_tag_content(item_xml, "title").unwrap_or_default();
+            let item_link = Self::extract_tag_content(item_xml, "link").unwrap_or_default();
+            let item_description =
+                Self::extract_tag_content(item_xml, "description").unwrap_or_default();
+            let pub_date =
+                Self::extract_tag_content(item_xml, "pubDate").and_then(|d| Self::parse_date(&d));
+            let guid =
+                Self::extract_tag_content(item_xml, "guid").unwrap_or_else(|| item_link.clone());
             let author = Self::extract_tag_content(item_xml, "author")
                 .or_else(|| Self::extract_tag_content(item_xml, "dc:creator"));
             let content_encoded = Self::extract_tag_content(item_xml, "content:encoded");
@@ -256,18 +251,15 @@ impl FeedParser {
     /// Parse Atom feed content.
     fn parse_atom(content: &str) -> Result<ParsedFeed> {
         // Parse feed-level metadata
-        let title = Self::extract_tag_content(content, "title")
-            .unwrap_or_default();
-        let subtitle = Self::extract_tag_content(content, "subtitle")
-            .unwrap_or_default();
+        let title = Self::extract_tag_content(content, "title").unwrap_or_default();
+        let subtitle = Self::extract_tag_content(content, "subtitle").unwrap_or_default();
 
         // Extract feed link (site link with rel="alternate" or first link)
         let site_url = Self::extract_atom_link(content, Some("alternate"))
             .or_else(|| Self::extract_atom_link(content, None))
             .unwrap_or_default();
 
-        let feed_url = Self::extract_atom_link(content, Some("self"))
-            .unwrap_or_default();
+        let feed_url = Self::extract_atom_link(content, Some("self")).unwrap_or_default();
 
         let updated_str = Self::extract_tag_content(content, "updated");
         let last_build_date = updated_str.and_then(|d| Self::parse_date(&d));
@@ -287,21 +279,19 @@ impl FeedParser {
         let mut entries = Vec::new();
 
         for entry_xml in &entries_xml {
-            let entry_title = Self::extract_tag_content(entry_xml, "title")
-                .unwrap_or_default();
+            let entry_title = Self::extract_tag_content(entry_xml, "title").unwrap_or_default();
             let entry_link = Self::extract_atom_link(entry_xml, Some("alternate"))
                 .or_else(|| Self::extract_atom_link(entry_xml, None))
                 .or_else(|| Self::extract_atom_link_href(entry_xml))
                 .unwrap_or_default();
-            let summary = Self::extract_tag_content(entry_xml, "summary")
-                .unwrap_or_default();
+            let summary = Self::extract_tag_content(entry_xml, "summary").unwrap_or_default();
             let content = Self::extract_tag_content(entry_xml, "content");
             let published = Self::extract_tag_content(entry_xml, "published")
                 .and_then(|d| Self::parse_date(&d));
-            let updated = Self::extract_tag_content(entry_xml, "updated")
-                .and_then(|d| Self::parse_date(&d));
-            let id = Self::extract_tag_content(entry_xml, "id")
-                .unwrap_or_else(|| entry_link.clone());
+            let updated =
+                Self::extract_tag_content(entry_xml, "updated").and_then(|d| Self::parse_date(&d));
+            let id =
+                Self::extract_tag_content(entry_xml, "id").unwrap_or_else(|| entry_link.clone());
 
             // Author: <author><name>...</name></author>
             let author = Self::extract_tag_content(entry_xml, "author")
@@ -340,7 +330,12 @@ impl FeedParser {
         );
         let re = Regex::new(&pattern).ok()?;
         re.captures(xml).map(|c| {
-            let text = c.get(1).expect("capture group 1").as_str().trim().to_string();
+            let text = c
+                .get(1)
+                .expect("capture group 1")
+                .as_str()
+                .trim()
+                .to_string();
             // Strip CDATA wrapping if present
             strip_cdata(&text)
         })
@@ -358,7 +353,12 @@ impl FeedParser {
         };
         re.captures_iter(xml)
             .map(|c| {
-                let text = c.get(1).expect("capture group 1").as_str().trim().to_string();
+                let text = c
+                    .get(1)
+                    .expect("capture group 1")
+                    .as_str()
+                    .trim()
+                    .to_string();
                 strip_cdata(&text)
             })
             .collect()
@@ -500,7 +500,10 @@ impl FeedMonitor {
 
     /// Check a single feed for new entries.
     pub fn check_feed(&mut self, name: &str) -> Result<FeedCheckResult> {
-        let url = self.config.feeds.get(name)
+        let url = self
+            .config
+            .feeds
+            .get(name)
             .ok_or_else(|| anyhow!("Feed '{}' not found", name))?
             .clone();
 
@@ -508,12 +511,16 @@ impl FeedMonitor {
             Ok(content) => {
                 match FeedParser::parse(&content) {
                     Ok(parsed) => {
-                        let known = self.state.known_entries
+                        let known = self
+                            .state
+                            .known_entries
                             .entry(name.to_string())
                             .or_insert_with(Vec::new);
 
                         // Find new entries by comparing IDs
-                        let new_entries: Vec<FeedEntry> = parsed.entries.iter()
+                        let new_entries: Vec<FeedEntry> = parsed
+                            .entries
+                            .iter()
                             .filter(|e| !known.contains(&e.id))
                             .cloned()
                             .collect();
@@ -531,11 +538,15 @@ impl FeedMonitor {
                         }
 
                         // Update last entry date
-                        if let Some(newest_date) = parsed.entries.iter()
+                        if let Some(newest_date) = parsed
+                            .entries
+                            .iter()
                             .filter_map(|e| e.published.or(e.updated))
                             .max()
                         {
-                            self.state.last_entry_date.insert(name.to_string(), newest_date);
+                            self.state
+                                .last_entry_date
+                                .insert(name.to_string(), newest_date);
                         }
 
                         // Update last checked timestamp
@@ -603,14 +614,13 @@ impl FeedMonitor {
 
     /// Export the current state as a JSON string.
     pub fn export_state(&self) -> String {
-        serde_json::to_string_pretty(&self.state)
-            .unwrap_or_else(|_| "{}".to_string())
+        serde_json::to_string_pretty(&self.state).unwrap_or_else(|_| "{}".to_string())
     }
 
     /// Import state from a JSON string.
     pub fn import_state(&mut self, json: &str) -> Result<()> {
-        let state: FeedMonitorState = serde_json::from_str(json)
-            .map_err(|e| anyhow!("Failed to parse state JSON: {}", e))?;
+        let state: FeedMonitorState =
+            serde_json::from_str(json).map_err(|e| anyhow!("Failed to parse state JSON: {}", e))?;
         self.state = state;
         Ok(())
     }
@@ -630,7 +640,9 @@ impl FeedMonitor {
 
     /// Get a list of all configured feeds as (name, url) pairs.
     pub fn feeds(&self) -> Vec<(&str, &str)> {
-        self.config.feeds.iter()
+        self.config
+            .feeds
+            .iter()
             .map(|(k, v)| (k.as_str(), v.as_str()))
             .collect()
     }
@@ -645,11 +657,13 @@ impl FeedMonitor {
             .user_agent(&self.config.user_agent)
             .build();
 
-        let response = agent.get(url)
+        let response = agent
+            .get(url)
             .call()
             .map_err(|e| anyhow!("HTTP request failed: {}", e))?;
 
-        let body = response.into_string()
+        let body = response
+            .into_string()
             .map_err(|e| anyhow!("Failed to read response body: {}", e))?;
 
         Ok(body)
@@ -762,7 +776,10 @@ mod tests {
         assert_eq!(parsed.metadata.title, "Atom Test Feed");
         assert_eq!(parsed.metadata.description, "A test atom feed");
         assert_eq!(parsed.metadata.site_url, "https://atom.example.com");
-        assert_eq!(parsed.metadata.feed_url, "https://atom.example.com/feed.xml");
+        assert_eq!(
+            parsed.metadata.feed_url,
+            "https://atom.example.com/feed.xml"
+        );
         assert!(parsed.metadata.last_build_date.is_some());
 
         // Check entries
@@ -789,9 +806,18 @@ mod tests {
     fn test_format_detection() {
         assert_eq!(FeedParser::detect_format(SAMPLE_RSS), FeedFormat::Rss2);
         assert_eq!(FeedParser::detect_format(SAMPLE_ATOM), FeedFormat::Atom);
-        assert_eq!(FeedParser::detect_format("just some text"), FeedFormat::Unknown);
-        assert_eq!(FeedParser::detect_format("<RSS version='2.0'>"), FeedFormat::Rss2);
-        assert_eq!(FeedParser::detect_format("<FEED xmlns='...'>"), FeedFormat::Atom);
+        assert_eq!(
+            FeedParser::detect_format("just some text"),
+            FeedFormat::Unknown
+        );
+        assert_eq!(
+            FeedParser::detect_format("<RSS version='2.0'>"),
+            FeedFormat::Rss2
+        );
+        assert_eq!(
+            FeedParser::detect_format("<FEED xmlns='...'>"),
+            FeedFormat::Atom
+        );
     }
 
     #[test]
@@ -840,7 +866,9 @@ mod tests {
         assert!(state_json.contains("{"));
 
         let mut monitor2 = FeedMonitor::new(FeedMonitorConfig::default());
-        monitor2.import_state(&state_json).expect("Failed to import state");
+        monitor2
+            .import_state(&state_json)
+            .expect("Failed to import state");
     }
 
     #[test]
@@ -858,7 +886,9 @@ mod tests {
         // Parse the RSS and check which entries are new
         let parsed = FeedParser::parse(SAMPLE_RSS).unwrap();
         let known = monitor.state.known_entries.get("test").unwrap();
-        let new_entries: Vec<&FeedEntry> = parsed.entries.iter()
+        let new_entries: Vec<&FeedEntry> = parsed
+            .entries
+            .iter()
             .filter(|e| !known.contains(&e.id))
             .collect();
 
@@ -914,7 +944,10 @@ mod tests {
 
         let mut state = FeedMonitorState::default();
         state.last_checked.insert("feed1".to_string(), Utc::now());
-        state.known_entries.insert("feed1".to_string(), vec!["id-1".to_string(), "id-2".to_string()]);
+        state.known_entries.insert(
+            "feed1".to_string(),
+            vec!["id-1".to_string(), "id-2".to_string()],
+        );
 
         monitor.restore_state(state.clone());
 

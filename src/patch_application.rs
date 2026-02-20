@@ -95,7 +95,8 @@ impl PatchHunk {
 
     /// Get context lines before the changes
     pub fn leading_context(&self) -> Vec<&str> {
-        self.lines.iter()
+        self.lines
+            .iter()
             .take_while(|l| l.is_context())
             .map(|l| l.content())
             .collect()
@@ -103,7 +104,8 @@ impl PatchHunk {
 
     /// Get context lines after the changes
     pub fn trailing_context(&self) -> Vec<&str> {
-        self.lines.iter()
+        self.lines
+            .iter()
             .rev()
             .take_while(|l| l.is_context())
             .map(|l| l.content())
@@ -115,7 +117,8 @@ impl PatchHunk {
 
     /// Get lines to remove
     pub fn removals(&self) -> Vec<&str> {
-        self.lines.iter()
+        self.lines
+            .iter()
             .filter(|l| l.is_remove())
             .map(|l| l.content())
             .collect()
@@ -123,7 +126,8 @@ impl PatchHunk {
 
     /// Get lines to add
     pub fn additions(&self) -> Vec<&str> {
-        self.lines.iter()
+        self.lines
+            .iter()
             .filter(|l| l.is_add())
             .map(|l| l.content())
             .collect()
@@ -131,11 +135,15 @@ impl PatchHunk {
 
     /// Reverse this hunk (swap additions and removals)
     pub fn reverse(&self) -> Self {
-        let lines = self.lines.iter().map(|l| match l {
-            PatchLine::Context(s) => PatchLine::Context(s.clone()),
-            PatchLine::Add(s) => PatchLine::Remove(s.clone()),
-            PatchLine::Remove(s) => PatchLine::Add(s.clone()),
-        }).collect();
+        let lines = self
+            .lines
+            .iter()
+            .map(|l| match l {
+                PatchLine::Context(s) => PatchLine::Context(s.clone()),
+                PatchLine::Add(s) => PatchLine::Remove(s.clone()),
+                PatchLine::Remove(s) => PatchLine::Add(s.clone()),
+            })
+            .collect();
 
         Self {
             old_start: self.new_start,
@@ -253,18 +261,26 @@ impl Patch {
         let old_range = Self::parse_range(parts[0].trim_start_matches('-'))?;
         let new_range = Self::parse_range(parts[1].trim_start_matches('+'))?;
 
-        Ok(PatchHunk::new(old_range.0, old_range.1, new_range.0, new_range.1))
+        Ok(PatchHunk::new(
+            old_range.0,
+            old_range.1,
+            new_range.0,
+            new_range.1,
+        ))
     }
 
     fn parse_range(s: &str) -> Result<(usize, usize), PatchParseError> {
         if let Some(comma_pos) = s.find(',') {
-            let start: usize = s[..comma_pos].parse()
+            let start: usize = s[..comma_pos]
+                .parse()
                 .map_err(|_| PatchParseError::InvalidRange(s.to_string()))?;
-            let count: usize = s[comma_pos + 1..].parse()
+            let count: usize = s[comma_pos + 1..]
+                .parse()
                 .map_err(|_| PatchParseError::InvalidRange(s.to_string()))?;
             Ok((start, count))
         } else {
-            let start: usize = s.parse()
+            let start: usize = s
+                .parse()
                 .map_err(|_| PatchParseError::InvalidRange(s.to_string()))?;
             Ok((start, 1))
         }
@@ -289,17 +305,25 @@ impl Patch {
             for diff_line in &diff_hunk.lines {
                 match diff_line.change_type {
                     ChangeType::Equal => {
-                        patch_hunk.lines.push(PatchLine::Context(diff_line.content.clone()));
+                        patch_hunk
+                            .lines
+                            .push(PatchLine::Context(diff_line.content.clone()));
                     }
                     ChangeType::Added => {
-                        patch_hunk.lines.push(PatchLine::Add(diff_line.content.clone()));
+                        patch_hunk
+                            .lines
+                            .push(PatchLine::Add(diff_line.content.clone()));
                     }
                     ChangeType::Removed => {
-                        patch_hunk.lines.push(PatchLine::Remove(diff_line.content.clone()));
+                        patch_hunk
+                            .lines
+                            .push(PatchLine::Remove(diff_line.content.clone()));
                     }
                     ChangeType::Modified => {
                         // Modified lines appear as remove + add in unified diff format
-                        patch_hunk.lines.push(PatchLine::Remove(diff_line.content.clone()));
+                        patch_hunk
+                            .lines
+                            .push(PatchLine::Remove(diff_line.content.clone()));
                     }
                 }
             }
@@ -335,8 +359,7 @@ impl Patch {
         for hunk in &self.hunks {
             result.push_str(&format!(
                 "@@ -{},{} +{},{} @@\n",
-                hunk.old_start, hunk.old_count,
-                hunk.new_start, hunk.new_count
+                hunk.old_start, hunk.old_count, hunk.new_start, hunk.new_count
             ));
 
             for line in &hunk.lines {
@@ -417,17 +440,40 @@ pub enum PatchApplyError {
 impl fmt::Display for PatchApplyError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ContextMismatch { hunk, expected, found, line } => {
-                write!(f, "Hunk {} context mismatch at line {}: expected '{}', found '{}'",
-                    hunk, line, expected, found)
+            Self::ContextMismatch {
+                hunk,
+                expected,
+                found,
+                line,
+            } => {
+                write!(
+                    f,
+                    "Hunk {} context mismatch at line {}: expected '{}', found '{}'",
+                    hunk, line, expected, found
+                )
             }
-            Self::RemovalMismatch { hunk, expected, found, line } => {
-                write!(f, "Hunk {} removal mismatch at line {}: expected '{}', found '{}'",
-                    hunk, line, expected, found)
+            Self::RemovalMismatch {
+                hunk,
+                expected,
+                found,
+                line,
+            } => {
+                write!(
+                    f,
+                    "Hunk {} removal mismatch at line {}: expected '{}', found '{}'",
+                    hunk, line, expected, found
+                )
             }
-            Self::OutOfBounds { hunk, line, file_lines } => {
-                write!(f, "Hunk {} line {} out of bounds (file has {} lines)",
-                    hunk, line, file_lines)
+            Self::OutOfBounds {
+                hunk,
+                line,
+                file_lines,
+            } => {
+                write!(
+                    f,
+                    "Hunk {} line {} out of bounds (file has {} lines)",
+                    hunk, line, file_lines
+                )
             }
             Self::AlreadyApplied { hunk } => {
                 write!(f, "Hunk {} appears to be already applied", hunk)
@@ -500,7 +546,11 @@ impl PatchApplicator {
     }
 
     /// Apply a patch and return detailed result
-    pub fn apply_with_result(&self, text: &str, patch: &Patch) -> Result<PatchResult, PatchApplyError> {
+    pub fn apply_with_result(
+        &self,
+        text: &str,
+        patch: &Patch,
+    ) -> Result<PatchResult, PatchApplyError> {
         let mut lines: Vec<String> = text.lines().map(|s| s.to_string()).collect();
         let mut offset: isize = 0;
         let mut hunks_applied = 0;
@@ -648,8 +698,8 @@ impl PatchApplicator {
 
     fn lines_match(&self, expected: &str, actual: &str) -> bool {
         if self.config.ignore_whitespace {
-            expected.split_whitespace().collect::<Vec<_>>() ==
-            actual.split_whitespace().collect::<Vec<_>>()
+            expected.split_whitespace().collect::<Vec<_>>()
+                == actual.split_whitespace().collect::<Vec<_>>()
         } else {
             expected == actual
         }

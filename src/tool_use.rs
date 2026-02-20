@@ -25,9 +25,9 @@
 //! let result = registry.execute("get_time", serde_json::json!({}));
 //! ```
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
+use std::collections::HashMap;
 
 /// A tool parameter definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -187,7 +187,10 @@ impl Tool {
         for param in &self.parameters {
             let mut prop = serde_json::Map::new();
             prop.insert("type".to_string(), serde_json::json!(param.param_type));
-            prop.insert("description".to_string(), serde_json::json!(param.description));
+            prop.insert(
+                "description".to_string(),
+                serde_json::json!(param.description),
+            );
 
             if let Some(ref enum_values) = param.enum_values {
                 prop.insert("enum".to_string(), serde_json::json!(enum_values));
@@ -234,7 +237,9 @@ impl std::fmt::Display for ToolError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ToolError::MissingParameter(name) => write!(f, "Missing required parameter: {}", name),
-            ToolError::InvalidParameter { name, message } => write!(f, "Invalid parameter '{}': {}", name, message),
+            ToolError::InvalidParameter { name, message } => {
+                write!(f, "Invalid parameter '{}': {}", name, message)
+            }
             ToolError::NoHandler(name) => write!(f, "No handler for tool: {}", name),
             ToolError::NotFound(name) => write!(f, "Tool not found: {}", name),
             ToolError::ExecutionFailed(msg) => write!(f, "Tool execution failed: {}", msg),
@@ -280,7 +285,11 @@ impl ToolResult {
     }
 
     /// Create an error result
-    pub fn error(call_id: impl Into<String>, name: impl Into<String>, error: impl Into<String>) -> Self {
+    pub fn error(
+        call_id: impl Into<String>,
+        name: impl Into<String>,
+        error: impl Into<String>,
+    ) -> Self {
         Self {
             call_id: call_id.into(),
             name: name.into(),
@@ -332,7 +341,9 @@ impl ToolRegistry {
 
     /// Execute a tool call
     pub fn execute(&self, name: &str, args: JsonValue) -> Result<JsonValue, ToolError> {
-        let tool = self.tools.get(name)
+        let tool = self
+            .tools
+            .get(name)
             .ok_or_else(|| ToolError::NotFound(name.to_string()))?;
 
         tool.execute(args)
@@ -359,75 +370,95 @@ impl ToolRegistry {
     /// Register built-in tools
     pub fn register_builtins(&mut self) {
         // Get current time
-        self.register(Tool::new("get_current_time", "Get the current date and time")
-            .with_param(ToolParameter::string("timezone", "Timezone (e.g., 'UTC', 'America/New_York')").optional())
-            .with_handler(|_args| {
-                let now = chrono::Utc::now();
-                Ok(serde_json::json!({
-                    "datetime": now.to_rfc3339(),
-                    "unix_timestamp": now.timestamp(),
-                    "date": now.format("%Y-%m-%d").to_string(),
-                    "time": now.format("%H:%M:%S").to_string()
-                }))
-            }));
+        self.register(
+            Tool::new("get_current_time", "Get the current date and time")
+                .with_param(
+                    ToolParameter::string("timezone", "Timezone (e.g., 'UTC', 'America/New_York')")
+                        .optional(),
+                )
+                .with_handler(|_args| {
+                    let now = chrono::Utc::now();
+                    Ok(serde_json::json!({
+                        "datetime": now.to_rfc3339(),
+                        "unix_timestamp": now.timestamp(),
+                        "date": now.format("%Y-%m-%d").to_string(),
+                        "time": now.format("%H:%M:%S").to_string()
+                    }))
+                }),
+        );
 
         // Simple calculator
-        self.register(Tool::new("calculate", "Perform basic math calculations")
-            .with_param(ToolParameter::string("expression", "Math expression to evaluate"))
-            .with_handler(|args| {
-                let expr = args.get("expression")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| ToolError::MissingParameter("expression".to_string()))?;
+        self.register(
+            Tool::new("calculate", "Perform basic math calculations")
+                .with_param(ToolParameter::string(
+                    "expression",
+                    "Math expression to evaluate",
+                ))
+                .with_handler(|args| {
+                    let expr = args
+                        .get("expression")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| ToolError::MissingParameter("expression".to_string()))?;
 
-                // Simple evaluation (basic operations only)
-                let result = Self::evaluate_simple_math(expr)?;
-                Ok(serde_json::json!({
-                    "expression": expr,
-                    "result": result
-                }))
-            }));
+                    // Simple evaluation (basic operations only)
+                    let result = Self::evaluate_simple_math(expr)?;
+                    Ok(serde_json::json!({
+                        "expression": expr,
+                        "result": result
+                    }))
+                }),
+        );
 
         // String length
-        self.register(Tool::new("string_length", "Get the length of a string")
-            .with_param(ToolParameter::string("text", "The string to measure"))
-            .with_handler(|args| {
-                let text = args.get("text")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| ToolError::MissingParameter("text".to_string()))?;
+        self.register(
+            Tool::new("string_length", "Get the length of a string")
+                .with_param(ToolParameter::string("text", "The string to measure"))
+                .with_handler(|args| {
+                    let text = args
+                        .get("text")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| ToolError::MissingParameter("text".to_string()))?;
 
-                Ok(serde_json::json!({
-                    "length": text.len(),
-                    "characters": text.chars().count(),
-                    "words": text.split_whitespace().count()
-                }))
-            }));
+                    Ok(serde_json::json!({
+                        "length": text.len(),
+                        "characters": text.chars().count(),
+                        "words": text.split_whitespace().count()
+                    }))
+                }),
+        );
 
         // JSON validator
-        self.register(Tool::new("validate_json", "Validate a JSON string")
-            .with_param(ToolParameter::string("json_string", "JSON string to validate"))
-            .with_handler(|args| {
-                let json_str = args.get("json_string")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| ToolError::MissingParameter("json_string".to_string()))?;
+        self.register(
+            Tool::new("validate_json", "Validate a JSON string")
+                .with_param(ToolParameter::string(
+                    "json_string",
+                    "JSON string to validate",
+                ))
+                .with_handler(|args| {
+                    let json_str = args
+                        .get("json_string")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| ToolError::MissingParameter("json_string".to_string()))?;
 
-                match serde_json::from_str::<JsonValue>(json_str) {
-                    Ok(parsed) => Ok(serde_json::json!({
-                        "valid": true,
-                        "type": match parsed {
-                            JsonValue::Object(_) => "object",
-                            JsonValue::Array(_) => "array",
-                            JsonValue::String(_) => "string",
-                            JsonValue::Number(_) => "number",
-                            JsonValue::Bool(_) => "boolean",
-                            JsonValue::Null => "null"
-                        }
-                    })),
-                    Err(e) => Ok(serde_json::json!({
-                        "valid": false,
-                        "error": e.to_string()
-                    }))
-                }
-            }));
+                    match serde_json::from_str::<JsonValue>(json_str) {
+                        Ok(parsed) => Ok(serde_json::json!({
+                            "valid": true,
+                            "type": match parsed {
+                                JsonValue::Object(_) => "object",
+                                JsonValue::Array(_) => "array",
+                                JsonValue::String(_) => "string",
+                                JsonValue::Number(_) => "number",
+                                JsonValue::Bool(_) => "boolean",
+                                JsonValue::Null => "null"
+                            }
+                        })),
+                        Err(e) => Ok(serde_json::json!({
+                            "valid": false,
+                            "error": e.to_string()
+                        })),
+                    }
+                }),
+        );
     }
 
     fn evaluate_simple_math(expr: &str) -> Result<f64, ToolError> {
@@ -465,7 +496,10 @@ impl ToolRegistry {
             }
         }
 
-        Err(ToolError::ExecutionFailed(format!("Cannot evaluate: {}", expr)))
+        Err(ToolError::ExecutionFailed(format!(
+            "Cannot evaluate: {}",
+            expr
+        )))
     }
 }
 
@@ -525,7 +559,9 @@ mod tests {
             .with_param(ToolParameter::string("message", "Message"))
             .with_handler(|args| Ok(args));
 
-        let result = tool.execute(serde_json::json!({"message": "hello"})).unwrap();
+        let result = tool
+            .execute(serde_json::json!({"message": "hello"}))
+            .unwrap();
         assert_eq!(result["message"], "hello");
     }
 
@@ -543,8 +579,9 @@ mod tests {
     fn test_registry() {
         let mut registry = ToolRegistry::new();
 
-        registry.register(Tool::new("test", "Test tool")
-            .with_handler(|_| Ok(serde_json::json!({"ok": true}))));
+        registry.register(
+            Tool::new("test", "Test tool").with_handler(|_| Ok(serde_json::json!({"ok": true}))),
+        );
 
         assert!(registry.get("test").is_some());
         assert!(registry.get("nonexistent").is_none());
@@ -566,9 +603,14 @@ mod tests {
     fn test_calculate() {
         let registry = ToolRegistry::with_builtins();
 
-        let result = registry.execute("calculate", serde_json::json!({
-            "expression": "2 + 3 * 4"
-        })).unwrap();
+        let result = registry
+            .execute(
+                "calculate",
+                serde_json::json!({
+                    "expression": "2 + 3 * 4"
+                }),
+            )
+            .unwrap();
 
         assert_eq!(result["result"], 14.0);
     }

@@ -2,8 +2,8 @@
 //!
 //! Implements WebSocket protocol for bidirectional real-time AI communication.
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// WebSocket message types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -189,10 +189,7 @@ pub enum WsAiMessage {
         model: Option<String>,
     },
     #[serde(rename = "stream_start")]
-    StreamStart {
-        id: String,
-        model: String,
-    },
+    StreamStart { id: String, model: String },
     #[serde(rename = "stream_chunk")]
     StreamChunk {
         id: String,
@@ -222,10 +219,7 @@ pub enum WsAiMessage {
         error: Option<String>,
     },
     #[serde(rename = "error")]
-    Error {
-        code: String,
-        message: String,
-    },
+    Error { code: String, message: String },
     #[serde(rename = "ping")]
     Ping,
     #[serde(rename = "pong")]
@@ -263,7 +257,7 @@ pub struct WsCallbacks {
     pub on_chunk: Option<Box<dyn Fn(&str, &str) + Send + Sync>>, // (id, content)
     pub on_complete: Option<Box<dyn Fn(&str, &str) + Send + Sync>>, // (id, full_text)
     pub on_error: Option<Box<dyn Fn(&str, &str) + Send + Sync>>, // (code, message)
-    pub on_close: Option<Box<dyn Fn(u16, &str) + Send + Sync>>, // (code, reason)
+    pub on_close: Option<Box<dyn Fn(u16, &str) + Send + Sync>>,  // (code, reason)
 }
 
 impl Default for WsCallbacks {
@@ -331,8 +325,8 @@ impl WsStreamHandler {
 
     /// Handle incoming message
     pub fn handle_message(&mut self, text: &str) -> Result<(), WsError> {
-        let message: WsAiMessage = serde_json::from_str(text)
-            .map_err(|e| WsError::ParseError(e.to_string()))?;
+        let message: WsAiMessage =
+            serde_json::from_str(text).map_err(|e| WsError::ParseError(e.to_string()))?;
 
         // Invoke general callback
         if let Some(ref callback) = self.callbacks.on_message {
@@ -383,7 +377,12 @@ impl WsStreamHandler {
     }
 
     /// Create a tool result frame
-    pub fn create_tool_result(&self, id: &str, result: serde_json::Value, error: Option<&str>) -> WsFrame {
+    pub fn create_tool_result(
+        &self,
+        id: &str,
+        result: serde_json::Value,
+        error: Option<&str>,
+    ) -> WsFrame {
         let message = WsAiMessage::ToolResult {
             id: id.to_string(),
             result,
@@ -571,7 +570,8 @@ fn sha1_hash(data: &[u8]) -> [u8; 20] {
                 _ => (b ^ c ^ d, 0xCA62C1D6u32),
             };
 
-            let temp = a.rotate_left(5)
+            let temp = a
+                .rotate_left(5)
                 .wrapping_add(f)
                 .wrapping_add(e)
                 .wrapping_add(k)
@@ -748,15 +748,19 @@ mod tests {
         let hash = sha1_hash(b"abc");
         assert_eq!(
             hash,
-            [0xA9, 0x99, 0x3E, 0x36, 0x47, 0x06, 0x81, 0x6A, 0xBA, 0x3E,
-             0x25, 0x71, 0x78, 0x50, 0xC2, 0x6C, 0x9C, 0xD0, 0xD8, 0x9D]
+            [
+                0xA9, 0x99, 0x3E, 0x36, 0x47, 0x06, 0x81, 0x6A, 0xBA, 0x3E, 0x25, 0x71, 0x78, 0x50,
+                0xC2, 0x6C, 0x9C, 0xD0, 0xD8, 0x9D
+            ]
         );
 
         let hash2 = sha1_hash(b"");
         assert_eq!(
             hash2,
-            [0xDA, 0x39, 0xA3, 0xEE, 0x5E, 0x6B, 0x4B, 0x0D, 0x32, 0x55,
-             0xBF, 0xEF, 0x95, 0x60, 0x18, 0x90, 0xAF, 0xD8, 0x07, 0x09]
+            [
+                0xDA, 0x39, 0xA3, 0xEE, 0x5E, 0x6B, 0x4B, 0x0D, 0x32, 0x55, 0xBF, 0xEF, 0x95, 0x60,
+                0x18, 0x90, 0xAF, 0xD8, 0x07, 0x09
+            ]
         );
     }
 
@@ -790,6 +794,8 @@ mod tests {
         // WebSocket key should be base64-encoded 16 bytes = 24 chars with padding
         assert_eq!(key.len(), 24);
         // Should be valid base64
-        assert!(key.chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '='));
+        assert!(key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '='));
     }
 }

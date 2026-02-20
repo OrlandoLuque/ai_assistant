@@ -160,7 +160,8 @@ impl HealthChecker {
     pub fn register(&mut self, name: impl Into<String>, url: impl Into<String>) {
         let name = name.into();
         let url = url.into();
-        self.providers.insert(name, (url, ProviderHealth::default()));
+        self.providers
+            .insert(name, (url, ProviderHealth::default()));
     }
 
     /// Check a specific provider
@@ -199,7 +200,11 @@ impl HealthChecker {
         check_result
     }
 
-    fn update_health_impl(health: &mut ProviderHealth, result: &HealthCheckResult, config: &HealthCheckConfig) {
+    fn update_health_impl(
+        health: &mut ProviderHealth,
+        result: &HealthCheckResult,
+        config: &HealthCheckConfig,
+    ) {
         // Update history
         health.history.push(result.clone());
         if health.history.len() > config.max_history {
@@ -231,9 +236,7 @@ impl HealthChecker {
         };
 
         // Update average response time
-        let successful: Vec<_> = health.history.iter()
-            .filter(|r| r.healthy)
-            .collect();
+        let successful: Vec<_> = health.history.iter().filter(|r| r.healthy).collect();
         if !successful.is_empty() {
             let total: Duration = successful.iter().map(|r| r.response_time).sum();
             health.avg_response_time = total / successful.len() as u32;
@@ -275,7 +278,9 @@ impl HealthChecker {
 
     /// Check all registered providers by calling each one's stored URL
     pub fn check_all(&mut self) -> Vec<HealthCheckResult> {
-        let provider_info: Vec<(String, String)> = self.providers.iter()
+        let provider_info: Vec<(String, String)> = self
+            .providers
+            .iter()
             .map(|(name, (url, _))| (name.clone(), url.clone()))
             .collect();
         let mut results = Vec::new();
@@ -300,7 +305,8 @@ impl HealthChecker {
 
     /// Get healthy providers
     pub fn healthy_providers(&self) -> Vec<&str> {
-        self.providers.iter()
+        self.providers
+            .iter()
             .filter(|(_, (_, h))| h.status.is_available())
             .map(|(n, _)| n.as_str())
             .collect()
@@ -308,7 +314,8 @@ impl HealthChecker {
 
     /// Get unhealthy providers
     pub fn unhealthy_providers(&self) -> Vec<&str> {
-        self.providers.iter()
+        self.providers
+            .iter()
             .filter(|(_, (_, h))| !h.status.is_available())
             .map(|(n, _)| n.as_str())
             .collect()
@@ -375,7 +382,8 @@ impl HealthChecker {
 
         if summary.total > 0 {
             summary.health_percent = ((summary.healthy as f64 + 0.5 * summary.degraded as f64)
-                / summary.total as f64) * 100.0;
+                / summary.total as f64)
+                * 100.0;
         }
 
         summary
@@ -400,7 +408,10 @@ mod tests {
         checker.register("test", "http://localhost:1234");
 
         assert!(checker.get_health("test").is_some());
-        assert_eq!(checker.get_health("test").unwrap().status, HealthStatus::Unknown);
+        assert_eq!(
+            checker.get_health("test").unwrap().status,
+            HealthStatus::Unknown
+        );
     }
 
     #[test]
@@ -411,8 +422,8 @@ mod tests {
             ..Default::default()
         };
 
-        let mut checker = HealthChecker::new(config)
-            .with_check_fn(|_, _| Ok(Duration::from_millis(100)));
+        let mut checker =
+            HealthChecker::new(config).with_check_fn(|_, _| Ok(Duration::from_millis(100)));
 
         checker.register("test", "http://localhost");
 
@@ -432,8 +443,8 @@ mod tests {
             ..Default::default()
         };
 
-        let mut checker = HealthChecker::new(config)
-            .with_check_fn(|_, _| Err("Connection failed".to_string()));
+        let mut checker =
+            HealthChecker::new(config).with_check_fn(|_, _| Err("Connection failed".to_string()));
 
         checker.register("test", "http://localhost");
 
@@ -449,18 +460,36 @@ mod tests {
     fn test_summary() {
         let mut checker = HealthChecker::default();
 
-        checker.providers.insert("p1".to_string(), ("http://p1".to_string(), ProviderHealth {
-            status: HealthStatus::Healthy,
-            ..Default::default()
-        }));
-        checker.providers.insert("p2".to_string(), ("http://p2".to_string(), ProviderHealth {
-            status: HealthStatus::Degraded,
-            ..Default::default()
-        }));
-        checker.providers.insert("p3".to_string(), ("http://p3".to_string(), ProviderHealth {
-            status: HealthStatus::Unhealthy,
-            ..Default::default()
-        }));
+        checker.providers.insert(
+            "p1".to_string(),
+            (
+                "http://p1".to_string(),
+                ProviderHealth {
+                    status: HealthStatus::Healthy,
+                    ..Default::default()
+                },
+            ),
+        );
+        checker.providers.insert(
+            "p2".to_string(),
+            (
+                "http://p2".to_string(),
+                ProviderHealth {
+                    status: HealthStatus::Degraded,
+                    ..Default::default()
+                },
+            ),
+        );
+        checker.providers.insert(
+            "p3".to_string(),
+            (
+                "http://p3".to_string(),
+                ProviderHealth {
+                    status: HealthStatus::Unhealthy,
+                    ..Default::default()
+                },
+            ),
+        );
 
         let summary = checker.summary();
         assert_eq!(summary.total, 3);
@@ -479,8 +508,8 @@ mod tests {
 
     #[test]
     fn test_check_all_uses_stored_urls() {
-        let mut checker = HealthChecker::new(HealthCheckConfig::default())
-            .with_check_fn(|name, url| {
+        let mut checker =
+            HealthChecker::new(HealthCheckConfig::default()).with_check_fn(|name, url| {
                 // Verify the check_fn receives correct name and URL
                 assert!(!name.is_empty());
                 assert!(!url.is_empty());

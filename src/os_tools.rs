@@ -16,10 +16,7 @@ use std::sync::{Arc, RwLock};
 // ============================================================================
 
 /// Register all OS tools into a ToolRegistry with sandbox validation.
-pub fn register_os_tools(
-    registry: &mut ToolRegistry,
-    sandbox: Arc<RwLock<SandboxValidator>>,
-) {
+pub fn register_os_tools(registry: &mut ToolRegistry, sandbox: Arc<RwLock<SandboxValidator>>) {
     // Filesystem
     register_read_file(registry, Arc::clone(&sandbox));
     register_write_file(registry, Arc::clone(&sandbox));
@@ -51,11 +48,15 @@ fn register_read_file(registry: &mut ToolRegistry, sandbox: Arc<RwLock<SandboxVa
         .build();
 
     let handler: ToolHandler = Arc::new(move |call: &ToolCall| {
-        let path = call.arguments.get("path")
+        let path = call
+            .arguments
+            .get("path")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::MissingParameter("path".into()))?;
 
-        sandbox.write().map_err(|_| ToolError::ExecutionFailed("sandbox lock poisoned".into()))?
+        sandbox
+            .write()
+            .map_err(|_| ToolError::ExecutionFailed("sandbox lock poisoned".into()))?
             .validate_file_read(path)
             .map_err(|e| ToolError::ExecutionFailed(e.message))?;
 
@@ -75,20 +76,30 @@ fn register_write_file(registry: &mut ToolRegistry, sandbox: Arc<RwLock<SandboxV
         .build();
 
     let handler: ToolHandler = Arc::new(move |call: &ToolCall| {
-        let path = call.arguments.get("path")
+        let path = call
+            .arguments
+            .get("path")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::MissingParameter("path".into()))?;
-        let content = call.arguments.get("content")
+        let content = call
+            .arguments
+            .get("content")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::MissingParameter("content".into()))?;
 
-        sandbox.write().map_err(|_| ToolError::ExecutionFailed("sandbox lock poisoned".into()))?
+        sandbox
+            .write()
+            .map_err(|_| ToolError::ExecutionFailed("sandbox lock poisoned".into()))?
             .validate_file_write(path)
             .map_err(|e| ToolError::ExecutionFailed(e.message))?;
 
         fs::write(path, content)
             .map_err(|e| ToolError::ExecutionFailed(format!("Failed to write {}: {}", path, e)))?;
-        Ok(ToolOutput::text(format!("Written {} bytes to {}", content.len(), path)))
+        Ok(ToolOutput::text(format!(
+            "Written {} bytes to {}",
+            content.len(),
+            path
+        )))
     });
 
     registry.register(def, handler);
@@ -96,21 +107,29 @@ fn register_write_file(registry: &mut ToolRegistry, sandbox: Arc<RwLock<SandboxV
 
 fn register_list_dir(registry: &mut ToolRegistry, sandbox: Arc<RwLock<SandboxValidator>>) {
     let def = ToolBuilder::new("list_dir", "List contents of a directory")
-        .param(ParamSchema::string("path", "Absolute path to the directory"))
+        .param(ParamSchema::string(
+            "path",
+            "Absolute path to the directory",
+        ))
         .category("filesystem")
         .build();
 
     let handler: ToolHandler = Arc::new(move |call: &ToolCall| {
-        let path = call.arguments.get("path")
+        let path = call
+            .arguments
+            .get("path")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::MissingParameter("path".into()))?;
 
-        sandbox.write().map_err(|_| ToolError::ExecutionFailed("sandbox lock poisoned".into()))?
+        sandbox
+            .write()
+            .map_err(|_| ToolError::ExecutionFailed("sandbox lock poisoned".into()))?
             .validate_file_read(path)
             .map_err(|e| ToolError::ExecutionFailed(e.message))?;
 
-        let entries = fs::read_dir(path)
-            .map_err(|e| ToolError::ExecutionFailed(format!("Failed to read dir {}: {}", path, e)))?;
+        let entries = fs::read_dir(path).map_err(|e| {
+            ToolError::ExecutionFailed(format!("Failed to read dir {}: {}", path, e))
+        })?;
 
         let mut lines = Vec::new();
         for entry in entries.flatten() {
@@ -133,21 +152,29 @@ fn register_list_dir(registry: &mut ToolRegistry, sandbox: Arc<RwLock<SandboxVal
 
 fn register_create_dir(registry: &mut ToolRegistry, sandbox: Arc<RwLock<SandboxValidator>>) {
     let def = ToolBuilder::new("create_dir", "Create a directory (and parents)")
-        .param(ParamSchema::string("path", "Absolute path for the new directory"))
+        .param(ParamSchema::string(
+            "path",
+            "Absolute path for the new directory",
+        ))
         .category("filesystem")
         .build();
 
     let handler: ToolHandler = Arc::new(move |call: &ToolCall| {
-        let path = call.arguments.get("path")
+        let path = call
+            .arguments
+            .get("path")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::MissingParameter("path".into()))?;
 
-        sandbox.write().map_err(|_| ToolError::ExecutionFailed("sandbox lock poisoned".into()))?
+        sandbox
+            .write()
+            .map_err(|_| ToolError::ExecutionFailed("sandbox lock poisoned".into()))?
             .validate_file_write(path)
             .map_err(|e| ToolError::ExecutionFailed(e.message))?;
 
-        fs::create_dir_all(path)
-            .map_err(|e| ToolError::ExecutionFailed(format!("Failed to create dir {}: {}", path, e)))?;
+        fs::create_dir_all(path).map_err(|e| {
+            ToolError::ExecutionFailed(format!("Failed to create dir {}: {}", path, e))
+        })?;
         Ok(ToolOutput::text(format!("Created directory: {}", path)))
     });
 
@@ -156,25 +183,33 @@ fn register_create_dir(registry: &mut ToolRegistry, sandbox: Arc<RwLock<SandboxV
 
 fn register_delete_file(registry: &mut ToolRegistry, sandbox: Arc<RwLock<SandboxValidator>>) {
     let def = ToolBuilder::new("delete_file", "Delete a file")
-        .param(ParamSchema::string("path", "Absolute path to the file to delete"))
+        .param(ParamSchema::string(
+            "path",
+            "Absolute path to the file to delete",
+        ))
         .category("filesystem")
         .build();
 
     let handler: ToolHandler = Arc::new(move |call: &ToolCall| {
-        let path_str = call.arguments.get("path")
+        let path_str = call
+            .arguments
+            .get("path")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::MissingParameter("path".into()))?;
 
         {
             use crate::agent_policy::{ActionDescriptor, ActionType};
             let action = ActionDescriptor::new(ActionType::FileDelete, path_str);
-            sandbox.write().map_err(|_| ToolError::ExecutionFailed("sandbox lock poisoned".into()))?
+            sandbox
+                .write()
+                .map_err(|_| ToolError::ExecutionFailed("sandbox lock poisoned".into()))?
                 .validate(&action)
                 .map_err(|e| ToolError::ExecutionFailed(e.message))?;
         }
 
-        fs::remove_file(path_str)
-            .map_err(|e| ToolError::ExecutionFailed(format!("Failed to delete {}: {}", path_str, e)))?;
+        fs::remove_file(path_str).map_err(|e| {
+            ToolError::ExecutionFailed(format!("Failed to delete {}: {}", path_str, e))
+        })?;
         Ok(ToolOutput::text(format!("Deleted: {}", path_str)))
     });
 
@@ -188,21 +223,32 @@ fn register_file_info(registry: &mut ToolRegistry, sandbox: Arc<RwLock<SandboxVa
         .build();
 
     let handler: ToolHandler = Arc::new(move |call: &ToolCall| {
-        let path_str = call.arguments.get("path")
+        let path_str = call
+            .arguments
+            .get("path")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::MissingParameter("path".into()))?;
 
-        sandbox.write().map_err(|_| ToolError::ExecutionFailed("sandbox lock poisoned".into()))?
+        sandbox
+            .write()
+            .map_err(|_| ToolError::ExecutionFailed("sandbox lock poisoned".into()))?
             .validate_file_read(path_str)
             .map_err(|e| ToolError::ExecutionFailed(e.message))?;
 
-        let meta = fs::metadata(path_str)
-            .map_err(|e| ToolError::ExecutionFailed(format!("Failed to stat {}: {}", path_str, e)))?;
+        let meta = fs::metadata(path_str).map_err(|e| {
+            ToolError::ExecutionFailed(format!("Failed to stat {}: {}", path_str, e))
+        })?;
 
         let info = format!(
             "Path: {}\nType: {}\nSize: {}\nReadonly: {}",
             path_str,
-            if meta.is_dir() { "directory" } else if meta.is_file() { "file" } else { "other" },
+            if meta.is_dir() {
+                "directory"
+            } else if meta.is_file() {
+                "file"
+            } else {
+                "other"
+            },
             format_size(meta.len()),
             meta.permissions().readonly(),
         );
@@ -223,11 +269,15 @@ fn register_run_command(registry: &mut ToolRegistry, sandbox: Arc<RwLock<Sandbox
         .build();
 
     let handler: ToolHandler = Arc::new(move |call: &ToolCall| {
-        let cmd = call.arguments.get("command")
+        let cmd = call
+            .arguments
+            .get("command")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::MissingParameter("command".into()))?;
 
-        sandbox.write().map_err(|_| ToolError::ExecutionFailed("sandbox lock poisoned".into()))?
+        sandbox
+            .write()
+            .map_err(|_| ToolError::ExecutionFailed("sandbox lock poisoned".into()))?
             .validate_command(cmd)
             .map_err(|e| ToolError::ExecutionFailed(e.message))?;
 
@@ -250,8 +300,16 @@ fn register_run_command(registry: &mut ToolRegistry, sandbox: Arc<RwLock<Sandbox
         let result = format!(
             "Exit code: {}\n--- stdout ---\n{}\n--- stderr ---\n{}",
             exit_code,
-            if stdout.is_empty() { "(empty)" } else { stdout.trim() },
-            if stderr.is_empty() { "(empty)" } else { stderr.trim() }
+            if stdout.is_empty() {
+                "(empty)"
+            } else {
+                stdout.trim()
+            },
+            if stderr.is_empty() {
+                "(empty)"
+            } else {
+                stderr.trim()
+            }
         );
         Ok(ToolOutput::text(result))
     });
@@ -265,7 +323,9 @@ fn register_run_command(registry: &mut ToolRegistry, sandbox: Arc<RwLock<Sandbox
 
 fn run_git(args: &[&str], sandbox: &Arc<RwLock<SandboxValidator>>) -> Result<String, ToolError> {
     let cmd = format!("git {}", args.join(" "));
-    sandbox.write().map_err(|_| ToolError::ExecutionFailed("sandbox lock poisoned".into()))?
+    sandbox
+        .write()
+        .map_err(|_| ToolError::ExecutionFailed("sandbox lock poisoned".into()))?
         .validate_command(&cmd)
         .map_err(|e| ToolError::ExecutionFailed(e.message))?;
 
@@ -295,7 +355,11 @@ fn register_git_status(registry: &mut ToolRegistry, sandbox: Arc<RwLock<SandboxV
 
     let handler: ToolHandler = Arc::new(move |_call: &ToolCall| {
         let output = run_git(&["status", "--short"], &sandbox)?;
-        Ok(ToolOutput::text(if output.is_empty() { "Clean working tree".to_string() } else { output }))
+        Ok(ToolOutput::text(if output.is_empty() {
+            "Clean working tree".to_string()
+        } else {
+            output
+        }))
     });
 
     registry.register(def, handler);
@@ -308,7 +372,11 @@ fn register_git_diff(registry: &mut ToolRegistry, sandbox: Arc<RwLock<SandboxVal
 
     let handler: ToolHandler = Arc::new(move |_call: &ToolCall| {
         let output = run_git(&["diff"], &sandbox)?;
-        Ok(ToolOutput::text(if output.is_empty() { "No unstaged changes".to_string() } else { output }))
+        Ok(ToolOutput::text(if output.is_empty() {
+            "No unstaged changes".to_string()
+        } else {
+            output
+        }))
     });
 
     registry.register(def, handler);
@@ -338,11 +406,15 @@ fn register_http_get(registry: &mut ToolRegistry, sandbox: Arc<RwLock<SandboxVal
         .build();
 
     let handler: ToolHandler = Arc::new(move |call: &ToolCall| {
-        let url = call.arguments.get("url")
+        let url = call
+            .arguments
+            .get("url")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::MissingParameter("url".into()))?;
 
-        sandbox.write().map_err(|_| ToolError::ExecutionFailed("sandbox lock poisoned".into()))?
+        sandbox
+            .write()
+            .map_err(|_| ToolError::ExecutionFailed("sandbox lock poisoned".into()))?
             .validate_url(url)
             .map_err(|e| ToolError::ExecutionFailed(e.message))?;
 
@@ -393,15 +465,24 @@ pub fn os_tool_definitions() -> Vec<ToolDef> {
             .category("filesystem")
             .build(),
         ToolBuilder::new("list_dir", "List contents of a directory")
-            .param(ParamSchema::string("path", "Absolute path to the directory"))
+            .param(ParamSchema::string(
+                "path",
+                "Absolute path to the directory",
+            ))
             .category("filesystem")
             .build(),
         ToolBuilder::new("create_dir", "Create a directory (and parents)")
-            .param(ParamSchema::string("path", "Absolute path for the new directory"))
+            .param(ParamSchema::string(
+                "path",
+                "Absolute path for the new directory",
+            ))
             .category("filesystem")
             .build(),
         ToolBuilder::new("delete_file", "Delete a file")
-            .param(ParamSchema::string("path", "Absolute path to the file to delete"))
+            .param(ParamSchema::string(
+                "path",
+                "Absolute path to the file to delete",
+            ))
             .category("filesystem")
             .build(),
         ToolBuilder::new("file_info", "Get metadata about a file or directory")
@@ -446,7 +527,9 @@ mod tests {
             .internet(InternetMode::FullAccess)
             .build();
         let handler: Arc<dyn crate::agent_policy::ApprovalHandler> = Arc::new(AutoApproveAll);
-        Arc::new(RwLock::new(SandboxValidator::with_approval(policy, handler)))
+        Arc::new(RwLock::new(SandboxValidator::with_approval(
+            policy, handler,
+        )))
     }
 
     #[test]
@@ -480,9 +563,13 @@ mod tests {
         let mut registry = ToolRegistry::new();
         register_os_tools(&mut registry, sandbox);
 
-        let call = ToolCall::new("read_file", HashMap::from([
-            ("path".to_string(), serde_json::Value::String(file_path.to_string_lossy().to_string())),
-        ]));
+        let call = ToolCall::new(
+            "read_file",
+            HashMap::from([(
+                "path".to_string(),
+                serde_json::Value::String(file_path.to_string_lossy().to_string()),
+            )]),
+        );
         let result = registry.execute(&call).unwrap();
         assert_eq!(result.content, "hello world");
 
@@ -499,10 +586,19 @@ mod tests {
         let mut registry = ToolRegistry::new();
         register_os_tools(&mut registry, sandbox);
 
-        let call = ToolCall::new("write_file", HashMap::from([
-            ("path".to_string(), serde_json::Value::String(file_path.to_string_lossy().to_string())),
-            ("content".to_string(), serde_json::Value::String("test content".to_string())),
-        ]));
+        let call = ToolCall::new(
+            "write_file",
+            HashMap::from([
+                (
+                    "path".to_string(),
+                    serde_json::Value::String(file_path.to_string_lossy().to_string()),
+                ),
+                (
+                    "content".to_string(),
+                    serde_json::Value::String("test content".to_string()),
+                ),
+            ]),
+        );
         let result = registry.execute(&call).unwrap();
         assert!(result.content.contains("12 bytes"));
 
@@ -523,9 +619,13 @@ mod tests {
         let mut registry = ToolRegistry::new();
         register_os_tools(&mut registry, sandbox);
 
-        let call = ToolCall::new("list_dir", HashMap::from([
-            ("path".to_string(), serde_json::Value::String(dir.to_string_lossy().to_string())),
-        ]));
+        let call = ToolCall::new(
+            "list_dir",
+            HashMap::from([(
+                "path".to_string(),
+                serde_json::Value::String(dir.to_string_lossy().to_string()),
+            )]),
+        );
         let result = registry.execute(&call).unwrap();
         assert!(result.content.contains("a.txt"));
         assert!(result.content.contains("b.txt"));
@@ -535,16 +635,23 @@ mod tests {
 
     #[test]
     fn test_create_dir_tool() {
-        let dir = std::env::temp_dir().join("os_tools_test_mkdir").join("sub").join("dir");
+        let dir = std::env::temp_dir()
+            .join("os_tools_test_mkdir")
+            .join("sub")
+            .join("dir");
         let _ = fs::remove_dir_all(std::env::temp_dir().join("os_tools_test_mkdir"));
 
         let sandbox = test_sandbox();
         let mut registry = ToolRegistry::new();
         register_os_tools(&mut registry, sandbox);
 
-        let call = ToolCall::new("create_dir", HashMap::from([
-            ("path".to_string(), serde_json::Value::String(dir.to_string_lossy().to_string())),
-        ]));
+        let call = ToolCall::new(
+            "create_dir",
+            HashMap::from([(
+                "path".to_string(),
+                serde_json::Value::String(dir.to_string_lossy().to_string()),
+            )]),
+        );
         let result = registry.execute(&call).unwrap();
         assert!(result.content.contains("Created directory"));
         assert!(dir.exists());
@@ -563,9 +670,13 @@ mod tests {
         let mut registry = ToolRegistry::new();
         register_os_tools(&mut registry, sandbox);
 
-        let call = ToolCall::new("delete_file", HashMap::from([
-            ("path".to_string(), serde_json::Value::String(file.to_string_lossy().to_string())),
-        ]));
+        let call = ToolCall::new(
+            "delete_file",
+            HashMap::from([(
+                "path".to_string(),
+                serde_json::Value::String(file.to_string_lossy().to_string()),
+            )]),
+        );
         let result = registry.execute(&call).unwrap();
         assert!(result.content.contains("Deleted"));
         assert!(!file.exists());
@@ -583,9 +694,13 @@ mod tests {
         let mut registry = ToolRegistry::new();
         register_os_tools(&mut registry, sandbox);
 
-        let call = ToolCall::new("file_info", HashMap::from([
-            ("path".to_string(), serde_json::Value::String(dir.join("info.txt").to_string_lossy().to_string())),
-        ]));
+        let call = ToolCall::new(
+            "file_info",
+            HashMap::from([(
+                "path".to_string(),
+                serde_json::Value::String(dir.join("info.txt").to_string_lossy().to_string()),
+            )]),
+        );
         let result = registry.execute(&call).unwrap();
         assert!(result.content.contains("file"));
         assert!(result.content.contains("5B"));
@@ -602,9 +717,13 @@ mod tests {
         let mut registry = ToolRegistry::new();
         register_os_tools(&mut registry, sandbox);
 
-        let call = ToolCall::new("read_file", HashMap::from([
-            ("path".to_string(), serde_json::Value::String("/etc/passwd".to_string())),
-        ]));
+        let call = ToolCall::new(
+            "read_file",
+            HashMap::from([(
+                "path".to_string(),
+                serde_json::Value::String("/etc/passwd".to_string()),
+            )]),
+        );
         let result = registry.execute(&call);
         assert!(result.is_err());
     }
@@ -631,9 +750,13 @@ mod tests {
         let mut registry = ToolRegistry::new();
         register_os_tools(&mut registry, sandbox);
 
-        let call = ToolCall::new("run_command", HashMap::from([
-            ("command".to_string(), serde_json::Value::String("echo hello_test".to_string())),
-        ]));
+        let call = ToolCall::new(
+            "run_command",
+            HashMap::from([(
+                "command".to_string(),
+                serde_json::Value::String("echo hello_test".to_string()),
+            )]),
+        );
         let result = registry.execute(&call).unwrap();
         assert!(result.content.contains("hello_test"));
         assert!(result.content.contains("Exit code: 0"));

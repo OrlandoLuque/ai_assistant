@@ -153,10 +153,7 @@ pub enum HookChainResult {
         by_hooks: Vec<String>,
     },
     /// Processing was blocked
-    Blocked {
-        by_hook: String,
-        reason: String,
-    },
+    Blocked { by_hook: String, reason: String },
 }
 
 impl HookChainResult {
@@ -181,9 +178,7 @@ mod tests {
     fn test_hook_manager() {
         let mut manager = HookManager::new();
 
-        manager.register_pre_hook("uppercase", |msg| {
-            HookResult::Modify(msg.to_uppercase())
-        });
+        manager.register_pre_hook("uppercase", |msg| HookResult::Modify(msg.to_uppercase()));
 
         let result = manager.run_pre_hooks("hello");
         match result {
@@ -191,6 +186,68 @@ mod tests {
                 assert_eq!(content, "HELLO");
             }
             _ => panic!("Expected modified result"),
+        }
+    }
+
+    #[test]
+    fn test_hook_removal() {
+        let mut manager = HookManager::new();
+
+        manager.register_pre_hook("hook_a", |_msg| HookResult::Continue);
+        manager.register_pre_hook("hook_b", |_msg| HookResult::Continue);
+
+        assert_eq!(manager.list_pre_hooks(), vec!["hook_a", "hook_b"]);
+
+        manager.remove_pre_hook("hook_a");
+
+        let remaining = manager.list_pre_hooks();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0], "hook_b");
+    }
+
+    #[test]
+    fn test_post_hooks_execution() {
+        let mut manager = HookManager::new();
+
+        manager.register_post_hook("append_footer", |_user_msg, response| {
+            HookResult::Modify(format!("{} [reviewed]", response))
+        });
+
+        let result = manager.run_post_hooks("question", "answer");
+        match result {
+            HookChainResult::Modified { content, by_hooks } => {
+                assert_eq!(content, "answer [reviewed]");
+                assert_eq!(by_hooks, vec!["append_footer"]);
+            }
+            _ => panic!("Expected Modified result"),
+        }
+    }
+
+    #[test]
+    fn test_hook_blocking() {
+        let mut manager = HookManager::new();
+
+        manager.register_pre_hook("blocker", |msg| {
+            if msg.contains("forbidden") {
+                HookResult::Block("Contains forbidden content".to_string())
+            } else {
+                HookResult::Continue
+            }
+        });
+
+        // Non-forbidden message passes through
+        let ok_result = manager.run_pre_hooks("hello world");
+        assert!(!ok_result.is_blocked());
+
+        // Forbidden message is blocked
+        let blocked_result = manager.run_pre_hooks("this is forbidden text");
+        assert!(blocked_result.is_blocked());
+        match blocked_result {
+            HookChainResult::Blocked { by_hook, reason } => {
+                assert_eq!(by_hook, "blocker");
+                assert_eq!(reason, "Contains forbidden content");
+            }
+            _ => panic!("Expected Blocked result"),
         }
     }
 }

@@ -8,9 +8,9 @@
 // Anthropic uses /v1/messages with its own format (x-api-key header, different
 // message structure, system prompt as top-level parameter).
 
-use anyhow::{Context, Result};
 use crate::config::{AiConfig, AiProvider};
 use crate::messages::ChatMessage;
+use anyhow::{Context, Result};
 
 // ============================================================================
 // API Key Resolution
@@ -24,20 +24,20 @@ use crate::messages::ChatMessage;
 ///
 /// Returns an error if no key is found for a cloud provider.
 pub fn resolve_api_key(config: &AiConfig) -> Result<String> {
-    config
-        .get_api_key()
-        .ok_or_else(|| {
-            let env_var = match &config.provider {
-                AiProvider::OpenAI => "OPENAI_API_KEY",
-                AiProvider::Anthropic => "ANTHROPIC_API_KEY",
-                _ => "API_KEY",
-            };
-            anyhow::anyhow!(
-                "No API key found for {}. Set config.api_key or {} environment variable.",
-                config.provider.display_name(),
-                env_var
-            )
-        })
+    config.get_api_key().ok_or_else(|| {
+        let env_var = match &config.provider {
+            AiProvider::OpenAI => "OPENAI_API_KEY",
+            AiProvider::Anthropic => "ANTHROPIC_API_KEY",
+            AiProvider::Gemini => "GOOGLE_API_KEY",
+            AiProvider::Bedrock { .. } => "AWS_ACCESS_KEY_ID",
+            _ => "API_KEY",
+        };
+        anyhow::anyhow!(
+            "No API key found for {}. Set config.api_key or {} environment variable.",
+            config.provider.display_name(),
+            env_var
+        )
+    })
 }
 
 // ============================================================================
@@ -82,7 +82,8 @@ pub fn generate_openai_cloud(
         .send_json(&body)
         .context("OpenAI API request failed")?;
 
-    let json: serde_json::Value = response.into_json()
+    let json: serde_json::Value = response
+        .into_json()
         .context("Failed to parse OpenAI response")?;
 
     json.get("choices")
@@ -107,7 +108,8 @@ pub fn fetch_openai_cloud_models(config: &AiConfig) -> Result<Vec<String>> {
         .call()
         .context("Failed to fetch OpenAI models")?;
 
-    let json: serde_json::Value = response.into_json()
+    let json: serde_json::Value = response
+        .into_json()
         .context("Failed to parse models response")?;
 
     let models = json
@@ -115,7 +117,11 @@ pub fn fetch_openai_cloud_models(config: &AiConfig) -> Result<Vec<String>> {
         .and_then(|d| d.as_array())
         .map(|arr| {
             arr.iter()
-                .filter_map(|m| m.get("id").and_then(|id| id.as_str()).map(|s| s.to_string()))
+                .filter_map(|m| {
+                    m.get("id")
+                        .and_then(|id| id.as_str())
+                        .map(|s| s.to_string())
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -175,7 +181,8 @@ pub fn generate_anthropic_cloud(
         .send_json(&body)
         .context("Anthropic API request failed")?;
 
-    let json: serde_json::Value = response.into_json()
+    let json: serde_json::Value = response
+        .into_json()
         .context("Failed to parse Anthropic response")?;
 
     // Anthropic response format: {"content": [{"type": "text", "text": "..."}]}
@@ -185,7 +192,10 @@ pub fn generate_anthropic_cloud(
             arr.iter()
                 .filter_map(|block| {
                     if block.get("type").and_then(|t| t.as_str()) == Some("text") {
-                        block.get("text").and_then(|t| t.as_str()).map(|s| s.to_string())
+                        block
+                            .get("text")
+                            .and_then(|t| t.as_str())
+                            .map(|s| s.to_string())
                     } else {
                         None
                     }
@@ -213,6 +223,99 @@ pub fn fetch_anthropic_cloud_models() -> Vec<String> {
 }
 
 // ============================================================================
+// Google Gemini Cloud
+// ============================================================================
+
+/// Generate a non-streaming response from Google Gemini's API.
+///
+/// Uses the generateContent endpoint with API key authentication.
+pub fn generate_gemini_cloud(
+    config: &AiConfig,
+    messages: &[ChatMessage],
+    system_prompt: &str,
+) -> Result<String> {
+    let api_key = resolve_api_key(config)?;
+    let model = if config.selected_model.is_empty() {
+        "gemini-2.0-flash"
+    } else {
+        &config.selected_model
+    };
+
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+        model, api_key
+    );
+
+    // Build Gemini contents array
+    let mut contents = Vec::new();
+
+    // System instruction (Gemini supports it as a separate field)
+    if !system_prompt.is_empty() {
+        // Gemini uses systemInstruction field
+    }
+
+    for msg in messages {
+        let role = match msg.role.as_str() {
+            "assistant" => "model",
+            "system" => "user", // Gemini doesn't have system role in contents
+            other => other,
+        };
+        contents.push(serde_json::json!({
+            "role": role,
+            "parts": [{ "text": msg.content }]
+        }));
+    }
+
+    let mut body = serde_json::json!({
+        "contents": contents,
+        "generationConfig": {
+            "temperature": config.temperature,
+            "maxOutputTokens": 4096
+        }
+    });
+
+    if !system_prompt.is_empty() {
+        body["systemInstruction"] = serde_json::json!({
+            "parts": [{ "text": system_prompt }]
+        });
+    }
+
+    let response = ureq::post(&url)
+        .set("content-type", "application/json")
+        .timeout(std::time::Duration::from_secs(120))
+        .send_json(&body)
+        .context("Gemini API request failed")?;
+
+    let json: serde_json::Value = response
+        .into_json()
+        .context("Failed to parse Gemini response")?;
+
+    // Gemini response: {"candidates": [{"content": {"parts": [{"text": "..."}]}}]}
+    json.get("candidates")
+        .and_then(|c| c.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|candidate| candidate.get("content"))
+        .and_then(|content| content.get("parts"))
+        .and_then(|parts| parts.as_array())
+        .and_then(|parts| parts.first())
+        .and_then(|part| part.get("text"))
+        .and_then(|t| t.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| anyhow::anyhow!("Unexpected Gemini response format"))
+}
+
+/// Fetch available models from Gemini (returns known model list).
+pub fn fetch_gemini_cloud_models() -> Vec<String> {
+    vec![
+        "gemini-2.0-flash".to_string(),
+        "gemini-2.0-flash-lite".to_string(),
+        "gemini-1.5-pro".to_string(),
+        "gemini-1.5-flash".to_string(),
+        "gemini-1.5-flash-8b".to_string(),
+    ]
+}
+
+// ============================================================================
 // Unified Cloud Interface
 // ============================================================================
 
@@ -228,6 +331,10 @@ pub fn generate_cloud_response(
     match config.provider {
         AiProvider::OpenAI => generate_openai_cloud(config, messages, system_prompt),
         AiProvider::Anthropic => generate_anthropic_cloud(config, messages, system_prompt),
+        AiProvider::Gemini => generate_gemini_cloud(config, messages, system_prompt),
+        AiProvider::Bedrock { .. } => {
+            anyhow::bail!("AWS Bedrock requires the `aws-bedrock` feature flag.")
+        }
         _ => anyhow::bail!(
             "{} is not a cloud provider. Use the standard provider functions.",
             config.provider.display_name()
@@ -240,6 +347,14 @@ pub fn fetch_cloud_models(config: &AiConfig) -> Result<Vec<String>> {
     match config.provider {
         AiProvider::OpenAI => fetch_openai_cloud_models(config),
         AiProvider::Anthropic => Ok(fetch_anthropic_cloud_models()),
+        AiProvider::Gemini => Ok(fetch_gemini_cloud_models()),
+        AiProvider::Bedrock { .. } => Ok(vec![
+            "anthropic.claude-3-5-sonnet-20241022-v2:0".to_string(),
+            "anthropic.claude-3-5-haiku-20241022-v1:0".to_string(),
+            "anthropic.claude-3-opus-20240229-v1:0".to_string(),
+            "amazon.titan-text-express-v1".to_string(),
+            "meta.llama3-1-70b-instruct-v1:0".to_string(),
+        ]),
         _ => anyhow::bail!(
             "{} is not a cloud provider.",
             config.provider.display_name()
@@ -305,7 +420,10 @@ mod tests {
         let config = AiConfig::default(); // Ollama
         let result = generate_cloud_response(&config, &[], "");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not a cloud provider"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("not a cloud provider"));
     }
 
     #[test]
@@ -338,5 +456,122 @@ mod tests {
     fn test_cloud_display_names() {
         assert_eq!(AiProvider::OpenAI.display_name(), "OpenAI");
         assert_eq!(AiProvider::Anthropic.display_name(), "Anthropic");
+    }
+
+    #[test]
+    fn test_gemini_is_cloud() {
+        assert!(AiProvider::Gemini.is_cloud());
+    }
+
+    #[test]
+    fn test_gemini_display_name() {
+        assert_eq!(AiProvider::Gemini.display_name(), "Google Gemini");
+    }
+
+    #[test]
+    fn test_gemini_base_url() {
+        let mut config = AiConfig::default();
+        config.provider = AiProvider::Gemini;
+        assert_eq!(
+            config.get_base_url(),
+            "https://generativelanguage.googleapis.com"
+        );
+    }
+
+    #[test]
+    fn test_fetch_gemini_models() {
+        let models = fetch_gemini_cloud_models();
+        assert!(!models.is_empty());
+        assert!(models.iter().any(|m| m.contains("gemini")));
+        assert!(models.iter().any(|m| m.contains("flash")));
+    }
+
+    #[test]
+    fn test_fetch_cloud_models_gemini() {
+        let mut config = AiConfig::default();
+        config.provider = AiProvider::Gemini;
+        let models = fetch_cloud_models(&config).unwrap();
+        assert!(!models.is_empty());
+        assert!(models.iter().any(|m| m.contains("gemini")));
+    }
+
+    #[test]
+    fn test_bedrock_base_url() {
+        let mut config = AiConfig::default();
+        config.provider = AiProvider::Bedrock {
+            region: "us-east-1".to_string(),
+        };
+        assert_eq!(
+            config.get_base_url(),
+            "https://bedrock-runtime.us-east-1.amazonaws.com"
+        );
+    }
+
+    #[test]
+    fn test_bedrock_is_cloud() {
+        assert!(AiProvider::Bedrock {
+            region: "us-west-2".to_string()
+        }
+        .is_cloud());
+    }
+
+    #[test]
+    fn test_bedrock_display_name() {
+        assert_eq!(
+            AiProvider::Bedrock {
+                region: "eu-west-1".to_string()
+            }
+            .display_name(),
+            "AWS Bedrock"
+        );
+    }
+
+    #[test]
+    fn test_fetch_cloud_models_bedrock() {
+        let mut config = AiConfig::default();
+        config.provider = AiProvider::Bedrock {
+            region: "us-east-1".to_string(),
+        };
+        let models = fetch_cloud_models(&config).unwrap();
+        assert!(!models.is_empty());
+        assert!(models
+            .iter()
+            .any(|m| m.contains("claude") || m.contains("anthropic")));
+    }
+
+    #[test]
+    fn test_generate_cloud_response_bedrock_needs_feature() {
+        let mut config = AiConfig::default();
+        config.provider = AiProvider::Bedrock {
+            region: "us-east-1".to_string(),
+        };
+        config.api_key = "test-key".to_string();
+        let result = generate_cloud_response(&config, &[], "");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("aws-bedrock"));
+    }
+
+    #[test]
+    fn test_resolve_api_key_gemini() {
+        let config = AiConfig {
+            provider: AiProvider::Gemini,
+            api_key: "gemini-test-key".to_string(),
+            ..Default::default()
+        };
+        let key = resolve_api_key(&config).unwrap();
+        assert_eq!(key, "gemini-test-key");
+    }
+
+    #[test]
+    fn test_resolve_api_key_bedrock() {
+        let config = AiConfig {
+            provider: AiProvider::Bedrock {
+                region: "us-east-1".to_string(),
+            },
+            api_key: "aws-key".to_string(),
+            ..Default::default()
+        };
+        let key = resolve_api_key(&config).unwrap();
+        assert_eq!(key, "aws-key");
     }
 }

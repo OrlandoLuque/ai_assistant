@@ -7,7 +7,7 @@
 //! Run with: cargo run --example quality_tests --features rag
 
 use ai_assistant::{
-    AiAssistant, ConversationTestCase, TestSuite, TestSuiteResults, MessageMetrics,
+    AiAssistant, ConversationTestCase, MessageMetrics, TestSuite, TestSuiteResults,
 };
 use std::path::Path;
 
@@ -17,21 +17,15 @@ fn main() {
     // Create a test suite for Star Citizen knowledge
     let mut suite = TestSuite::new(
         "Star Citizen Knowledge Tests",
-        "Tests for verifying the AI correctly retrieves and uses Star Citizen game knowledge"
+        "Tests for verifying the AI correctly retrieves and uses Star Citizen game knowledge",
     );
 
     // Test 1: Basic ship query
     suite.add_test(ConversationTestCase {
         name: "Aurora ship information".to_string(),
         query: "What is the Aurora ship in Star Citizen?".to_string(),
-        expected_keywords: vec![
-            "Aurora".to_string(),
-            "starter".to_string(),
-        ],
-        forbidden_keywords: vec![
-            "error".to_string(),
-            "I don't know".to_string(),
-        ],
+        expected_keywords: vec!["Aurora".to_string(), "starter".to_string()],
+        forbidden_keywords: vec!["error".to_string(), "I don't know".to_string()],
         expected_sources: vec!["ships".to_string()],
         max_response_time_ms: Some(10000),
         min_output_tokens: Some(50),
@@ -42,10 +36,7 @@ fn main() {
     suite.add_test(ConversationTestCase {
         name: "Quantum travel explanation".to_string(),
         query: "How does quantum travel work?".to_string(),
-        expected_keywords: vec![
-            "quantum".to_string(),
-            "drive".to_string(),
-        ],
+        expected_keywords: vec!["quantum".to_string(), "drive".to_string()],
         forbidden_keywords: vec![],
         expected_sources: vec!["mechanics".to_string()],
         max_response_time_ms: Some(15000),
@@ -57,9 +48,7 @@ fn main() {
     suite.add_test(ConversationTestCase {
         name: "Localization process".to_string(),
         query: "How do I install Spanish translations?".to_string(),
-        expected_keywords: vec![
-            "global.ini".to_string(),
-        ],
+        expected_keywords: vec!["global.ini".to_string()],
         forbidden_keywords: vec![],
         expected_sources: vec!["localization".to_string()],
         max_response_time_ms: Some(10000),
@@ -71,9 +60,7 @@ fn main() {
     suite.add_test(ConversationTestCase {
         name: "Response is helpful".to_string(),
         query: "I'm new to Star Citizen, where should I start?".to_string(),
-        expected_keywords: vec![
-            "tutorial".to_string(),
-        ],
+        expected_keywords: vec!["tutorial".to_string()],
         forbidden_keywords: vec![
             "error".to_string(),
             "cannot".to_string(),
@@ -109,7 +96,7 @@ fn main() {
 
 fn simulate_test_result(
     test: &ConversationTestCase,
-    passed: bool,
+    _passed: bool,
     response: &str,
     output_tokens: usize,
     response_time_ms: u64,
@@ -129,13 +116,21 @@ fn simulate_test_result(
         model: "llama3:8b".to_string(),
     };
 
-    test.evaluate(response, &metrics, &["ships".to_string(), "mechanics".to_string()])
+    test.evaluate(
+        response,
+        &metrics,
+        &["ships".to_string(), "mechanics".to_string()],
+    )
 }
 
 fn print_results(results: &TestSuiteResults) {
     println!("Suite: {}", results.suite_name);
     println!("Total: {} tests", results.total_tests);
-    println!("Passed: {} ({:.0}%)", results.passed, results.pass_rate * 100.0);
+    println!(
+        "Passed: {} ({:.0}%)",
+        results.passed,
+        results.pass_rate * 100.0
+    );
     println!("Failed: {}", results.failed);
     println!("Avg Response Time: {:.0}ms", results.avg_response_time_ms);
     println!();
@@ -150,9 +145,9 @@ fn print_results(results: &TestSuiteResults) {
             }
         }
 
-        println!("  Response time: {}ms, Tokens: {}",
-            result.metrics.total_response_time_ms,
-            result.metrics.output_tokens
+        println!(
+            "  Response time: {}ms, Tokens: {}",
+            result.metrics.total_response_time_ms, result.metrics.output_tokens
         );
     }
 }

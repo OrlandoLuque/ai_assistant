@@ -30,8 +30,8 @@
 //! editor.apply_batch(&edits);
 //! ```
 
-use std::ops::Range;
 use std::collections::VecDeque;
+use std::ops::Range;
 
 /// A position in text (line, column) - both 0-indexed
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -57,7 +57,11 @@ impl Position {
 
         for (i, c) in text.char_indices() {
             if current_line == self.line {
-                let col_offset = text[offset..].chars().take(self.column).map(|c| c.len_utf8()).sum::<usize>();
+                let col_offset = text[offset..]
+                    .chars()
+                    .take(self.column)
+                    .map(|c| c.len_utf8())
+                    .sum::<usize>();
                 return Some(offset + col_offset);
             }
             if c == '\n' {
@@ -67,7 +71,11 @@ impl Position {
         }
 
         if current_line == self.line {
-            let col_offset = text[offset..].chars().take(self.column).map(|c| c.len_utf8()).sum::<usize>();
+            let col_offset = text[offset..]
+                .chars()
+                .take(self.column)
+                .map(|c| c.len_utf8())
+                .sum::<usize>();
             Some(offset + col_offset)
         } else {
             None
@@ -116,8 +124,8 @@ impl TextRange {
 
     /// Check if range is valid (start <= end)
     pub fn is_valid(&self) -> bool {
-        self.start.line < self.end.line ||
-        (self.start.line == self.end.line && self.start.column <= self.end.column)
+        self.start.line < self.end.line
+            || (self.start.line == self.end.line && self.start.column <= self.end.column)
     }
 
     /// Check if this range contains a position
@@ -136,8 +144,10 @@ impl TextRange {
 
     /// Check if two ranges overlap
     pub fn overlaps(&self, other: &TextRange) -> bool {
-        self.contains(&other.start) || self.contains(&other.end) ||
-        other.contains(&self.start) || other.contains(&self.end)
+        self.contains(&other.start)
+            || self.contains(&other.end)
+            || other.contains(&self.start)
+            || other.contains(&self.end)
     }
 }
 
@@ -271,7 +281,11 @@ impl std::fmt::Display for EditError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::OutOfBounds { offset, text_len } => {
-                write!(f, "Edit offset {} is out of bounds (text length: {})", offset, text_len)
+                write!(
+                    f,
+                    "Edit offset {} is out of bounds (text length: {})",
+                    offset, text_len
+                )
             }
             Self::OverlappingEdits { edit1, edit2 } => {
                 write!(f, "Edits {} and {} overlap", edit1, edit2)
@@ -343,7 +357,7 @@ impl EditBuilder {
             if next_end > current.offset {
                 return Err(EditError::OverlappingEdits {
                     edit1: i,
-                    edit2: i + 1
+                    edit2: i + 1,
                 });
             }
         }
@@ -443,25 +457,35 @@ impl TextEditor {
     }
 
     /// Replace text in range
-    pub fn replace_range(&mut self, range: Range<usize>, text: impl Into<String>) -> Result<(), EditError> {
+    pub fn replace_range(
+        &mut self,
+        range: Range<usize>,
+        text: impl Into<String>,
+    ) -> Result<(), EditError> {
         self.apply(Edit::replace(range, text))
     }
 
     /// Insert text at position
     pub fn insert_at(&mut self, pos: Position, text: impl Into<String>) -> Result<(), EditError> {
-        let offset = pos.to_offset(&self.text)
-            .ok_or(EditError::OutOfBounds { offset: 0, text_len: self.text.len() })?;
+        let offset = pos.to_offset(&self.text).ok_or(EditError::OutOfBounds {
+            offset: 0,
+            text_len: self.text.len(),
+        })?;
         self.insert(offset, text)
     }
 
     /// Replace line content (keeps line ending)
-    pub fn replace_line(&mut self, line_num: usize, new_content: impl Into<String>) -> Result<(), EditError> {
+    pub fn replace_line(
+        &mut self,
+        line_num: usize,
+        new_content: impl Into<String>,
+    ) -> Result<(), EditError> {
         let lines: Vec<&str> = self.text.lines().collect();
 
         if line_num >= lines.len() {
             return Err(EditError::OutOfBounds {
                 offset: line_num,
-                text_len: lines.len()
+                text_len: lines.len(),
             });
         }
 
@@ -477,12 +501,16 @@ impl TextEditor {
 
         Err(EditError::OutOfBounds {
             offset: line_num,
-            text_len: lines.len()
+            text_len: lines.len(),
         })
     }
 
     /// Insert a new line at the given line number
-    pub fn insert_line(&mut self, line_num: usize, content: impl Into<String>) -> Result<(), EditError> {
+    pub fn insert_line(
+        &mut self,
+        line_num: usize,
+        content: impl Into<String>,
+    ) -> Result<(), EditError> {
         let content = content.into();
         let lines: Vec<&str> = self.text.lines().collect();
 
@@ -517,7 +545,7 @@ impl TextEditor {
         if line_num >= lines.len() {
             return Err(EditError::OutOfBounds {
                 offset: line_num,
-                text_len: lines.len()
+                text_len: lines.len(),
             });
         }
 
@@ -542,8 +570,7 @@ impl TextEditor {
 
     /// Undo the last operation
     pub fn undo(&mut self) -> Result<(), EditError> {
-        let edits = self.undo_stack.pop_back()
-            .ok_or(EditError::NothingToUndo)?;
+        let edits = self.undo_stack.pop_back().ok_or(EditError::NothingToUndo)?;
 
         // Create redo edits
         let mut redo_edits = Vec::new();
@@ -560,8 +587,7 @@ impl TextEditor {
 
     /// Redo the last undone operation
     pub fn redo(&mut self) -> Result<(), EditError> {
-        let edits = self.redo_stack.pop_back()
-            .ok_or(EditError::NothingToRedo)?;
+        let edits = self.redo_stack.pop_back().ok_or(EditError::NothingToRedo)?;
 
         let mut undo_edits = Vec::new();
         for edit in &edits {

@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use ai_assistant::{
-    AppKeyProvider, CustomKeyProvider, ExamplePair, KpkgBuilder, KpkgManifest,
-    KpkgReader, KeyProvider,
+    AppKeyProvider, CustomKeyProvider, ExamplePair, KeyProvider, KpkgBuilder, KpkgManifest,
+    KpkgReader,
 };
 
 fn main() -> ExitCode {
@@ -674,9 +674,30 @@ fn print_manifest_formatted(manifest: &KpkgManifest, file: &Path, file_size: usi
 
     // Basic info
     println!("--- Basic Information ---");
-    println!("Name:        {}", if manifest.name.is_empty() { "(not set)" } else { &manifest.name });
-    println!("Description: {}", if manifest.description.is_empty() { "(not set)" } else { &manifest.description });
-    println!("Version:     {}", if manifest.version.is_empty() { "(not set)" } else { &manifest.version });
+    println!(
+        "Name:        {}",
+        if manifest.name.is_empty() {
+            "(not set)"
+        } else {
+            &manifest.name
+        }
+    );
+    println!(
+        "Description: {}",
+        if manifest.description.is_empty() {
+            "(not set)"
+        } else {
+            &manifest.description
+        }
+    );
+    println!(
+        "Version:     {}",
+        if manifest.version.is_empty() {
+            "(not set)"
+        } else {
+            &manifest.version
+        }
+    );
     println!();
 
     // Priorities
@@ -750,7 +771,10 @@ fn print_manifest_formatted(manifest: &KpkgManifest, file: &Path, file_size: usi
                 println!("Chunking:        {}", cs);
             }
             if let Some(hs) = rag.use_hybrid_search {
-                println!("Hybrid search:   {}", if hs { "enabled" } else { "disabled" });
+                println!(
+                    "Hybrid search:   {}",
+                    if hs { "enabled" } else { "disabled" }
+                );
             }
             if let Some(pb) = rag.priority_boost {
                 println!("Priority boost:  {}", pb);
@@ -853,18 +877,20 @@ fn run_extract(args: &[String]) -> Result<(), String> {
     };
 
     // Create output directory
-    fs::create_dir_all(&output)
-        .map_err(|e| format!("Failed to create output directory: {}", e))?;
+    fs::create_dir_all(&output).map_err(|e| format!("Failed to create output directory: {}", e))?;
 
-    println!("Extracting {} documents to {}", docs.len(), output.display());
+    println!(
+        "Extracting {} documents to {}",
+        docs.len(),
+        output.display()
+    );
 
     for doc in &docs {
         let doc_path = output.join(&doc.path);
 
         // Create parent directories
         if let Some(parent) = doc_path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create directory: {}", e))?;
+            fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {}", e))?;
         }
 
         fs::write(&doc_path, &doc.content)

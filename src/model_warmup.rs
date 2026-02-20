@@ -11,7 +11,7 @@
 //! - **Resource-conscious**: Configurable warmup intervals
 
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 /// Configuration for model warmup
@@ -82,7 +82,10 @@ impl ModelUsageStats {
         *self.request_counts.entry(model.to_string()).or_insert(0) += 1;
         self.last_request.insert(model.to_string(), Instant::now());
 
-        let avg = self.avg_latency.entry(model.to_string()).or_insert(Duration::ZERO);
+        let avg = self
+            .avg_latency
+            .entry(model.to_string())
+            .or_insert(Duration::ZERO);
         let count = self.request_counts[model];
         *avg = (*avg * (count - 1) as u32 + latency) / count as u32;
     }

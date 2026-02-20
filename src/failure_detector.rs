@@ -308,11 +308,7 @@ impl HeartbeatManager {
     /// Record a heartbeat from a node. Creates a detector if one doesn't exist.
     pub fn record_heartbeat(&mut self, node_id: &NodeId) {
         let detector = self.detectors.entry(*node_id).or_insert_with(|| {
-            PhiAccrualDetector::with_config(
-                self.config.phi_threshold,
-                self.config.max_samples,
-                5,
-            )
+            PhiAccrualDetector::with_config(self.config.phi_threshold, self.config.max_samples, 5)
         });
         detector.heartbeat();
     }
@@ -423,7 +419,11 @@ mod tests {
 
         // Should be alive with regular heartbeats
         assert!(detector.sample_count() >= 3);
-        assert!(detector.is_alive(), "Regular heartbeats should keep node alive, phi={}", detector.phi());
+        assert!(
+            detector.is_alive(),
+            "Regular heartbeats should keep node alive, phi={}",
+            detector.phi()
+        );
     }
 
     #[test]
@@ -441,7 +441,11 @@ mod tests {
 
         // Phi should be very high
         let phi = detector.phi();
-        assert!(phi > 5.0, "After long silence, phi should be high, got {}", phi);
+        assert!(
+            phi > 5.0,
+            "After long silence, phi should be high, got {}",
+            phi
+        );
     }
 
     #[test]
@@ -452,11 +456,18 @@ mod tests {
 
         // erf(1) ≈ 0.8427
         let erf_1 = PhiAccrualDetector::erf(1.0);
-        assert!((erf_1 - 0.8427).abs() < 0.01, "erf(1) should be ~0.8427, got {}", erf_1);
+        assert!(
+            (erf_1 - 0.8427).abs() < 0.01,
+            "erf(1) should be ~0.8427, got {}",
+            erf_1
+        );
 
         // erf(-x) = -erf(x)
         let erf_neg = PhiAccrualDetector::erf(-1.0);
-        assert!((erf_neg + erf_1).abs() < 0.001, "erf should be odd function");
+        assert!(
+            (erf_neg + erf_1).abs() < 0.001,
+            "erf should be odd function"
+        );
 
         // erf(3) ≈ 0.9999
         let erf_3 = PhiAccrualDetector::erf(3.0);
@@ -467,15 +478,27 @@ mod tests {
     fn test_cdf_normal() {
         // CDF at mean should be 0.5
         let cdf = PhiAccrualDetector::cdf_normal(10.0, 10.0, 2.0);
-        assert!((cdf - 0.5).abs() < 0.01, "CDF at mean should be ~0.5, got {}", cdf);
+        assert!(
+            (cdf - 0.5).abs() < 0.01,
+            "CDF at mean should be ~0.5, got {}",
+            cdf
+        );
 
         // CDF well above mean should approach 1.0
         let cdf_high = PhiAccrualDetector::cdf_normal(20.0, 10.0, 2.0);
-        assert!(cdf_high > 0.99, "CDF far above mean should approach 1, got {}", cdf_high);
+        assert!(
+            cdf_high > 0.99,
+            "CDF far above mean should approach 1, got {}",
+            cdf_high
+        );
 
         // CDF well below mean should approach 0.0
         let cdf_low = PhiAccrualDetector::cdf_normal(0.0, 10.0, 2.0);
-        assert!(cdf_low < 0.01, "CDF far below mean should approach 0, got {}", cdf_low);
+        assert!(
+            cdf_low < 0.01,
+            "CDF far below mean should approach 0, got {}",
+            cdf_low
+        );
     }
 
     #[test]
@@ -584,5 +607,141 @@ mod tests {
     fn test_detector_threshold() {
         let detector = PhiAccrualDetector::new(12.0);
         assert_eq!(detector.threshold(), 12.0);
+    }
+
+    // =========================================================================
+    // is_suspicious() boundary test
+    // =========================================================================
+
+    #[test]
+    fn test_is_suspicious_boundary() {
+        // is_suspicious returns true when phi > threshold * 0.5
+        // With threshold=16.0, suspicious triggers at phi > 8.0
+
+        // Fresh detector: phi=0, not suspicious
+        let detector = PhiAccrualDetector::new(16.0);
+        assert!(
+            !detector.is_suspicious(),
+            "Fresh detector should not be suspicious"
+        );
+
+        // Build short-interval samples, then check consistency
+        let mut detector2 = PhiAccrualDetector::with_config(16.0, 50, 3);
+        for _ in 0..10 {
+            detector2.heartbeat();
+            thread::sleep(Duration::from_millis(2));
+        }
+        // Right after heartbeat, phi should be low, not suspicious
+        let phi_now = detector2.phi();
+        assert_eq!(
+            detector2.is_suspicious(),
+            phi_now > 16.0 * 0.5,
+            "is_suspicious should agree with phi > threshold*0.5 (phi={}, threshold=16.0)",
+            phi_now
+        );
+
+        // With a lower threshold (8.0), rapid heartbeats then a pause
+        let mut detector3 = PhiAccrualDetector::with_config(8.0, 50, 3);
+        for _ in 0..10 {
+            detector3.heartbeat();
+            thread::sleep(Duration::from_millis(1));
+        }
+        // Wait for phi to rise
+        thread::sleep(Duration::from_millis(100));
+
+        let phi_after_wait = detector3.phi();
+        let expected_suspicious = phi_after_wait > 8.0 * 0.5;
+        assert_eq!(
+            detector3.is_suspicious(),
+            expected_suspicious,
+            "is_suspicious consistency: phi={}, threshold=8.0, expected_suspicious={}",
+            phi_after_wait,
+            expected_suspicious
+        );
+    }
+
+    // =========================================================================
+    // HeartbeatManager::get_suspicious_nodes() test
+    // =========================================================================
+
+    #[test]
+    fn test_heartbeat_manager_get_suspicious_nodes() {
+        // Use generous thresholds to avoid flakiness on loaded systems
+        let config = HeartbeatConfig {
+            phi_threshold: 16.0,
+            suspicious_threshold: 8.0,
+            max_samples: 50,
+            interval: Duration::from_millis(20),
+        };
+        let mut mgr = HeartbeatManager::new(config);
+
+        let healthy = make_node("healthy_node");
+        let stale = make_node("stale_node");
+
+        // Build up rapid heartbeat history for both nodes
+        for _ in 0..10 {
+            mgr.record_heartbeat(&healthy);
+            mgr.record_heartbeat(&stale);
+            thread::sleep(Duration::from_millis(2));
+        }
+
+        // Keep healthy going, let stale go silent
+        for _ in 0..5 {
+            mgr.record_heartbeat(&healthy);
+            thread::sleep(Duration::from_millis(5));
+        }
+
+        // Wait for stale node's phi to rise (but keep healthy alive)
+        thread::sleep(Duration::from_millis(60));
+        mgr.record_heartbeat(&healthy);
+
+        // Healthy should NOT be in suspicious list
+        let suspicious = mgr.get_suspicious_nodes();
+        assert!(
+            !suspicious.iter().any(|(id, _)| *id == healthy),
+            "Healthy node should not be suspicious"
+        );
+
+        // Stale node should be either suspicious or dead
+        let stale_status = mgr.check_node(&stale);
+        match stale_status {
+            NodeStatus::Suspicious(phi) => {
+                // Should appear in get_suspicious_nodes
+                assert!(
+                    suspicious.iter().any(|(id, _)| *id == stale),
+                    "Stale node with Suspicious status should be in get_suspicious_nodes()"
+                );
+                assert!(
+                    phi >= 8.0 && phi < 16.0,
+                    "Suspicious phi should be in [suspicious_threshold, phi_threshold): {}",
+                    phi
+                );
+            }
+            NodeStatus::Dead(phi) => {
+                // Dead nodes should NOT be in suspicious list (only in get_dead_nodes)
+                assert!(
+                    !suspicious.iter().any(|(id, _)| *id == stale),
+                    "Dead node should NOT be in get_suspicious_nodes(), phi={}",
+                    phi
+                );
+                assert!(phi >= 16.0, "Dead phi should be >= phi_threshold: {}", phi);
+            }
+            NodeStatus::Alive => {
+                // On very fast systems, might still be alive — that's OK, just skip assertion
+                // This means the sleep wasn't long enough for phi to rise
+            }
+            NodeStatus::Unknown => {
+                panic!("Stale node should not be Unknown after recording heartbeats");
+            }
+        }
+
+        // get_suspicious_nodes should only return nodes in the suspicious range
+        for (_, phi) in &suspicious {
+            assert!(
+                *phi >= 8.0 && *phi < 16.0,
+                "All suspicious nodes should have phi in [8.0, 16.0), got {}",
+                phi
+            );
+        }
     }
 }

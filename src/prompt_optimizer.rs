@@ -181,7 +181,10 @@ impl PromptOptimizer {
     /// Add variant to a group
     pub fn add_to_group(&mut self, group: &str, name: &str, template: &str) -> String {
         let id = self.add_variant(name, template);
-        self.groups.entry(group.to_string()).or_default().push(id.clone());
+        self.groups
+            .entry(group.to_string())
+            .or_default()
+            .push(id.clone());
         id
     }
 
@@ -207,10 +210,15 @@ impl PromptOptimizer {
             return self.select_random();
         }
 
-        self.variants.values()
+        self.variants
+            .values()
             .filter(|v| v.active)
             .filter(|v| v.use_count >= self.config.min_uses_for_selection)
-            .max_by(|a, b| a.effectiveness().partial_cmp(&b.effectiveness()).unwrap_or(std::cmp::Ordering::Equal))
+            .max_by(|a, b| {
+                a.effectiveness()
+                    .partial_cmp(&b.effectiveness())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
             .or_else(|| self.select_random())
     }
 
@@ -223,11 +231,16 @@ impl PromptOptimizer {
             return self.select_random_from_group(group);
         }
 
-        variant_ids.iter()
+        variant_ids
+            .iter()
             .filter_map(|id| self.variants.get(id))
             .filter(|v| v.active)
             .filter(|v| v.use_count >= self.config.min_uses_for_selection)
-            .max_by(|a, b| a.effectiveness().partial_cmp(&b.effectiveness()).unwrap_or(std::cmp::Ordering::Equal))
+            .max_by(|a, b| {
+                a.effectiveness()
+                    .partial_cmp(&b.effectiveness())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
             .or_else(|| self.select_random_from_group(group))
     }
 
@@ -244,7 +257,8 @@ impl PromptOptimizer {
     /// Select random from group
     pub fn select_random_from_group(&self, group: &str) -> Option<&PromptVariant> {
         let variant_ids = self.groups.get(group)?;
-        let active: Vec<_> = variant_ids.iter()
+        let active: Vec<_> = variant_ids
+            .iter()
             .filter_map(|id| self.variants.get(id))
             .filter(|v| v.active)
             .collect();
@@ -272,12 +286,14 @@ impl PromptOptimizer {
             if let Some(time_ms) = feedback.response_time_ms {
                 // Running average
                 variant.avg_response_time_ms =
-                    (variant.avg_response_time_ms * (variant.use_count - 1) + time_ms) / variant.use_count;
+                    (variant.avg_response_time_ms * (variant.use_count - 1) + time_ms)
+                        / variant.use_count;
             }
 
             if let Some(tokens) = feedback.token_count {
-                variant.avg_tokens =
-                    (variant.avg_tokens * (variant.use_count as usize - 1) + tokens) / variant.use_count as usize;
+                variant.avg_tokens = (variant.avg_tokens * (variant.use_count as usize - 1)
+                    + tokens)
+                    / variant.use_count as usize;
             }
 
             // Record in history
@@ -317,16 +333,25 @@ impl PromptOptimizer {
         let total_uses: u64 = variants.iter().map(|v| v.use_count).sum();
         let total_successes: u64 = variants.iter().map(|v| v.success_count).sum();
 
-        let best = variants.iter()
+        let best = variants
+            .iter()
             .filter(|v| v.active && v.use_count >= self.config.min_uses_for_selection)
-            .max_by(|a, b| a.effectiveness().partial_cmp(&b.effectiveness()).unwrap_or(std::cmp::Ordering::Equal));
+            .max_by(|a, b| {
+                a.effectiveness()
+                    .partial_cmp(&b.effectiveness())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
 
         OptimizationStats {
             total_variants: variants.len(),
             active_variants: variants.iter().filter(|v| v.active).count(),
             total_uses,
             total_successes,
-            overall_success_rate: if total_uses > 0 { total_successes as f64 / total_uses as f64 } else { 0.0 },
+            overall_success_rate: if total_uses > 0 {
+                total_successes as f64 / total_uses as f64
+            } else {
+                0.0
+            },
             best_variant_id: best.map(|v| v.id.clone()),
             best_effectiveness: best.map(|v| v.effectiveness()).unwrap_or(0.0),
         }
@@ -334,7 +359,8 @@ impl PromptOptimizer {
 
     /// Get variant comparison report
     pub fn comparison_report(&self) -> Vec<VariantReport> {
-        self.variants.values()
+        self.variants
+            .values()
             .map(|v| VariantReport {
                 id: v.id.clone(),
                 name: v.name.clone(),
@@ -359,7 +385,10 @@ impl PromptOptimizer {
 
     /// Get feedback entries for a specific variant
     pub fn feedback_for_variant(&self, variant_id: &str) -> Vec<&FeedbackEntry> {
-        self.feedback_history.iter().filter(|e| e.variant_id == variant_id).collect()
+        self.feedback_history
+            .iter()
+            .filter(|e| e.variant_id == variant_id)
+            .collect()
     }
 
     /// Clear feedback history (keep stats)
@@ -528,8 +557,16 @@ impl PromptShortener {
     pub fn new() -> Self {
         Self {
             filler_words: vec![
-                "please", "kindly", "just", "simply", "basically",
-                "actually", "really", "very", "quite", "rather",
+                "please",
+                "kindly",
+                "just",
+                "simply",
+                "basically",
+                "actually",
+                "really",
+                "very",
+                "quite",
+                "rather",
             ],
             replacements: vec![
                 ("in order to", "to"),
@@ -598,7 +635,7 @@ mod tests {
     fn test_optimizer_add_select() {
         let mut optimizer = PromptOptimizer::new(OptimizerConfig {
             min_uses_for_selection: 0, // Allow immediate selection
-            exploration_rate: 0.0, // No exploration
+            exploration_rate: 0.0,     // No exploration
             ..Default::default()
         });
 

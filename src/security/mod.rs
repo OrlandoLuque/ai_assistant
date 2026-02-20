@@ -39,25 +39,20 @@
 //!     .with_detail("tokens", "150"));
 //! ```
 
-mod rate_limiting;
-mod sanitization;
 mod audit;
 mod hooks;
+mod rate_limiting;
+mod sanitization;
 
 // Re-export all public types
 pub use rate_limiting::{
-    RateLimitConfig, RateLimiter, RateLimitResult, RateLimitReason,
-    RateLimitUsage, RateLimitStatus,
+    RateLimitConfig, RateLimitReason, RateLimitResult, RateLimitStatus, RateLimitUsage, RateLimiter,
 };
 
 pub use sanitization::{
-    SanitizationConfig, InputSanitizer, SanitizationResult, SanitizationWarning,
+    InputSanitizer, SanitizationConfig, SanitizationResult, SanitizationWarning,
 };
 
-pub use audit::{
-    AuditConfig, AuditLogger, AuditEvent, AuditEventType, AuditStats,
-};
+pub use audit::{AuditConfig, AuditEvent, AuditEventType, AuditLogger, AuditStats};
 
-pub use hooks::{
-    PreMessageHook, PostMessageHook, HookResult, HookManager, HookChainResult,
-};
+pub use hooks::{HookChainResult, HookManager, HookResult, PostMessageHook, PreMessageHook};

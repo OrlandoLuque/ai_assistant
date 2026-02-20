@@ -1,0 +1,1960 @@
+<!DOCTYPE html>
+<!--
+  Agent Visualization Dashboard
+  Interactive D3.js-based visualization for AI Assistant agent system.
+  Self-contained HTML file — open directly in any modern browser.
+
+  Panels:
+    1. Agent Flow Graph (force-directed)
+    2. Task Board Kanban
+    3. Knowledge Graph Explorer
+
+  Crate stats (2026-02-21):
+    - 2431 tests  |  6 benchmarks  |  19 examples
+    - Browser tools wired into AiAssistant (init_browser, browser_session accessors)
+    - Distributed agents wired into AiAssistant (init_distributed_agents, distributed_agents accessors)
+    - BestFit agent assignment is deterministic (sorted idle_agents + alphabetical tie-breaking)
+    - agent_graph.rs now provides programmatic graph data (AgentGraph, DOT/Mermaid/JSON export,
+      ExecutionTrace, GraphAnalytics) that can feed into this visualization
+
+  Created: 2026-02-19
+  Updated: 2026-02-21
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Assistant — Agent Visualization Dashboard</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+/* ===================================================================
+   CSS Variables & Reset
+   =================================================================== */
+:root {
+  --bg: #1a1a2e;
+  --panel: #16213e;
+  --text: #e0e0e0;
+  --text-dim: #8899aa;
+  --accent: #0f3460;
+  --accent-bright: #1a5276;
+  --border: #2a3a5e;
+  --shadow: rgba(0, 0, 0, 0.4);
+  --scrollbar-bg: #0d1525;
+  --scrollbar-thumb: #2a3a5e;
+
+  /* Role colors */
+  --role-researcher: #4CAF50;
+  --role-analyst: #2196F3;
+  --role-writer: #FF9800;
+  --role-coordinator: #9C27B0;
+  --role-default: #607D8B;
+
+  /* Entity colors */
+  --entity-person: #E91E63;
+  --entity-organization: #3F51B5;
+  --entity-concept: #009688;
+  --entity-location: #FF5722;
+  --entity-technology: #8BC34A;
+  --entity-default: #9E9E9E;
+
+  /* Task status colors */
+  --status-pending: #607D8B;
+  --status-inprogress: #2196F3;
+  --status-completed: #4CAF50;
+  --status-failed: #f44336;
+
+  /* Priority colors */
+  --priority-high: #f44336;
+  --priority-medium: #FFC107;
+  --priority-low: #4CAF50;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* ===================================================================
+   Custom Scrollbar
+   =================================================================== */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--scrollbar-bg); border-radius: 4px; }
+::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #3a4a6e; }
+
+/* ===================================================================
+   Header
+   =================================================================== */
+.header {
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 24px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  box-shadow: 0 2px 12px var(--shadow);
+}
+
+.header-title {
+  font-size: 1.2rem;
+  font-weight: 700;
+  background: linear-gradient(135deg, #60a5fa, #a78bfa);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  white-space: nowrap;
+}
+
+.tab-bar {
+  display: flex;
+  gap: 4px;
+  background: var(--bg);
+  border-radius: 8px;
+  padding: 3px;
+}
+
+.tab-btn {
+  padding: 8px 18px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.tab-btn:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.tab-btn.active {
+  background: var(--accent-bright);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(15, 52, 96, 0.5);
+}
+
+.header-actions {
+  display: flex;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.btn-simulate {
+  padding: 8px 20px;
+  border: none;
+  background: linear-gradient(135deg, #1a5276, #0f3460);
+  color: #fff;
+  font-size: 0.85rem;
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(15, 52, 96, 0.4);
+}
+
+.btn-simulate:hover {
+  background: linear-gradient(135deg, #1f6da0, #1a5276);
+  box-shadow: 0 4px 16px rgba(15, 52, 96, 0.6);
+  transform: translateY(-1px);
+}
+
+.btn-simulate:active {
+  transform: translateY(0);
+}
+
+.btn-load {
+  padding: 8px 20px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-load:hover {
+  border-color: var(--accent-bright);
+  color: var(--text);
+  background: rgba(15, 52, 96, 0.2);
+}
+
+.stats-bar {
+  display: flex;
+  gap: 18px;
+  padding: 8px 24px;
+  background: rgba(15, 52, 96, 0.15);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.8rem;
+}
+
+.stat-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+}
+
+.stat-value {
+  font-weight: 700;
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
+.stat-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+/* ===================================================================
+   Panel Container
+   =================================================================== */
+.panel-container {
+  position: relative;
+  height: calc(100vh - 110px);
+  overflow: hidden;
+}
+
+.panel {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+}
+
+.panel.active {
+  opacity: 1;
+  pointer-events: all;
+}
+
+/* ===================================================================
+   Panel 1: Agent Flow Graph
+   =================================================================== */
+.agent-flow-panel {
+  display: flex;
+  height: 100%;
+}
+
+.agent-flow-svg-container {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+.agent-flow-svg-container svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.agent-sidebar {
+  width: 300px;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+  padding: 20px;
+  overflow-y: auto;
+  transition: transform 0.3s ease;
+}
+
+.agent-sidebar.collapsed {
+  transform: translateX(100%);
+  width: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.sidebar-title {
+  font-size: 1rem;
+  font-weight: 700;
+  margin-bottom: 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  color: #60a5fa;
+}
+
+.sidebar-field {
+  margin-bottom: 12px;
+}
+
+.sidebar-label {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+
+.sidebar-value {
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+.sidebar-badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #fff;
+}
+
+.sidebar-capabilities {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.capability-tag {
+  background: rgba(15, 52, 96, 0.5);
+  border: 1px solid var(--border);
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+.sidebar-placeholder {
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  margin-top: 60px;
+}
+
+/* ===================================================================
+   Panel 2: Task Board Kanban
+   =================================================================== */
+.kanban-board {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  padding: 16px;
+  height: 100%;
+  overflow-x: auto;
+}
+
+.kanban-column {
+  background: var(--panel);
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.kanban-column-header {
+  padding: 14px 16px;
+  font-weight: 700;
+  font-size: 0.9rem;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 2px solid transparent;
+}
+
+.kanban-column-header .col-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.kanban-column-header .col-count {
+  margin-left: auto;
+  background: rgba(255,255,255,0.08);
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+.kanban-column[data-status="Pending"] .kanban-column-header { border-bottom-color: var(--status-pending); }
+.kanban-column[data-status="InProgress"] .kanban-column-header { border-bottom-color: var(--status-inprogress); }
+.kanban-column[data-status="Completed"] .kanban-column-header { border-bottom-color: var(--status-completed); }
+.kanban-column[data-status="Failed"] .kanban-column-header { border-bottom-color: var(--status-failed); }
+
+.kanban-cards {
+  padding: 10px;
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.task-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+}
+
+.task-card:hover {
+  border-color: var(--accent-bright);
+  box-shadow: 0 4px 16px var(--shadow);
+  transform: translateY(-2px);
+}
+
+.task-card-title {
+  font-weight: 700;
+  font-size: 0.85rem;
+  margin-bottom: 6px;
+  color: var(--text);
+}
+
+.task-card-desc {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.task-card-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.priority-badge {
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.priority-high { background: rgba(244, 67, 54, 0.2); color: var(--priority-high); }
+.priority-medium { background: rgba(255, 193, 7, 0.2); color: var(--priority-medium); }
+.priority-low { background: rgba(76, 175, 80, 0.2); color: var(--priority-low); }
+
+.task-agent {
+  font-size: 0.73rem;
+  color: var(--text-dim);
+}
+
+.task-progress-bar {
+  height: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.task-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.5s ease;
+}
+
+/* Task card tooltip (hover detail) */
+.task-tooltip {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #0d1525;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 16px;
+  min-width: 220px;
+  z-index: 50;
+  box-shadow: 0 8px 24px var(--shadow);
+  font-size: 0.78rem;
+  pointer-events: none;
+}
+
+.task-card:hover .task-tooltip {
+  display: block;
+}
+
+.task-tooltip-row {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.task-tooltip-row:last-child { margin-bottom: 0; }
+
+.task-tooltip-label {
+  color: var(--text-dim);
+}
+
+.task-tooltip-value {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* ===================================================================
+   Panel 3: Knowledge Graph
+   =================================================================== */
+.knowledge-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.knowledge-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.knowledge-search {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 14px;
+  color: var(--text);
+  font-size: 0.85rem;
+  width: 280px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.knowledge-search:focus {
+  border-color: var(--accent-bright);
+}
+
+.knowledge-search::placeholder {
+  color: var(--text-dim);
+}
+
+.knowledge-legend {
+  display: flex;
+  gap: 14px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+.legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.knowledge-svg-container {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+.knowledge-svg-container svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* ===================================================================
+   D3 Graph Styles (SVG)
+   =================================================================== */
+.node-label {
+  font-size: 11px;
+  fill: var(--text);
+  text-anchor: middle;
+  pointer-events: none;
+  font-weight: 600;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+}
+
+.edge-label {
+  font-size: 9px;
+  fill: var(--text-dim);
+  text-anchor: middle;
+  pointer-events: none;
+}
+
+.kg-node-label {
+  font-size: 10px;
+  fill: var(--text);
+  text-anchor: middle;
+  pointer-events: none;
+  font-weight: 600;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+}
+
+.kg-edge-label {
+  font-size: 8px;
+  fill: #8899aa;
+  pointer-events: none;
+}
+
+/* ===================================================================
+   Tooltip (global D3 tooltip)
+   =================================================================== */
+.d3-tooltip {
+  position: absolute;
+  background: #0d1525;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 0.78rem;
+  color: var(--text);
+  pointer-events: none;
+  z-index: 200;
+  box-shadow: 0 8px 24px var(--shadow);
+  max-width: 280px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.d3-tooltip.visible {
+  opacity: 1;
+}
+
+.d3-tooltip strong {
+  color: #60a5fa;
+}
+
+/* ===================================================================
+   Empty State
+   =================================================================== */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-dim);
+  gap: 12px;
+}
+
+.empty-state-icon {
+  font-size: 3rem;
+  opacity: 0.3;
+}
+
+.empty-state-text {
+  font-size: 1rem;
+}
+
+.empty-state-hint {
+  font-size: 0.82rem;
+  color: #556;
+}
+
+/* ===================================================================
+   Hidden file input
+   =================================================================== */
+#file-input {
+  display: none;
+}
+
+/* ===================================================================
+   Responsive
+   =================================================================== */
+@media (max-width: 1100px) {
+  .agent-sidebar { width: 240px; }
+  .kanban-board { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 900px) {
+  .header { padding: 10px 12px; gap: 10px; }
+  .header-title { font-size: 1rem; }
+  .tab-btn { padding: 6px 12px; font-size: 0.78rem; }
+  .kanban-board { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<!-- ================================================================
+     Header
+     ================================================================ -->
+<header class="header">
+  <div class="header-title">AI Assistant — Agent Visualization Dashboard</div>
+  <div class="tab-bar">
+    <button class="tab-btn active" data-panel="agent-flow">Agent Flow</button>
+    <button class="tab-btn" data-panel="task-board">Task Board</button>
+    <button class="tab-btn" data-panel="knowledge-graph">Knowledge Graph</button>
+  </div>
+  <div class="header-actions">
+    <button class="btn-simulate" id="btn-simulate">Simulate</button>
+    <button class="btn-load" id="btn-load">Load JSON</button>
+    <input type="file" id="file-input" accept=".json">
+  </div>
+</header>
+
+<div class="stats-bar" id="stats-bar">
+  <div class="stat-item">
+    <span class="stat-dot" style="background:#4CAF50"></span>
+    Agents: <span class="stat-value" id="stat-agents">0</span>
+  </div>
+  <div class="stat-item">
+    <span class="stat-dot" style="background:#2196F3"></span>
+    Tasks: <span class="stat-value" id="stat-tasks">0</span>
+  </div>
+  <div class="stat-item">
+    <span class="stat-dot" style="background:#FF9800"></span>
+    Messages: <span class="stat-value" id="stat-messages">0</span>
+  </div>
+  <div class="stat-item">
+    <span class="stat-dot" style="background:#9C27B0"></span>
+    Working: <span class="stat-value" id="stat-working">0</span>
+  </div>
+  <div class="stat-item">
+    <span class="stat-dot" style="background:#607D8B"></span>
+    Idle: <span class="stat-value" id="stat-idle">0</span>
+  </div>
+  <div class="stat-item">
+    <span class="stat-dot" style="background:#4CAF50"></span>
+    Completed: <span class="stat-value" id="stat-completed">0</span>
+  </div>
+  <div class="stat-item">
+    <span class="stat-dot" style="background:#f44336"></span>
+    Failed: <span class="stat-value" id="stat-failed">0</span>
+  </div>
+  <div class="stat-item" style="margin-left:auto;border-left:1px solid var(--border);padding-left:18px">
+    <span class="stat-dot" style="background:#60a5fa"></span>
+    Tests: <span class="stat-value">2431</span>
+  </div>
+  <div class="stat-item">
+    <span class="stat-dot" style="background:#a78bfa"></span>
+    Benchmarks: <span class="stat-value">6</span>
+  </div>
+  <div class="stat-item">
+    <span class="stat-dot" style="background:#fbbf24"></span>
+    Examples: <span class="stat-value">13</span>
+  </div>
+</div>
+
+<!-- ================================================================
+     Panel Container
+     ================================================================ -->
+<div class="panel-container">
+
+  <!-- Panel 1: Agent Flow Graph -->
+  <div class="panel active" id="panel-agent-flow">
+    <div class="agent-flow-panel">
+      <div class="agent-flow-svg-container" id="agent-flow-container">
+        <div class="empty-state" id="agent-flow-empty">
+          <div class="empty-state-icon">&#9673;</div>
+          <div class="empty-state-text">No agent data loaded</div>
+          <div class="empty-state-hint">Click "Simulate" to generate sample data or "Load JSON" to import.</div>
+        </div>
+      </div>
+      <aside class="agent-sidebar" id="agent-sidebar">
+        <div class="sidebar-placeholder" id="sidebar-placeholder">
+          Click on an agent node to view details
+        </div>
+        <div id="sidebar-content" style="display:none">
+          <div class="sidebar-title" id="sidebar-agent-name"></div>
+          <div class="sidebar-field">
+            <div class="sidebar-label">Role</div>
+            <div class="sidebar-value"><span class="sidebar-badge" id="sidebar-agent-role"></span></div>
+          </div>
+          <div class="sidebar-field">
+            <div class="sidebar-label">Status</div>
+            <div class="sidebar-value" id="sidebar-agent-status"></div>
+          </div>
+          <div class="sidebar-field">
+            <div class="sidebar-label">Agent ID</div>
+            <div class="sidebar-value" id="sidebar-agent-id" style="font-family:monospace;font-size:0.8rem"></div>
+          </div>
+          <div class="sidebar-field">
+            <div class="sidebar-label">Current Task</div>
+            <div class="sidebar-value" id="sidebar-agent-task"></div>
+          </div>
+          <div class="sidebar-field">
+            <div class="sidebar-label">Capabilities</div>
+            <div class="sidebar-capabilities" id="sidebar-agent-caps"></div>
+          </div>
+          <div class="sidebar-field">
+            <div class="sidebar-label">Messages Sent</div>
+            <div class="sidebar-value" id="sidebar-agent-sent"></div>
+          </div>
+          <div class="sidebar-field">
+            <div class="sidebar-label">Messages Received</div>
+            <div class="sidebar-value" id="sidebar-agent-received"></div>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <!-- Panel 2: Task Board Kanban -->
+  <div class="panel" id="panel-task-board">
+    <div class="kanban-board" id="kanban-board">
+      <div class="empty-state" id="task-board-empty" style="grid-column: 1 / -1;">
+        <div class="empty-state-icon">&#9744;</div>
+        <div class="empty-state-text">No tasks loaded</div>
+        <div class="empty-state-hint">Click "Simulate" to generate sample data or "Load JSON" to import.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Panel 3: Knowledge Graph Explorer -->
+  <div class="panel" id="panel-knowledge-graph">
+    <div class="knowledge-panel">
+      <div class="knowledge-toolbar">
+        <input type="text" class="knowledge-search" id="kg-search" placeholder="Search entities...">
+        <div class="knowledge-legend">
+          <div class="legend-item"><span class="legend-dot" style="background:#E91E63"></span> Person</div>
+          <div class="legend-item"><span class="legend-dot" style="background:#3F51B5"></span> Organization</div>
+          <div class="legend-item"><span class="legend-dot" style="background:#009688"></span> Concept</div>
+          <div class="legend-item"><span class="legend-dot" style="background:#FF5722"></span> Location</div>
+          <div class="legend-item"><span class="legend-dot" style="background:#8BC34A"></span> Technology</div>
+        </div>
+      </div>
+      <div class="knowledge-svg-container" id="kg-container">
+        <div class="empty-state" id="kg-empty">
+          <div class="empty-state-icon">&#9672;</div>
+          <div class="empty-state-text">No knowledge graph loaded</div>
+          <div class="empty-state-hint">Click "Simulate" to generate sample data or "Load JSON" to import.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Global D3 tooltip -->
+<div class="d3-tooltip" id="d3-tooltip"></div>
+
+<!-- ================================================================
+     JavaScript
+     ================================================================ -->
+<script>
+(function() {
+  'use strict';
+
+  // ================================================================
+  // State
+  // ================================================================
+  let currentPanel = 'agent-flow';
+  let agentData = null;
+  let knowledgeData = null;
+  let agentSimulation = null;
+  let kgSimulation = null;
+  let selectedAgent = null;
+
+  // ================================================================
+  // Sample Data
+  // ================================================================
+  const sampleAgentData = {
+    agents: [
+      { id: "agent-1", name: "Research Lead", role: "Researcher", status: "Working", capabilities: ["web_search", "analysis"], current_task: "task-1" },
+      { id: "agent-2", name: "Data Analyst", role: "Analyst", status: "Idle", capabilities: ["data_analysis", "visualization"], current_task: null },
+      { id: "agent-3", name: "Content Writer", role: "Writer", status: "Working", capabilities: ["writing", "editing"], current_task: "task-3" },
+      { id: "agent-4", name: "Coordinator", role: "Coordinator", status: "Working", capabilities: ["orchestration", "bestfit_assignment"], current_task: null },
+      { id: "agent-5", name: "Web Researcher", role: "Researcher", status: "Idle", capabilities: ["web_search"], current_task: null },
+      { id: "agent-6", name: "Browser Agent", role: "Browser", status: "Working", capabilities: ["browser_navigate", "browser_screenshot", "browser_evaluate"], current_task: "task-9" },
+      { id: "agent-7", name: "Distributed Runner", role: "Distributed", status: "Working", capabilities: ["distributed_task", "map_reduce", "agent_node_info"], current_task: "task-10" }
+    ],
+    tasks: [
+      { id: "task-1", title: "Research AI Frameworks", description: "Research and compare modern AI/ML frameworks including TensorFlow, PyTorch, and JAX for the upcoming project.", status: "InProgress", priority: 10, assigned_to: "agent-1", progress: 0.6 },
+      { id: "task-2", title: "Analyze Competitor Data", description: "Perform comprehensive analysis of competitor products, pricing strategies, and market positioning.", status: "Pending", priority: 8, assigned_to: null, progress: 0.0 },
+      { id: "task-3", title: "Write Technical Report", description: "Draft the technical report covering system architecture, design decisions, and performance benchmarks.", status: "InProgress", priority: 7, assigned_to: "agent-3", progress: 0.3 },
+      { id: "task-4", title: "Review Documentation", description: "Review all API documentation for accuracy, completeness, and adherence to style guide.", status: "Completed", priority: 5, assigned_to: "agent-2", progress: 1.0 },
+      { id: "task-5", title: "Deploy Staging Environment", description: "Set up and configure the staging environment with all required services and dependencies.", status: "Failed", priority: 9, assigned_to: "agent-1", progress: 0.8 },
+      { id: "task-6", title: "Update API Endpoints", description: "Refactor and update REST API endpoints to match the new v2 specification.", status: "Pending", priority: 6, assigned_to: null, progress: 0.0 },
+      { id: "task-7", title: "Optimize Database Queries", description: "Profile and optimize slow database queries identified in the performance audit.", status: "Completed", priority: 8, assigned_to: "agent-2", progress: 1.0 },
+      { id: "task-8", title: "Security Audit", description: "Conduct thorough security audit covering authentication, authorization, and data encryption.", status: "Pending", priority: 10, assigned_to: null, progress: 0.0 },
+      { id: "task-9", title: "Scrape Product Pages", description: "Use browser automation (CDP) to navigate and extract product data from competitor websites.", status: "InProgress", priority: 7, assigned_to: "agent-6", progress: 0.4 },
+      { id: "task-10", title: "Distributed Map-Reduce Analysis", description: "Distribute large-scale data analysis across agent nodes using MapReduceAgentJob.", status: "InProgress", priority: 9, assigned_to: "agent-7", progress: 0.5 }
+    ],
+    messages: [
+      { from: "agent-4", to: "agent-1", content: "Begin research phase", message_type: "TaskAssignment" },
+      { from: "agent-1", to: "agent-4", content: "Research 60% complete", message_type: "StatusUpdate" },
+      { from: "agent-4", to: "agent-3", content: "Start writing draft", message_type: "TaskAssignment" },
+      { from: "agent-1", to: "agent-2", content: "Data ready for analysis", message_type: "DataTransfer" },
+      { from: "agent-3", to: "agent-4", content: "Draft outline ready", message_type: "StatusUpdate" },
+      { from: "agent-2", to: "agent-4", content: "Analysis complete", message_type: "Result" },
+      { from: "agent-4", to: "agent-5", content: "Verify sources", message_type: "TaskAssignment" },
+      { from: "agent-5", to: "agent-1", content: "Source verification done", message_type: "Result" },
+      { from: "agent-4", to: "agent-2", content: "Run final checks", message_type: "TaskAssignment" },
+      { from: "agent-3", to: "agent-1", content: "Need more data on topic X", message_type: "Query" },
+      { from: "agent-4", to: "agent-6", content: "BestFit: scrape product pages (deterministic assignment)", message_type: "TaskAssignment" },
+      { from: "agent-6", to: "agent-4", content: "Browser session active, navigating pages", message_type: "StatusUpdate" },
+      { from: "agent-4", to: "agent-7", content: "Distribute map-reduce job across nodes", message_type: "TaskAssignment" },
+      { from: "agent-7", to: "agent-4", content: "MapReduce 50% — 3/6 nodes reporting", message_type: "StatusUpdate" }
+    ],
+    status: { total_agents: 7, idle_agents: 2, working_agents: 5, total_tasks: 10, pending_tasks: 3, in_progress_tasks: 4, completed_tasks: 2, failed_tasks: 1 }
+  };
+
+  const sampleKnowledgeGraph = {
+    entities: [
+      { id: 1, name: "Rust", entity_type: "Technology" },
+      { id: 2, name: "Python", entity_type: "Technology" },
+      { id: 3, name: "TensorFlow", entity_type: "Technology" },
+      { id: 4, name: "OpenAI", entity_type: "Organization" },
+      { id: 5, name: "Anthropic", entity_type: "Organization" },
+      { id: 6, name: "Machine Learning", entity_type: "Concept" },
+      { id: 7, name: "Neural Networks", entity_type: "Concept" },
+      { id: 8, name: "Natural Language Processing", entity_type: "Concept" },
+      { id: 9, name: "San Francisco", entity_type: "Location" },
+      { id: 10, name: "London", entity_type: "Location" },
+      { id: 11, name: "GPT-4", entity_type: "Technology" },
+      { id: 12, name: "Claude", entity_type: "Technology" },
+      { id: 13, name: "Deep Learning", entity_type: "Concept" },
+      { id: 14, name: "Transformer", entity_type: "Concept" },
+      { id: 15, name: "WASM", entity_type: "Technology" },
+      { id: 16, name: "CDP (Chrome DevTools Protocol)", entity_type: "Technology" },
+      { id: 17, name: "BrowserSession", entity_type: "Technology" },
+      { id: 18, name: "Distributed Agents", entity_type: "Concept" },
+      { id: 19, name: "MapReduce", entity_type: "Concept" },
+      { id: 20, name: "BestFit Assignment", entity_type: "Concept" }
+    ],
+    relations: [
+      { from_entity_id: 4, to_entity_id: 11, relation_type: "created", confidence: 1.0 },
+      { from_entity_id: 5, to_entity_id: 12, relation_type: "created", confidence: 1.0 },
+      { from_entity_id: 3, to_entity_id: 2, relation_type: "implemented_in", confidence: 0.95 },
+      { from_entity_id: 6, to_entity_id: 7, relation_type: "includes", confidence: 0.9 },
+      { from_entity_id: 6, to_entity_id: 13, relation_type: "includes", confidence: 0.9 },
+      { from_entity_id: 7, to_entity_id: 14, relation_type: "evolved_to", confidence: 0.85 },
+      { from_entity_id: 14, to_entity_id: 11, relation_type: "powers", confidence: 0.9 },
+      { from_entity_id: 14, to_entity_id: 12, relation_type: "powers", confidence: 0.9 },
+      { from_entity_id: 8, to_entity_id: 6, relation_type: "subfield_of", confidence: 0.95 },
+      { from_entity_id: 4, to_entity_id: 9, relation_type: "headquartered_in", confidence: 1.0 },
+      { from_entity_id: 5, to_entity_id: 9, relation_type: "headquartered_in", confidence: 1.0 },
+      { from_entity_id: 1, to_entity_id: 15, relation_type: "compiles_to", confidence: 0.85 },
+      { from_entity_id: 11, to_entity_id: 8, relation_type: "excels_at", confidence: 0.9 },
+      { from_entity_id: 12, to_entity_id: 8, relation_type: "excels_at", confidence: 0.9 },
+      { from_entity_id: 3, to_entity_id: 7, relation_type: "implements", confidence: 0.95 },
+      { from_entity_id: 13, to_entity_id: 14, relation_type: "uses", confidence: 0.9 },
+      { from_entity_id: 1, to_entity_id: 3, relation_type: "has_bindings_for", confidence: 0.7 },
+      { from_entity_id: 2, to_entity_id: 6, relation_type: "popular_for", confidence: 0.95 },
+      { from_entity_id: 10, to_entity_id: 5, relation_type: "office_location", confidence: 0.8 },
+      { from_entity_id: 8, to_entity_id: 14, relation_type: "transformed_by", confidence: 0.9 },
+      { from_entity_id: 16, to_entity_id: 17, relation_type: "implements", confidence: 1.0 },
+      { from_entity_id: 17, to_entity_id: 1, relation_type: "written_in", confidence: 1.0 },
+      { from_entity_id: 18, to_entity_id: 19, relation_type: "uses", confidence: 0.9 },
+      { from_entity_id: 18, to_entity_id: 1, relation_type: "implemented_in", confidence: 1.0 },
+      { from_entity_id: 20, to_entity_id: 18, relation_type: "schedules_for", confidence: 0.95 },
+      { from_entity_id: 20, to_entity_id: 6, relation_type: "applies", confidence: 0.8 }
+    ]
+  };
+
+  // ================================================================
+  // Utility: Color mappings
+  // ================================================================
+  function roleColor(role) {
+    const map = {
+      'Researcher': '#4CAF50',
+      'Analyst': '#2196F3',
+      'Writer': '#FF9800',
+      'Coordinator': '#9C27B0',
+      'Browser': '#00BCD4',
+      'Distributed': '#FF5722'
+    };
+    return map[role] || '#607D8B';
+  }
+
+  function entityColor(type) {
+    const map = {
+      'Person': '#E91E63',
+      'Organization': '#3F51B5',
+      'Concept': '#009688',
+      'Location': '#FF5722',
+      'Technology': '#8BC34A'
+    };
+    return map[type] || '#9E9E9E';
+  }
+
+  function statusColor(status) {
+    const map = {
+      'Pending': '#607D8B',
+      'InProgress': '#2196F3',
+      'Completed': '#4CAF50',
+      'Failed': '#f44336'
+    };
+    return map[status] || '#607D8B';
+  }
+
+  function priorityClass(priority) {
+    if (priority >= 9) return 'priority-high';
+    if (priority >= 6) return 'priority-medium';
+    return 'priority-low';
+  }
+
+  function priorityLabel(priority) {
+    if (priority >= 9) return 'High';
+    if (priority >= 6) return 'Medium';
+    return 'Low';
+  }
+
+  // ================================================================
+  // Tooltip
+  // ================================================================
+  const tooltip = d3.select('#d3-tooltip');
+
+  function showTooltip(html, event) {
+    tooltip.html(html)
+      .style('left', (event.pageX + 14) + 'px')
+      .style('top', (event.pageY - 10) + 'px')
+      .classed('visible', true);
+  }
+
+  function hideTooltip() {
+    tooltip.classed('visible', false);
+  }
+
+  // ================================================================
+  // Tab Switching
+  // ================================================================
+  const tabBtns = document.querySelectorAll('.tab-btn');
+  const panels = document.querySelectorAll('.panel');
+
+  tabBtns.forEach(btn => {
+    btn.addEventListener('click', function() {
+      const panelId = this.dataset.panel;
+      switchPanel(panelId);
+    });
+  });
+
+  function switchPanel(panelId) {
+    currentPanel = panelId;
+
+    tabBtns.forEach(b => b.classList.remove('active'));
+    document.querySelector(`.tab-btn[data-panel="${panelId}"]`).classList.add('active');
+
+    panels.forEach(p => p.classList.remove('active'));
+    document.getElementById('panel-' + panelId).classList.add('active');
+
+    // Resume / pause simulations to save CPU
+    if (panelId === 'agent-flow' && agentSimulation) {
+      agentSimulation.alpha(0.3).restart();
+    } else if (agentSimulation) {
+      agentSimulation.stop();
+    }
+
+    if (panelId === 'knowledge-graph' && kgSimulation) {
+      kgSimulation.alpha(0.3).restart();
+    } else if (kgSimulation) {
+      kgSimulation.stop();
+    }
+  }
+
+  // ================================================================
+  // Stats Bar Update
+  // ================================================================
+  function updateStats() {
+    const s = agentData ? agentData.status : null;
+    document.getElementById('stat-agents').textContent = s ? s.total_agents : 0;
+    document.getElementById('stat-tasks').textContent = s ? s.total_tasks : 0;
+    document.getElementById('stat-messages').textContent = agentData ? agentData.messages.length : 0;
+    document.getElementById('stat-working').textContent = s ? s.working_agents : 0;
+    document.getElementById('stat-idle').textContent = s ? s.idle_agents : 0;
+    document.getElementById('stat-completed').textContent = s ? s.completed_tasks : 0;
+    document.getElementById('stat-failed').textContent = s ? s.failed_tasks : 0;
+  }
+
+  // ================================================================
+  // Panel 1: Agent Flow Graph
+  // ================================================================
+  function renderAgentFlow() {
+    // Clean up previous
+    if (agentSimulation) { agentSimulation.stop(); agentSimulation = null; }
+    const container = document.getElementById('agent-flow-container');
+    const existing = container.querySelector('svg');
+    if (existing) existing.remove();
+
+    const emptyEl = document.getElementById('agent-flow-empty');
+    if (!agentData || !agentData.agents.length) {
+      emptyEl.style.display = 'flex';
+      return;
+    }
+    emptyEl.style.display = 'none';
+
+    // Reset sidebar
+    selectedAgent = null;
+    document.getElementById('sidebar-placeholder').style.display = 'block';
+    document.getElementById('sidebar-content').style.display = 'none';
+
+    const rect = container.getBoundingClientRect();
+    const width = rect.width;
+    const height = rect.height;
+
+    const svg = d3.select(container)
+      .append('svg')
+      .attr('width', width)
+      .attr('height', height);
+
+    // Defs: arrow markers
+    const defs = svg.append('defs');
+
+    // Create a marker for each message type color
+    const markerColors = ['#5a6a8a', '#4CAF50', '#2196F3', '#FF9800', '#9C27B0', '#f44336'];
+    markerColors.forEach((color, i) => {
+      defs.append('marker')
+        .attr('id', 'arrowhead-' + i)
+        .attr('viewBox', '0 -5 10 10')
+        .attr('refX', 32)
+        .attr('refY', 0)
+        .attr('markerWidth', 8)
+        .attr('markerHeight', 8)
+        .attr('orient', 'auto')
+        .append('path')
+        .attr('d', 'M0,-5L10,0L0,5')
+        .attr('fill', color);
+    });
+
+    // Default arrow
+    defs.append('marker')
+      .attr('id', 'arrowhead-default')
+      .attr('viewBox', '0 -5 10 10')
+      .attr('refX', 32)
+      .attr('refY', 0)
+      .attr('markerWidth', 8)
+      .attr('markerHeight', 8)
+      .attr('orient', 'auto')
+      .append('path')
+      .attr('d', 'M0,-5L10,0L0,5')
+      .attr('fill', '#5a6a8a');
+
+    // Zoom group
+    const g = svg.append('g');
+
+    const zoom = d3.zoom()
+      .scaleExtent([0.3, 4])
+      .on('zoom', (event) => {
+        g.attr('transform', event.transform);
+      });
+
+    svg.call(zoom);
+
+    // Build nodes and links
+    const nodes = agentData.agents.map(a => ({ ...a }));
+    const nodeMap = {};
+    nodes.forEach(n => { nodeMap[n.id] = n; });
+
+    const links = agentData.messages.map((m, i) => ({
+      source: m.from,
+      target: m.to,
+      content: m.content,
+      message_type: m.message_type,
+      index: i
+    })).filter(l => nodeMap[l.source] && nodeMap[l.target]);
+
+    // Message type color
+    function msgTypeColor(type) {
+      const map = {
+        'TaskAssignment': '#9C27B0',
+        'StatusUpdate': '#2196F3',
+        'DataTransfer': '#FF9800',
+        'Result': '#4CAF50',
+        'Query': '#f44336'
+      };
+      return map[type] || '#5a6a8a';
+    }
+
+    // Force simulation
+    agentSimulation = d3.forceSimulation(nodes)
+      .force('link', d3.forceLink(links).id(d => d.id).distance(180))
+      .force('charge', d3.forceManyBody().strength(-500))
+      .force('center', d3.forceCenter(width / 2, height / 2))
+      .force('collide', d3.forceCollide(50));
+
+    // Draw links (edges)
+    const linkGroup = g.append('g').attr('class', 'links');
+
+    const linkLines = linkGroup.selectAll('line')
+      .data(links)
+      .join('line')
+      .attr('stroke', d => msgTypeColor(d.message_type))
+      .attr('stroke-width', 2)
+      .attr('stroke-opacity', 0.6)
+      .attr('marker-end', 'url(#arrowhead-default)');
+
+    // Edge labels
+    const edgeLabels = linkGroup.selectAll('text')
+      .data(links)
+      .join('text')
+      .attr('class', 'edge-label')
+      .text(d => d.message_type)
+      .attr('dy', -6);
+
+    // Edge tooltip
+    linkLines
+      .on('mouseover', function(event, d) {
+        d3.select(this).attr('stroke-width', 4).attr('stroke-opacity', 1);
+        showTooltip(
+          `<strong>${d.message_type}</strong><br>` +
+          `From: ${nodeMap[d.source.id || d.source]?.name || d.source}<br>` +
+          `To: ${nodeMap[d.target.id || d.target]?.name || d.target}<br>` +
+          `"${d.content}"`,
+          event
+        );
+      })
+      .on('mouseout', function() {
+        d3.select(this).attr('stroke-width', 2).attr('stroke-opacity', 0.6);
+        hideTooltip();
+      });
+
+    // Draw nodes
+    const nodeGroup = g.append('g').attr('class', 'nodes');
+
+    const nodeGs = nodeGroup.selectAll('g')
+      .data(nodes)
+      .join('g')
+      .attr('cursor', 'pointer')
+      .call(d3.drag()
+        .on('start', dragstarted)
+        .on('drag', dragged)
+        .on('end', dragended));
+
+    // Outer glow circle
+    nodeGs.append('circle')
+      .attr('r', 30)
+      .attr('fill', d => roleColor(d.role))
+      .attr('fill-opacity', 0.15)
+      .attr('stroke', d => roleColor(d.role))
+      .attr('stroke-width', 2)
+      .attr('stroke-opacity', 0.4);
+
+    // Inner circle
+    nodeGs.append('circle')
+      .attr('r', 22)
+      .attr('fill', d => roleColor(d.role))
+      .attr('fill-opacity', 0.85)
+      .attr('stroke', '#fff')
+      .attr('stroke-width', 1.5)
+      .attr('stroke-opacity', 0.3);
+
+    // Status indicator dot
+    nodeGs.append('circle')
+      .attr('r', 5)
+      .attr('cx', 16)
+      .attr('cy', -16)
+      .attr('fill', d => d.status === 'Working' ? '#4CAF50' : '#607D8B')
+      .attr('stroke', '#1a1a2e')
+      .attr('stroke-width', 2);
+
+    // Role initial inside node
+    nodeGs.append('text')
+      .attr('text-anchor', 'middle')
+      .attr('dy', 4)
+      .attr('fill', '#fff')
+      .attr('font-size', '12px')
+      .attr('font-weight', '700')
+      .attr('pointer-events', 'none')
+      .text(d => d.role.charAt(0));
+
+    // Name label below
+    nodeGs.append('text')
+      .attr('class', 'node-label')
+      .attr('y', 38)
+      .text(d => d.name);
+
+    // Node interactions
+    nodeGs
+      .on('mouseover', function(event, d) {
+        d3.select(this).select('circle:first-child')
+          .transition().duration(200)
+          .attr('r', 35)
+          .attr('fill-opacity', 0.25);
+        showTooltip(
+          `<strong>${d.name}</strong><br>` +
+          `Role: ${d.role}<br>` +
+          `Status: ${d.status}<br>` +
+          `Task: ${d.current_task || 'None'}`,
+          event
+        );
+      })
+      .on('mouseout', function() {
+        d3.select(this).select('circle:first-child')
+          .transition().duration(200)
+          .attr('r', 30)
+          .attr('fill-opacity', 0.15);
+        hideTooltip();
+      })
+      .on('click', function(event, d) {
+        selectAgent(d);
+        // Highlight selected node
+        nodeGs.select('circle:nth-child(2)')
+          .attr('stroke', '#fff')
+          .attr('stroke-width', 1.5)
+          .attr('stroke-opacity', 0.3);
+        d3.select(this).select('circle:nth-child(2)')
+          .attr('stroke', '#60a5fa')
+          .attr('stroke-width', 3)
+          .attr('stroke-opacity', 1);
+      });
+
+    // Tick
+    agentSimulation.on('tick', () => {
+      linkLines
+        .attr('x1', d => d.source.x)
+        .attr('y1', d => d.source.y)
+        .attr('x2', d => d.target.x)
+        .attr('y2', d => d.target.y);
+
+      edgeLabels
+        .attr('x', d => (d.source.x + d.target.x) / 2)
+        .attr('y', d => (d.source.y + d.target.y) / 2);
+
+      nodeGs.attr('transform', d => `translate(${d.x},${d.y})`);
+    });
+
+    function dragstarted(event, d) {
+      if (!event.active) agentSimulation.alphaTarget(0.3).restart();
+      d.fx = d.x;
+      d.fy = d.y;
+    }
+
+    function dragged(event, d) {
+      d.fx = event.x;
+      d.fy = event.y;
+    }
+
+    function dragended(event, d) {
+      if (!event.active) agentSimulation.alphaTarget(0);
+      d.fx = null;
+      d.fy = null;
+    }
+
+    // Create custom arrow markers matching edge colors
+    links.forEach((l, i) => {
+      const color = msgTypeColor(l.message_type);
+      defs.append('marker')
+        .attr('id', 'arrow-' + i)
+        .attr('viewBox', '0 -5 10 10')
+        .attr('refX', 32)
+        .attr('refY', 0)
+        .attr('markerWidth', 8)
+        .attr('markerHeight', 8)
+        .attr('orient', 'auto')
+        .append('path')
+        .attr('d', 'M0,-5L10,0L0,5')
+        .attr('fill', color);
+    });
+
+    linkLines.attr('marker-end', (d, i) => `url(#arrow-${i})`);
+  }
+
+  // ================================================================
+  // Agent Sidebar
+  // ================================================================
+  function selectAgent(agent) {
+    selectedAgent = agent;
+    document.getElementById('sidebar-placeholder').style.display = 'none';
+    document.getElementById('sidebar-content').style.display = 'block';
+
+    document.getElementById('sidebar-agent-name').textContent = agent.name;
+    const roleEl = document.getElementById('sidebar-agent-role');
+    roleEl.textContent = agent.role;
+    roleEl.style.backgroundColor = roleColor(agent.role);
+
+    document.getElementById('sidebar-agent-status').textContent = agent.status;
+    document.getElementById('sidebar-agent-id').textContent = agent.id;
+
+    // Current task
+    const taskEl = document.getElementById('sidebar-agent-task');
+    if (agent.current_task && agentData) {
+      const task = agentData.tasks.find(t => t.id === agent.current_task);
+      taskEl.textContent = task ? task.title : agent.current_task;
+    } else {
+      taskEl.textContent = 'None';
+    }
+
+    // Capabilities
+    const capsEl = document.getElementById('sidebar-agent-caps');
+    capsEl.innerHTML = '';
+    (agent.capabilities || []).forEach(cap => {
+      const tag = document.createElement('span');
+      tag.className = 'capability-tag';
+      tag.textContent = cap;
+      capsEl.appendChild(tag);
+    });
+
+    // Message counts
+    if (agentData) {
+      const sent = agentData.messages.filter(m => m.from === agent.id).length;
+      const received = agentData.messages.filter(m => m.to === agent.id).length;
+      document.getElementById('sidebar-agent-sent').textContent = sent;
+      document.getElementById('sidebar-agent-received').textContent = received;
+    }
+  }
+
+  // ================================================================
+  // Panel 2: Task Board Kanban
+  // ================================================================
+  function renderTaskBoard() {
+    const board = document.getElementById('kanban-board');
+    board.innerHTML = '';
+
+    const emptyEl = document.getElementById('task-board-empty');
+    if (!agentData || !agentData.tasks.length) {
+      // Recreate empty state inside board
+      board.innerHTML = `
+        <div class="empty-state" style="grid-column: 1 / -1;">
+          <div class="empty-state-icon">&#9744;</div>
+          <div class="empty-state-text">No tasks loaded</div>
+          <div class="empty-state-hint">Click "Simulate" to generate sample data or "Load JSON" to import.</div>
+        </div>`;
+      return;
+    }
+
+    const statuses = [
+      { key: 'Pending', label: 'Pending', color: '#607D8B' },
+      { key: 'InProgress', label: 'In Progress', color: '#2196F3' },
+      { key: 'Completed', label: 'Completed', color: '#4CAF50' },
+      { key: 'Failed', label: 'Failed', color: '#f44336' }
+    ];
+
+    const agentMap = {};
+    if (agentData && agentData.agents) {
+      agentData.agents.forEach(a => { agentMap[a.id] = a; });
+    }
+
+    statuses.forEach(st => {
+      const tasks = agentData.tasks.filter(t => t.status === st.key);
+
+      const col = document.createElement('div');
+      col.className = 'kanban-column';
+      col.dataset.status = st.key;
+
+      col.innerHTML = `
+        <div class="kanban-column-header">
+          <span class="col-dot" style="background:${st.color}"></span>
+          ${st.label}
+          <span class="col-count">${tasks.length}</span>
+        </div>
+        <div class="kanban-cards"></div>
+      `;
+
+      const cardsContainer = col.querySelector('.kanban-cards');
+
+      tasks.forEach(task => {
+        const card = document.createElement('div');
+        card.className = 'task-card';
+
+        const agentName = task.assigned_to && agentMap[task.assigned_to]
+          ? agentMap[task.assigned_to].name
+          : (task.assigned_to || 'Unassigned');
+
+        const progressPct = Math.round(task.progress * 100);
+        const pClass = priorityClass(task.priority);
+        const pLabel = priorityLabel(task.priority);
+
+        card.innerHTML = `
+          <div class="task-card-title">${task.title}</div>
+          <div class="task-card-desc">${task.description}</div>
+          <div class="task-card-meta">
+            <span class="priority-badge ${pClass}">${pLabel}</span>
+            <span class="task-agent">${agentName}</span>
+          </div>
+          <div class="task-progress-bar">
+            <div class="task-progress-fill" style="width:${progressPct}%;background:${st.color}"></div>
+          </div>
+          <div class="task-tooltip">
+            <div class="task-tooltip-row">
+              <span class="task-tooltip-label">ID</span>
+              <span class="task-tooltip-value">${task.id}</span>
+            </div>
+            <div class="task-tooltip-row">
+              <span class="task-tooltip-label">Priority</span>
+              <span class="task-tooltip-value">${task.priority}/10</span>
+            </div>
+            <div class="task-tooltip-row">
+              <span class="task-tooltip-label">Progress</span>
+              <span class="task-tooltip-value">${progressPct}%</span>
+            </div>
+            <div class="task-tooltip-row">
+              <span class="task-tooltip-label">Assigned</span>
+              <span class="task-tooltip-value">${agentName}</span>
+            </div>
+            <div class="task-tooltip-row">
+              <span class="task-tooltip-label">Status</span>
+              <span class="task-tooltip-value">${st.label}</span>
+            </div>
+            <div style="margin-top:8px;font-size:0.75rem;color:#8899aa">${task.description}</div>
+          </div>
+        `;
+
+        cardsContainer.appendChild(card);
+      });
+
+      board.appendChild(col);
+    });
+  }
+
+  // ================================================================
+  // Panel 3: Knowledge Graph Explorer
+  // ================================================================
+  function renderKnowledgeGraph() {
+    // Clean up previous
+    if (kgSimulation) { kgSimulation.stop(); kgSimulation = null; }
+    const container = document.getElementById('kg-container');
+    const existing = container.querySelector('svg');
+    if (existing) existing.remove();
+
+    const emptyEl = document.getElementById('kg-empty');
+    if (!knowledgeData || !knowledgeData.entities.length) {
+      emptyEl.style.display = 'flex';
+      return;
+    }
+    emptyEl.style.display = 'none';
+
+    const rect = container.getBoundingClientRect();
+    const width = rect.width;
+    const height = rect.height;
+
+    const svg = d3.select(container)
+      .append('svg')
+      .attr('width', width)
+      .attr('height', height);
+
+    // Defs: arrow for knowledge graph edges
+    const defs = svg.append('defs');
+    defs.append('marker')
+      .attr('id', 'kg-arrow')
+      .attr('viewBox', '0 -5 10 10')
+      .attr('refX', 22)
+      .attr('refY', 0)
+      .attr('markerWidth', 7)
+      .attr('markerHeight', 7)
+      .attr('orient', 'auto')
+      .append('path')
+      .attr('d', 'M0,-5L10,0L0,5')
+      .attr('fill', '#5a6a8a');
+
+    // Zoom group
+    const g = svg.append('g');
+
+    const zoom = d3.zoom()
+      .scaleExtent([0.2, 5])
+      .on('zoom', (event) => {
+        g.attr('transform', event.transform);
+      });
+
+    svg.call(zoom);
+
+    // Build nodes and links
+    const nodes = knowledgeData.entities.map(e => ({ ...e }));
+    const nodeMap = {};
+    nodes.forEach(n => { nodeMap[n.id] = n; });
+
+    const links = knowledgeData.relations.map((r, i) => ({
+      source: r.from_entity_id,
+      target: r.to_entity_id,
+      relation_type: r.relation_type,
+      confidence: r.confidence,
+      index: i
+    })).filter(l => nodeMap[l.source] && nodeMap[l.target]);
+
+    // Force simulation
+    kgSimulation = d3.forceSimulation(nodes)
+      .force('link', d3.forceLink(links).id(d => d.id).distance(140))
+      .force('charge', d3.forceManyBody().strength(-350))
+      .force('center', d3.forceCenter(width / 2, height / 2))
+      .force('collide', d3.forceCollide(35));
+
+    // Draw links
+    const linkGroup = g.append('g').attr('class', 'kg-links');
+
+    const linkLines = linkGroup.selectAll('line')
+      .data(links)
+      .join('line')
+      .attr('stroke', '#3a4a6e')
+      .attr('stroke-width', d => 1 + d.confidence * 1.5)
+      .attr('stroke-opacity', d => 0.3 + d.confidence * 0.4)
+      .attr('marker-end', 'url(#kg-arrow)');
+
+    // Edge label paths (for text along path)
+    const edgeLabelGroup = g.append('g').attr('class', 'kg-edge-labels');
+
+    // Use text elements positioned at midpoint
+    const edgeLabels = edgeLabelGroup.selectAll('text')
+      .data(links)
+      .join('text')
+      .attr('class', 'kg-edge-label')
+      .attr('text-anchor', 'middle')
+      .attr('dy', -4)
+      .text(d => d.relation_type.replace(/_/g, ' '));
+
+    // Link tooltips
+    linkLines
+      .on('mouseover', function(event, d) {
+        d3.select(this).attr('stroke', '#60a5fa').attr('stroke-opacity', 1);
+        const srcName = (typeof d.source === 'object') ? d.source.name : (nodeMap[d.source]?.name || d.source);
+        const tgtName = (typeof d.target === 'object') ? d.target.name : (nodeMap[d.target]?.name || d.target);
+        showTooltip(
+          `<strong>${d.relation_type.replace(/_/g, ' ')}</strong><br>` +
+          `${srcName} &rarr; ${tgtName}<br>` +
+          `Confidence: ${Math.round(d.confidence * 100)}%`,
+          event
+        );
+      })
+      .on('mouseout', function(event, d) {
+        d3.select(this)
+          .attr('stroke', '#3a4a6e')
+          .attr('stroke-opacity', 0.3 + d.confidence * 0.4);
+        hideTooltip();
+      });
+
+    // Draw nodes
+    const nodeGroup = g.append('g').attr('class', 'kg-nodes');
+
+    const nodeGs = nodeGroup.selectAll('g')
+      .data(nodes)
+      .join('g')
+      .attr('cursor', 'pointer')
+      .call(d3.drag()
+        .on('start', dragstarted)
+        .on('drag', dragged)
+        .on('end', dragended));
+
+    // Outer glow
+    nodeGs.append('circle')
+      .attr('r', 20)
+      .attr('fill', d => entityColor(d.entity_type))
+      .attr('fill-opacity', 0.12)
+      .attr('stroke', d => entityColor(d.entity_type))
+      .attr('stroke-width', 1.5)
+      .attr('stroke-opacity', 0.3);
+
+    // Inner circle
+    nodeGs.append('circle')
+      .attr('r', 14)
+      .attr('fill', d => entityColor(d.entity_type))
+      .attr('fill-opacity', 0.8)
+      .attr('stroke', '#fff')
+      .attr('stroke-width', 1)
+      .attr('stroke-opacity', 0.2);
+
+    // Entity type initial
+    nodeGs.append('text')
+      .attr('text-anchor', 'middle')
+      .attr('dy', 4)
+      .attr('fill', '#fff')
+      .attr('font-size', '9px')
+      .attr('font-weight', '700')
+      .attr('pointer-events', 'none')
+      .text(d => d.entity_type.charAt(0));
+
+    // Name label below node
+    nodeGs.append('text')
+      .attr('class', 'kg-node-label')
+      .attr('y', 26)
+      .text(d => d.name);
+
+    // Node interactions
+    nodeGs
+      .on('mouseover', function(event, d) {
+        d3.select(this).select('circle:first-child')
+          .transition().duration(200)
+          .attr('r', 25)
+          .attr('fill-opacity', 0.25);
+
+        // Gather relations
+        const rels = links.filter(l => {
+          const sid = typeof l.source === 'object' ? l.source.id : l.source;
+          const tid = typeof l.target === 'object' ? l.target.id : l.target;
+          return sid === d.id || tid === d.id;
+        });
+
+        let relHtml = rels.slice(0, 5).map(r => {
+          const sid = typeof r.source === 'object' ? r.source.id : r.source;
+          const tid = typeof r.target === 'object' ? r.target.id : r.target;
+          const other = sid === d.id ? (nodeMap[tid]?.name || tid) : (nodeMap[sid]?.name || sid);
+          const dir = sid === d.id ? '&rarr;' : '&larr;';
+          return `${dir} ${r.relation_type.replace(/_/g, ' ')} ${dir === '&rarr;' ? '' : 'from '}${other}`;
+        }).join('<br>');
+
+        if (rels.length > 5) relHtml += `<br>... and ${rels.length - 5} more`;
+
+        showTooltip(
+          `<strong>${d.name}</strong><br>` +
+          `Type: ${d.entity_type}<br>` +
+          `Relations: ${rels.length}<br>` +
+          (relHtml ? `<br>${relHtml}` : ''),
+          event
+        );
+      })
+      .on('mouseout', function() {
+        d3.select(this).select('circle:first-child')
+          .transition().duration(200)
+          .attr('r', 20)
+          .attr('fill-opacity', 0.12);
+        hideTooltip();
+      })
+      .on('click', function(event, d) {
+        // Highlight node and connected edges
+        nodeGs.select('circle:nth-child(2)')
+          .attr('stroke', '#fff')
+          .attr('stroke-width', 1)
+          .attr('stroke-opacity', 0.2);
+
+        d3.select(this).select('circle:nth-child(2)')
+          .attr('stroke', '#60a5fa')
+          .attr('stroke-width', 3)
+          .attr('stroke-opacity', 1);
+
+        // Highlight connected edges
+        linkLines
+          .attr('stroke', l => {
+            const sid = typeof l.source === 'object' ? l.source.id : l.source;
+            const tid = typeof l.target === 'object' ? l.target.id : l.target;
+            return (sid === d.id || tid === d.id) ? '#60a5fa' : '#3a4a6e';
+          })
+          .attr('stroke-opacity', l => {
+            const sid = typeof l.source === 'object' ? l.source.id : l.source;
+            const tid = typeof l.target === 'object' ? l.target.id : l.target;
+            return (sid === d.id || tid === d.id) ? 0.9 : (0.3 + l.confidence * 0.4);
+          });
+      });
+
+    // Tick handler
+    kgSimulation.on('tick', () => {
+      linkLines
+        .attr('x1', d => d.source.x)
+        .attr('y1', d => d.source.y)
+        .attr('x2', d => d.target.x)
+        .attr('y2', d => d.target.y);
+
+      edgeLabels
+        .attr('x', d => (d.source.x + d.target.x) / 2)
+        .attr('y', d => (d.source.y + d.target.y) / 2);
+
+      nodeGs.attr('transform', d => `translate(${d.x},${d.y})`);
+    });
+
+    function dragstarted(event, d) {
+      if (!event.active) kgSimulation.alphaTarget(0.3).restart();
+      d.fx = d.x;
+      d.fy = d.y;
+    }
+
+    function dragged(event, d) {
+      d.fx = event.x;
+      d.fy = event.y;
+    }
+
+    function dragended(event, d) {
+      if (!event.active) kgSimulation.alphaTarget(0);
+      d.fx = null;
+      d.fy = null;
+    }
+
+    // Store refs for search filtering
+    container._nodeGs = nodeGs;
+    container._linkLines = linkLines;
+    container._edgeLabels = edgeLabels;
+    container._nodes = nodes;
+    container._links = links;
+    container._nodeMap = nodeMap;
+  }
+
+  // ================================================================
+  // Knowledge Graph Search
+  // ================================================================
+  const kgSearchInput = document.getElementById('kg-search');
+  let searchTimeout = null;
+
+  kgSearchInput.addEventListener('input', function() {
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(() => {
+      filterKnowledgeGraph(this.value.trim().toLowerCase());
+    }, 200);
+  });
+
+  function filterKnowledgeGraph(query) {
+    const container = document.getElementById('kg-container');
+    if (!container._nodeGs) return;
+
+    const nodeGs = container._nodeGs;
+    const linkLines = container._linkLines;
+    const edgeLabels = container._edgeLabels;
+    const nodes = container._nodes;
+    const links = container._links;
+
+    if (!query) {
+      // Reset all
+      nodeGs.select('circle:first-child')
+        .attr('fill-opacity', 0.12)
+        .attr('stroke-opacity', 0.3);
+      nodeGs.select('circle:nth-child(2)')
+        .attr('fill-opacity', 0.8)
+        .attr('stroke', '#fff')
+        .attr('stroke-width', 1)
+        .attr('stroke-opacity', 0.2);
+      nodeGs.selectAll('.kg-node-label')
+        .attr('fill', '#e0e0e0');
+      nodeGs.attr('opacity', 1);
+
+      linkLines.attr('stroke', '#3a4a6e')
+        .attr('stroke-opacity', d => 0.3 + d.confidence * 0.4);
+      edgeLabels.attr('opacity', 1);
+      return;
+    }
+
+    // Find matching nodes
+    const matchIds = new Set();
+    nodes.forEach(n => {
+      if (n.name.toLowerCase().includes(query) || n.entity_type.toLowerCase().includes(query)) {
+        matchIds.add(n.id);
+      }
+    });
+
+    // Also highlight directly connected nodes
+    const connectedIds = new Set(matchIds);
+    links.forEach(l => {
+      const sid = typeof l.source === 'object' ? l.source.id : l.source;
+      const tid = typeof l.target === 'object' ? l.target.id : l.target;
+      if (matchIds.has(sid)) connectedIds.add(tid);
+      if (matchIds.has(tid)) connectedIds.add(sid);
+    });
+
+    // Dim non-matching
+    nodeGs.attr('opacity', d => connectedIds.has(d.id) ? 1 : 0.15);
+
+    nodeGs.select('circle:nth-child(2)')
+      .attr('stroke', d => matchIds.has(d.id) ? '#FFD700' : '#fff')
+      .attr('stroke-width', d => matchIds.has(d.id) ? 3 : 1)
+      .attr('stroke-opacity', d => matchIds.has(d.id) ? 1 : 0.2);
+
+    linkLines.attr('stroke-opacity', l => {
+      const sid = typeof l.source === 'object' ? l.source.id : l.source;
+      const tid = typeof l.target === 'object' ? l.target.id : l.target;
+      if (matchIds.has(sid) || matchIds.has(tid)) return 0.8;
+      return 0.05;
+    });
+
+    edgeLabels.attr('opacity', l => {
+      const sid = typeof l.source === 'object' ? l.source.id : l.source;
+      const tid = typeof l.target === 'object' ? l.target.id : l.target;
+      if (matchIds.has(sid) || matchIds.has(tid)) return 1;
+      return 0.1;
+    });
+  }
+
+  // ================================================================
+  // Simulate Button
+  // ================================================================
+  document.getElementById('btn-simulate').addEventListener('click', function() {
+    // Deep clone sample data
+    agentData = JSON.parse(JSON.stringify(sampleAgentData));
+    knowledgeData = JSON.parse(JSON.stringify(sampleKnowledgeGraph));
+
+    updateStats();
+    renderAgentFlow();
+    renderTaskBoard();
+    renderKnowledgeGraph();
+
+    // Quick button feedback
+    this.textContent = 'Loaded!';
+    this.style.background = 'linear-gradient(135deg, #2e7d32, #1b5e20)';
+    setTimeout(() => {
+      this.textContent = 'Simulate';
+      this.style.background = '';
+    }, 1200);
+  });
+
+  // ================================================================
+  // Load JSON Button
+  // ================================================================
+  document.getElementById('btn-load').addEventListener('click', () => {
+    document.getElementById('file-input').click();
+  });
+
+  document.getElementById('file-input').addEventListener('change', function(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      try {
+        const data = JSON.parse(e.target.result);
+
+        // Detect format: could be { agentData: {...}, knowledgeGraph: {...} }
+        // or just the agent data directly
+        if (data.agentData || data.agents) {
+          agentData = data.agentData || data;
+
+          // Ensure status is present
+          if (!agentData.status && agentData.agents) {
+            const agents = agentData.agents;
+            const tasks = agentData.tasks || [];
+            agentData.status = {
+              total_agents: agents.length,
+              idle_agents: agents.filter(a => a.status === 'Idle').length,
+              working_agents: agents.filter(a => a.status === 'Working').length,
+              total_tasks: tasks.length,
+              pending_tasks: tasks.filter(t => t.status === 'Pending').length,
+              in_progress_tasks: tasks.filter(t => t.status === 'InProgress').length,
+              completed_tasks: tasks.filter(t => t.status === 'Completed').length,
+              failed_tasks: tasks.filter(t => t.status === 'Failed').length
+            };
+          }
+        }
+
+        if (data.knowledgeGraph || data.entities) {
+          knowledgeData = data.knowledgeGraph || data;
+        }
+
+        updateStats();
+        renderAgentFlow();
+        renderTaskBoard();
+        renderKnowledgeGraph();
+      } catch (err) {
+        console.error('Failed to parse JSON:', err);
+        alert('Failed to parse JSON file: ' + err.message);
+      }
+    };
+    reader.readAsText(file);
+
+    // Reset so same file can be loaded again
+    this.value = '';
+  });
+
+  // ================================================================
+  // Window Resize Handler
+  // ================================================================
+  let resizeTimeout;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimeout);
+    resizeTimeout = setTimeout(() => {
+      if (agentData) {
+        if (currentPanel === 'agent-flow') renderAgentFlow();
+        if (currentPanel === 'knowledge-graph') renderKnowledgeGraph();
+      }
+    }, 300);
+  });
+
+  // ================================================================
+  // Initial render (empty state)
+  // ================================================================
+  updateStats();
+
+})();
+</script>
+</body>
+</html>

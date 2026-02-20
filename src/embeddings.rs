@@ -1,7 +1,7 @@
 //! Local embeddings for semantic search (without external API calls)
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 // ============================================================================
 // TF-IDF Based Embeddings
@@ -79,7 +79,8 @@ impl LocalEmbedder {
                 break;
             }
             if **freq >= self.config.min_word_freq {
-                self.vocab.insert(word.to_string(), i % self.config.dimensions);
+                self.vocab
+                    .insert(word.to_string(), i % self.config.dimensions);
             }
         }
     }
@@ -148,7 +149,8 @@ impl LocalEmbedder {
     ) -> Vec<(usize, f32)> {
         let query_embedding = self.embed(query);
 
-        let mut similarities: Vec<(usize, f32)> = candidates.iter()
+        let mut similarities: Vec<(usize, f32)> = candidates
+            .iter()
             .enumerate()
             .map(|(i, (_, emb))| (i, Self::cosine_similarity(&query_embedding, emb)))
             .collect();
@@ -276,7 +278,8 @@ impl SemanticIndex {
         self.embedder.train(&texts);
 
         // Index documents
-        self.documents = documents.into_iter()
+        self.documents = documents
+            .into_iter()
             .map(|(id, content, metadata)| {
                 let embedding = self.embedder.embed(&content);
                 IndexedDocument {
@@ -311,7 +314,9 @@ impl SemanticIndex {
     pub fn search(&self, query: &str, top_k: usize) -> Vec<SearchResult> {
         let query_embedding = self.embedder.embed(query);
 
-        let mut results: Vec<SearchResult> = self.documents.iter()
+        let mut results: Vec<SearchResult> = self
+            .documents
+            .iter()
             .map(|doc| {
                 let similarity = LocalEmbedder::cosine_similarity(&query_embedding, &doc.embedding);
                 SearchResult {
@@ -323,13 +328,22 @@ impl SemanticIndex {
             })
             .collect();
 
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results.truncate(top_k);
         results
     }
 
     /// Search with minimum score threshold
-    pub fn search_with_threshold(&self, query: &str, top_k: usize, min_score: f32) -> Vec<SearchResult> {
+    pub fn search_with_threshold(
+        &self,
+        query: &str,
+        top_k: usize,
+        min_score: f32,
+    ) -> Vec<SearchResult> {
         self.search(query, top_k)
             .into_iter()
             .filter(|r| r.score >= min_score)
@@ -426,7 +440,8 @@ impl HybridSearcher {
     ) -> Vec<HybridSearchResult> {
         // Get semantic results
         let semantic_results = self.semantic_index.search(query, top_k * 2);
-        let semantic_map: HashMap<_, _> = semantic_results.iter()
+        let semantic_map: HashMap<_, _> = semantic_results
+            .iter()
             .map(|r| (r.id.clone(), r.score))
             .collect();
 
@@ -439,33 +454,46 @@ impl HybridSearcher {
             let combined_score = keyword_score * self.config.keyword_weight
                 + semantic_score * self.config.semantic_weight;
 
-            combined.insert(id.clone(), HybridSearchResult {
-                id: id.clone(),
-                keyword_score: *keyword_score,
-                semantic_score,
-                combined_score,
-                content: self.semantic_index.get_document(id)
-                    .map(|d| d.content.clone())
-                    .unwrap_or_default(),
-            });
+            combined.insert(
+                id.clone(),
+                HybridSearchResult {
+                    id: id.clone(),
+                    keyword_score: *keyword_score,
+                    semantic_score,
+                    combined_score,
+                    content: self
+                        .semantic_index
+                        .get_document(id)
+                        .map(|d| d.content.clone())
+                        .unwrap_or_default(),
+                },
+            );
         }
 
         // Add semantic-only results (not in keyword results)
         for result in semantic_results {
-            if !combined.contains_key(&result.id) && result.score >= self.config.min_semantic_score {
-                combined.insert(result.id.clone(), HybridSearchResult {
-                    id: result.id,
-                    keyword_score: 0.0,
-                    semantic_score: result.score,
-                    combined_score: result.score * self.config.semantic_weight,
-                    content: result.content,
-                });
+            if !combined.contains_key(&result.id) && result.score >= self.config.min_semantic_score
+            {
+                combined.insert(
+                    result.id.clone(),
+                    HybridSearchResult {
+                        id: result.id,
+                        keyword_score: 0.0,
+                        semantic_score: result.score,
+                        combined_score: result.score * self.config.semantic_weight,
+                        content: result.content,
+                    },
+                );
             }
         }
 
         // Sort by combined score
         let mut results: Vec<_> = combined.into_values().collect();
-        results.sort_by(|a, b| b.combined_score.partial_cmp(&a.combined_score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.combined_score
+                .partial_cmp(&a.combined_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results.truncate(top_k);
         results
     }
@@ -517,9 +545,21 @@ mod tests {
         let mut index = SemanticIndex::new(EmbeddingConfig::default());
 
         let docs = vec![
-            ("doc1".to_string(), "Rust programming language".to_string(), HashMap::new()),
-            ("doc2".to_string(), "Python programming language".to_string(), HashMap::new()),
-            ("doc3".to_string(), "Cooking recipes for dinner".to_string(), HashMap::new()),
+            (
+                "doc1".to_string(),
+                "Rust programming language".to_string(),
+                HashMap::new(),
+            ),
+            (
+                "doc2".to_string(),
+                "Python programming language".to_string(),
+                HashMap::new(),
+            ),
+            (
+                "doc3".to_string(),
+                "Cooking recipes for dinner".to_string(),
+                HashMap::new(),
+            ),
         ];
 
         index.build(docs);
@@ -537,5 +577,69 @@ mod tests {
 
         assert!((LocalEmbedder::cosine_similarity(&a, &b) - 1.0).abs() < 0.001);
         assert!((LocalEmbedder::cosine_similarity(&a, &c) - 0.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_normalization() {
+        let mut embedder = LocalEmbedder::new(EmbeddingConfig::default());
+
+        let docs = vec![
+            "Rust is a systems programming language",
+            "Python is great for data science",
+            "JavaScript runs in the browser",
+        ];
+        embedder.train(&docs);
+
+        let embedding = embedder.embed("Rust programming language features");
+
+        // Compute L2 norm
+        let l2_norm: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
+
+        // After normalization the L2 norm should be approximately 1.0
+        assert!(
+            (l2_norm - 1.0).abs() < 0.001,
+            "L2 norm should be ~1.0 after normalization, got {}",
+            l2_norm,
+        );
+    }
+
+    #[test]
+    fn test_batch_embed() {
+        let mut embedder = LocalEmbedder::new(EmbeddingConfig::default());
+
+        let docs = vec![
+            "Machine learning algorithms",
+            "Deep neural networks",
+            "Natural language processing",
+        ];
+        embedder.train(&docs);
+
+        let texts: Vec<&str> = vec![
+            "Machine learning is interesting",
+            "Neural networks are powerful",
+            "NLP is a subfield of AI",
+        ];
+
+        let embeddings = embedder.embed_batch(&texts);
+
+        // Should produce exactly 3 embeddings
+        assert_eq!(
+            embeddings.len(),
+            3,
+            "embed_batch should return one embedding per input text",
+        );
+
+        // Each embedding should have the configured dimensionality
+        let expected_dim = EmbeddingConfig::default().dimensions;
+        for (i, emb) in embeddings.iter().enumerate() {
+            assert_eq!(
+                emb.len(),
+                expected_dim,
+                "Embedding {} should have dimension {}, got {}",
+                i,
+                expected_dim,
+                emb.len(),
+            );
+        }
     }
 }

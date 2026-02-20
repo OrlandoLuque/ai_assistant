@@ -1,7 +1,7 @@
 //! Message types for AI conversations
 
-use serde::{Deserialize, Serialize};
 use crate::models::ModelInfo;
+use serde::{Deserialize, Serialize};
 
 /// Represents a chat message in a conversation
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,7 +76,10 @@ pub enum AiResponse {
 impl AiResponse {
     /// Check if this is a terminal response (Complete, Cancelled, or Error)
     pub fn is_terminal(&self) -> bool {
-        matches!(self, AiResponse::Complete(_) | AiResponse::Cancelled(_) | AiResponse::Error(_))
+        matches!(
+            self,
+            AiResponse::Complete(_) | AiResponse::Cancelled(_) | AiResponse::Error(_)
+        )
     }
 
     /// Get the text content if this is a Chunk, Complete, or Cancelled response
@@ -154,8 +157,14 @@ mod tests {
     #[test]
     fn test_ai_response_text() {
         assert_eq!(AiResponse::Chunk("hello".to_string()).text(), Some("hello"));
-        assert_eq!(AiResponse::Complete("done".to_string()).text(), Some("done"));
-        assert_eq!(AiResponse::Cancelled("part".to_string()).text(), Some("part"));
+        assert_eq!(
+            AiResponse::Complete("done".to_string()).text(),
+            Some("done")
+        );
+        assert_eq!(
+            AiResponse::Cancelled("part".to_string()).text(),
+            Some("part")
+        );
         assert!(AiResponse::ModelsLoaded(vec![]).text().is_none());
     }
 

@@ -118,7 +118,11 @@ pub enum ConfigError {
     /// Missing required configuration value
     MissingValue { field: String, description: String },
     /// Invalid configuration value
-    InvalidValue { field: String, value: String, expected: String },
+    InvalidValue {
+        field: String,
+        value: String,
+        expected: String,
+    },
     /// Failed to load configuration file
     LoadFailed { path: String, reason: String },
     /// Failed to save configuration file
@@ -133,13 +137,29 @@ impl fmt::Display for ConfigError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ConfigError::MissingValue { field, description } => {
-                write!(f, "Missing required configuration '{}': {}", field, description)
+                write!(
+                    f,
+                    "Missing required configuration '{}': {}",
+                    field, description
+                )
             }
-            ConfigError::InvalidValue { field, value, expected } => {
-                write!(f, "Invalid value '{}' for '{}', expected: {}", value, field, expected)
+            ConfigError::InvalidValue {
+                field,
+                value,
+                expected,
+            } => {
+                write!(
+                    f,
+                    "Invalid value '{}' for '{}', expected: {}",
+                    value, field, expected
+                )
             }
             ConfigError::LoadFailed { path, reason } => {
-                write!(f, "Failed to load configuration from '{}': {}", path, reason)
+                write!(
+                    f,
+                    "Failed to load configuration from '{}': {}",
+                    path, reason
+                )
             }
             ConfigError::SaveFailed { path, reason } => {
                 write!(f, "Failed to save configuration to '{}': {}", path, reason)
@@ -191,13 +211,23 @@ pub enum ProviderError {
     /// Authentication failed
     AuthenticationFailed { provider: String, reason: String },
     /// Rate limited by provider
-    RateLimited { provider: String, retry_after: Option<u64> },
+    RateLimited {
+        provider: String,
+        retry_after: Option<u64>,
+    },
     /// Context length exceeded
-    ContextLengthExceeded { max_tokens: usize, used_tokens: usize },
+    ContextLengthExceeded {
+        max_tokens: usize,
+        used_tokens: usize,
+    },
     /// Invalid response from provider
     InvalidResponse { provider: String, reason: String },
     /// Provider returned an error
-    ApiError { provider: String, status_code: u16, message: String },
+    ApiError {
+        provider: String,
+        status_code: u16,
+        message: String,
+    },
     /// Generation was cancelled
     Cancelled,
     /// Streaming error
@@ -218,20 +248,38 @@ impl fmt::Display for ProviderError {
             ProviderError::AuthenticationFailed { provider, reason } => {
                 write!(f, "Authentication failed for {}: {}", provider, reason)
             }
-            ProviderError::RateLimited { provider, retry_after } => {
+            ProviderError::RateLimited {
+                provider,
+                retry_after,
+            } => {
                 if let Some(secs) = retry_after {
-                    write!(f, "Rate limited by {}, retry after {} seconds", provider, secs)
+                    write!(
+                        f,
+                        "Rate limited by {}, retry after {} seconds",
+                        provider, secs
+                    )
                 } else {
                     write!(f, "Rate limited by {}", provider)
                 }
             }
-            ProviderError::ContextLengthExceeded { max_tokens, used_tokens } => {
-                write!(f, "Context length exceeded: {} tokens used, {} max", used_tokens, max_tokens)
+            ProviderError::ContextLengthExceeded {
+                max_tokens,
+                used_tokens,
+            } => {
+                write!(
+                    f,
+                    "Context length exceeded: {} tokens used, {} max",
+                    used_tokens, max_tokens
+                )
             }
             ProviderError::InvalidResponse { provider, reason } => {
                 write!(f, "Invalid response from {}: {}", provider, reason)
             }
-            ProviderError::ApiError { provider, status_code, message } => {
+            ProviderError::ApiError {
+                provider,
+                status_code,
+                message,
+            } => {
                 write!(f, "{} API error ({}): {}", provider, status_code, message)
             }
             ProviderError::Cancelled => {
@@ -253,9 +301,7 @@ impl ProviderError {
             ProviderError::ModelNotFound { .. } => {
                 Some("Use fetch_models() to get available models, or pull the model first")
             }
-            ProviderError::AuthenticationFailed { .. } => {
-                Some("Check your API key or credentials")
-            }
+            ProviderError::AuthenticationFailed { .. } => Some("Check your API key or credentials"),
             ProviderError::RateLimited { .. } => {
                 Some("Wait before retrying or reduce request frequency")
             }
@@ -270,9 +316,7 @@ impl ProviderError {
             }
             ProviderError::ApiError { .. } => None,
             ProviderError::Cancelled => None,
-            ProviderError::StreamError { .. } => {
-                Some("Check network connection and try again")
-            }
+            ProviderError::StreamError { .. } => Some("Check network connection and try again"),
         }
     }
 
@@ -334,7 +378,11 @@ impl fmt::Display for RagError {
                 write!(f, "Search failed for '{}': {}", query, reason)
             }
             RagError::AppendOnlyViolation { operation, source } => {
-                write!(f, "Cannot {} document '{}': append-only mode is enabled", operation, source)
+                write!(
+                    f,
+                    "Cannot {} document '{}': append-only mode is enabled",
+                    operation, source
+                )
             }
             RagError::EmbeddingError(reason) => {
                 write!(f, "Embedding error: {}", reason)
@@ -346,27 +394,17 @@ impl fmt::Display for RagError {
 impl RagError {
     pub fn suggestion(&self) -> Option<&'static str> {
         match self {
-            RagError::Database { .. } => {
-                Some("Check database file permissions and disk space")
-            }
+            RagError::Database { .. } => Some("Check database file permissions and disk space"),
             RagError::DocumentNotFound(_) => {
                 Some("Register the document first with register_knowledge_document()")
             }
-            RagError::InvalidDocument { .. } => {
-                Some("Ensure the document is valid UTF-8 text")
-            }
-            RagError::IndexingFailed { .. } => {
-                Some("Check document content and try again")
-            }
-            RagError::SearchFailed { .. } => {
-                Some("Try a simpler search query")
-            }
+            RagError::InvalidDocument { .. } => Some("Ensure the document is valid UTF-8 text"),
+            RagError::IndexingFailed { .. } => Some("Check document content and try again"),
+            RagError::SearchFailed { .. } => Some("Try a simpler search query"),
             RagError::AppendOnlyViolation { .. } => {
                 Some("Disable append-only mode with set_append_only_mode(false)")
             }
-            RagError::EmbeddingError(_) => {
-                Some("Check embedding configuration")
-            }
+            RagError::EmbeddingError(_) => Some("Check embedding configuration"),
         }
     }
 }
@@ -424,9 +462,7 @@ impl NetworkError {
             NetworkError::ConnectionFailed { .. } => {
                 Some("Check network connectivity and server status")
             }
-            NetworkError::Timeout { .. } => {
-                Some("Increase timeout or check server responsiveness")
-            }
+            NetworkError::Timeout { .. } => Some("Increase timeout or check server responsiveness"),
             NetworkError::DnsError { .. } => {
                 Some("Check hostname spelling and network configuration")
             }
@@ -467,11 +503,20 @@ pub enum ValidationError {
     /// Empty input
     EmptyInput { field: String },
     /// Input too long
-    TooLong { field: String, max_length: usize, actual_length: usize },
+    TooLong {
+        field: String,
+        max_length: usize,
+        actual_length: usize,
+    },
     /// Invalid format
     InvalidFormat { field: String, expected: String },
     /// Out of range
-    OutOfRange { field: String, min: String, max: String, value: String },
+    OutOfRange {
+        field: String,
+        min: String,
+        max: String,
+        value: String,
+    },
     /// Custom validation error
     Custom { field: String, message: String },
 }
@@ -484,14 +529,31 @@ impl fmt::Display for ValidationError {
             ValidationError::EmptyInput { field } => {
                 write!(f, "'{}' cannot be empty", field)
             }
-            ValidationError::TooLong { field, max_length, actual_length } => {
-                write!(f, "'{}' is too long ({} chars, max {})", field, actual_length, max_length)
+            ValidationError::TooLong {
+                field,
+                max_length,
+                actual_length,
+            } => {
+                write!(
+                    f,
+                    "'{}' is too long ({} chars, max {})",
+                    field, actual_length, max_length
+                )
             }
             ValidationError::InvalidFormat { field, expected } => {
                 write!(f, "'{}' has invalid format, expected: {}", field, expected)
             }
-            ValidationError::OutOfRange { field, min, max, value } => {
-                write!(f, "'{}' value '{}' out of range [{}, {}]", field, value, min, max)
+            ValidationError::OutOfRange {
+                field,
+                min,
+                max,
+                value,
+            } => {
+                write!(
+                    f,
+                    "'{}' value '{}' out of range [{}, {}]",
+                    field, value, min, max
+                )
             }
             ValidationError::Custom { field, message } => {
                 write!(f, "'{}': {}", field, message)
@@ -524,7 +586,11 @@ impl From<ValidationError> for AiError {
 #[derive(Debug)]
 pub enum ResourceLimitError {
     /// Rate limit exceeded
-    RateLimitExceeded { limit: u32, window_secs: u64, retry_after_secs: Option<u64> },
+    RateLimitExceeded {
+        limit: u32,
+        window_secs: u64,
+        retry_after_secs: Option<u64>,
+    },
     /// Memory limit exceeded
     MemoryLimitExceeded { limit_mb: usize, used_mb: usize },
     /// Token limit exceeded
@@ -534,7 +600,11 @@ pub enum ResourceLimitError {
     /// Concurrent request limit
     ConcurrentRequestLimit { limit: usize },
     /// Budget exceeded
-    BudgetExceeded { budget: f64, used: f64, currency: String },
+    BudgetExceeded {
+        budget: f64,
+        used: f64,
+        currency: String,
+    },
 }
 
 impl std::error::Error for ResourceLimitError {}
@@ -542,27 +612,55 @@ impl std::error::Error for ResourceLimitError {}
 impl fmt::Display for ResourceLimitError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ResourceLimitError::RateLimitExceeded { limit, window_secs, retry_after_secs } => {
+            ResourceLimitError::RateLimitExceeded {
+                limit,
+                window_secs,
+                retry_after_secs,
+            } => {
                 if let Some(retry) = retry_after_secs {
-                    write!(f, "Rate limit exceeded ({} requests per {}s), retry after {}s", limit, window_secs, retry)
+                    write!(
+                        f,
+                        "Rate limit exceeded ({} requests per {}s), retry after {}s",
+                        limit, window_secs, retry
+                    )
                 } else {
-                    write!(f, "Rate limit exceeded ({} requests per {}s)", limit, window_secs)
+                    write!(
+                        f,
+                        "Rate limit exceeded ({} requests per {}s)",
+                        limit, window_secs
+                    )
                 }
             }
             ResourceLimitError::MemoryLimitExceeded { limit_mb, used_mb } => {
-                write!(f, "Memory limit exceeded: {}MB used of {}MB limit", used_mb, limit_mb)
+                write!(
+                    f,
+                    "Memory limit exceeded: {}MB used of {}MB limit",
+                    used_mb, limit_mb
+                )
             }
             ResourceLimitError::TokenLimitExceeded { limit, used } => {
                 write!(f, "Token limit exceeded: {} used of {} limit", used, limit)
             }
             ResourceLimitError::StorageLimitExceeded { limit_mb, used_mb } => {
-                write!(f, "Storage limit exceeded: {}MB used of {}MB limit", used_mb, limit_mb)
+                write!(
+                    f,
+                    "Storage limit exceeded: {}MB used of {}MB limit",
+                    used_mb, limit_mb
+                )
             }
             ResourceLimitError::ConcurrentRequestLimit { limit } => {
                 write!(f, "Concurrent request limit exceeded: {} max", limit)
             }
-            ResourceLimitError::BudgetExceeded { budget, used, currency } => {
-                write!(f, "Budget exceeded: {:.2} {} used of {:.2} {} budget", used, currency, budget, currency)
+            ResourceLimitError::BudgetExceeded {
+                budget,
+                used,
+                currency,
+            } => {
+                write!(
+                    f,
+                    "Budget exceeded: {:.2} {} used of {:.2} {} budget",
+                    used, currency, budget, currency
+                )
             }
         }
     }
@@ -622,7 +720,11 @@ impl std::error::Error for IoError {}
 impl fmt::Display for IoError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(ref path) = self.path {
-            write!(f, "I/O error during '{}' on '{}': {}", self.operation, path, self.reason)
+            write!(
+                f,
+                "I/O error during '{}' on '{}': {}",
+                self.operation, path, self.reason
+            )
         } else {
             write!(f, "I/O error during '{}': {}", self.operation, self.reason)
         }
@@ -638,7 +740,11 @@ impl IoError {
         }
     }
 
-    pub fn with_path(operation: impl Into<String>, path: impl Into<String>, reason: impl Into<String>) -> Self {
+    pub fn with_path(
+        operation: impl Into<String>,
+        path: impl Into<String>,
+        reason: impl Into<String>,
+    ) -> Self {
         Self {
             operation: operation.into(),
             path: Some(path.into()),
@@ -695,7 +801,11 @@ impl std::error::Error for SerializationError {}
 
 impl fmt::Display for SerializationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} {} error: {}", self.format, self.operation, self.reason)
+        write!(
+            f,
+            "{} {} error: {}",
+            self.format, self.operation, self.reason
+        )
     }
 }
 
@@ -764,7 +874,8 @@ impl AiError {
         ProviderError::Unavailable {
             provider: provider.into(),
             url: url.into(),
-        }.into()
+        }
+        .into()
     }
 
     /// Create a model not found error
@@ -772,12 +883,17 @@ impl AiError {
         ProviderError::ModelNotFound {
             provider: provider.into(),
             model: model.into(),
-        }.into()
+        }
+        .into()
     }
 
     /// Create a context length exceeded error
     pub fn context_exceeded(max_tokens: usize, used_tokens: usize) -> Self {
-        ProviderError::ContextLengthExceeded { max_tokens, used_tokens }.into()
+        ProviderError::ContextLengthExceeded {
+            max_tokens,
+            used_tokens,
+        }
+        .into()
     }
 
     /// Create a rate limit error
@@ -786,7 +902,8 @@ impl AiError {
             limit,
             window_secs,
             retry_after_secs: None,
-        }.into()
+        }
+        .into()
     }
 
     /// Create an append-only violation error
@@ -794,12 +911,16 @@ impl AiError {
         RagError::AppendOnlyViolation {
             operation: operation.into(),
             source: source.into(),
-        }.into()
+        }
+        .into()
     }
 
     /// Create a validation empty input error
     pub fn empty_input(field: impl Into<String>) -> Self {
-        ValidationError::EmptyInput { field: field.into() }.into()
+        ValidationError::EmptyInput {
+            field: field.into(),
+        }
+        .into()
     }
 }
 
@@ -827,5 +948,199 @@ mod tests {
 
         let e = AiError::empty_input("message");
         assert!(!e.is_recoverable());
+    }
+
+    #[test]
+    fn test_all_error_display_variants() {
+        let errors: Vec<AiError> = vec![
+            AiError::Config(ConfigError::MissingValue {
+                field: "key".into(),
+                description: "required".into(),
+            }),
+            AiError::Provider(ProviderError::Cancelled),
+            AiError::Rag(RagError::DocumentNotFound("doc.txt".into())),
+            AiError::Network(NetworkError::DnsError {
+                host: "example.com".into(),
+            }),
+            AiError::Validation(ValidationError::EmptyInput {
+                field: "name".into(),
+            }),
+            AiError::ResourceLimit(ResourceLimitError::ConcurrentRequestLimit { limit: 5 }),
+            AiError::Io(IoError::new("read", "permission denied")),
+            AiError::Serialization(SerializationError::json_serialize("bad data")),
+            AiError::Other("something went wrong".into()),
+        ];
+
+        for err in &errors {
+            let display = err.to_string();
+            assert!(
+                !display.is_empty(),
+                "Display for {:?} should be non-empty",
+                err
+            );
+        }
+    }
+
+    #[test]
+    fn test_config_error_suggestions() {
+        let config_errors: Vec<ConfigError> = vec![
+            ConfigError::MissingValue {
+                field: "api_key".into(),
+                description: "needed".into(),
+            },
+            ConfigError::InvalidValue {
+                field: "port".into(),
+                value: "abc".into(),
+                expected: "integer".into(),
+            },
+            ConfigError::LoadFailed {
+                path: "/tmp/config.toml".into(),
+                reason: "not found".into(),
+            },
+            ConfigError::SaveFailed {
+                path: "/tmp/config.toml".into(),
+                reason: "read-only".into(),
+            },
+            ConfigError::UnknownProvider("foo_provider".into()),
+        ];
+
+        for err in &config_errors {
+            let suggestion = err.suggestion();
+            assert!(
+                suggestion.is_some(),
+                "ConfigError {:?} should have a suggestion",
+                err
+            );
+            assert!(
+                !suggestion.unwrap().is_empty(),
+                "Suggestion for {:?} should be non-empty",
+                err
+            );
+        }
+    }
+
+    #[test]
+    fn test_network_error_recoverable() {
+        // ConnectionFailed is recoverable
+        let conn_err = NetworkError::ConnectionFailed {
+            url: "http://localhost:8080".into(),
+            reason: "refused".into(),
+        };
+        assert!(
+            conn_err.is_recoverable(),
+            "ConnectionFailed should be recoverable"
+        );
+
+        // Timeout is recoverable
+        let timeout_err = NetworkError::Timeout {
+            url: "http://localhost:8080".into(),
+            timeout_ms: 5000,
+        };
+        assert!(
+            timeout_err.is_recoverable(),
+            "Timeout should be recoverable"
+        );
+
+        // DnsError is NOT recoverable
+        let dns_err = NetworkError::DnsError {
+            host: "bad.host".into(),
+        };
+        assert!(
+            !dns_err.is_recoverable(),
+            "DnsError should not be recoverable"
+        );
+
+        // TlsError is NOT recoverable
+        let tls_err = NetworkError::TlsError {
+            url: "https://example.com".into(),
+            reason: "cert expired".into(),
+        };
+        assert!(
+            !tls_err.is_recoverable(),
+            "TlsError should not be recoverable"
+        );
+
+        // HttpError with 500 is recoverable, 404 is not
+        let http_500 = NetworkError::HttpError {
+            status: 500,
+            message: "server error".into(),
+        };
+        assert!(http_500.is_recoverable(), "HTTP 500 should be recoverable");
+
+        let http_404 = NetworkError::HttpError {
+            status: 404,
+            message: "not found".into(),
+        };
+        assert!(
+            !http_404.is_recoverable(),
+            "HTTP 404 should not be recoverable"
+        );
+    }
+
+    #[test]
+    fn test_from_conversions() {
+        // ConfigError -> AiError::Config
+        let config_err = ConfigError::UnknownProvider("test".into());
+        let ai_err: AiError = config_err.into();
+        assert_eq!(ai_err.code(), "CONFIG");
+
+        // std::io::Error -> AiError::Io
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file missing");
+        let ai_err: AiError = io_err.into();
+        assert_eq!(ai_err.code(), "IO");
+        assert!(ai_err.to_string().contains("file missing"));
+
+        // ValidationError -> AiError::Validation
+        let val_err = ValidationError::EmptyInput {
+            field: "name".into(),
+        };
+        let ai_err: AiError = val_err.into();
+        assert_eq!(ai_err.code(), "VALIDATION");
+
+        // NetworkError -> AiError::Network
+        let net_err = NetworkError::DnsError {
+            host: "example.com".into(),
+        };
+        let ai_err: AiError = net_err.into();
+        assert_eq!(ai_err.code(), "NETWORK");
+
+        // SerializationError -> AiError::Serialization
+        let ser_err = SerializationError::json_deserialize("unexpected token");
+        let ai_err: AiError = ser_err.into();
+        assert_eq!(ai_err.code(), "SERIALIZATION");
+    }
+
+    #[test]
+    fn test_error_code_all_variants() {
+        let cases: Vec<(AiError, &str)> = vec![
+            (
+                AiError::Config(ConfigError::UnknownProvider("x".into())),
+                "CONFIG",
+            ),
+            (AiError::Provider(ProviderError::Cancelled), "PROVIDER"),
+            (AiError::Rag(RagError::EmbeddingError("x".into())), "RAG"),
+            (
+                AiError::Network(NetworkError::DnsError { host: "x".into() }),
+                "NETWORK",
+            ),
+            (
+                AiError::Validation(ValidationError::EmptyInput { field: "x".into() }),
+                "VALIDATION",
+            ),
+            (
+                AiError::ResourceLimit(ResourceLimitError::ConcurrentRequestLimit { limit: 1 }),
+                "RESOURCE_LIMIT",
+            ),
+            (AiError::Io(IoError::new("op", "reason")), "IO"),
+            (
+                AiError::Serialization(SerializationError::json_serialize("x")),
+                "SERIALIZATION",
+            ),
+            (AiError::Other("misc".into()), "OTHER"),
+        ];
+
+        for (err, expected_code) in &cases {
+            assert_eq!(err.code(), *expected_code, "Wrong code for {:?}", err);
+        }
     }
 }

@@ -105,7 +105,9 @@ impl ConsistentHashRing {
         }
 
         let mut affected = Vec::new();
-        let positions: Vec<u64> = self.ring.iter()
+        let positions: Vec<u64> = self
+            .ring
+            .iter()
             .filter(|(_, nid)| *nid == node_id)
             .map(|(&pos, _)| pos)
             .collect();
@@ -298,7 +300,12 @@ mod tests {
         for i in 0..50 {
             let key = format!("test_key_{}", i);
             let nodes = ring.get_nodes(&key, 3);
-            assert_eq!(nodes.len(), 3, "Should return 3 distinct nodes for key {}", key);
+            assert_eq!(
+                nodes.len(),
+                3,
+                "Should return 3 distinct nodes for key {}",
+                key
+            );
 
             // All nodes should be unique
             let unique: HashSet<_> = nodes.iter().collect();
@@ -423,7 +430,10 @@ mod tests {
         let affected = ring.add_node(node_a);
 
         // First node: all ranges map to it
-        assert!(!affected.is_empty(), "Adding first node should produce affected ranges");
+        assert!(
+            !affected.is_empty(),
+            "Adding first node should produce affected ranges"
+        );
         for range in &affected {
             assert_eq!(range.node_id, node_a);
         }

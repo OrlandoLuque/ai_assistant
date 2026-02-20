@@ -104,7 +104,9 @@ impl ConversationTemplate {
 
         for (key, value) in vars {
             result.system_prompt = result.system_prompt.replace(&format!("{{{}}}", key), value);
-            result.starter_messages = result.starter_messages.iter()
+            result.starter_messages = result
+                .starter_messages
+                .iter()
                 .map(|m| m.replace(&format!("{{{}}}", key), value))
                 .collect();
         }
@@ -198,18 +200,20 @@ impl TemplateLibrary {
     }
 
     pub fn get_by_category(&self, category: TemplateCategory) -> Vec<&ConversationTemplate> {
-        self.templates.values()
+        self.templates
+            .values()
             .filter(|t| t.category == category)
             .collect()
     }
 
     pub fn search(&self, query: &str) -> Vec<&ConversationTemplate> {
         let lower = query.to_lowercase();
-        self.templates.values()
+        self.templates
+            .values()
             .filter(|t| {
-                t.name.to_lowercase().contains(&lower) ||
-                t.description.to_lowercase().contains(&lower) ||
-                t.tags.iter().any(|tag| tag.to_lowercase().contains(&lower))
+                t.name.to_lowercase().contains(&lower)
+                    || t.description.to_lowercase().contains(&lower)
+                    || t.tags.iter().any(|tag| tag.to_lowercase().contains(&lower))
             })
             .collect()
     }
@@ -256,7 +260,9 @@ mod tests {
         let coding = lib.get_by_category(TemplateCategory::Coding);
 
         assert!(!coding.is_empty());
-        assert!(coding.iter().all(|t| t.category == TemplateCategory::Coding));
+        assert!(coding
+            .iter()
+            .all(|t| t.category == TemplateCategory::Coding));
     }
 
     #[test]
@@ -270,5 +276,171 @@ mod tests {
 
         let applied = template.apply(&vars);
         assert!(applied.system_prompt.contains("Rust"));
+    }
+
+    #[test]
+    fn test_all_template_categories() {
+        let lib = TemplateLibrary::new();
+        let categories = lib.categories();
+
+        // Every category returned by categories() should have at least one template
+        for category in &categories {
+            let templates = lib.get_by_category(*category);
+            // Not all categories may have builtins (Analysis doesn't), but let's
+            // verify the ones that do are non-empty and correct
+            for t in &templates {
+                assert_eq!(t.category, *category);
+            }
+        }
+
+        // Verify specific categories we know have builtins
+        assert!(!lib.get_by_category(TemplateCategory::Coding).is_empty());
+        assert!(!lib.get_by_category(TemplateCategory::Writing).is_empty());
+        assert!(!lib.get_by_category(TemplateCategory::Learning).is_empty());
+        assert!(!lib.get_by_category(TemplateCategory::Creative).is_empty());
+        assert!(!lib.get_by_category(TemplateCategory::Business).is_empty());
+        assert!(!lib.get_by_category(TemplateCategory::Research).is_empty());
+        assert!(!lib.get_by_category(TemplateCategory::Support).is_empty());
+
+        // Verify the categories list has all 8 variants
+        assert_eq!(categories.len(), 8);
+    }
+
+    #[test]
+    fn test_template_builder() {
+        let template = ConversationTemplate::new("my_template", "My Template", TemplateCategory::Creative)
+            .with_description("A custom creative template")
+            .with_system_prompt("You are a creative assistant helping with {project}")
+            .with_starter("Let's get started on {project}")
+            .with_starter("Tell me about your creative vision")
+            .with_variable("project", "Project name", true)
+            .with_variable("style", "Preferred style", false)
+            .with_tag("creative")
+            .with_tag("custom");
+
+        assert_eq!(template.id, "my_template");
+        assert_eq!(template.name, "My Template");
+        assert_eq!(template.category, TemplateCategory::Creative);
+        assert_eq!(template.description, "A custom creative template");
+        assert!(template.system_prompt.contains("{project}"));
+        assert_eq!(template.starter_messages.len(), 2);
+        assert_eq!(template.variables.len(), 2);
+        assert!(template.variables[0].required);
+        assert!(!template.variables[1].required);
+        assert_eq!(template.tags, vec!["creative", "custom"]);
+    }
+
+    #[test]
+    fn test_custom_template_registration() {
+        let mut lib = TemplateLibrary::new();
+        let initial_count = lib.all().len();
+
+        let custom = ConversationTemplate::new("custom_qa", "Q&A Bot", TemplateCategory::Support)
+            .with_description("Custom Q&A template")
+            .with_system_prompt("Answer questions concisely")
+            .with_starter("Ask me anything")
+            .with_tag("qa");
+
+        lib.add(custom);
+
+        // Library should have one more template
+        assert_eq!(lib.all().len(), initial_count + 1);
+
+        // Should be retrievable by id
+        let retrieved = lib.get("custom_qa");
+        assert!(retrieved.is_some());
+        let retrieved = retrieved.unwrap();
+        assert_eq!(retrieved.name, "Q&A Bot");
+        assert_eq!(retrieved.category, TemplateCategory::Support);
+        assert_eq!(retrieved.description, "Custom Q&A template");
+
+        // Should appear in category filter
+        let support_templates = lib.get_by_category(TemplateCategory::Support);
+        assert!(support_templates.iter().any(|t| t.id == "custom_qa"));
+    }
+
+    #[test]
+    fn test_search_templates() {
+        let lib = TemplateLibrary::new();
+
+        // Search by name
+        let results = lib.search("code review");
+        assert!(!results.is_empty());
+        assert!(results.iter().any(|t| t.id == "code_review"));
+
+        // Search by tag
+        let results = lib.search("debug");
+        assert!(!results.is_empty());
+        assert!(results.iter().any(|t| t.id == "debug"));
+
+        // Search by description keyword
+        let results = lib.search("troubleshooting");
+        assert!(!results.is_empty());
+        assert!(results.iter().any(|t| t.id == "support"));
+
+        // Search with no matches
+        let results = lib.search("xyznonexistent");
+        assert!(results.is_empty());
+
+        // Case-insensitive search
+        let results = lib.search("WRITING");
+        assert!(!results.is_empty());
+        assert!(results.iter().any(|t| t.id == "writing"));
+    }
+
+    #[test]
+    fn test_template_with_variables() {
+        let template = ConversationTemplate::new("multi_var", "Multi Variable", TemplateCategory::Learning)
+            .with_system_prompt("Teach {topic} at {level} level using {language}")
+            .with_starter("Explain {topic} for a {level} student")
+            .with_starter("Give a {language} example of {topic}")
+            .with_variable("topic", "Subject to learn", true)
+            .with_variable("level", "Difficulty level", true)
+            .with_variable("language", "Programming language", false);
+
+        let mut vars = HashMap::new();
+        vars.insert("topic".to_string(), "algorithms".to_string());
+        vars.insert("level".to_string(), "intermediate".to_string());
+        vars.insert("language".to_string(), "Python".to_string());
+
+        let applied = template.apply(&vars);
+
+        // Verify system_prompt substitution
+        assert_eq!(applied.system_prompt, "Teach algorithms at intermediate level using Python");
+        assert!(!applied.system_prompt.contains("{topic}"));
+        assert!(!applied.system_prompt.contains("{level}"));
+        assert!(!applied.system_prompt.contains("{language}"));
+
+        // Verify starter messages substitution
+        assert_eq!(applied.starter_messages[0], "Explain algorithms for a intermediate student");
+        assert_eq!(applied.starter_messages[1], "Give a Python example of algorithms");
+    }
+
+    #[test]
+    fn test_template_starters() {
+        let lib = TemplateLibrary::new();
+
+        // Every builtin template should have at least one starter message
+        for template in lib.all() {
+            assert!(
+                !template.starter_messages.is_empty(),
+                "Template '{}' should have at least one starter message",
+                template.id
+            );
+
+            // Each starter message should be non-empty and meaningful (more than 5 chars)
+            for starter in &template.starter_messages {
+                assert!(
+                    starter.len() > 5,
+                    "Starter '{}' in template '{}' should be meaningful",
+                    starter,
+                    template.id
+                );
+            }
+        }
+
+        // Verify a specific known starter for the tutor template (has a variable)
+        let tutor = lib.get("tutor").unwrap();
+        assert!(tutor.starter_messages[0].contains("{topic}"));
     }
 }

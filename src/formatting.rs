@@ -414,7 +414,10 @@ impl ResponseParser {
     fn parse_checkbox(&self, content: &str) -> (Option<bool>, String) {
         if let Some(rest) = content.strip_prefix("[ ] ") {
             (Some(false), rest.to_string())
-        } else if let Some(rest) = content.strip_prefix("[x] ").or(content.strip_prefix("[X] ")) {
+        } else if let Some(rest) = content
+            .strip_prefix("[x] ")
+            .or(content.strip_prefix("[X] "))
+        {
             (Some(true), rest.to_string())
         } else {
             (None, content.to_string())
@@ -669,7 +672,8 @@ pub fn extract_first_code(response: &str) -> Option<CodeBlock> {
 pub fn extract_code_by_language(response: &str, language: &str) -> Vec<CodeBlock> {
     let parser = ResponseParser::new();
     let parsed = parser.parse(response);
-    parsed.code_blocks
+    parsed
+        .code_blocks
         .into_iter()
         .filter(|b| b.language.as_deref() == Some(language))
         .collect()

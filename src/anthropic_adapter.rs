@@ -183,7 +183,8 @@ pub struct AnthropicUsage {
 impl AnthropicResponse {
     /// Get the text content from the response
     pub fn text(&self) -> String {
-        self.content.iter()
+        self.content
+            .iter()
             .filter(|b| b.block_type == "text")
             .filter_map(|b| b.text.as_ref())
             .cloned()
@@ -238,7 +239,10 @@ impl AnthropicClient {
     }
 
     /// Create a message
-    pub fn message(&self, request: AnthropicRequest) -> Result<AnthropicResponse, AnthropicAdapterError> {
+    pub fn message(
+        &self,
+        request: AnthropicRequest,
+    ) -> Result<AnthropicResponse, AnthropicAdapterError> {
         let url = format!("{}/v1/messages", self.config.base_url);
 
         let req = ureq::post(&url)
@@ -254,7 +258,8 @@ impl AnthropicClient {
 
         match response {
             Ok(resp) => {
-                let text = resp.into_string()
+                let text = resp
+                    .into_string()
                     .map_err(|e| AnthropicAdapterError::Network(e.to_string()))?;
 
                 serde_json::from_str(&text)
@@ -281,7 +286,11 @@ impl AnthropicClient {
     }
 
     /// Create a streaming message
-    pub fn message_stream<F>(&self, request: AnthropicRequest, mut on_chunk: F) -> Result<String, AnthropicAdapterError>
+    pub fn message_stream<F>(
+        &self,
+        request: AnthropicRequest,
+        mut on_chunk: F,
+    ) -> Result<String, AnthropicAdapterError>
     where
         F: FnMut(&str),
     {
@@ -299,7 +308,8 @@ impl AnthropicClient {
         let body = serde_json::to_string(&streaming_request)
             .map_err(|e| AnthropicAdapterError::Serialization(e.to_string()))?;
 
-        let response = req.send_string(&body)
+        let response = req
+            .send_string(&body)
             .map_err(|e| AnthropicAdapterError::Network(e.to_string()))?;
 
         let reader = response.into_reader();
@@ -380,7 +390,12 @@ impl std::fmt::Display for AnthropicAdapterError {
 impl std::error::Error for AnthropicAdapterError {}
 
 /// Simple chat helper
-pub fn simple_chat(api_key: &str, model: &str, system: &str, user_message: &str) -> Result<String, AnthropicAdapterError> {
+pub fn simple_chat(
+    api_key: &str,
+    model: &str,
+    system: &str,
+    user_message: &str,
+) -> Result<String, AnthropicAdapterError> {
     let client = AnthropicClient::new(AnthropicConfig::new(api_key));
 
     let request = AnthropicRequest::new(model, vec![AnthropicMessage::user(user_message)])
@@ -418,5 +433,127 @@ mod tests {
         let opus = AnthropicModel::claude3_opus();
         assert!(opus.supports_vision);
         assert!(opus.context_length > 100000);
+    }
+
+    #[test]
+    fn test_model_presets() {
+        let opus = AnthropicModel::claude3_opus();
+        assert_eq!(opus.id, "claude-3-opus-20240229");
+        assert_eq!(opus.name, "Claude 3 Opus");
+        assert_eq!(opus.context_length, 200000);
+        assert!(opus.supports_vision);
+
+        let sonnet = AnthropicModel::claude3_sonnet();
+        assert_eq!(sonnet.id, "claude-3-sonnet-20240229");
+        assert_eq!(sonnet.name, "Claude 3 Sonnet");
+        assert_eq!(sonnet.context_length, 200000);
+        assert!(sonnet.supports_vision);
+
+        let haiku = AnthropicModel::claude3_haiku();
+        assert_eq!(haiku.id, "claude-3-haiku-20240307");
+        assert_eq!(haiku.name, "Claude 3 Haiku");
+        assert_eq!(haiku.context_length, 200000);
+        assert!(haiku.supports_vision);
+
+        let claude2 = AnthropicModel::claude2();
+        assert_eq!(claude2.id, "claude-2.1");
+        assert_eq!(claude2.name, "Claude 2.1");
+        assert_eq!(claude2.context_length, 200000);
+        assert!(!claude2.supports_vision);
+    }
+
+    #[test]
+    fn test_message_types() {
+        let usr = AnthropicMessage::user("Hello");
+        assert_eq!(usr.role, "user");
+        assert_eq!(usr.content, serde_json::Value::String("Hello".to_string()));
+
+        let asst = AnthropicMessage::assistant("Hi there");
+        assert_eq!(asst.role, "assistant");
+        assert_eq!(asst.content, serde_json::Value::String("Hi there".to_string()));
+    }
+
+    #[test]
+    fn test_user_with_image() {
+        let msg = AnthropicMessage::user_with_image(
+            "Describe this image",
+            "aW1hZ2VkYXRh",
+            "image/png",
+        );
+        assert_eq!(msg.role, "user");
+
+        let content = msg.content.as_array().expect("content should be an array");
+        assert_eq!(content.len(), 2);
+
+        // First element is the image block
+        assert_eq!(content[0]["type"], "image");
+        assert_eq!(content[0]["source"]["type"], "base64");
+        assert_eq!(content[0]["source"]["media_type"], "image/png");
+        assert_eq!(content[0]["source"]["data"], "aW1hZ2VkYXRh");
+
+        // Second element is the text block
+        assert_eq!(content[1]["type"], "text");
+        assert_eq!(content[1]["text"], "Describe this image");
+    }
+
+    #[test]
+    fn test_request_options() {
+        let messages = vec![AnthropicMessage::user("Hello")];
+        let req = AnthropicRequest::new("claude-3-opus-20240229", messages)
+            .with_system("You are a helpful assistant")
+            .with_temperature(0.5)
+            .with_max_tokens(2048)
+            .streaming();
+
+        assert_eq!(req.model, "claude-3-opus-20240229");
+        assert_eq!(req.system, Some("You are a helpful assistant".to_string()));
+        assert_eq!(req.temperature, Some(0.5));
+        assert_eq!(req.max_tokens, 2048);
+        assert!(req.stream);
+
+        // Verify defaults for unset optional fields
+        assert!(req.top_p.is_none());
+        assert!(req.top_k.is_none());
+        assert!(req.stop_sequences.is_none());
+    }
+
+    #[test]
+    fn test_config_builder() {
+        let config = AnthropicConfig::new("sk-ant-test-key");
+        assert_eq!(config.api_key, "sk-ant-test-key");
+        assert_eq!(config.base_url, "https://api.anthropic.com");
+        assert_eq!(config.timeout, Duration::from_secs(120));
+        assert_eq!(config.api_version, "2023-06-01");
+    }
+
+    #[test]
+    fn test_request_serialization() {
+        let messages = vec![
+            AnthropicMessage::user("What is Rust?"),
+        ];
+        let req = AnthropicRequest::new("claude-3-haiku-20240307", messages)
+            .with_system("Be concise")
+            .with_max_tokens(512);
+
+        let json_str = serde_json::to_string(&req).expect("should serialize");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json_str).expect("should parse as JSON");
+
+        assert_eq!(parsed["model"], "claude-3-haiku-20240307");
+        assert_eq!(parsed["max_tokens"], 512);
+        assert_eq!(parsed["system"], "Be concise");
+        assert_eq!(parsed["stream"], false);
+
+        // messages array
+        let msgs = parsed["messages"].as_array().expect("messages should be array");
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0]["role"], "user");
+        assert_eq!(msgs[0]["content"], "What is Rust?");
+
+        // Optional fields should be absent (skip_serializing_if)
+        assert!(parsed.get("temperature").is_none());
+        assert!(parsed.get("top_p").is_none());
+        assert!(parsed.get("top_k").is_none());
+        assert!(parsed.get("stop_sequences").is_none());
     }
 }

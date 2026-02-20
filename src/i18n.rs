@@ -3,8 +3,8 @@
 //! This module provides language detection, translation hints, and
 //! localization utilities for AI conversations.
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 // ============================================================================
 // Language Detection
@@ -50,82 +50,144 @@ impl LanguageDetector {
         let mut patterns = HashMap::new();
 
         // English
-        patterns.insert("en".to_string(), LanguagePatterns {
-            common_words: vec!["the", "is", "are", "was", "were", "have", "has", "been", "be", "to",
-                               "of", "and", "in", "that", "it", "with", "for", "on", "this", "can"],
-            unique_chars: vec![],
-            script: "Latin",
-        });
+        patterns.insert(
+            "en".to_string(),
+            LanguagePatterns {
+                common_words: vec![
+                    "the", "is", "are", "was", "were", "have", "has", "been", "be", "to", "of",
+                    "and", "in", "that", "it", "with", "for", "on", "this", "can",
+                ],
+                unique_chars: vec![],
+                script: "Latin",
+            },
+        );
 
         // Spanish
-        patterns.insert("es".to_string(), LanguagePatterns {
-            common_words: vec!["el", "la", "los", "las", "un", "una", "es", "son", "que", "de",
-                               "en", "por", "para", "con", "como", "pero", "si", "se", "su", "yo"],
-            unique_chars: vec!['ñ', 'á', 'é', 'í', 'ó', 'ú', '¿', '¡'],
-            script: "Latin",
-        });
+        patterns.insert(
+            "es".to_string(),
+            LanguagePatterns {
+                common_words: vec![
+                    "el", "la", "los", "las", "un", "una", "es", "son", "que", "de", "en", "por",
+                    "para", "con", "como", "pero", "si", "se", "su", "yo",
+                ],
+                unique_chars: vec!['ñ', 'á', 'é', 'í', 'ó', 'ú', '¿', '¡'],
+                script: "Latin",
+            },
+        );
 
         // French
-        patterns.insert("fr".to_string(), LanguagePatterns {
-            common_words: vec!["le", "la", "les", "un", "une", "est", "sont", "que", "de", "et",
-                               "dans", "pour", "avec", "comme", "mais", "si", "ce", "cette", "je", "vous"],
-            unique_chars: vec!['é', 'è', 'ê', 'à', 'ù', 'ç', 'œ', 'î', 'ô'],
-            script: "Latin",
-        });
+        patterns.insert(
+            "fr".to_string(),
+            LanguagePatterns {
+                common_words: vec![
+                    "le", "la", "les", "un", "une", "est", "sont", "que", "de", "et", "dans",
+                    "pour", "avec", "comme", "mais", "si", "ce", "cette", "je", "vous",
+                ],
+                unique_chars: vec!['é', 'è', 'ê', 'à', 'ù', 'ç', 'œ', 'î', 'ô'],
+                script: "Latin",
+            },
+        );
 
         // German
-        patterns.insert("de".to_string(), LanguagePatterns {
-            common_words: vec!["der", "die", "das", "ist", "sind", "ein", "eine", "und", "in", "zu",
-                               "mit", "für", "auf", "von", "nicht", "es", "ich", "sie", "wir", "haben"],
-            unique_chars: vec!['ä', 'ö', 'ü', 'ß'],
-            script: "Latin",
-        });
+        patterns.insert(
+            "de".to_string(),
+            LanguagePatterns {
+                common_words: vec![
+                    "der", "die", "das", "ist", "sind", "ein", "eine", "und", "in", "zu", "mit",
+                    "für", "auf", "von", "nicht", "es", "ich", "sie", "wir", "haben",
+                ],
+                unique_chars: vec!['ä', 'ö', 'ü', 'ß'],
+                script: "Latin",
+            },
+        );
 
         // Italian
-        patterns.insert("it".to_string(), LanguagePatterns {
-            common_words: vec!["il", "la", "lo", "le", "gli", "un", "una", "è", "sono", "che", "di",
-                               "in", "per", "con", "come", "ma", "se", "ci", "questo", "questa"],
-            unique_chars: vec!['à', 'è', 'é', 'ì', 'ò', 'ù'],
-            script: "Latin",
-        });
+        patterns.insert(
+            "it".to_string(),
+            LanguagePatterns {
+                common_words: vec![
+                    "il", "la", "lo", "le", "gli", "un", "una", "è", "sono", "che", "di", "in",
+                    "per", "con", "come", "ma", "se", "ci", "questo", "questa",
+                ],
+                unique_chars: vec!['à', 'è', 'é', 'ì', 'ò', 'ù'],
+                script: "Latin",
+            },
+        );
 
         // Portuguese
-        patterns.insert("pt".to_string(), LanguagePatterns {
-            common_words: vec!["o", "a", "os", "as", "um", "uma", "é", "são", "que", "de", "em",
-                               "para", "com", "como", "mas", "se", "eu", "você", "não", "isso"],
-            unique_chars: vec!['ã', 'õ', 'ç', 'á', 'é', 'í', 'ó', 'ú', 'â', 'ê', 'ô'],
-            script: "Latin",
-        });
+        patterns.insert(
+            "pt".to_string(),
+            LanguagePatterns {
+                common_words: vec![
+                    "o", "a", "os", "as", "um", "uma", "é", "são", "que", "de", "em", "para",
+                    "com", "como", "mas", "se", "eu", "você", "não", "isso",
+                ],
+                unique_chars: vec!['ã', 'õ', 'ç', 'á', 'é', 'í', 'ó', 'ú', 'â', 'ê', 'ô'],
+                script: "Latin",
+            },
+        );
 
         // Russian
-        patterns.insert("ru".to_string(), LanguagePatterns {
-            common_words: vec!["и", "в", "не", "на", "я", "что", "он", "как", "это", "она", "по", "но"],
-            unique_chars: vec!['а', 'б', 'в', 'г', 'д', 'е', 'ж', 'з', 'и', 'й', 'к', 'л', 'м',
-                               'н', 'о', 'п', 'р', 'с', 'т', 'у', 'ф', 'х', 'ц', 'ч', 'ш', 'щ',
-                               'ъ', 'ы', 'ь', 'э', 'ю', 'я'],
-            script: "Cyrillic",
-        });
+        patterns.insert(
+            "ru".to_string(),
+            LanguagePatterns {
+                common_words: vec![
+                    "и", "в", "не", "на", "я", "что", "он", "как", "это", "она", "по", "но",
+                ],
+                unique_chars: vec![
+                    'а', 'б', 'в', 'г', 'д', 'е', 'ж', 'з', 'и', 'й', 'к', 'л', 'м', 'н', 'о', 'п',
+                    'р', 'с', 'т', 'у', 'ф', 'х', 'ц', 'ч', 'ш', 'щ', 'ъ', 'ы', 'ь', 'э', 'ю', 'я',
+                ],
+                script: "Cyrillic",
+            },
+        );
 
         // Chinese (simplified)
-        patterns.insert("zh".to_string(), LanguagePatterns {
-            common_words: vec!["的", "是", "在", "有", "和", "与", "了", "不", "我", "他", "这", "为"],
-            unique_chars: vec![],
-            script: "Han",
-        });
+        patterns.insert(
+            "zh".to_string(),
+            LanguagePatterns {
+                common_words: vec![
+                    "的", "是", "在", "有", "和", "与", "了", "不", "我", "他", "这", "为",
+                ],
+                unique_chars: vec![],
+                script: "Han",
+            },
+        );
 
         // Japanese
-        patterns.insert("ja".to_string(), LanguagePatterns {
-            common_words: vec!["の", "は", "が", "を", "に", "で", "と", "も", "た", "です", "ます"],
-            unique_chars: vec!['あ', 'い', 'う', 'え', 'お', 'か', 'き', 'く', 'け', 'こ'],
-            script: "Japanese",
-        });
+        patterns.insert(
+            "ja".to_string(),
+            LanguagePatterns {
+                common_words: vec![
+                    "の", "は", "が", "を", "に", "で", "と", "も", "た", "です", "ます",
+                ],
+                unique_chars: vec!['あ', 'い', 'う', 'え', 'お', 'か', 'き', 'く', 'け', 'こ'],
+                script: "Japanese",
+            },
+        );
 
         // Korean
-        patterns.insert("ko".to_string(), LanguagePatterns {
-            common_words: vec!["이", "가", "은", "는", "을", "를", "의", "에", "로", "와", "과", "입니다"],
-            unique_chars: vec!['가', '나', '다', '라', '마', '바', '사', '아', '자', '차'],
-            script: "Hangul",
-        });
+        patterns.insert(
+            "ko".to_string(),
+            LanguagePatterns {
+                common_words: vec![
+                    "이",
+                    "가",
+                    "은",
+                    "는",
+                    "을",
+                    "를",
+                    "의",
+                    "에",
+                    "로",
+                    "와",
+                    "과",
+                    "입니다",
+                ],
+                unique_chars: vec!['가', '나', '다', '라', '마', '바', '사', '아', '자', '차'],
+                script: "Hangul",
+            },
+        );
 
         Self { patterns }
     }
@@ -152,7 +214,8 @@ impl LanguageDetector {
         // Sort by score descending
         scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-        let (best_code, best_score) = scores.first()
+        let (best_code, best_score) = scores
+            .first()
             .cloned()
             .unwrap_or_else(|| ("en".to_string(), 0.5));
 
@@ -171,14 +234,16 @@ impl LanguageDetector {
         let total_words = words.len().max(1);
 
         // Word matching
-        let word_matches: usize = words.iter()
+        let word_matches: usize = words
+            .iter()
             .filter(|w| patterns.common_words.contains(w))
             .count();
 
         let word_score = word_matches as f32 / total_words.min(20) as f32;
 
         // Character matching
-        let char_matches: usize = text.chars()
+        let char_matches: usize = text
+            .chars()
             .filter(|c| patterns.unique_chars.contains(c))
             .count();
 
@@ -236,7 +301,11 @@ impl LanguageDetector {
             "Latin"
         };
 
-        if detected_script == expected_script { 1.0 } else { 0.3 }
+        if detected_script == expected_script {
+            1.0
+        } else {
+            0.3
+        }
     }
 
     fn get_language_info(&self, code: &str) -> (&'static str, &'static str) {
@@ -270,7 +339,8 @@ impl LanguageDetector {
             *entry = (*entry + detected.confidence) / 2.0;
         }
 
-        let mut results: Vec<DetectedLanguage> = seen_languages.iter()
+        let mut results: Vec<DetectedLanguage> = seen_languages
+            .iter()
             .map(|(code, confidence)| {
                 let (name, script) = self.get_language_info(code);
                 DetectedLanguage {
@@ -282,7 +352,11 @@ impl LanguageDetector {
             })
             .collect();
 
-        results.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.confidence
+                .partial_cmp(&a.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results
     }
 }
@@ -447,11 +521,7 @@ impl MultilingualPromptBuilder {
         let detected = self.detector.detect(message);
 
         if self.preferences.match_query_language {
-            let enriched = format!(
-                "[User message in {}]\n{}",
-                detected.name,
-                message
-            );
+            let enriched = format!("[User message in {}]\n{}", detected.name, message);
             (enriched, detected)
         } else {
             (message.to_string(), detected)
@@ -515,8 +585,14 @@ mod tests {
     fn test_localized_strings() {
         let strings = LocalizedStrings::new();
 
-        assert_eq!(strings.get("greeting", "en"), Some("Hello! How can I help you?"));
-        assert_eq!(strings.get("greeting", "es"), Some("¡Hola! ¿Cómo puedo ayudarte?"));
+        assert_eq!(
+            strings.get("greeting", "en"),
+            Some("Hello! How can I help you?")
+        );
+        assert_eq!(
+            strings.get("greeting", "es"),
+            Some("¡Hola! ¿Cómo puedo ayudarte?")
+        );
     }
 
     #[test]

@@ -3,9 +3,9 @@
 //! This module provides a simple agent framework for executing
 //! multi-step tasks with tool calling capabilities.
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use serde::{Deserialize, Serialize};
 
 /// Agent state
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -69,7 +69,11 @@ impl AgentTool {
     }
 
     /// Add a parameter description
-    pub fn with_parameter(mut self, name: impl Into<String>, description: impl Into<String>) -> Self {
+    pub fn with_parameter(
+        mut self,
+        name: impl Into<String>,
+        description: impl Into<String>,
+    ) -> Self {
         self.parameters.insert(name.into(), description.into());
         self
     }
@@ -222,7 +226,8 @@ impl ReactAgent {
     pub fn build_system_prompt(&self) -> String {
         let mut prompt = self.config.system_prompt.clone().unwrap_or_else(|| {
             "You are a helpful AI assistant that can use tools to accomplish tasks. \
-             Think step by step and use the available tools when needed.".to_string()
+             Think step by step and use the available tools when needed."
+                .to_string()
         });
 
         prompt.push_str("\n\nAvailable tools:\n");
@@ -269,7 +274,12 @@ impl ReactAgent {
     }
 
     /// Execute a single step
-    pub fn execute_step(&mut self, thought: String, action: String, action_input: String) -> Result<String, String> {
+    pub fn execute_step(
+        &mut self,
+        thought: String,
+        action: String,
+        action_input: String,
+    ) -> Result<String, String> {
         self.context.current_step += 1;
         let step_num = self.context.current_step;
 
@@ -428,13 +438,14 @@ impl PlanningAgent {
     /// Get next executable step
     pub fn next_step(&self) -> Option<&PlanStep> {
         self.plan.iter().find(|step| {
-            step.status == PlanStepStatus::Pending &&
-            step.dependencies.iter().all(|dep| {
-                self.plan.iter()
-                    .find(|s| s.step == *dep)
-                    .map(|s| s.status == PlanStepStatus::Completed)
-                    .unwrap_or(false)
-            })
+            step.status == PlanStepStatus::Pending
+                && step.dependencies.iter().all(|dep| {
+                    self.plan
+                        .iter()
+                        .find(|s| s.step == *dep)
+                        .map(|s| s.status == PlanStepStatus::Completed)
+                        .unwrap_or(false)
+                })
         })
     }
 
@@ -461,7 +472,10 @@ impl PlanningAgent {
     /// Check if plan is complete
     pub fn is_complete(&self) -> bool {
         self.plan.iter().all(|step| {
-            matches!(step.status, PlanStepStatus::Completed | PlanStepStatus::Skipped)
+            matches!(
+                step.status,
+                PlanStepStatus::Completed | PlanStepStatus::Skipped
+            )
         })
     }
 
@@ -505,9 +519,7 @@ pub struct AgentExecutor {
 impl AgentExecutor {
     /// Create a new executor
     pub fn new() -> Self {
-        Self {
-            max_concurrent: 1,
-        }
+        Self { max_concurrent: 1 }
     }
 
     /// Set max concurrent agents
@@ -556,7 +568,10 @@ impl AgentCallback for LoggingCallback {
 
     fn on_tool_execution(&self, agent_id: &str, tool: &str, input: &str) {
         if self.verbose {
-            println!("[{}] Executing tool '{}' with input: {}", agent_id, tool, input);
+            println!(
+                "[{}] Executing tool '{}' with input: {}",
+                agent_id, tool, input
+            );
         }
     }
 
@@ -579,13 +594,16 @@ impl AgentCallback for LoggingCallback {
 pub fn create_builtin_agent_tools() -> Vec<AgentTool> {
     vec![
         // Calculator tool
-        AgentTool::new("calculator", "Perform basic arithmetic calculations", |input| {
-            // Simple expression evaluator
-            let result = evaluate_simple_math(input)?;
-            Ok(format!("{}", result))
-        })
+        AgentTool::new(
+            "calculator",
+            "Perform basic arithmetic calculations",
+            |input| {
+                // Simple expression evaluator
+                let result = evaluate_simple_math(input)?;
+                Ok(format!("{}", result))
+            },
+        )
         .with_parameter("expression", "Mathematical expression like '2 + 3 * 4'"),
-
         // String manipulation tool
         AgentTool::new("string_tool", "Manipulate strings", |input| {
             let parts: Vec<&str> = input.splitn(2, ':').collect();
@@ -602,7 +620,10 @@ pub fn create_builtin_agent_tools() -> Vec<AgentTool> {
                 _ => Err(format!("Unknown operation: {}", op)),
             }
         })
-        .with_parameter("input", "Format: operation:text (operations: upper, lower, reverse, length, trim)"),
+        .with_parameter(
+            "input",
+            "Format: operation:text (operations: upper, lower, reverse, length, trim)",
+        ),
     ]
 }
 
@@ -616,7 +637,9 @@ fn evaluate_simple_math(expr: &str) -> Result<f64, String> {
             Some(pos) => pos,
             None => return Err("Mismatched parentheses".to_string()),
         };
-        let end = expr[start..].find(')').map(|i| start + i)
+        let end = expr[start..]
+            .find(')')
+            .map(|i| start + i)
             .ok_or("Mismatched parentheses")?;
         let inner = &expr[start + 1..end];
         let inner_result = evaluate_simple_math(inner)?;
@@ -662,7 +685,8 @@ fn evaluate_simple_math(expr: &str) -> Result<f64, String> {
             _ => Err(format!("Unknown operator: {}", op_char)),
         }
     } else {
-        expr.parse::<f64>().map_err(|_| format!("Cannot parse: {}", expr))
+        expr.parse::<f64>()
+            .map_err(|_| format!("Cannot parse: {}", expr))
     }
 }
 
@@ -691,7 +715,8 @@ mod tests {
     fn test_react_agent_parse_response() {
         let agent = ReactAgent::new(AgentConfig::default());
 
-        let response = "Thought: I need to calculate something\nAction: calculator\nAction Input: 2 + 2";
+        let response =
+            "Thought: I need to calculate something\nAction: calculator\nAction Input: 2 + 2";
         let parsed = agent.parse_response(response);
 
         assert!(parsed.is_some());
@@ -704,7 +729,9 @@ mod tests {
     #[test]
     fn test_react_agent_execute_step() {
         let mut agent = ReactAgent::new(AgentConfig::default());
-        agent.add_tool(AgentTool::new("echo", "Echoes input", |input| Ok(input.to_string())));
+        agent.add_tool(AgentTool::new("echo", "Echoes input", |input| {
+            Ok(input.to_string())
+        }));
 
         let result = agent.execute_step(
             "Testing".to_string(),
@@ -904,7 +931,9 @@ mod tests {
             stop_on_error: true,
             ..Default::default()
         });
-        agent.add_tool(AgentTool::new("failing", "Fails", |_| Err("Error!".to_string())));
+        agent.add_tool(AgentTool::new("failing", "Fails", |_| {
+            Err("Error!".to_string())
+        }));
 
         let result = agent.execute_step(
             "Thinking".to_string(),
@@ -922,7 +951,9 @@ mod tests {
             stop_on_error: false,
             ..Default::default()
         });
-        agent.add_tool(AgentTool::new("failing", "Fails", |_| Err("Error!".to_string())));
+        agent.add_tool(AgentTool::new("failing", "Fails", |_| {
+            Err("Error!".to_string())
+        }));
 
         let result = agent.execute_step(
             "Thinking".to_string(),
@@ -974,8 +1005,12 @@ mod tests {
     fn test_build_system_prompt() {
         let mut agent = ReactAgent::new(AgentConfig::default());
         agent.add_tool(
-            AgentTool::new("calculator", "Perform calculations", |_| Ok("0".to_string()))
-                .with_parameter("expression", "Math expression"),
+            AgentTool::new(
+                "calculator",
+                "Perform calculations",
+                |_| Ok("0".to_string()),
+            )
+            .with_parameter("expression", "Math expression"),
         );
 
         let prompt = agent.build_system_prompt();
@@ -1038,8 +1073,16 @@ mod tests {
         agent.add_tool(AgentTool::new("tool", "Test", |_| Ok("result".to_string())));
 
         // Execute some steps
-        let _ = agent.execute_step("First thought".to_string(), "tool".to_string(), "input1".to_string());
-        let _ = agent.execute_step("Second thought".to_string(), "tool".to_string(), "input2".to_string());
+        let _ = agent.execute_step(
+            "First thought".to_string(),
+            "tool".to_string(),
+            "input1".to_string(),
+        );
+        let _ = agent.execute_step(
+            "Second thought".to_string(),
+            "tool".to_string(),
+            "input2".to_string(),
+        );
 
         let prompt = agent.build_prompt_with_history("Test task");
 
@@ -1052,13 +1095,17 @@ mod tests {
 
     #[test]
     fn test_finish_action_variants() {
-        for action in &["final_answer", "Final_Answer", "FINAL_ANSWER", "finish", "Finish", "FINISH"] {
+        for action in &[
+            "final_answer",
+            "Final_Answer",
+            "FINAL_ANSWER",
+            "finish",
+            "Finish",
+            "FINISH",
+        ] {
             let mut agent = ReactAgent::new(AgentConfig::default());
-            let result = agent.execute_step(
-                "Done".to_string(),
-                action.to_string(),
-                "Answer".to_string(),
-            );
+            let result =
+                agent.execute_step("Done".to_string(), action.to_string(), "Answer".to_string());
 
             assert!(result.is_ok());
             assert_eq!(*agent.state(), AgentState::Completed);
@@ -1070,7 +1117,11 @@ mod tests {
         let mut agent = ReactAgent::new(AgentConfig::default());
         agent.add_tool(AgentTool::new("tool", "Test", |_| Ok("ok".to_string())));
 
-        let _ = agent.execute_step("Thought".to_string(), "tool".to_string(), "input".to_string());
+        let _ = agent.execute_step(
+            "Thought".to_string(),
+            "tool".to_string(),
+            "input".to_string(),
+        );
 
         let step = &agent.steps()[0];
         assert!(step.timestamp > 0);
@@ -1327,16 +1378,14 @@ mod tests {
             success: true,
             answer: Some("The answer is 42".to_string()),
             error: None,
-            steps: vec![
-                AgentStep {
-                    step_number: 1,
-                    thought: "I need to calculate".to_string(),
-                    action: "calculator".to_string(),
-                    action_input: "6 * 7".to_string(),
-                    observation: Some("42".to_string()),
-                    timestamp: 1234567890,
-                },
-            ],
+            steps: vec![AgentStep {
+                step_number: 1,
+                thought: "I need to calculate".to_string(),
+                action: "calculator".to_string(),
+                action_input: "6 * 7".to_string(),
+                observation: Some("42".to_string()),
+                timestamp: 1234567890,
+            }],
             execution_time_ms: 150,
             total_tokens: Some(100),
         };
@@ -1365,7 +1414,9 @@ mod tests {
     #[test]
     fn test_observations_accumulate() {
         let mut agent = ReactAgent::new(AgentConfig::default());
-        agent.add_tool(AgentTool::new("tool", "Test", |input| Ok(format!("Result: {}", input))));
+        agent.add_tool(AgentTool::new("tool", "Test", |input| {
+            Ok(format!("Result: {}", input))
+        }));
 
         let _ = agent.execute_step("Step 1".to_string(), "tool".to_string(), "a".to_string());
         let _ = agent.execute_step("Step 2".to_string(), "tool".to_string(), "b".to_string());
@@ -1397,7 +1448,11 @@ mod tests {
         assert_eq!(*agent.state(), AgentState::Thinking);
 
         // After final answer
-        let _ = agent.execute_step("Done".to_string(), "final_answer".to_string(), "answer".to_string());
+        let _ = agent.execute_step(
+            "Done".to_string(),
+            "final_answer".to_string(),
+            "answer".to_string(),
+        );
         assert_eq!(*agent.state(), AgentState::Completed);
     }
 

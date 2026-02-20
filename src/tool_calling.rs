@@ -2,12 +2,13 @@
 //!
 //! Enables LLM models to use tools like web search, calculations, etc.
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use serde::{Deserialize, Serialize};
 
 /// Tool handler function type
-pub type ToolHandlerFn = dyn Fn(&HashMap<String, serde_json::Value>) -> Result<String, String> + Send + Sync;
+pub type ToolHandlerFn =
+    dyn Fn(&HashMap<String, serde_json::Value>) -> Result<String, String> + Send + Sync;
 
 /// Tool definition that can be used by an LLM
 #[derive(Clone)]
@@ -85,7 +86,10 @@ impl Tool {
 
     pub fn with_handler<F>(mut self, handler: F) -> Self
     where
-        F: Fn(&HashMap<String, serde_json::Value>) -> Result<String, String> + Send + Sync + 'static,
+        F: Fn(&HashMap<String, serde_json::Value>) -> Result<String, String>
+            + Send
+            + Sync
+            + 'static,
     {
         self.handler = Some(Arc::new(handler));
         self
@@ -107,8 +111,14 @@ impl Tool {
             };
 
             let mut prop = serde_json::Map::new();
-            prop.insert("type".to_string(), serde_json::Value::String(type_str.to_string()));
-            prop.insert("description".to_string(), serde_json::Value::String(param.description.clone()));
+            prop.insert(
+                "type".to_string(),
+                serde_json::Value::String(type_str.to_string()),
+            );
+            prop.insert(
+                "description".to_string(),
+                serde_json::Value::String(param.description.clone()),
+            );
 
             properties.insert(param.name.clone(), serde_json::Value::Object(prop));
 
@@ -242,19 +252,26 @@ impl ToolRegistry {
             if let Some(tool_calls) = parsed.get("tool_calls").and_then(|v| v.as_array()) {
                 for tc in tool_calls {
                     if let (Some(name), Some(args)) = (
-                        tc.get("function").and_then(|f| f.get("name")).and_then(|n| n.as_str()),
+                        tc.get("function")
+                            .and_then(|f| f.get("name"))
+                            .and_then(|n| n.as_str()),
                         tc.get("function").and_then(|f| f.get("arguments")),
                     ) {
-                        let arguments: HashMap<String, serde_json::Value> = if let Some(s) = args.as_str() {
-                            serde_json::from_str(s).unwrap_or_default()
-                        } else if let Some(obj) = args.as_object() {
-                            obj.clone().into_iter().collect()
-                        } else {
-                            HashMap::new()
-                        };
+                        let arguments: HashMap<String, serde_json::Value> =
+                            if let Some(s) = args.as_str() {
+                                serde_json::from_str(s).unwrap_or_default()
+                            } else if let Some(obj) = args.as_object() {
+                                obj.clone().into_iter().collect()
+                            } else {
+                                HashMap::new()
+                            };
 
                         calls.push(ToolCall {
-                            id: tc.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string(),
+                            id: tc
+                                .get("id")
+                                .and_then(|i| i.as_str())
+                                .unwrap_or("")
+                                .to_string(),
                             tool_name: name.to_string(),
                             arguments,
                         });
@@ -276,7 +293,10 @@ impl ToolRegistry {
                     for arg_cap in arg_re.captures_iter(args_str) {
                         let key = arg_cap.get(1).map(|m| m.as_str()).unwrap_or("");
                         let value = arg_cap.get(2).map(|m| m.as_str()).unwrap_or("");
-                        arguments.insert(key.to_string(), serde_json::Value::String(value.to_string()));
+                        arguments.insert(
+                            key.to_string(),
+                            serde_json::Value::String(value.to_string()),
+                        );
                     }
                 }
 
@@ -301,13 +321,19 @@ impl ToolRegistry {
                     for param_cap in param_re.captures_iter(content) {
                         let key = param_cap.get(1).map(|m| m.as_str()).unwrap_or("");
                         let value = param_cap.get(2).map(|m| m.as_str()).unwrap_or("");
-                        arguments.insert(key.to_string(), serde_json::Value::String(value.to_string()));
+                        arguments.insert(
+                            key.to_string(),
+                            serde_json::Value::String(value.to_string()),
+                        );
                     }
                 }
 
                 // If no params found, use content as default "query" param
                 if arguments.is_empty() && !content.trim().is_empty() {
-                    arguments.insert("query".to_string(), serde_json::Value::String(content.trim().to_string()));
+                    arguments.insert(
+                        "query".to_string(),
+                        serde_json::Value::String(content.trim().to_string()),
+                    );
                 }
 
                 calls.push(ToolCall {
@@ -327,9 +353,13 @@ impl ToolRegistry {
 
         for result in results {
             if result.success {
-                output.push_str(&format!("[Tool: {}]\n{}\n\n", result.tool_name, result.output));
+                output.push_str(&format!(
+                    "[Tool: {}]\n{}\n\n",
+                    result.tool_name, result.output
+                ));
             } else {
-                output.push_str(&format!("[Tool: {} - Error]\n{}\n\n",
+                output.push_str(&format!(
+                    "[Tool: {} - Error]\n{}\n\n",
                     result.tool_name,
                     result.error.as_deref().unwrap_or("Unknown error")
                 ));
@@ -363,7 +393,8 @@ impl CommonTools {
                     "num_results",
                     "Number of results to return",
                     ParameterType::Integer,
-                ).with_default("5")
+                )
+                .with_default("5"),
             )
     }
 
@@ -376,7 +407,8 @@ impl CommonTools {
                 ParameterType::String,
             ))
             .with_handler(|args| {
-                let expr = args.get("expression")
+                let expr = args
+                    .get("expression")
                     .and_then(|v| v.as_str())
                     .ok_or("Missing expression")?;
 
@@ -393,10 +425,12 @@ impl CommonTools {
                     "format",
                     "Date format (iso, human, timestamp)",
                     ParameterType::String,
-                ).with_default("human")
+                )
+                .with_default("human"),
             )
             .with_handler(|args| {
-                let format = args.get("format")
+                let format = args
+                    .get("format")
                     .and_then(|v| v.as_str())
                     .unwrap_or("human");
 
@@ -419,7 +453,8 @@ impl CommonTools {
                 ParameterType::String,
             ))
             .with_handler(|args| {
-                let text = args.get("text")
+                let text = args
+                    .get("text")
                     .and_then(|v| v.as_str())
                     .ok_or("Missing text")?;
 
@@ -427,7 +462,10 @@ impl CommonTools {
                 let words = text.split_whitespace().count();
                 let lines = text.lines().count();
 
-                Ok(format!("Characters: {}, Words: {}, Lines: {}", chars, words, lines))
+                Ok(format!(
+                    "Characters: {}, Words: {}, Lines: {}",
+                    chars, words, lines
+                ))
             })
     }
 }
@@ -440,31 +478,47 @@ fn evaluate_expression(expr: &str) -> Result<String, String> {
     // Simple parser for basic operations
     if let Some(pos) = expr.rfind('+') {
         let (left, right) = expr.split_at(pos);
-        let left_val: f64 = evaluate_expression(left)?.parse().map_err(|_| "Invalid number")?;
-        let right_val: f64 = evaluate_expression(&right[1..])?.parse().map_err(|_| "Invalid number")?;
+        let left_val: f64 = evaluate_expression(left)?
+            .parse()
+            .map_err(|_| "Invalid number")?;
+        let right_val: f64 = evaluate_expression(&right[1..])?
+            .parse()
+            .map_err(|_| "Invalid number")?;
         return Ok((left_val + right_val).to_string());
     }
 
     if let Some(pos) = expr.rfind('-') {
         if pos > 0 {
             let (left, right) = expr.split_at(pos);
-            let left_val: f64 = evaluate_expression(left)?.parse().map_err(|_| "Invalid number")?;
-            let right_val: f64 = evaluate_expression(&right[1..])?.parse().map_err(|_| "Invalid number")?;
+            let left_val: f64 = evaluate_expression(left)?
+                .parse()
+                .map_err(|_| "Invalid number")?;
+            let right_val: f64 = evaluate_expression(&right[1..])?
+                .parse()
+                .map_err(|_| "Invalid number")?;
             return Ok((left_val - right_val).to_string());
         }
     }
 
     if let Some(pos) = expr.rfind('*') {
         let (left, right) = expr.split_at(pos);
-        let left_val: f64 = evaluate_expression(left)?.parse().map_err(|_| "Invalid number")?;
-        let right_val: f64 = evaluate_expression(&right[1..])?.parse().map_err(|_| "Invalid number")?;
+        let left_val: f64 = evaluate_expression(left)?
+            .parse()
+            .map_err(|_| "Invalid number")?;
+        let right_val: f64 = evaluate_expression(&right[1..])?
+            .parse()
+            .map_err(|_| "Invalid number")?;
         return Ok((left_val * right_val).to_string());
     }
 
     if let Some(pos) = expr.rfind('/') {
         let (left, right) = expr.split_at(pos);
-        let left_val: f64 = evaluate_expression(left)?.parse().map_err(|_| "Invalid number")?;
-        let right_val: f64 = evaluate_expression(&right[1..])?.parse().map_err(|_| "Invalid number")?;
+        let left_val: f64 = evaluate_expression(left)?
+            .parse()
+            .map_err(|_| "Invalid number")?;
+        let right_val: f64 = evaluate_expression(&right[1..])?
+            .parse()
+            .map_err(|_| "Invalid number")?;
         if right_val == 0.0 {
             return Err("Division by zero".to_string());
         }
@@ -506,8 +560,12 @@ mod tests {
         let call = ToolCall {
             id: "1".to_string(),
             tool_name: "calculator".to_string(),
-            arguments: [("expression".to_string(), serde_json::Value::String("2+3*4".to_string()))]
-                .into_iter().collect(),
+            arguments: [(
+                "expression".to_string(),
+                serde_json::Value::String("2+3*4".to_string()),
+            )]
+            .into_iter()
+            .collect(),
         };
 
         let result = registry.execute(&call);

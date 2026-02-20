@@ -3,10 +3,10 @@
 //! This module provides tools to measure and track performance of various
 //! components including response generation, RAG search, and embedding operations.
 
-use std::time::{Duration, Instant};
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 // ============================================================================
 // Benchmark Configuration
@@ -73,9 +73,7 @@ impl BenchmarkStats {
             return Self::default();
         }
 
-        let mut times_ms: Vec<f64> = durations.iter()
-            .map(|d| d.as_secs_f64() * 1000.0)
-            .collect();
+        let mut times_ms: Vec<f64> = durations.iter().map(|d| d.as_secs_f64() * 1000.0).collect();
 
         times_ms.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
@@ -83,9 +81,7 @@ impl BenchmarkStats {
         let sum: f64 = times_ms.iter().sum();
         let mean = sum / n as f64;
 
-        let variance: f64 = times_ms.iter()
-            .map(|t| (t - mean).powi(2))
-            .sum::<f64>() / n as f64;
+        let variance: f64 = times_ms.iter().map(|t| (t - mean).powi(2)).sum::<f64>() / n as f64;
 
         let std_dev = variance.sqrt();
 
@@ -283,7 +279,9 @@ impl BenchmarkRunner {
                     durations.push(elapsed);
 
                     if self.config.record_individual {
-                        result.individual_times_ms.push(elapsed.as_secs_f64() * 1000.0);
+                        result
+                            .individual_times_ms
+                            .push(elapsed.as_secs_f64() * 1000.0);
                     }
                 }
                 Err(e) => {
@@ -295,13 +293,20 @@ impl BenchmarkRunner {
 
         // Calculate stats
         result.stats = BenchmarkStats::from_durations(&durations);
-        result.stats.success_rate = (self.config.iterations - result.errors) as f64 / self.config.iterations as f64;
+        result.stats.success_rate =
+            (self.config.iterations - result.errors) as f64 / self.config.iterations as f64;
 
         result
     }
 
     /// Run a benchmark with setup
-    pub fn run_with_setup<S, F, T>(&self, name: &str, description: &str, setup: S, mut f: F) -> BenchmarkResult
+    pub fn run_with_setup<S, F, T>(
+        &self,
+        name: &str,
+        description: &str,
+        setup: S,
+        mut f: F,
+    ) -> BenchmarkResult
     where
         S: Fn() -> T,
         F: FnMut(T) -> Result<(), String>,
@@ -326,7 +331,9 @@ impl BenchmarkRunner {
                     durations.push(elapsed);
 
                     if self.config.record_individual {
-                        result.individual_times_ms.push(elapsed.as_secs_f64() * 1000.0);
+                        result
+                            .individual_times_ms
+                            .push(elapsed.as_secs_f64() * 1000.0);
                     }
                 }
                 Err(e) => {
@@ -337,7 +344,8 @@ impl BenchmarkRunner {
         }
 
         result.stats = BenchmarkStats::from_durations(&durations);
-        result.stats.success_rate = (self.config.iterations - result.errors) as f64 / self.config.iterations as f64;
+        result.stats.success_rate =
+            (self.config.iterations - result.errors) as f64 / self.config.iterations as f64;
 
         result
     }
@@ -349,20 +357,17 @@ impl BenchmarkRunner {
 
 /// Built-in benchmark for token estimation
 pub fn benchmark_token_estimation(runner: &BenchmarkRunner) -> BenchmarkResult {
-    runner.run(
-        "token_estimation",
-        "Estimate tokens for text",
-        || {
-            let text = "This is a sample text for benchmarking token estimation. ".repeat(100);
-            let _tokens = crate::context::estimate_tokens(&text);
-            Ok(())
-        },
-    )
+    runner.run("token_estimation", "Estimate tokens for text", || {
+        let text = "This is a sample text for benchmarking token estimation. ".repeat(100);
+        let _tokens = crate::context::estimate_tokens(&text);
+        Ok(())
+    })
 }
 
 /// Built-in benchmark for entity extraction
 pub fn benchmark_entity_extraction(runner: &BenchmarkRunner) -> BenchmarkResult {
-    let extractor = crate::entities::EntityExtractor::new(crate::entities::EntityExtractorConfig::default());
+    let extractor =
+        crate::entities::EntityExtractor::new(crate::entities::EntityExtractorConfig::default());
 
     runner.run(
         "entity_extraction",
@@ -395,45 +400,37 @@ pub fn benchmark_quality_analysis(runner: &BenchmarkRunner) -> BenchmarkResult {
 pub fn benchmark_language_detection(runner: &BenchmarkRunner) -> BenchmarkResult {
     let detector = crate::i18n::LanguageDetector::new();
 
-    runner.run(
-        "language_detection",
-        "Detect language of text",
-        || {
-            let texts = [
-                "The quick brown fox jumps over the lazy dog.",
-                "El rápido zorro marrón salta sobre el perro perezoso.",
-                "Der schnelle braune Fuchs springt über den faulen Hund.",
-                "Le rapide renard brun saute par-dessus le chien paresseux.",
-            ];
+    runner.run("language_detection", "Detect language of text", || {
+        let texts = [
+            "The quick brown fox jumps over the lazy dog.",
+            "El rápido zorro marrón salta sobre el perro perezoso.",
+            "Der schnelle braune Fuchs springt über den faulen Hund.",
+            "Le rapide renard brun saute par-dessus le chien paresseux.",
+        ];
 
-            for text in texts {
-                let _detected = detector.detect(text);
-            }
-            Ok(())
-        },
-    )
+        for text in texts {
+            let _detected = detector.detect(text);
+        }
+        Ok(())
+    })
 }
 
 /// Built-in benchmark for sentiment analysis
 pub fn benchmark_sentiment_analysis(runner: &BenchmarkRunner) -> BenchmarkResult {
     let analyzer = crate::analysis::SentimentAnalyzer::new();
 
-    runner.run(
-        "sentiment_analysis",
-        "Analyze sentiment of text",
-        || {
-            let texts = [
-                "I love this product! It's amazing and works perfectly.",
-                "This is terrible. I'm very disappointed with the quality.",
-                "The item arrived on time. It works as expected.",
-            ];
+    runner.run("sentiment_analysis", "Analyze sentiment of text", || {
+        let texts = [
+            "I love this product! It's amazing and works perfectly.",
+            "This is terrible. I'm very disappointed with the quality.",
+            "The item arrived on time. It works as expected.",
+        ];
 
-            for text in texts {
-                let _sentiment = analyzer.analyze_message(text);
-            }
-            Ok(())
-        },
-    )
+        for text in texts {
+            let _sentiment = analyzer.analyze_message(text);
+        }
+        Ok(())
+    })
 }
 
 /// Built-in benchmark for topic detection
@@ -447,14 +444,10 @@ pub fn benchmark_topic_detection(runner: &BenchmarkRunner) -> BenchmarkResult {
         crate::ChatMessage::user("The database queries are also slow and need optimization. Can you review the Python code in the API module?".to_string()),
     ];
 
-    runner.run(
-        "topic_detection",
-        "Detect topics in messages",
-        || {
-            let _topics = detector.detect_topics(&messages);
-            Ok(())
-        },
-    )
+    runner.run("topic_detection", "Detect topics in messages", || {
+        let _topics = detector.detect_topics(&messages);
+        Ok(())
+    })
 }
 
 /// Run all built-in benchmarks
@@ -514,13 +507,20 @@ pub fn compare_results(baseline: &BenchmarkResult, new: &BenchmarkResult) -> Ben
         0.0
     };
 
-    let direction = if mean_speedup > 0.0 { "faster" } else { "slower" };
+    let direction = if mean_speedup > 0.0 {
+        "faster"
+    } else {
+        "slower"
+    };
 
     let summary = format!(
         "{} vs {}: {:.1}% {} (mean: {:.2}ms -> {:.2}ms)",
-        new.name, baseline.name,
-        mean_speedup.abs(), direction,
-        baseline.stats.mean_ms, new.stats.mean_ms
+        new.name,
+        baseline.name,
+        mean_speedup.abs(),
+        direction,
+        baseline.stats.mean_ms,
+        new.stats.mean_ms
     );
 
     BenchmarkComparison {

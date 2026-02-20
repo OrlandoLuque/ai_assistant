@@ -251,7 +251,10 @@ impl RequestQueue {
             if state.closed {
                 return None;
             }
-            state = self.not_empty.wait(state).unwrap_or_else(|e| e.into_inner());
+            state = self
+                .not_empty
+                .wait(state)
+                .unwrap_or_else(|e| e.into_inner());
         }
     }
 
@@ -274,7 +277,10 @@ impl RequestQueue {
                 return None;
             }
 
-            let (new_state, timeout_result) = self.not_empty.wait_timeout(state, remaining).unwrap_or_else(|e| e.into_inner());
+            let (new_state, timeout_result) = self
+                .not_empty
+                .wait_timeout(state, remaining)
+                .unwrap_or_else(|e| e.into_inner());
             state = new_state;
 
             if timeout_result.timed_out() {
@@ -298,12 +304,19 @@ impl RequestQueue {
 
     /// Returns whether the queue is empty.
     pub fn is_empty(&self) -> bool {
-        self.state.lock().unwrap_or_else(|e| e.into_inner()).total_pending() == 0
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .total_pending()
+            == 0
     }
 
     /// Returns the number of pending requests.
     pub fn len(&self) -> usize {
-        self.state.lock().unwrap_or_else(|e| e.into_inner()).total_pending()
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .total_pending()
     }
 
     /// Returns queue statistics.
@@ -324,9 +337,15 @@ impl RequestQueue {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         let before = state.total_pending();
 
-        state.high.retain(|r| r.session_id.as_deref() != Some(session_id));
-        state.normal.retain(|r| r.session_id.as_deref() != Some(session_id));
-        state.low.retain(|r| r.session_id.as_deref() != Some(session_id));
+        state
+            .high
+            .retain(|r| r.session_id.as_deref() != Some(session_id));
+        state
+            .normal
+            .retain(|r| r.session_id.as_deref() != Some(session_id));
+        state
+            .low
+            .retain(|r| r.session_id.as_deref() != Some(session_id));
 
         before - state.total_pending()
     }
@@ -505,9 +524,7 @@ mod tests {
         let queue = RequestQueue::new(100);
         let q = queue.clone();
 
-        let handle = std::thread::spawn(move || {
-            q.dequeue_blocking()
-        });
+        let handle = std::thread::spawn(move || q.dequeue_blocking());
 
         // Give thread time to start blocking
         std::thread::sleep(std::time::Duration::from_millis(20));

@@ -21,12 +21,12 @@
 //! let value = cache.get("key1");
 //! ```
 
-use std::collections::HashMap;
-use std::io::{Read, Write};
-use flate2::read::{GzDecoder, DeflateDecoder};
-use flate2::write::{GzEncoder, DeflateEncoder};
+use flate2::read::{DeflateDecoder, GzDecoder};
+use flate2::write::{DeflateEncoder, GzEncoder};
 use flate2::Compression;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::io::{Read, Write};
 
 /// Compression algorithms available
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,7 +116,11 @@ impl CompressedData {
 }
 
 /// Compress data using the specified algorithm
-pub fn compress(data: &[u8], algorithm: CompressionAlgorithm, level: CompressionLevel) -> CompressedData {
+pub fn compress(
+    data: &[u8],
+    algorithm: CompressionAlgorithm,
+    level: CompressionLevel,
+) -> CompressedData {
     let algorithm = if algorithm == CompressionAlgorithm::Auto {
         select_algorithm(data)
     } else {
@@ -143,7 +147,9 @@ pub fn compress(data: &[u8], algorithm: CompressionAlgorithm, level: Compression
 pub fn decompress(compressed: &CompressedData) -> Result<Vec<u8>, CompressionError> {
     match compressed.algorithm {
         CompressionAlgorithm::None => Ok(compressed.data.clone()),
-        CompressionAlgorithm::Gzip | CompressionAlgorithm::Best => decompress_gzip(&compressed.data),
+        CompressionAlgorithm::Gzip | CompressionAlgorithm::Best => {
+            decompress_gzip(&compressed.data)
+        }
         CompressionAlgorithm::Deflate => decompress_deflate(&compressed.data),
         CompressionAlgorithm::Fast => decompress_fast(&compressed.data),
         CompressionAlgorithm::Auto => {
@@ -157,28 +163,34 @@ pub fn decompress(compressed: &CompressedData) -> Result<Vec<u8>, CompressionErr
 
 fn compress_gzip(data: &[u8], level: CompressionLevel) -> Vec<u8> {
     let mut encoder = GzEncoder::new(Vec::new(), level.to_flate2());
-    encoder.write_all(data).expect("compression should not fail");
+    encoder
+        .write_all(data)
+        .expect("compression should not fail");
     encoder.finish().expect("compression should not fail")
 }
 
 fn decompress_gzip(data: &[u8]) -> Result<Vec<u8>, CompressionError> {
     let mut decoder = GzDecoder::new(data);
     let mut result = Vec::new();
-    decoder.read_to_end(&mut result)
+    decoder
+        .read_to_end(&mut result)
         .map_err(|e| CompressionError::DecompressionFailed(e.to_string()))?;
     Ok(result)
 }
 
 fn compress_deflate(data: &[u8], level: CompressionLevel) -> Vec<u8> {
     let mut encoder = DeflateEncoder::new(Vec::new(), level.to_flate2());
-    encoder.write_all(data).expect("compression should not fail");
+    encoder
+        .write_all(data)
+        .expect("compression should not fail");
     encoder.finish().expect("compression should not fail")
 }
 
 fn decompress_deflate(data: &[u8]) -> Result<Vec<u8>, CompressionError> {
     let mut decoder = DeflateDecoder::new(data);
     let mut result = Vec::new();
-    decoder.read_to_end(&mut result)
+    decoder
+        .read_to_end(&mut result)
         .map_err(|e| CompressionError::DecompressionFailed(e.to_string()))?;
     Ok(result)
 }
@@ -236,7 +248,9 @@ impl std::fmt::Display for CompressionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CompressionError::CompressionFailed(msg) => write!(f, "Compression failed: {}", msg),
-            CompressionError::DecompressionFailed(msg) => write!(f, "Decompression failed: {}", msg),
+            CompressionError::DecompressionFailed(msg) => {
+                write!(f, "Decompression failed: {}", msg)
+            }
             CompressionError::InvalidData(msg) => write!(f, "Invalid data: {}", msg),
         }
     }
@@ -300,8 +314,14 @@ impl<V: Serialize + for<'de> Deserialize<'de>> CompressedCache<V> {
     pub fn remove(&mut self, key: &str) -> Option<V> {
         let compressed = self.data.remove(key)?;
 
-        self.stats.original_bytes = self.stats.original_bytes.saturating_sub(compressed.original_size);
-        self.stats.compressed_bytes = self.stats.compressed_bytes.saturating_sub(compressed.data.len());
+        self.stats.original_bytes = self
+            .stats
+            .original_bytes
+            .saturating_sub(compressed.original_size);
+        self.stats.compressed_bytes = self
+            .stats
+            .compressed_bytes
+            .saturating_sub(compressed.data.len());
         self.stats.items = self.stats.items.saturating_sub(1);
 
         let decompressed = decompress(&compressed).ok()?;
@@ -398,8 +418,7 @@ pub fn compress_string(s: &str, algorithm: CompressionAlgorithm) -> CompressedDa
 /// Decompress to string
 pub fn decompress_string(compressed: &CompressedData) -> Result<String, CompressionError> {
     let bytes = decompress(compressed)?;
-    String::from_utf8(bytes)
-        .map_err(|e| CompressionError::InvalidData(e.to_string()))
+    String::from_utf8(bytes).map_err(|e| CompressionError::InvalidData(e.to_string()))
 }
 
 /// Streaming compressor for large data
@@ -447,8 +466,13 @@ mod tests {
 
     #[test]
     fn test_compress_decompress() {
-        let original = "Hello, World! This is a test string that should compress well. ".repeat(100);
-        let compressed = compress(original.as_bytes(), CompressionAlgorithm::Gzip, CompressionLevel::Default);
+        let original =
+            "Hello, World! This is a test string that should compress well. ".repeat(100);
+        let compressed = compress(
+            original.as_bytes(),
+            CompressionAlgorithm::Gzip,
+            CompressionLevel::Default,
+        );
 
         assert!(compressed.data.len() < original.len());
 
@@ -459,7 +483,11 @@ mod tests {
     #[test]
     fn test_compression_ratio() {
         let original = "aaaaaaaaaa".repeat(1000); // Highly compressible
-        let compressed = compress(original.as_bytes(), CompressionAlgorithm::Best, CompressionLevel::Best);
+        let compressed = compress(
+            original.as_bytes(),
+            CompressionAlgorithm::Best,
+            CompressionLevel::Best,
+        );
 
         assert!(compressed.compression_ratio() < 0.1); // Should be very well compressed
         assert!(compressed.space_saved_percent() > 90.0);
@@ -481,7 +509,10 @@ mod tests {
     fn test_auto_algorithm_selection() {
         // Small data
         let small = "Hi";
-        assert_eq!(select_algorithm(small.as_bytes()), CompressionAlgorithm::None);
+        assert_eq!(
+            select_algorithm(small.as_bytes()),
+            CompressionAlgorithm::None
+        );
 
         // Larger text data
         let text = "Hello World! ".repeat(100);

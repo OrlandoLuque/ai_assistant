@@ -3,11 +3,11 @@
 //! This module provides caching functionality for embedding vectors
 //! to avoid redundant computation of embeddings.
 
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
-use std::hash::{Hash, Hasher};
-use std::collections::hash_map::DefaultHasher;
 
 /// Cache configuration
 #[derive(Debug, Clone)]
@@ -179,7 +179,8 @@ impl EmbeddingCache {
 
         let key_to_remove = if self.config.enable_lru {
             // Find least recently used
-            self.entries.iter()
+            self.entries
+                .iter()
                 .min_by_key(|(_, entry)| entry.last_accessed)
                 .map(|(k, _)| *k)
         } else {
@@ -189,7 +190,9 @@ impl EmbeddingCache {
 
         if let Some(key) = key_to_remove {
             if let Some(entry) = self.entries.remove(&key) {
-                self.stats.memory_bytes = self.stats.memory_bytes
+                self.stats.memory_bytes = self
+                    .stats
+                    .memory_bytes
                     .saturating_sub(entry.embedding.len() * std::mem::size_of::<f32>());
                 self.stats.evictions += 1;
             }
@@ -215,7 +218,9 @@ impl EmbeddingCache {
         self.stats.evictions += removed;
 
         // Recalculate memory
-        self.stats.memory_bytes = self.entries.values()
+        self.stats.memory_bytes = self
+            .entries
+            .values()
             .map(|e| e.embedding.len() * std::mem::size_of::<f32>())
             .sum();
 
@@ -282,7 +287,11 @@ impl SharedEmbeddingCache {
 
     /// Cleanup expired entries
     pub fn cleanup_expired(&self) -> usize {
-        self.inner.write().ok().map(|mut c| c.cleanup_expired()).unwrap_or(0)
+        self.inner
+            .write()
+            .ok()
+            .map(|mut c| c.cleanup_expired())
+            .unwrap_or(0)
     }
 
     /// Get statistics
@@ -292,7 +301,11 @@ impl SharedEmbeddingCache {
 
     /// Check if cached
     pub fn contains(&self, text: &str, model: &str) -> bool {
-        self.inner.read().ok().map(|c| c.contains(text, model)).unwrap_or(false)
+        self.inner
+            .read()
+            .ok()
+            .map(|c| c.contains(text, model))
+            .unwrap_or(false)
     }
 
     /// Clone the Arc
@@ -581,10 +594,7 @@ mod tests {
 
     #[test]
     fn test_similarity_cache() {
-        let mut cache = SimilarityEmbeddingCache::new(
-            EmbeddingCacheConfig::default(),
-            0.9,
-        );
+        let mut cache = SimilarityEmbeddingCache::new(EmbeddingCacheConfig::default(), 0.9);
 
         cache.set("hello", "model", vec![1.0, 0.0, 0.0]);
         cache.set("world", "model", vec![0.0, 1.0, 0.0]);

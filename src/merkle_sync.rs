@@ -12,7 +12,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::time::{Duration, Instant};
 
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 
 #[cfg(feature = "distributed")]
 use crate::distributed::NodeId;
@@ -142,7 +142,9 @@ impl MerkleTree {
         let mut differing = Vec::new();
 
         // Build a map of key -> leaf_hash for the other tree
-        let other_map: HashMap<&str, [u8; 32]> = other.leaf_keys.iter()
+        let other_map: HashMap<&str, [u8; 32]> = other
+            .leaf_keys
+            .iter()
             .enumerate()
             .map(|(i, key)| {
                 let leaf_idx = other.leaf_slots - 1 + i;
@@ -162,7 +164,8 @@ impl MerkleTree {
         }
 
         // Keys in other that are not in self
-        let self_keys: std::collections::HashSet<&str> = self.leaf_keys.iter().map(|k| k.as_str()).collect();
+        let self_keys: std::collections::HashSet<&str> =
+            self.leaf_keys.iter().map(|k| k.as_str()).collect();
         for key in &other.leaf_keys {
             if !self_keys.contains(key.as_str()) {
                 differing.push(key.clone());
@@ -399,7 +402,8 @@ mod tests {
     use super::*;
 
     fn make_data(pairs: &[(&str, &str)]) -> BTreeMap<String, Vec<u8>> {
-        pairs.iter()
+        pairs
+            .iter()
             .map(|(k, v)| (k.to_string(), v.as_bytes().to_vec()))
             .collect()
     }
@@ -435,8 +439,11 @@ mod tests {
         let tree1 = MerkleTree::from_data(&data);
         let tree2 = MerkleTree::from_data(&data);
 
-        assert_eq!(tree1.root_hash(), tree2.root_hash(),
-            "Same data should produce same root hash");
+        assert_eq!(
+            tree1.root_hash(),
+            tree2.root_hash(),
+            "Same data should produce same root hash"
+        );
     }
 
     #[test]
@@ -447,8 +454,11 @@ mod tests {
         let tree1 = MerkleTree::from_data(&data1);
         let tree2 = MerkleTree::from_data(&data2);
 
-        assert_ne!(tree1.root_hash(), tree2.root_hash(),
-            "Different data should produce different root hash");
+        assert_ne!(
+            tree1.root_hash(),
+            tree2.root_hash(),
+            "Different data should produce different root hash"
+        );
     }
 
     #[test]
@@ -470,8 +480,14 @@ mod tests {
         let tree2 = MerkleTree::from_data(&data2);
 
         let diff = tree1.diff(&tree2);
-        assert!(diff.contains(&"b".to_string()), "Should detect changed key 'b'");
-        assert!(!diff.contains(&"a".to_string()), "Unchanged key 'a' should not be in diff");
+        assert!(
+            diff.contains(&"b".to_string()),
+            "Should detect changed key 'b'"
+        );
+        assert!(
+            !diff.contains(&"a".to_string()),
+            "Unchanged key 'a' should not be in diff"
+        );
     }
 
     #[test]
@@ -494,18 +510,24 @@ mod tests {
         let root = tree.root_hash().unwrap();
 
         // Generate proof for key "b"
-        let proof = tree.proof("b").expect("Should generate proof for existing key");
+        let proof = tree
+            .proof("b")
+            .expect("Should generate proof for existing key");
         assert_eq!(proof.key, "b");
 
         // Verify the proof
-        assert!(MerkleTree::verify_proof(&root, &proof),
-            "Valid proof should verify");
+        assert!(
+            MerkleTree::verify_proof(&root, &proof),
+            "Valid proof should verify"
+        );
 
         // Tamper with the proof — should fail
         let mut tampered = proof.clone();
         tampered.leaf_hash[0] ^= 0xFF;
-        assert!(!MerkleTree::verify_proof(&root, &tampered),
-            "Tampered proof should not verify");
+        assert!(
+            !MerkleTree::verify_proof(&root, &tampered),
+            "Tampered proof should not verify"
+        );
     }
 
     #[test]
@@ -513,8 +535,10 @@ mod tests {
         let data = make_data(&[("a", "1"), ("b", "2")]);
         let tree = MerkleTree::from_data(&data);
 
-        assert!(tree.proof("nonexistent").is_none(),
-            "Should return None for nonexistent key");
+        assert!(
+            tree.proof("nonexistent").is_none(),
+            "Should return None for nonexistent key"
+        );
     }
 
     #[test]

@@ -26,9 +26,9 @@
 //! reporter.report(Progress::complete("Indexing").with_message("Done!"));
 //! ```
 
+use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use serde::{Deserialize, Serialize};
 
 /// Progress information for a long-running operation
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -225,8 +225,7 @@ impl ProgressReporter {
         self.start_time = Instant::now();
         self.last_report = Instant::now() - self.min_report_interval; // Allow immediate first report
 
-        self.report(Progress::new(&self.operation, 0, total)
-            .with_message("Starting..."));
+        self.report(Progress::new(&self.operation, 0, total).with_message("Starting..."));
     }
 
     /// Update progress
@@ -248,7 +247,12 @@ impl ProgressReporter {
     }
 
     /// Update with detail
-    pub fn update_detail(&mut self, current: usize, message: impl Into<String>, detail: impl Into<String>) {
+    pub fn update_detail(
+        &mut self,
+        current: usize,
+        message: impl Into<String>,
+        detail: impl Into<String>,
+    ) {
         self.current = current;
 
         if self.last_report.elapsed() < self.min_report_interval {
@@ -280,8 +284,8 @@ impl ProgressReporter {
 
     /// Mark operation as failed
     pub fn error(&mut self, error: impl Into<String>) {
-        let progress = Progress::error(&self.operation, error)
-            .with_elapsed(self.start_time.elapsed());
+        let progress =
+            Progress::error(&self.operation, error).with_elapsed(self.start_time.elapsed());
         self.report(progress);
     }
 
@@ -339,7 +343,10 @@ impl MultiProgressTracker {
 
     /// Get all current operation progresses
     pub fn get_all(&self) -> Vec<Progress> {
-        self.operations.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.operations
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Get overall progress across all operations
@@ -408,8 +415,8 @@ impl OperationHandle {
 
     /// Mark as error
     pub fn error(&self, error: impl Into<String>) {
-        let progress = Progress::error(&self.operation, error)
-            .with_elapsed(self.start_time.elapsed());
+        let progress =
+            Progress::error(&self.operation, error).with_elapsed(self.start_time.elapsed());
 
         let mut ops = self.tracker.lock().unwrap_or_else(|e| e.into_inner());
         if self.index < ops.len() {
@@ -439,7 +446,11 @@ struct AggregatorInner {
 
 impl ProgressAggregator {
     /// Create a new aggregator
-    pub fn new(operation: impl Into<String>, total_items: usize, callback: Option<ProgressCallback>) -> Self {
+    pub fn new(
+        operation: impl Into<String>,
+        total_items: usize,
+        callback: Option<ProgressCallback>,
+    ) -> Self {
         Self {
             inner: Arc::new(Mutex::new(AggregatorInner {
                 operation: operation.into(),
@@ -487,9 +498,7 @@ impl ProgressAggregator {
         progress.is_error = inner.failed_items > 0;
         progress.message = format!(
             "{}/{} completed ({} failed)",
-            inner.completed_items,
-            inner.total_items,
-            inner.failed_items
+            inner.completed_items, inner.total_items, inner.failed_items
         );
         progress.estimate_remaining();
         progress
@@ -553,7 +562,10 @@ impl ProgressCallbackBuilder {
                 }
             } else if progress.is_complete {
                 if let Some(ref f) = self.on_complete {
-                    f(&progress.operation, Duration::from_millis(progress.elapsed_ms));
+                    f(
+                        &progress.operation,
+                        Duration::from_millis(progress.elapsed_ms),
+                    );
                 }
             } else if progress.current == 0 && progress.total > 0 {
                 if let Some(ref f) = self.on_start {
@@ -570,11 +582,24 @@ impl ProgressCallbackBuilder {
 pub fn logging_callback(prefix: &'static str) -> ProgressCallback {
     Box::new(move |progress: Progress| {
         if progress.is_error {
-            log::error!("[{}] ERROR {}: {:?}", prefix, progress.operation, progress.error_message);
+            log::error!(
+                "[{}] ERROR {}: {:?}",
+                prefix,
+                progress.operation,
+                progress.error_message
+            );
         } else if progress.is_complete {
-            println!("[{}] {} completed in {}", prefix, progress.operation, progress.elapsed_human());
+            println!(
+                "[{}] {} completed in {}",
+                prefix,
+                progress.operation,
+                progress.elapsed_human()
+            );
         } else {
-            let remaining = progress.remaining_human().map(|r| format!(" (~{} remaining)", r)).unwrap_or_default();
+            let remaining = progress
+                .remaining_human()
+                .map(|r| format!(" (~{} remaining)", r))
+                .unwrap_or_default();
             println!(
                 "[{}] {} {}% - {}{}",
                 prefix,

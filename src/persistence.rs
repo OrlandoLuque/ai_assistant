@@ -1,11 +1,11 @@
 //! Persistence utilities: backup, compaction, session migration
 
-use std::path::{Path, PathBuf};
-use std::fs;
-use std::io::{Read, Write};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::fs;
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 
 // ============================================================================
 // Database Backup
@@ -90,13 +90,13 @@ impl BackupManager {
     /// Create a backup of the database
     pub fn create_backup(&mut self, db_path: &Path) -> Result<BackupInfo> {
         // Ensure backup directory exists
-        fs::create_dir_all(&self.config.backup_dir)
-            .context("Failed to create backup directory")?;
+        fs::create_dir_all(&self.config.backup_dir).context("Failed to create backup directory")?;
 
         let timestamp = Utc::now();
         let timestamp_str = timestamp.format(&self.config.timestamp_format).to_string();
 
-        let db_name = db_path.file_stem()
+        let db_name = db_path
+            .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("database");
 
@@ -105,23 +105,23 @@ impl BackupManager {
         let backup_path = self.config.backup_dir.join(&backup_filename);
 
         // Read source database
-        let mut source = fs::File::open(db_path)
-            .context("Failed to open source database")?;
+        let mut source = fs::File::open(db_path).context("Failed to open source database")?;
         let mut data = Vec::new();
-        source.read_to_end(&mut data)
+        source
+            .read_to_end(&mut data)
             .context("Failed to read source database")?;
 
         // Write backup (with optional compression)
         let size_bytes = if self.config.compress {
             let compressed = Self::compress_data(&data)?;
-            let mut backup_file = fs::File::create(&backup_path)
-                .context("Failed to create backup file")?;
-            backup_file.write_all(&compressed)
+            let mut backup_file =
+                fs::File::create(&backup_path).context("Failed to create backup file")?;
+            backup_file
+                .write_all(&compressed)
                 .context("Failed to write compressed backup")?;
             compressed.len() as u64
         } else {
-            fs::copy(db_path, &backup_path)
-                .context("Failed to copy database")?
+            fs::copy(db_path, &backup_path).context("Failed to copy database")?
         };
 
         self.last_backup = Some(timestamp);
@@ -141,10 +141,10 @@ impl BackupManager {
 
     /// Restore database from backup
     pub fn restore_backup(&self, backup_path: &Path, target_path: &Path) -> Result<()> {
-        let mut backup_file = fs::File::open(backup_path)
-            .context("Failed to open backup file")?;
+        let mut backup_file = fs::File::open(backup_path).context("Failed to open backup file")?;
         let mut data = Vec::new();
-        backup_file.read_to_end(&mut data)
+        backup_file
+            .read_to_end(&mut data)
             .context("Failed to read backup file")?;
 
         // Decompress if needed
@@ -155,9 +155,10 @@ impl BackupManager {
         };
 
         // Write to target
-        let mut target_file = fs::File::create(target_path)
-            .context("Failed to create target database")?;
-        target_file.write_all(&decompressed)
+        let mut target_file =
+            fs::File::create(target_path).context("Failed to create target database")?;
+        target_file
+            .write_all(&decompressed)
             .context("Failed to write restored database")?;
 
         Ok(())
@@ -180,15 +181,17 @@ impl BackupManager {
                     let is_backup = ext == "db" || ext == "gz";
                     if is_backup {
                         let metadata = fs::metadata(&path)?;
-                        let filename = path.file_name()
+                        let filename = path
+                            .file_name()
                             .and_then(|s| s.to_str())
                             .unwrap_or("")
                             .to_string();
 
                         // Try to parse timestamp from filename
-                        let created_at = Self::parse_backup_timestamp(&filename)
-                            .unwrap_or_else(|| {
-                                metadata.modified()
+                        let created_at =
+                            Self::parse_backup_timestamp(&filename).unwrap_or_else(|| {
+                                metadata
+                                    .modified()
                                     .map(|t| DateTime::from(t))
                                     .unwrap_or_else(|_| Utc::now())
                             });
@@ -214,8 +217,7 @@ impl BackupManager {
 
     /// Delete a backup
     pub fn delete_backup(&self, backup_path: &Path) -> Result<()> {
-        fs::remove_file(backup_path)
-            .context("Failed to delete backup")?;
+        fs::remove_file(backup_path).context("Failed to delete backup")?;
         Ok(())
     }
 
@@ -368,7 +370,10 @@ impl DatabaseCompactor {
         conn.execute("ANALYZE", [])?;
 
         // Optionally optimize FTS tables
-        let _ = conn.execute("INSERT INTO knowledge_fts(knowledge_fts) VALUES('optimize')", []);
+        let _ = conn.execute(
+            "INSERT INTO knowledge_fts(knowledge_fts) VALUES('optimize')",
+            [],
+        );
 
         conn.close().map_err(|(_, e)| e)?;
 
@@ -553,7 +558,8 @@ impl SessionMigrator {
     ) -> Vec<&'a crate::session::ChatSession> {
         let now = Utc::now();
 
-        sessions.iter()
+        sessions
+            .iter()
             .filter(|s| {
                 s.messages.len() >= self.config.min_messages
                     && (now - s.updated_at).num_days() <= self.config.max_age_days as i64
@@ -756,11 +762,14 @@ impl PersistentCache {
         let now_str = now.to_rfc3339();
 
         // Get entry and check expiration
-        let result: Option<(String, bool, String)> = self.conn.query_row(
-            "SELECT value, compressed, expires_at FROM cache_entries WHERE key = ?1",
-            [key],
-            |row| Ok((row.get(0)?, row.get::<_, i32>(1)? != 0, row.get(2)?)),
-        ).ok();
+        let result: Option<(String, bool, String)> = self
+            .conn
+            .query_row(
+                "SELECT value, compressed, expires_at FROM cache_entries WHERE key = ?1",
+                [key],
+                |row| Ok((row.get(0)?, row.get::<_, i32>(1)? != 0, row.get(2)?)),
+            )
+            .ok();
 
         let (value, compressed, expires_at) = match result {
             Some(v) => v,
@@ -771,7 +780,9 @@ impl PersistentCache {
         if let Ok(exp) = chrono::DateTime::parse_from_rfc3339(&expires_at) {
             if exp.with_timezone(&Utc) < now {
                 // Entry expired, delete it
-                let _ = self.conn.execute("DELETE FROM cache_entries WHERE key = ?1", [key]);
+                let _ = self
+                    .conn
+                    .execute("DELETE FROM cache_entries WHERE key = ?1", [key]);
                 return Ok(None);
             }
         }
@@ -801,14 +812,21 @@ impl PersistentCache {
     }
 
     /// Set a value in cache with custom TTL
-    pub fn set_with_ttl<T: Serialize>(&mut self, key: &str, value: &T, ttl_seconds: u64) -> Result<()> {
+    pub fn set_with_ttl<T: Serialize>(
+        &mut self,
+        key: &str,
+        value: &T,
+        ttl_seconds: u64,
+    ) -> Result<()> {
         let now = Utc::now();
         let expires_at = now + chrono::Duration::seconds(ttl_seconds as i64);
 
         let json = serde_json::to_string(value)?;
 
         // Compress if large
-        let (stored_value, compressed) = if self.config.compress_large_values && json.len() > self.config.compression_threshold {
+        let (stored_value, compressed) = if self.config.compress_large_values
+            && json.len() > self.config.compression_threshold
+        {
             let compressed_data = BackupManager::compress_data(json.as_bytes())?;
             (base64_encode(&compressed_data), true)
         } else {
@@ -835,10 +853,9 @@ impl PersistentCache {
 
     /// Delete a value from cache
     pub fn delete(&mut self, key: &str) -> Result<bool> {
-        let deleted = self.conn.execute(
-            "DELETE FROM cache_entries WHERE key = ?1",
-            [key],
-        )?;
+        let deleted = self
+            .conn
+            .execute("DELETE FROM cache_entries WHERE key = ?1", [key])?;
         Ok(deleted > 0)
     }
 
@@ -862,10 +879,9 @@ impl PersistentCache {
     /// Remove expired entries
     pub fn cleanup_expired(&mut self) -> Result<usize> {
         let now = Utc::now().to_rfc3339();
-        let deleted = self.conn.execute(
-            "DELETE FROM cache_entries WHERE expires_at < ?1",
-            [&now],
-        )?;
+        let deleted = self
+            .conn
+            .execute("DELETE FROM cache_entries WHERE expires_at < ?1", [&now])?;
         self.last_cleanup = Some(Utc::now());
         Ok(deleted)
     }
@@ -887,11 +903,9 @@ impl PersistentCache {
     }
 
     fn enforce_max_entries(&mut self) -> Result<()> {
-        let count: usize = self.conn.query_row(
-            "SELECT COUNT(*) FROM cache_entries",
-            [],
-            |row| row.get(0),
-        )?;
+        let count: usize =
+            self.conn
+                .query_row("SELECT COUNT(*) FROM cache_entries", [], |row| row.get(0))?;
 
         if count > self.config.max_entries {
             // Delete oldest entries based on last_accessed
@@ -909,11 +923,9 @@ impl PersistentCache {
 
     /// Get cache statistics
     pub fn get_stats(&self) -> Result<CacheStats> {
-        let total_entries: usize = self.conn.query_row(
-            "SELECT COUNT(*) FROM cache_entries",
-            [],
-            |row| row.get(0),
-        )?;
+        let total_entries: usize =
+            self.conn
+                .query_row("SELECT COUNT(*) FROM cache_entries", [], |row| row.get(0))?;
 
         let now = Utc::now().to_rfc3339();
         let expired_entries: usize = self.conn.query_row(
@@ -952,7 +964,9 @@ impl PersistentCache {
 
     /// List all cache keys
     pub fn list_keys(&self) -> Result<Vec<String>> {
-        let mut stmt = self.conn.prepare("SELECT key FROM cache_entries ORDER BY key")?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT key FROM cache_entries ORDER BY key")?;
         let rows = stmt.query_map([], |row| row.get(0))?;
 
         let mut keys = Vec::new();
@@ -968,15 +982,17 @@ impl PersistentCache {
             "SELECT compressed, created_at, expires_at, access_count, last_accessed, LENGTH(value)
              FROM cache_entries WHERE key = ?1",
             [key],
-            |row| Ok(CacheEntryInfo {
-                key: key.to_string(),
-                compressed: row.get::<_, i32>(0)? != 0,
-                created_at: row.get(1)?,
-                expires_at: row.get(2)?,
-                access_count: row.get(3)?,
-                last_accessed: row.get(4)?,
-                size_bytes: row.get(5)?,
-            }),
+            |row| {
+                Ok(CacheEntryInfo {
+                    key: key.to_string(),
+                    compressed: row.get::<_, i32>(0)? != 0,
+                    created_at: row.get(1)?,
+                    expires_at: row.get(2)?,
+                    access_count: row.get(3)?,
+                    last_accessed: row.get(4)?,
+                    size_bytes: row.get(5)?,
+                })
+            },
         );
 
         match result {
@@ -1061,14 +1077,15 @@ fn base64_decode(data: &str) -> Result<Vec<u8>> {
         }
     };
 
-    let chars: Vec<u8> = data.chars()
-        .filter_map(decode_char)
-        .collect();
+    let chars: Vec<u8> = data.chars().filter_map(decode_char).collect();
 
     let mut chunks = chars.chunks_exact(4);
 
     for chunk in chunks.by_ref() {
-        let n = (chunk[0] as u32) << 18 | (chunk[1] as u32) << 12 | (chunk[2] as u32) << 6 | chunk[3] as u32;
+        let n = (chunk[0] as u32) << 18
+            | (chunk[1] as u32) << 12
+            | (chunk[2] as u32) << 6
+            | chunk[3] as u32;
         result.push((n >> 16) as u8);
         result.push((n >> 8) as u8);
         result.push(n as u8);
@@ -1076,7 +1093,8 @@ fn base64_decode(data: &str) -> Result<Vec<u8>> {
 
     let remainder = chunks.remainder();
     if remainder.len() >= 2 {
-        let n = (remainder[0] as u32) << 18 | (remainder[1] as u32) << 12
+        let n = (remainder[0] as u32) << 18
+            | (remainder[1] as u32) << 12
             | remainder.get(2).map(|&c| (c as u32) << 6).unwrap_or(0);
 
         result.push((n >> 16) as u8);
@@ -1136,5 +1154,155 @@ mod tests {
 
         // Should backup if never backed up
         assert!(manager.should_backup());
+    }
+
+    #[test]
+    fn test_backup_cleanup() {
+        let dir = tempdir().unwrap();
+        let backup_dir = dir.path().join("backups");
+        let config = BackupConfig {
+            backup_dir: backup_dir.clone(),
+            max_backups: 2,
+            compress: false,
+            ..Default::default()
+        };
+        let mut manager = BackupManager::new(config);
+
+        let db_path = dir.path().join("test.db");
+        fs::write(&db_path, b"database content").unwrap();
+
+        // Create 3 backups with slight delay so timestamps differ
+        let _b1 = manager.create_backup(&db_path).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let _b2 = manager.create_backup(&db_path).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let _b3 = manager.create_backup(&db_path).unwrap();
+
+        // After creating 3 with max_backups=2, only 2 should remain
+        let backups = manager.list_backups().unwrap();
+        assert_eq!(
+            backups.len(),
+            2,
+            "Expected 2 backups after cleanup, got {}",
+            backups.len()
+        );
+    }
+
+    #[test]
+    fn test_restore_backup() {
+        let dir = tempdir().unwrap();
+        let config = BackupConfig {
+            backup_dir: dir.path().join("backups"),
+            compress: false,
+            ..Default::default()
+        };
+        let mut manager = BackupManager::new(config);
+
+        let original_content = b"important database content 12345";
+        let db_path = dir.path().join("source.db");
+        fs::write(&db_path, original_content).unwrap();
+
+        let backup_info = manager.create_backup(&db_path).unwrap();
+
+        // Restore to a new location
+        let restored_path = dir.path().join("restored.db");
+        manager
+            .restore_backup(&backup_info.path, &restored_path)
+            .unwrap();
+
+        let restored_content = fs::read(&restored_path).unwrap();
+        assert_eq!(
+            restored_content, original_content,
+            "Restored content must match original"
+        );
+    }
+
+    #[test]
+    fn test_compressed_backup_roundtrip() {
+        let dir = tempdir().unwrap();
+        let config = BackupConfig {
+            backup_dir: dir.path().join("backups"),
+            compress: true,
+            ..Default::default()
+        };
+        let mut manager = BackupManager::new(config);
+
+        let original_content =
+            b"compressed database content with repeated data repeated data repeated data";
+        let db_path = dir.path().join("source.db");
+        fs::write(&db_path, original_content).unwrap();
+
+        let backup_info = manager.create_backup(&db_path).unwrap();
+        assert!(backup_info.compressed, "Backup should be compressed");
+        assert!(
+            backup_info.filename.ends_with(".db.gz"),
+            "Filename should end with .db.gz"
+        );
+
+        // Restore the compressed backup
+        let restored_path = dir.path().join("restored.db");
+        manager
+            .restore_backup(&backup_info.path, &restored_path)
+            .unwrap();
+
+        let restored_content = fs::read(&restored_path).unwrap();
+        assert_eq!(
+            restored_content, original_content,
+            "Decompressed content must match original"
+        );
+    }
+
+    #[test]
+    fn test_list_backups_sorted() {
+        let dir = tempdir().unwrap();
+        let backup_dir = dir.path().join("backups");
+        let config = BackupConfig {
+            backup_dir: backup_dir.clone(),
+            max_backups: 10,
+            compress: false,
+            ..Default::default()
+        };
+        let mut manager = BackupManager::new(config);
+
+        let db_path = dir.path().join("test.db");
+        fs::write(&db_path, b"db content").unwrap();
+
+        // Create backups with delays so timestamps differ
+        let b1 = manager.create_backup(&db_path).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let b2 = manager.create_backup(&db_path).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let b3 = manager.create_backup(&db_path).unwrap();
+
+        let backups = manager.list_backups().unwrap();
+        assert_eq!(backups.len(), 3);
+
+        // Newest first: b3 > b2 > b1
+        assert_eq!(
+            backups[0].filename, b3.filename,
+            "First backup should be newest"
+        );
+        assert_eq!(
+            backups[1].filename, b2.filename,
+            "Second backup should be middle"
+        );
+        assert_eq!(
+            backups[2].filename, b1.filename,
+            "Third backup should be oldest"
+        );
+    }
+
+    #[test]
+    fn test_should_backup_disabled() {
+        let config = BackupConfig {
+            enabled: false,
+            ..Default::default()
+        };
+        let manager = BackupManager::new(config);
+
+        assert!(
+            !manager.should_backup(),
+            "should_backup must return false when enabled=false"
+        );
     }
 }

@@ -2,9 +2,9 @@
 //!
 //! Implements SSE protocol for real-time streaming responses from AI models.
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read};
-use serde::{Deserialize, Serialize};
 
 /// SSE Event
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -275,7 +275,8 @@ impl SseClient {
             request = request.set("Last-Event-ID", id);
         }
 
-        let response = request.call()
+        let response = request
+            .call()
             .map_err(|e| SseError::IoError(e.to_string()))?;
 
         Ok(SseConnection {
@@ -303,7 +304,9 @@ impl SseConnection {
         self.buffer.clear();
 
         loop {
-            let n = self.reader.read(&mut buf)
+            let n = self
+                .reader
+                .read(&mut buf)
                 .map_err(|e| SseError::IoError(e.to_string()))?;
 
             if n == 0 {
@@ -380,13 +383,15 @@ impl StreamChunk {
 
     /// Get the text content if any
     pub fn get_content(&self) -> Option<&str> {
-        self.choices.first()
+        self.choices
+            .first()
             .and_then(|c| c.delta.content.as_deref())
     }
 
     /// Check if this is the final chunk
     pub fn is_done(&self) -> bool {
-        self.choices.first()
+        self.choices
+            .first()
             .and_then(|c| c.finish_reason.as_ref())
             .is_some()
     }
@@ -497,7 +502,10 @@ mod tests {
             model: "test".to_string(),
             choices: vec![StreamChoice {
                 index: 0,
-                delta: StreamDelta { role: None, content: Some("Hello".to_string()) },
+                delta: StreamDelta {
+                    role: None,
+                    content: Some("Hello".to_string()),
+                },
                 finish_reason: None,
             }],
         };
@@ -509,7 +517,10 @@ mod tests {
             model: "test".to_string(),
             choices: vec![StreamChoice {
                 index: 0,
-                delta: StreamDelta { role: None, content: Some(" World".to_string()) },
+                delta: StreamDelta {
+                    role: None,
+                    content: Some(" World".to_string()),
+                },
                 finish_reason: Some("stop".to_string()),
             }],
         };

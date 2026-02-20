@@ -3,7 +3,7 @@
 //! Queue-based processing for AI requests.
 
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex, Condvar};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 /// Queue message
@@ -82,7 +82,10 @@ impl MemoryQueue {
             if remaining.is_zero() {
                 return None;
             }
-            let result = self.signal.wait_timeout(queue, remaining).unwrap_or_else(|e| e.into_inner());
+            let result = self
+                .signal
+                .wait_timeout(queue, remaining)
+                .unwrap_or_else(|e| e.into_inner());
             queue = result.0;
             if result.1.timed_out() {
                 return None;
@@ -93,7 +96,10 @@ impl MemoryQueue {
     }
 
     pub fn len(&self) -> usize {
-        self.messages.lock().unwrap_or_else(|e| e.into_inner()).len()
+        self.messages
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -101,7 +107,10 @@ impl MemoryQueue {
     }
 
     pub fn clear(&self) {
-        self.messages.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        self.messages
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
     }
 }
 
@@ -132,6 +141,15 @@ impl std::fmt::Display for QueueError {
 }
 
 impl std::error::Error for QueueError {}
+
+/// Statistics from batch processing operations
+#[derive(Debug, Clone, Default)]
+pub struct ProcessingStats {
+    pub processed: usize,
+    pub succeeded: usize,
+    pub failed: usize,
+    pub duration_ms: u64,
+}
 
 /// Queue processor for handling messages
 pub struct QueueProcessor<F>
@@ -171,6 +189,56 @@ where
         let message = self.queue.pop()?;
         Some((self.handler)(message))
     }
+
+    /// Drain the queue, processing each message. Returns all results.
+    pub fn process_all(&self) -> Vec<Result<String, String>> {
+        let mut results = Vec::new();
+        while let Some(result) = self.process_one() {
+            results.push(result);
+        }
+        results
+    }
+
+    /// Process up to `max` messages from the queue. Returns results for processed messages.
+    pub fn process_batch(&self, max: usize) -> Vec<Result<String, String>> {
+        let mut results = Vec::new();
+        for _ in 0..max {
+            match self.process_one() {
+                Some(result) => results.push(result),
+                None => break,
+            }
+        }
+        results
+    }
+
+    /// Loop processing messages until the queue is empty, tracking statistics.
+    /// Returns empty stats if the processor is not running.
+    /// Stops early if `stop()` is called mid-processing.
+    pub fn process_until_empty(&self) -> ProcessingStats {
+        if !self.is_running() {
+            return ProcessingStats::default();
+        }
+
+        let start = Instant::now();
+        let mut stats = ProcessingStats::default();
+
+        while self.is_running() {
+            match self.process_one() {
+                Some(Ok(_)) => {
+                    stats.processed += 1;
+                    stats.succeeded += 1;
+                }
+                Some(Err(_)) => {
+                    stats.processed += 1;
+                    stats.failed += 1;
+                }
+                None => break,
+            }
+        }
+
+        stats.duration_ms = start.elapsed().as_millis() as u64;
+        stats
+    }
 }
 
 /// Dead letter queue for failed messages
@@ -196,11 +264,17 @@ impl DeadLetterQueue {
     }
 
     pub fn pop(&self) -> Option<(QueueMessage, String)> {
-        self.messages.lock().unwrap_or_else(|e| e.into_inner()).pop()
+        self.messages
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .pop()
     }
 
     pub fn len(&self) -> usize {
-        self.messages.lock().unwrap_or_else(|e| e.into_inner()).len()
+        self.messages
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -240,5 +314,74 @@ mod tests {
 
         let result = queue.push(QueueMessage::new("3"));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_process_all_drains_queue() {
+        let queue = Arc::new(MemoryQueue::new(100));
+        for i in 0..5 {
+            queue.push(QueueMessage::new(&format!("msg{}", i))).unwrap();
+        }
+
+        let processor = QueueProcessor::new(Arc::clone(&queue), |msg| {
+            Ok(format!("processed: {}", msg.payload))
+        });
+
+        let results = processor.process_all();
+        assert_eq!(results.len(), 5);
+        for result in &results {
+            assert!(result.is_ok());
+        }
+        assert!(queue.is_empty());
+    }
+
+    #[test]
+    fn test_process_batch_limits() {
+        let queue = Arc::new(MemoryQueue::new(100));
+        for i in 0..10 {
+            queue.push(QueueMessage::new(&format!("msg{}", i))).unwrap();
+        }
+
+        let processor = QueueProcessor::new(Arc::clone(&queue), |msg| {
+            Ok(format!("processed: {}", msg.payload))
+        });
+
+        let results = processor.process_batch(3);
+        assert_eq!(results.len(), 3);
+        assert_eq!(queue.len(), 7);
+    }
+
+    #[test]
+    fn test_process_until_empty_stats() {
+        let queue = Arc::new(MemoryQueue::new(100));
+        // Enqueue 4 messages: 3 will succeed, 1 will fail
+        queue.push(QueueMessage::new("ok1")).unwrap();
+        queue.push(QueueMessage::new("ok2")).unwrap();
+        queue.push(QueueMessage::new("fail")).unwrap();
+        queue.push(QueueMessage::new("ok3")).unwrap();
+
+        let processor = QueueProcessor::new(Arc::clone(&queue), |msg| {
+            if msg.payload == "fail" {
+                Err("processing failed".to_string())
+            } else {
+                Ok(format!("done: {}", msg.payload))
+            }
+        });
+
+        // Without start(), should return empty stats
+        let stats = processor.process_until_empty();
+        assert_eq!(stats.processed, 0);
+        assert_eq!(stats.succeeded, 0);
+        assert_eq!(stats.failed, 0);
+        // Queue should still have all messages
+        assert_eq!(queue.len(), 4);
+
+        // Now start and process
+        processor.start();
+        let stats = processor.process_until_empty();
+        assert_eq!(stats.processed, 4);
+        assert_eq!(stats.succeeded, 3);
+        assert_eq!(stats.failed, 1);
+        assert!(queue.is_empty());
     }
 }

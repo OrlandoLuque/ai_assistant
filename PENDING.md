@@ -1,6 +1,6 @@
 # AI Assistant — Documentacion de modulos y funcionalidad pendiente
 
-**Ultima actualizacion**: 2026-02-19
+**Ultima actualizacion**: 2026-02-21
 
 ---
 
@@ -69,6 +69,29 @@
 | `os_tools` | Operaciones del SO con validacion sandbox: archivos, procesos, HTTP | `autonomous` | 11 |
 | `browser_tools` | Chrome DevTools Protocol real via WebSocket, lanzamiento de Chrome, CDP JSON-RPC | `browser` | 19 |
 | `distributed_agents` | Distribucion de tareas entre nodos, heartbeats, MapReduce distribuido | `distributed-agents` | 17 |
+
+### REPL, Reranking y A/B Testing
+
+| Modulo | Funcionalidad | Feature | Tests |
+|--------|---------------|---------|-------|
+| `repl` | Motor REPL interactivo con command parsing, history, tab completion, temas, gestion de sesiones + CLI binary | `full` | 21 |
+| `reranker` | CrossEncoderReranker, ReciprocalRankFusion, DiversityReranker (MMR), CascadeReranker, RerankerPipeline | `full` | 15 |
+| `ab_testing` | ExperimentManager, VariantAssigner (FNV-1a), SignificanceCalculator (Welch's t / chi-square), EarlyStopping | `eval` | 20 |
+
+### Token Counting, Cost Integration y Multi-Modal RAG
+
+| Modulo | Funcionalidad | Feature | Tests |
+|--------|---------------|---------|-------|
+| `token_counter` | TokenCounter trait, BpeTokenCounter (BPE puro Rust), ApproximateCounter, ProviderTokenCounter, TokenBudget, TokenAllocation | `full` | 15 |
+| `cost_integration` | CostDashboard, CostMiddleware trait, DefaultCostMiddleware, CostAwareConfig, RequestCostEntry, RequestType, CostDecision | `full` | 12 |
+| `multimodal_rag` | ModalityType, MultiModalChunk, MultiModalDocument, MultiModalRetriever, MultiModalPipeline, MultiModalResult, ImageCaptionExtractor | `full` | 15 |
+
+### UI Framework Hooks y Agent Graph Visualization
+
+| Modulo | Funcionalidad | Feature | Tests |
+|--------|---------------|---------|-------|
+| `ui_hooks` | ChatStreamEvent (8 variantes), ChatHooks (suscriptores), StreamAdapter, ChatSession, ChatStatus, UsageInfo | `full` | 16 |
+| `agent_graph` | AgentGraph, AgentNode, AgentEdge, export DOT/Mermaid/JSON, ExecutionTrace, GraphAnalytics (critical path, bottlenecks, utilization) | `full` | 17 |
 
 ### Razonamiento adaptativo
 
@@ -545,8 +568,9 @@ Modulos de networking real para sistema distribuido:
 - **Relevancia**: Baja - complejo y requiere infraestructura dedicada
 
 ### 9. Orquestacion DAG de workflows
-- **Estado**: Parcial (`prompt_chaining` + `agentic_loop` + `decision_tree`)
-- **Pendiente**: Grafos dirigidos con paralelismo real, human-in-the-loop
+- **Estado**: Parcial (`prompt_chaining` + `agentic_loop` + `decision_tree` + ejemplo `dag_workflow`)
+- **Completado**: Ejemplo `dag_workflow` demuestra orquestacion basica de grafos dirigidos
+- **Pendiente**: Paralelismo real en ramas del DAG, human-in-the-loop avanzado
 - **Relevancia**: Media
 
 ### 10. Monitorizacion automatica de cambios web
@@ -564,6 +588,88 @@ Modulos de networking real para sistema distribuido:
 - **Estado**: `data_source_client` implementado (infraestructura generica)
 - **Pendiente**: Conectores especificos para APIs publicas (Open5e, Wikidata, etc.)
 - **Relevancia**: Media - el cliente generico ya soporta auth/paginacion/cache
+
+### 13. REPL/CLI interactivo
+- **Estado**: IMPLEMENTADO (ver `repl.rs` + `bin/ai_assistant_cli.rs`)
+- **Descripcion**: Terminal interactivo para conversar con el asistente sin UI grafica
+- **Funcionalidad**:
+  - `ReplEngine`: motor principal con event loop, command parsing, history
+  - Comandos built-in: `/help`, `/clear`, `/session`, `/model`, `/config`, `/export`, `/quit`
+  - Tab completion, historial persistible, temas de color configurables
+  - Binary `ai_assistant_cli` para ejecucion directa
+- **Tests**: 21 tests unitarios
+- **Ejemplo**: `repl_demo`
+
+### 14. RAG reranking avanzado
+- **Estado**: IMPLEMENTADO (ver `reranker.rs`)
+- **Descripcion**: Re-ranking de resultados RAG con modelos cross-encoder o reciprocal rank fusion
+- **Funcionalidad**:
+  - `CrossEncoderReranker`: reranking basado en scores de relevancia query-document
+  - `ReciprocalRankFusion` (RRF): fusion de rankings multiples con factor k configurable
+  - `DiversityReranker`: seleccion por Maximum Marginal Relevance (MMR)
+  - `CascadeReranker`: pipeline en cascada con top-k progresivo
+  - `RerankerPipeline`: combinacion configurable de estrategias
+- **Tests**: 15 tests unitarios
+
+### 15. A/B testing de prompts
+- **Estado**: IMPLEMENTADO (ver `ab_testing.rs`, feature `eval`)
+- **Descripcion**: Framework completo de A/B testing con asignacion automatica de variantes, metricas de conversion
+- **Funcionalidad**:
+  - `ExperimentManager`: gestion del ciclo de vida de experimentos (draft, running, paused, completed)
+  - `VariantAssigner`: asignacion determinista por user ID (FNV-1a hashing)
+  - `SignificanceCalculator`: Welch's t-test (continuas) + chi-square (proporciones)
+  - `EarlyStopping`: finalizacion temprana por significancia estadistica
+  - Metricas por variante: count, mean, variance, min, max, conversion rate
+- **Tests**: 20 tests unitarios
+- **Ejemplo**: `ab_testing_demo`
+- **Integracion**: `AiAssistant::init_experiment_manager()`, `experiment_manager()`, `experiment_manager_mut()`
+
+### 16. Cost tracking en tiempo real
+- **Estado**: IMPLEMENTADO (ver `cost_integration.rs` + `token_counter.rs`)
+- **Descripcion**: Dashboard de costes en tiempo real, middleware de costes, BPE token counting puro Rust
+- **Funcionalidad**:
+  - `CostDashboard`: dashboard completo con historial de requests, totales por provider, alertas por umbral
+  - `CostMiddleware` trait + `DefaultCostMiddleware`: intercepcion de requests con decision allow/warn/block
+  - `CostAwareConfig`: configuracion de limites diarios/mensuales por provider
+  - `TokenCounter` trait con 3 implementaciones: `BpeTokenCounter` (BPE puro Rust), `ApproximateCounter`, `ProviderTokenCounter`
+  - `TokenBudget` + `TokenAllocation`: gestion de presupuesto de tokens por request
+  - REPL comando `/cost` para ver dashboard en tiempo real
+- **Tests**: 27 tests unitarios (15 token_counter + 12 cost_integration)
+- **Ejemplos**: `cost_tracking`
+- **Integracion**: `AiAssistant::init_cost_tracking()`, `cost_dashboard()`, `cost_dashboard_mut()`, `cost_report()`
+
+### 17. Audio/Speech (TTS/STT)
+- **Estado**: No implementado (ver item 2)
+- **Descripcion**: Integracion con APIs de speech-to-text y text-to-speech
+- **Relevancia**: Baja para uso actual
+
+### 18. UI Framework Hooks
+- **Estado**: IMPLEMENTADO (ver `ui_hooks.rs`)
+- **Descripcion**: Infraestructura de eventos tipados para frameworks frontend (React, Vue, Svelte)
+- **Funcionalidad**:
+  - `ChatStreamEvent`: 8 variantes (MessageStart/Delta/End, ToolCallStart/Delta/End, Error, StatusChange)
+  - `ChatHooks`: gestion de suscriptores con `on_event()`, `emit()`, broadcast
+  - `StreamAdapter`: conversion de chunks crudos a eventos tipados
+  - `ChatSession`: estado de sesion ligero con export JSON para frontend
+  - `ChatStatus`: Idle/Thinking/Streaming/ToolCalling/Error
+  - `UsageInfo`: tracking de tokens + costo
+- **Tests**: 16 tests unitarios
+- **Ejemplo**: `ui_hooks_demo`
+- **Integracion**: `AiAssistant::init_chat_hooks()`, `chat_hooks()`, `emit_chat_event()`
+
+### 19. Agent Graph Visualization
+- **Estado**: IMPLEMENTADO (ver `agent_graph.rs`)
+- **Descripcion**: Exportacion programatica de grafos de agentes y trazas de ejecucion para analisis
+- **Funcionalidad**:
+  - `AgentGraph`: grafo con nodos y aristas, CRUD completo
+  - `AgentNode` / `AgentEdge`: nodos con capacidades, aristas tipadas (5 tipos: DataFlow, Control, Delegation, Communication, Dependency)
+  - `topological_sort()`: algoritmo de Kahn con deteccion de ciclos
+  - Export: `export_dot()`, `export_mermaid()`, `export_json()`
+  - `from_dag()`: construccion desde DagDefinition existente
+  - `ExecutionTrace` / `TraceStep`: registro paso a paso de ejecucion
+  - `GraphAnalytics`: critical path, bottlenecks, agent utilization
+- **Tests**: 17 tests unitarios
+- **Ejemplo**: `agent_graph_demo`
 
 ---
 
@@ -587,12 +693,19 @@ Modulos de networking real para sistema distribuido:
   - `butler`: auto-deteccion de entorno. Requiere `autonomous`.
   - `browser`: herramientas de navegador Chrome CDP. Requiere `autonomous`.
   - `distributed-agents`: ejecucion distribuida de agentes. Requiere `autonomous` + `distributed-network`.
+  - `aws-bedrock`: proveedor AWS Bedrock con autenticacion SigV4 (dependencia `hmac`).
+  - `vector-pgvector`: backend PostgreSQL pgvector para busqueda vectorial.
+  - `otel`: integracion OpenTelemetry para tracing de operaciones AI.
+  - `code-sandbox`: ejecucion aislada de codigo para agentes. Requiere `autonomous`.
+  - `cloud-connectors`: integracion con almacenamiento S3 y Google Drive.
+  - `integrity-check`: verificacion de integridad del binario al arranque.
 - Patron comun: `Config` struct con `Default`, structs de resultado con `Serialize/Deserialize`
 - Duraciones almacenadas como `u64` millis para compatibilidad de serializacion
 - Cross-references entre modulos via `super::module::Type`
 - Tests unitarios en cada modulo (`#[cfg(test)] mod tests`)
 - Total de tests en los 13 nuevos modulos de contenido: **240+**
 - Total de tests en los 14 modulos de agentes autonomos: **255**
+- **Total de tests (Phase 11)**: 2393 lib + 38 integration = **2431 tests**
 - Compilacion verificada con todas las combinaciones de features
 - **Zero `.unwrap()` en codigo de produccion**: 554 llamadas `.unwrap()` reemplazadas en 76 archivos con manejo apropiado de errores:
   - Lock poisoning: `.unwrap_or_else(|e| e.into_inner())` — recupera datos del Mutex/RwLock envenenado

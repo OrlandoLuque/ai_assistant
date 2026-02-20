@@ -12,10 +12,10 @@
 //! - User beliefs with confidence levels
 //! - Automatic entity extraction from conversations
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
-use serde::{Deserialize, Serialize};
 
 // Note: KnowledgeGraph integration is optional and depends on the rag feature
 // When needed, use crate::KnowledgeGraph, crate::GraphEntity, etc.
@@ -42,9 +42,9 @@ impl GraphLayer {
     pub fn priority(&self) -> u8 {
         match self {
             GraphLayer::Knowledge => 100,
-            GraphLayer::User => 80,      // User beliefs are important but not verified
-            GraphLayer::Internet => 50,  // Internet data needs verification
-            GraphLayer::Session => 30,   // Session data is contextual
+            GraphLayer::User => 80, // User beliefs are important but not verified
+            GraphLayer::Internet => 50, // Internet data needs verification
+            GraphLayer::Session => 30, // Session data is contextual
         }
     }
 
@@ -348,21 +348,46 @@ impl BeliefExtractor {
     pub fn new() -> Self {
         Self {
             preference_patterns: vec![
-                "prefiero", "me gusta más", "i prefer", "i like",
-                "me inclino por", "mi favorito", "my favorite",
+                "prefiero",
+                "me gusta más",
+                "i prefer",
+                "i like",
+                "me inclino por",
+                "mi favorito",
+                "my favorite",
             ],
             ownership_patterns: vec![
-                "tengo un", "tengo una", "i have a", "i own",
-                "mi ", "my ", "compré", "i bought",
+                "tengo un",
+                "tengo una",
+                "i have a",
+                "i own",
+                "mi ",
+                "my ",
+                "compré",
+                "i bought",
             ],
             goal_patterns: vec![
-                "quiero", "i want", "me gustaría", "i would like",
-                "planeo", "i plan to", "voy a comprar", "i'm going to buy",
+                "quiero",
+                "i want",
+                "me gustaría",
+                "i would like",
+                "planeo",
+                "i plan to",
+                "voy a comprar",
+                "i'm going to buy",
             ],
             opinion_patterns: vec![
-                "creo que", "pienso que", "i think", "i believe",
-                "en mi opinión", "in my opinion", "me parece que",
-                "es mejor", "is better", "es el mejor", "is the best",
+                "creo que",
+                "pienso que",
+                "i think",
+                "i believe",
+                "en mi opinión",
+                "in my opinion",
+                "me parece que",
+                "es mejor",
+                "is better",
+                "es el mejor",
+                "is the best",
             ],
         }
     }
@@ -472,7 +497,12 @@ impl SessionGraph {
     }
 
     /// Add an entity to the session graph
-    pub fn add_entity(&mut self, name: impl Into<String>, entity_type: impl Into<String>, source: impl Into<String>) {
+    pub fn add_entity(
+        &mut self,
+        name: impl Into<String>,
+        entity_type: impl Into<String>,
+        source: impl Into<String>,
+    ) {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -498,13 +528,19 @@ impl SessionGraph {
     }
 
     /// Add a relation to the session graph
-    pub fn add_relation(&mut self, from: impl Into<String>, relation_type: impl Into<String>, to: impl Into<String>) {
+    pub fn add_relation(
+        &mut self,
+        from: impl Into<String>,
+        relation_type: impl Into<String>,
+        to: impl Into<String>,
+    ) {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
 
-        self.relations.push((from.into(), relation_type.into(), to.into()));
+        self.relations
+            .push((from.into(), relation_type.into(), to.into()));
         self.updated_at = now;
     }
 
@@ -515,7 +551,9 @@ impl SessionGraph {
 
     /// Check if an entity is in this session
     pub fn has_entity(&self, name: &str) -> bool {
-        self.entities.iter().any(|e| e.name.eq_ignore_ascii_case(name))
+        self.entities
+            .iter()
+            .any(|e| e.name.eq_ignore_ascii_case(name))
     }
 }
 
@@ -562,7 +600,10 @@ impl UserGraph {
         self.beliefs
             .iter()
             .filter(|b| {
-                b.active && b.subject_entity.as_ref().map_or(false, |e| e.eq_ignore_ascii_case(entity))
+                b.active
+                    && b.subject_entity
+                        .as_ref()
+                        .map_or(false, |e| e.eq_ignore_ascii_case(entity))
             })
             .collect()
     }
@@ -676,7 +717,8 @@ impl InternetGraph {
     /// Add an entry
     pub fn add_entry(&mut self, entry: InternetGraphEntry) {
         // Remove any existing entry for same entity+attribute
-        self.entries.retain(|e| !(e.entity == entry.entity && e.attribute == entry.attribute));
+        self.entries
+            .retain(|e| !(e.entity == entry.entity && e.attribute == entry.attribute));
         self.entries.push(entry);
     }
 
@@ -794,9 +836,12 @@ impl MultiLayerGraph {
     /// Get or create a session graph
     pub fn get_or_create_session(&mut self, session_id: &str) -> &mut SessionGraph {
         if !self.session_graphs.contains_key(session_id) {
-            self.session_graphs.insert(session_id.to_string(), SessionGraph::new(session_id));
+            self.session_graphs
+                .insert(session_id.to_string(), SessionGraph::new(session_id));
         }
-        self.session_graphs.get_mut(session_id).expect("key just inserted")
+        self.session_graphs
+            .get_mut(session_id)
+            .expect("key just inserted")
     }
 
     /// Process a user message and extract entities/beliefs
@@ -813,7 +858,9 @@ impl MultiLayerGraph {
         }
 
         // Extract beliefs
-        let beliefs = self.belief_extractor.extract(message, session_id, extracted_entities);
+        let beliefs = self
+            .belief_extractor
+            .extract(message, session_id, extracted_entities);
         for belief in beliefs {
             self.user_graph.add_belief(belief);
         }
@@ -962,8 +1009,16 @@ impl MultiLayerGraph {
     }
 
     /// Resolve a contradiction
-    pub fn resolve_contradiction(&mut self, contradiction_id: &str, resolution: ContradictionResolution) -> bool {
-        if let Some(c) = self.contradictions.iter_mut().find(|c| c.id == contradiction_id) {
+    pub fn resolve_contradiction(
+        &mut self,
+        contradiction_id: &str,
+        resolution: ContradictionResolution,
+    ) -> bool {
+        if let Some(c) = self
+            .contradictions
+            .iter_mut()
+            .find(|c| c.id == contradiction_id)
+        {
             c.resolution = resolution;
             c.user_notified = true;
             self.save_contradiction_log();
@@ -1057,7 +1112,11 @@ impl MultiLayerGraph {
             user_beliefs_count: self.user_graph.beliefs.len(),
             internet_entries_count: self.internet_graph.entries.len(),
             contradiction_count: self.contradictions.len(),
-            unresolved_contradictions: self.contradictions.iter().filter(|c| c.resolution == ContradictionResolution::Unresolved).count(),
+            unresolved_contradictions: self
+                .contradictions
+                .iter()
+                .filter(|c| c.resolution == ContradictionResolution::Unresolved)
+                .count(),
         }
     }
 }
@@ -1086,7 +1145,11 @@ mod tests {
         let extractor = BeliefExtractor::new();
         let entities = vec!["Gladius".to_string()];
 
-        let beliefs = extractor.extract("Creo que el Gladius es el mejor fighter", "session1", &entities);
+        let beliefs = extractor.extract(
+            "Creo que el Gladius es el mejor fighter",
+            "session1",
+            &entities,
+        );
         assert!(!beliefs.is_empty());
         assert_eq!(beliefs[0].belief_type, BeliefType::Opinion);
 

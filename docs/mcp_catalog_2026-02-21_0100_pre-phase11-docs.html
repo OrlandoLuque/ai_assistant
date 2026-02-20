@@ -1,0 +1,1157 @@
+<!DOCTYPE html>
+<!--
+  MCP Tool Catalog - AI Assistant
+  Shows all MCP-exposable tools, resources and prompts available in the crate.
+
+  BACKUP POLICY: Before making significant changes to this file (new tools,
+  category restructuring, parameter changes, etc.), ALWAYS create a
+  timestamped copy first:
+    mcp_catalog_YYYY-MM-DD_HHMM_<brief-description>.html
+  Keep all historical copies in this same docs/ folder.
+
+  History:
+    - mcp_catalog.html  (v1: initial catalog, 29 capabilities)
+    - mcp_catalog_2026-02-20_1430_pre-phase8-docs.html (v1 backup before phase-8 updates)
+    - mcp_catalog.html  (v2: +structured output, model registry, benchmarks, browser/distributed exports)
+-->
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Assistant - Catálogo MCP</title>
+<style>
+  :root {
+    --core: #2563eb;
+    --auto: #7c3aed;
+    --available: #059669;
+    --feature: #d97706;
+    --na: #9ca3af;
+    --bg: #0f172a;
+    --surface: #1e293b;
+    --surface2: #334155;
+    --text: #f1f5f9;
+    --text-dim: #94a3b8;
+    --border: #475569;
+    --accent: #3b82f6;
+    --accent2: #8b5cf6;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 20px;
+    min-height: 100vh;
+    line-height: 1.5;
+  }
+
+  h1 {
+    text-align: center;
+    font-size: 1.6rem;
+    margin-bottom: 6px;
+    background: linear-gradient(135deg, #60a5fa, #a78bfa);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .subtitle {
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 0.85rem;
+    margin-bottom: 20px;
+  }
+
+  /* Protocol banner */
+  .protocol-banner {
+    display: flex;
+    justify-content: center;
+    gap: 24px;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+  }
+
+  .protocol-stat {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 20px;
+    text-align: center;
+    min-width: 140px;
+  }
+
+  .protocol-stat .value {
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: #60a5fa;
+  }
+
+  .protocol-stat .label {
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  /* Filter tabs */
+  .tab-bar {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+  }
+
+  .tab-btn {
+    padding: 7px 18px;
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    background: transparent;
+    color: var(--text-dim);
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .tab-btn:hover { border-color: #60a5fa; color: #60a5fa; }
+  .tab-btn.active { background: #1e3a5f; border-color: var(--accent); color: #93c5fd; }
+
+  .tab-btn .count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(59,130,246,0.2);
+    color: #93c5fd;
+    border-radius: 10px;
+    padding: 0 7px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    margin-left: 6px;
+    min-width: 20px;
+    height: 18px;
+  }
+
+  /* Category section */
+  .category {
+    margin-bottom: 24px;
+  }
+
+  .category-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px 10px 0 0;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.15s;
+  }
+
+  .category-header:hover { background: #253347; }
+
+  .category-header .icon { font-size: 1.2rem; }
+
+  .category-header h2 {
+    font-size: 1rem;
+    color: #93c5fd;
+    flex: 1;
+  }
+
+  .category-header .badge {
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 0.72rem;
+    font-weight: 600;
+  }
+
+  .badge-feature { background: rgba(217,119,6,0.25); color: #fcd34d; }
+  .badge-core { background: rgba(37,99,235,0.25); color: #93c5fd; }
+
+  .category-header .collapse-icon {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    transition: transform 0.2s;
+  }
+
+  .category.collapsed .collapse-icon { transform: rotate(-90deg); }
+  .category.collapsed .category-body { display: none; }
+
+  .category-body {
+    border: 1px solid var(--border);
+    border-top: none;
+    border-radius: 0 0 10px 10px;
+    overflow: hidden;
+  }
+
+  .category-desc {
+    padding: 10px 16px;
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    background: rgba(30,41,59,0.5);
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* Tool card */
+  .tool-card {
+    display: grid;
+    grid-template-columns: 1fr;
+    padding: 14px 16px;
+    border-bottom: 1px solid rgba(71,85,105,0.4);
+    transition: background 0.1s;
+    cursor: pointer;
+  }
+
+  .tool-card:last-child { border-bottom: none; }
+  .tool-card:hover { background: rgba(37,99,235,0.06); }
+  .tool-card.expanded { background: rgba(37,99,235,0.04); }
+
+  .tool-summary {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .tool-name {
+    font-weight: 700;
+    font-size: 0.88rem;
+    color: #e2e8f0;
+    font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  }
+
+  .tool-type-badge {
+    padding: 2px 8px;
+    border-radius: 8px;
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+
+  .type-tool { background: rgba(37,99,235,0.2); color: #93c5fd; }
+  .type-resource { background: rgba(5,150,105,0.2); color: #6ee7b7; }
+  .type-prompt { background: rgba(124,58,237,0.2); color: #c4b5fd; }
+
+  .tool-desc {
+    flex: 1;
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    margin-left: auto;
+    text-align: right;
+  }
+
+  .tool-expand-icon {
+    color: var(--text-dim);
+    font-size: 0.7rem;
+    transition: transform 0.2s;
+    margin-left: 8px;
+  }
+
+  .tool-card.expanded .tool-expand-icon { transform: rotate(90deg); }
+
+  .tool-details {
+    display: none;
+    margin-top: 12px;
+    padding: 14px;
+    background: var(--bg);
+    border-radius: 8px;
+    font-size: 0.8rem;
+  }
+
+  .tool-card.expanded .tool-details { display: block; }
+
+  .detail-section { margin-bottom: 10px; }
+  .detail-section:last-child { margin-bottom: 0; }
+
+  .detail-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-dim);
+    margin-bottom: 4px;
+    font-weight: 600;
+  }
+
+  .params-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.78rem;
+  }
+
+  .params-table th {
+    text-align: left;
+    padding: 5px 10px;
+    background: rgba(30,41,59,0.8);
+    color: #93c5fd;
+    font-weight: 600;
+    font-size: 0.72rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .params-table td {
+    padding: 5px 10px;
+    border-bottom: 1px solid rgba(71,85,105,0.3);
+    vertical-align: top;
+  }
+
+  .param-name {
+    font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    color: #fbbf24;
+    font-weight: 600;
+  }
+
+  .param-type {
+    color: #a78bfa;
+    font-size: 0.72rem;
+  }
+
+  .param-required {
+    display: inline-block;
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: 0.62rem;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+
+  .req-yes { background: rgba(225,29,72,0.2); color: #fb7185; }
+  .req-no { background: rgba(156,163,175,0.15); color: #9ca3af; }
+
+  .detail-tags {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .detail-tag {
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-size: 0.72rem;
+    font-weight: 500;
+  }
+
+  .tag-feature { background: rgba(217,119,6,0.15); color: #fbbf24; border: 1px solid rgba(217,119,6,0.3); }
+  .tag-sandbox { background: rgba(225,29,72,0.12); color: #fb7185; border: 1px solid rgba(225,29,72,0.25); }
+  .tag-platform { background: rgba(5,150,105,0.12); color: #6ee7b7; border: 1px solid rgba(5,150,105,0.25); }
+  .tag-module { background: rgba(37,99,235,0.12); color: #93c5fd; border: 1px solid rgba(37,99,235,0.25); }
+
+  .detail-note {
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    line-height: 1.5;
+    padding: 6px 0;
+  }
+
+  /* Search */
+  .search-bar {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 18px;
+  }
+
+  .search-input {
+    width: 400px;
+    max-width: 90vw;
+    padding: 10px 16px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+    color: var(--text);
+    font-size: 0.88rem;
+    transition: border-color 0.15s;
+  }
+
+  .search-input:focus { outline: none; border-color: var(--accent); }
+  .search-input::placeholder { color: #64748b; }
+
+  /* Responsive */
+  @media (max-width: 768px) {
+    body { padding: 10px; }
+    h1 { font-size: 1.2rem; }
+    .tool-summary { flex-wrap: wrap; }
+    .tool-desc { text-align: left; margin-left: 0; margin-top: 4px; }
+    .protocol-banner { gap: 10px; }
+    .protocol-stat { min-width: 100px; padding: 8px 12px; }
+  }
+</style>
+</head>
+<body>
+
+<h1>AI Assistant &mdash; Cat&aacute;logo MCP</h1>
+<p class="subtitle">Tools, Resources y Prompts disponibles v&iacute;a Model Context Protocol (MCP 2024-11-05) &mdash; Updated 2026-02-20</p>
+
+<div class="protocol-banner" id="banner"></div>
+
+<div class="search-bar">
+  <input type="text" class="search-input" id="searchInput" placeholder="Buscar tool, recurso o prompt..." oninput="filterCards()">
+</div>
+
+<div class="tab-bar" id="tabBar"></div>
+
+<div id="catalogContainer"></div>
+
+<script>
+// ============================================================
+// DATA
+// ============================================================
+
+const CATEGORIES = [
+  {
+    id: 'builtin',
+    name: 'Builtin Tools',
+    icon: '\u2699\uFE0F',
+    feature: 'tools',
+    featureInFull: true,
+    desc: 'Herramientas b\u00e1sicas siempre disponibles con el feature flag tools. Se registran autom\u00e1ticamente con ToolRegistry::with_builtins().',
+    items: [
+      { name: 'get_current_time', type: 'tool',
+        desc: 'Obtener fecha y hora actual del sistema',
+        params: [
+          { name: 'format', type: 'string', required: false, desc: 'Formato de salida: iso8601, unix o human (default: iso8601)' }
+        ],
+        module: 'unified_tools.rs',
+        notes: 'Detecta zona horaria del sistema. \u00datil para timestamps en logs, scheduling y contexto temporal del agente.'
+      },
+      { name: 'calculate', type: 'tool',
+        desc: 'Evaluar expresi\u00f3n matem\u00e1tica',
+        params: [
+          { name: 'expression', type: 'string', required: true, desc: 'Expresi\u00f3n con +, -, *, /, %, ** y par\u00e9ntesis' }
+        ],
+        module: 'unified_tools.rs',
+        notes: 'Parser matem\u00e1tico propio, no eval(). Soporta decimales, negativos y precedencia est\u00e1ndar.'
+      },
+      { name: 'string_length', type: 'tool',
+        desc: 'Obtener longitud de un string',
+        params: [
+          { name: 'text', type: 'string', required: true, desc: 'Texto a medir' }
+        ],
+        module: 'unified_tools.rs',
+        notes: 'Cuenta caracteres Unicode, no bytes.'
+      },
+      { name: 'validate_json', type: 'tool',
+        desc: 'Validar sintaxis JSON',
+        params: [
+          { name: 'json', type: 'string', required: true, desc: 'String JSON a validar' }
+        ],
+        module: 'unified_tools.rs',
+        notes: 'Devuelve {valid: true/false, error: "..."}. \u00datil para verificar outputs del modelo.'
+      },
+    ]
+  },
+  {
+    id: 'filesystem',
+    name: 'Filesystem Tools',
+    icon: '\uD83D\uDCC1',
+    feature: 'autonomous',
+    featureInFull: false,
+    desc: 'Operaciones de lectura/escritura en el sistema de archivos. Todas requieren validaci\u00f3n del SandboxValidator antes de ejecutarse.',
+    items: [
+      { name: 'read_file', type: 'tool',
+        desc: 'Leer contenido de un archivo',
+        params: [
+          { name: 'path', type: 'string', required: true, desc: 'Ruta absoluta al archivo' }
+        ],
+        module: 'os_tools.rs', sandbox: 'file_read',
+        notes: 'Lee como UTF-8. El sandbox valida que la ruta est\u00e9 dentro de los directorios permitidos por la AgentPolicy.'
+      },
+      { name: 'write_file', type: 'tool',
+        desc: 'Escribir contenido a un archivo',
+        params: [
+          { name: 'path', type: 'string', required: true, desc: 'Ruta absoluta al archivo' },
+          { name: 'content', type: 'string', required: true, desc: 'Contenido a escribir' }
+        ],
+        module: 'os_tools.rs', sandbox: 'file_write',
+        notes: 'Crea directorios intermedios si no existen. El sandbox valida escritura en la ruta.'
+      },
+      { name: 'list_dir', type: 'tool',
+        desc: 'Listar contenido de un directorio',
+        params: [
+          { name: 'path', type: 'string', required: true, desc: 'Ruta absoluta al directorio' }
+        ],
+        module: 'os_tools.rs', sandbox: 'file_read',
+        notes: 'Devuelve lista de entradas con tipo (file/dir) y tama\u00f1o.'
+      },
+      { name: 'create_dir', type: 'tool',
+        desc: 'Crear directorio (recursivo)',
+        params: [
+          { name: 'path', type: 'string', required: true, desc: 'Ruta del nuevo directorio' }
+        ],
+        module: 'os_tools.rs', sandbox: 'file_write',
+        notes: 'Equivalente a mkdir -p. Crea toda la jerarqu\u00eda de directorios necesaria.'
+      },
+      { name: 'delete_file', type: 'tool',
+        desc: 'Eliminar un archivo',
+        params: [
+          { name: 'path', type: 'string', required: true, desc: 'Ruta absoluta del archivo a eliminar' }
+        ],
+        module: 'os_tools.rs', sandbox: 'FileDelete',
+        notes: 'Solo archivos, no directorios. Operaci\u00f3n irreversible \u2014 el sandbox debe aprobarla.'
+      },
+      { name: 'file_info', type: 'tool',
+        desc: 'Obtener metadatos de archivo/directorio',
+        params: [
+          { name: 'path', type: 'string', required: true, desc: 'Ruta absoluta' }
+        ],
+        module: 'os_tools.rs', sandbox: 'file_read',
+        notes: 'Devuelve: tama\u00f1o, fechas (creaci\u00f3n, modificaci\u00f3n), permisos, tipo.'
+      },
+    ]
+  },
+  {
+    id: 'shell',
+    name: 'Shell & System Tools',
+    icon: '\uD83D\uDDA5\uFE0F',
+    feature: 'autonomous',
+    featureInFull: false,
+    desc: 'Ejecuci\u00f3n de comandos del sistema y herramientas de l\u00ednea de comandos. Plataforma-espec\u00edfico (cmd /C en Windows, sh -c en Unix).',
+    items: [
+      { name: 'run_command', type: 'tool',
+        desc: 'Ejecutar comando de shell',
+        params: [
+          { name: 'command', type: 'string', required: true, desc: 'Comando a ejecutar' }
+        ],
+        module: 'os_tools.rs', sandbox: 'validate_command', platform: true,
+        notes: 'Windows: cmd /C "comando". Unix: sh -c "comando". El sandbox valida el comando contra la lista de comandos permitidos/bloqueados de la AgentPolicy.'
+      },
+    ]
+  },
+  {
+    id: 'git',
+    name: 'Git Tools',
+    icon: '\uD83D\uDD00',
+    feature: 'autonomous',
+    featureInFull: false,
+    desc: 'Operaciones Git de solo lectura. Ejecutan comandos git bajo el sandbox.',
+    items: [
+      { name: 'git_status', type: 'tool',
+        desc: 'Mostrar estado del repositorio (git status --short)',
+        params: [],
+        module: 'os_tools.rs', sandbox: 'validate_command',
+        notes: 'Equivalente a git status --short. Solo lectura.'
+      },
+      { name: 'git_diff', type: 'tool',
+        desc: 'Mostrar cambios pendientes (git diff)',
+        params: [],
+        module: 'os_tools.rs', sandbox: 'validate_command',
+        notes: 'Muestra diff de cambios no staged.'
+      },
+      { name: 'git_log', type: 'tool',
+        desc: 'Mostrar commits recientes (git log --oneline -10)',
+        params: [],
+        module: 'os_tools.rs', sandbox: 'validate_command',
+        notes: '\u00daltimos 10 commits en formato compacto.'
+      },
+    ]
+  },
+  {
+    id: 'network',
+    name: 'Network Tools',
+    icon: '\uD83C\uDF10',
+    feature: 'autonomous',
+    featureInFull: false,
+    desc: 'Acceso HTTP para consultas web. Requiere validaci\u00f3n de URL por el sandbox.',
+    items: [
+      { name: 'http_get', type: 'tool',
+        desc: 'Realizar petici\u00f3n HTTP GET a una URL',
+        params: [
+          { name: 'url', type: 'string', required: true, desc: 'URL completa (https://...)' }
+        ],
+        module: 'os_tools.rs', sandbox: 'validate_url',
+        notes: 'El sandbox valida el dominio contra la lista de dominios permitidos/bloqueados de la AgentPolicy. Timeout configurable.'
+      },
+    ]
+  },
+  {
+    id: 'browser',
+    name: 'Browser Tools (CDP)',
+    icon: '\uD83C\uDF0D',
+    feature: 'browser',
+    featureInFull: false,
+    desc: 'Automatizaci\u00f3n de Chrome v\u00eda Chrome DevTools Protocol. Requiere Chrome/Chromium instalado. Soporta modo headless.',
+    items: [
+      { name: 'browser_navigate', type: 'tool',
+        desc: 'Navegar a una URL',
+        params: [
+          { name: 'url', type: 'string', required: true, desc: 'URL de destino' }
+        ],
+        module: 'browser_tools.rs', sandbox: 'validate_url',
+        notes: 'Env\u00eda Page.navigate v\u00eda CDP. Espera a loadEventFired. Devuelve: url, title, texto, screenshot.'
+      },
+      { name: 'browser_click', type: 'tool',
+        desc: 'Hacer clic en un elemento',
+        params: [
+          { name: 'selector', type: 'string', required: true, desc: 'Selector CSS del elemento' }
+        ],
+        module: 'browser_tools.rs',
+        notes: 'Ejecuta document.querySelector(sel).click() v\u00eda Runtime.evaluate.'
+      },
+      { name: 'browser_type', type: 'tool',
+        desc: 'Escribir texto en un campo',
+        params: [
+          { name: 'selector', type: 'string', required: true, desc: 'Selector CSS del input' },
+          { name: 'text', type: 'string', required: true, desc: 'Texto a escribir' }
+        ],
+        module: 'browser_tools.rs',
+        notes: 'Asigna el.value y dispara InputEvent para activar listeners del formulario.'
+      },
+      { name: 'browser_screenshot', type: 'tool',
+        desc: 'Capturar screenshot de la p\u00e1gina',
+        params: [],
+        module: 'browser_tools.rs',
+        notes: 'Page.captureScreenshot v\u00eda CDP. Devuelve PNG en base64.'
+      },
+      { name: 'browser_get_html', type: 'tool',
+        desc: 'Obtener HTML completo de la p\u00e1gina',
+        params: [],
+        module: 'browser_tools.rs',
+        notes: 'Devuelve document.documentElement.outerHTML.'
+      },
+      { name: 'browser_get_text', type: 'tool',
+        desc: 'Obtener texto visible de la p\u00e1gina',
+        params: [],
+        module: 'browser_tools.rs',
+        notes: 'Devuelve document.body.innerText (solo contenido visible).'
+      },
+      { name: 'browser_evaluate', type: 'tool',
+        desc: 'Ejecutar JavaScript en la p\u00e1gina',
+        params: [
+          { name: 'code', type: 'string', required: true, desc: 'Expresi\u00f3n JavaScript a evaluar' }
+        ],
+        module: 'browser_tools.rs',
+        notes: 'Runtime.evaluate directo. Devuelve el resultado como JSON.'
+      },
+    ]
+  },
+  {
+    id: 'resources',
+    name: 'MCP Resources',
+    icon: '\uD83D\uDCDA',
+    feature: 'rag',
+    featureInFull: true,
+    desc: 'Recursos expuestos v\u00eda MCP resources/list y resources/read. Permiten a clientes MCP acceder al conocimiento del asistente.',
+    items: [
+      { name: 'rag://chunk/{id}', type: 'resource',
+        desc: 'Fragmento de la base de conocimiento RAG',
+        params: [
+          { name: 'uri', type: 'string', required: true, desc: 'URI del chunk: rag://chunk/{chunk_id}' }
+        ],
+        module: 'rag.rs',
+        notes: 'Cada chunk de la base vectorial SQLite puede exponerse como recurso MCP. Incluye texto, fuente original y metadatos. mime_type: text/plain.'
+      },
+      { name: 'kpkg://{package}/{entry}', type: 'resource',
+        desc: 'Entrada de paquete de conocimiento cifrado (.kpkg)',
+        params: [
+          { name: 'uri', type: 'string', required: true, desc: 'URI del entry: kpkg://{package_name}/{entry_id}' }
+        ],
+        module: 'encrypted_knowledge.rs',
+        notes: 'Acceso a entradas dentro de paquetes .kpkg. Requiere que el paquete est\u00e9 descifrado y cargado en memoria.'
+      },
+      { name: 'graph://{layer}/{node}', type: 'resource',
+        desc: 'Nodo del knowledge graph',
+        params: [
+          { name: 'uri', type: 'string', required: true, desc: 'URI del nodo: graph://{layer_name}/{node_id}' }
+        ],
+        module: 'knowledge_graph.rs',
+        notes: 'Nodos y relaciones del grafo de conocimiento. Incluye propiedades, relaciones entrantes/salientes y capa.'
+      },
+      { name: 'doc://{format}/{id}', type: 'resource',
+        desc: 'Documento parseado (PDF, DOCX, EPUB, HTML)',
+        params: [
+          { name: 'uri', type: 'string', required: true, desc: 'URI del documento procesado' }
+        ],
+        module: 'document_parsing.rs', feature_extra: 'documents',
+        notes: 'Feature flag documents. Documentos parseados y convertidos a texto plano. Formatos: PDF, DOCX, EPUB, HTML.'
+      },
+      { name: 'feed://{feed_id}/latest', type: 'resource',
+        desc: '\u00daltimas entradas de un feed RSS/Atom monitorizado',
+        params: [
+          { name: 'uri', type: 'string', required: true, desc: 'URI del feed: feed://{feed_id}/latest' }
+        ],
+        module: 'feed_monitor.rs',
+        notes: 'Siempre compilado. Devuelve las entradas m\u00e1s recientes del feed en formato texto con t\u00edtulo, fecha y contenido.'
+      },
+    ]
+  },
+  {
+    id: 'prompts',
+    name: 'MCP Prompts',
+    icon: '\uD83D\uDCAC',
+    feature: 'tools',
+    featureInFull: true,
+    desc: 'Plantillas de prompt din\u00e1micas expuestas v\u00eda MCP prompts/list y prompts/get. Generan mensajes optimizados para tareas espec\u00edficas.',
+    items: [
+      { name: 'system_prompt_generator', type: 'prompt',
+        desc: 'Generar system prompt optimizado para una tarea',
+        params: [
+          { name: 'task_type', type: 'string', required: true, desc: 'Tipo de tarea: coding, analysis, creative, research, conversation' },
+          { name: 'language', type: 'string', required: false, desc: 'Idioma de respuesta (default: es)' }
+        ],
+        module: 'mcp_protocol.rs',
+        notes: 'Genera un system prompt especializado seg\u00fan el tipo de tarea. Incluye instrucciones de formato, tono y restricciones.'
+      },
+      { name: 'rag_context_builder', type: 'prompt',
+        desc: 'Construir contexto enriquecido desde la base de conocimiento',
+        params: [
+          { name: 'query', type: 'string', required: true, desc: 'Pregunta o tema a buscar' },
+          { name: 'max_chunks', type: 'number', required: false, desc: 'M\u00e1ximo de fragmentos a incluir (default: 5)' }
+        ],
+        module: 'rag.rs', feature_extra: 'rag',
+        notes: 'Busca en la base vectorial, expande la query, y devuelve mensajes con contexto relevante ya formateado.'
+      },
+      { name: 'conversation_compacter', type: 'prompt',
+        desc: 'Resumir conversaci\u00f3n larga manteniendo contexto clave',
+        params: [
+          { name: 'max_tokens', type: 'number', required: false, desc: 'L\u00edmite de tokens para el resumen (default: 1000)' }
+        ],
+        module: 'context.rs',
+        notes: 'Genera un prompt de compresi\u00f3n que pide al modelo resumir la conversaci\u00f3n preservando hechos clave, decisiones y contexto activo.'
+      },
+      { name: 'code_review', type: 'prompt',
+        desc: 'Plantilla de revisi\u00f3n de c\u00f3digo estructurada',
+        params: [
+          { name: 'language', type: 'string', required: true, desc: 'Lenguaje de programaci\u00f3n' },
+          { name: 'focus', type: 'string', required: false, desc: 'Foco: security, performance, readability, all (default: all)' }
+        ],
+        module: 'mcp_protocol.rs',
+        notes: 'Genera instrucciones de revisi\u00f3n con checklist espec\u00edfico del lenguaje y \u00e1rea de foco.'
+      },
+    ]
+  },
+  {
+    id: 'protocol',
+    name: 'Protocol & Transport',
+    icon: '\uD83D\uDD0C',
+    feature: 'tools',
+    featureInFull: true,
+    desc: 'Infraestructura del protocolo MCP: servidor, cliente, transporte HTTP y formatos de parsing.',
+    items: [
+      { name: 'McpServer', type: 'tool',
+        desc: 'Servidor MCP completo con registro de tools, resources y prompts',
+        params: [
+          { name: 'name', type: 'string', required: true, desc: 'Nombre del servidor' },
+          { name: 'version', type: 'string', required: true, desc: 'Versi\u00f3n del servidor' }
+        ],
+        module: 'mcp_protocol.rs',
+        notes: 'Maneja JSON-RPC 2.0. Soporta: initialize, tools/list, tools/call, resources/list, resources/read, prompts/list, prompts/get, ping. Capacidades negociadas en handshake.'
+      },
+      { name: 'McpClient', type: 'tool',
+        desc: 'Cliente MCP para conectar a servidores externos',
+        params: [
+          { name: 'server_url', type: 'string', required: true, desc: 'URL del servidor MCP (HTTP POST)' }
+        ],
+        module: 'mcp_protocol.rs',
+        notes: 'Transporte HTTP. Soporta initialize, list_tools, call_tool, list_resources, read_resource, list_prompts, get_prompt. Auto-incrementa request IDs.'
+      },
+      { name: 'ToolRegistry Bridge', type: 'tool',
+        desc: 'Puente entre ToolRegistry nativo y MCP',
+        params: [],
+        module: 'unified_tools.rs',
+        notes: 'to_openai_functions() y to_json_schema() convierten tools registrados a formatos est\u00e1ndar. Las tools se pueden exponer autom\u00e1ticamente como McpTools.'
+      },
+      { name: 'Multi-format Parser', type: 'tool',
+        desc: 'Parser de tool calls en 5 formatos distintos',
+        params: [],
+        module: 'unified_tools.rs',
+        notes: 'Soporta: JSON Array, JSON Object (OpenAI), texto [TOOL:name(args)], XML <tool>, y function_call. Permite interoperabilidad con cualquier modelo.'
+      },
+    ]
+  },
+  {
+    id: 'structured-output',
+    name: 'Structured Output Enforcer',
+    icon: '\uD83D\uDCCB',
+    feature: 'tools',
+    featureInFull: true,
+    desc: 'Garantiza que las respuestas del modelo cumplan un esquema JSON esperado. Incluye validaci\u00f3n, extracci\u00f3n y auto-correcci\u00f3n de outputs.',
+    items: [
+      { name: 'StructuredOutputEnforcer', type: 'tool',
+        desc: 'Motor principal de validaci\u00f3n y enforcement de outputs estructurados',
+        params: [
+          { name: 'config', type: 'EnforcementConfig', required: true, desc: 'Configuraci\u00f3n: esquema esperado, max reintentos, modo estricto/lenient' }
+        ],
+        module: 'structured_output.rs',
+        notes: 'Valida la respuesta del modelo contra un JSON schema. Si falla, puede reintentar con feedback al modelo o extraer parcialmente.'
+      },
+      { name: 'EnforcementConfig', type: 'tool',
+        desc: 'Configuraci\u00f3n para el enforcer: esquema, reintentos, modo',
+        params: [
+          { name: 'schema', type: 'object', required: true, desc: 'JSON Schema esperado para la respuesta' },
+          { name: 'max_retries', type: 'number', required: false, desc: 'M\u00e1ximo de reintentos si la validaci\u00f3n falla (default: 2)' },
+          { name: 'strict', type: 'bool', required: false, desc: 'Si true, rechaza respuestas que no cumplan exactamente el esquema' }
+        ],
+        module: 'structured_output.rs',
+        notes: 'El modo lenient intenta extraer JSON parcial de respuestas con texto extra.'
+      },
+      { name: 'EnforcementResult', type: 'tool',
+        desc: 'Resultado del enforcement: datos validados + metadata',
+        params: [],
+        module: 'structured_output.rs',
+        notes: 'Contiene: parsed_data (JSON validado), attempts (n\u00famero de intentos), warnings (campos extra/faltantes), is_valid.'
+      },
+      { name: 'extract_json_from_response', type: 'tool',
+        desc: 'Extraer bloque JSON de una respuesta de texto libre',
+        params: [
+          { name: 'response', type: 'string', required: true, desc: 'Texto de respuesta del modelo (puede contener markdown, explicaciones, etc.)' }
+        ],
+        module: 'structured_output.rs',
+        notes: 'Busca bloques ```json```, objetos/arrays JSON sueltos, o JSON incrustado en texto. Devuelve el primer JSON v\u00e1lido encontrado.'
+      },
+    ]
+  },
+  {
+    id: 'model-registry',
+    name: 'Model Capability Registry',
+    icon: '\uD83E\uDDE0',
+    feature: 'tools',
+    featureInFull: true,
+    desc: 'Registro de capacidades de modelos de IA conocidos. Permite seleccionar el modelo \u00f3ptimo seg\u00fan la tarea.',
+    items: [
+      { name: 'ModelCapabilityInfo', type: 'tool',
+        desc: 'Informaci\u00f3n de capacidades de un modelo espec\u00edfico',
+        params: [],
+        module: 'model_registry.rs',
+        notes: 'Incluye: context_window, supports_tools, supports_vision, supports_structured_output, max_output_tokens, pricing_tier.'
+      },
+      { name: 'ModelRegistry', type: 'tool',
+        desc: 'Registro con 7 modelos conocidos y sus capacidades',
+        params: [
+          { name: 'model_id', type: 'string', required: false, desc: 'ID del modelo a consultar (ej: gpt-4o, claude-3-opus, etc.)' }
+        ],
+        module: 'model_registry.rs',
+        notes: 'Modelos incluidos: GPT-4o, GPT-4o-mini, Claude 3 Opus, Claude 3.5 Sonnet, Claude 3 Haiku, Gemini 1.5 Pro, Gemini 1.5 Flash. lookup(), list_all(), best_for_task().'
+      },
+    ]
+  },
+  {
+    id: 'benchmarks',
+    name: 'Benchmark Suite',
+    icon: '\u23F1\uFE0F',
+    feature: 'full',
+    featureInFull: true,
+    desc: 'Suite de benchmarks con criterion. 6 benchmarks cubriendo las rutas cr\u00edticas del crate.',
+    items: [
+      { name: 'criterion benchmarks', type: 'tool',
+        desc: '6 benchmarks de rendimiento para rutas cr\u00edticas',
+        params: [],
+        module: 'benches/',
+        notes: 'Benchmarks: tool_registry_lookup, rag_chunking, context_management, knowledge_graph_traversal, mcp_protocol_parsing, structured_output_enforcement. Ejecutar: cargo bench.'
+      },
+    ]
+  },
+  {
+    id: 'public-api',
+    name: 'Public API Exports',
+    icon: '\uD83D\uDD11',
+    feature: 'tools',
+    featureInFull: true,
+    desc: 'Tipos y funciones p\u00fablicas adicionales exportados por el crate para integraci\u00f3n externa.',
+    items: [
+      { name: 'verify_webhook_signature', type: 'tool',
+        desc: 'Verificar firma HMAC de webhooks entrantes',
+        params: [
+          { name: 'payload', type: 'bytes', required: true, desc: 'Cuerpo del webhook' },
+          { name: 'signature', type: 'string', required: true, desc: 'Firma proporcionada en el header' },
+          { name: 'secret', type: 'string', required: true, desc: 'Secreto compartido para HMAC' }
+        ],
+        module: 'webhook.rs',
+        notes: 'HMAC-SHA256 con comparaci\u00f3n en tiempo constante. Protege contra ataques de timing.'
+      },
+      { name: 'ProcessingStats', type: 'tool',
+        desc: 'Estad\u00edsticas de procesamiento de documentos/chunks',
+        params: [],
+        module: 'rag.rs',
+        notes: 'Campos: total_documents, total_chunks, avg_chunk_size, processing_duration, errors. Devuelto por operaciones batch de RAG.'
+      },
+      { name: 'compute_relevance', type: 'tool',
+        desc: 'Calcular relevancia sem\u00e1ntica entre query y documento',
+        params: [
+          { name: 'query', type: 'string', required: true, desc: 'Query de b\u00fasqueda' },
+          { name: 'document', type: 'string', required: true, desc: 'Texto del documento' }
+        ],
+        module: 'rag.rs',
+        notes: 'Combina similitud coseno de embeddings con TF-IDF keyword matching. Score normalizado [0.0, 1.0].'
+      },
+    ]
+  },
+  {
+    id: 'browser-exports',
+    name: 'Browser Tools Exports',
+    icon: '\uD83C\uDF10',
+    feature: 'browser',
+    featureInFull: false,
+    desc: 'Tipos p\u00fablicos exportados del m\u00f3dulo browser. Ahora wired en AiAssistant via init_browser() y browser_session().',
+    items: [
+      { name: 'BrowserSession', type: 'tool',
+        desc: 'Sesi\u00f3n de browser CDP activa para automatizaci\u00f3n web',
+        params: [],
+        module: 'browser_tools.rs',
+        notes: 'Maneja la conexi\u00f3n WebSocket con Chrome/Chromium. M\u00e9todos: navigate(), click(), type_text(), screenshot(), evaluate(). Accesible via AiAssistant::browser_session().'
+      },
+      { name: 'BrowserError', type: 'tool',
+        desc: 'Enum de errores espec\u00edficos del m\u00f3dulo browser',
+        params: [],
+        module: 'browser_tools.rs',
+        notes: 'Variantes: ConnectionFailed, NavigationTimeout, ElementNotFound, JavaScriptError, ProtocolError.'
+      },
+      { name: 'BrowserPageContent', type: 'tool',
+        desc: 'Contenido extra\u00eddo de una p\u00e1gina web',
+        params: [],
+        module: 'browser_tools.rs',
+        notes: 'Campos: url, title, text_content, html (opcional), screenshot_base64 (opcional).'
+      },
+      { name: 'find_chrome_binary', type: 'tool',
+        desc: 'Detectar autom\u00e1ticamente la ruta del binario de Chrome/Chromium',
+        params: [],
+        module: 'browser_tools.rs', platform: true,
+        notes: 'Busca en rutas est\u00e1ndar seg\u00fan la plataforma: Program Files (Windows), /Applications (macOS), /usr/bin (Linux).'
+      },
+      { name: 'register_browser_tools', type: 'tool',
+        desc: 'Registrar todas las browser tools en un ToolRegistry',
+        params: [
+          { name: 'registry', type: 'ToolRegistry', required: true, desc: 'Registro de tools donde a\u00f1adir las browser tools' }
+        ],
+        module: 'browser_tools.rs',
+        notes: 'Registra: browser_navigate, browser_click, browser_type, browser_screenshot, browser_get_html, browser_get_text, browser_evaluate.'
+      },
+    ]
+  },
+  {
+    id: 'distributed-exports',
+    name: 'Distributed Agents Exports',
+    icon: '\uD83C\uDF10',
+    feature: 'distributed-agents',
+    featureInFull: false,
+    desc: 'Tipos p\u00fablicos del m\u00f3dulo distributed-agents. Ahora wired en AiAssistant via init_distributed_agents() y distributed_agents().',
+    items: [
+      { name: 'DistributedAgentManager', type: 'tool',
+        desc: 'Gestor principal de agentes distribuidos en red',
+        params: [],
+        module: 'distributed_agents.rs',
+        notes: 'Coordina tareas entre nodos de la red. M\u00e9todos: submit_task(), task_status(), list_nodes(), cancel_task(). Accesible via AiAssistant::distributed_agents().'
+      },
+      { name: 'DistributedTask', type: 'tool',
+        desc: 'Definici\u00f3n de una tarea a distribuir entre agentes',
+        params: [
+          { name: 'task_type', type: 'string', required: true, desc: 'Tipo de tarea (compute, transform, aggregate)' },
+          { name: 'payload', type: 'object', required: true, desc: 'Datos de la tarea en formato JSON' }
+        ],
+        module: 'distributed_agents.rs',
+        notes: 'Incluye: id, task_type, payload, priority, timeout, assigned_node (tras asignaci\u00f3n).'
+      },
+      { name: 'TaskDistributionStatus', type: 'tool',
+        desc: 'Estado actual de una tarea distribuida',
+        params: [],
+        module: 'distributed_agents.rs',
+        notes: 'Variantes: Queued, Assigned(node_id), Running(progress), Completed(result), Failed(error).'
+      },
+      { name: 'AgentNodeInfo', type: 'tool',
+        desc: 'Informaci\u00f3n de un nodo agente en la red distribuida',
+        params: [],
+        module: 'distributed_agents.rs',
+        notes: 'Campos: node_id, address, capabilities, load_factor, status (Online/Offline/Busy), last_heartbeat.'
+      },
+      { name: 'MapReduceAgentJob', type: 'tool',
+        desc: 'Definici\u00f3n de un job MapReduce distribuido entre agentes',
+        params: [
+          { name: 'map_fn', type: 'string', required: true, desc: 'Funci\u00f3n de mapeo (nombre registrado)' },
+          { name: 'reduce_fn', type: 'string', required: true, desc: 'Funci\u00f3n de reducci\u00f3n (nombre registrado)' },
+          { name: 'input_data', type: 'array', required: true, desc: 'Datos de entrada a particionar' }
+        ],
+        module: 'distributed_agents.rs',
+        notes: 'Distribuye datos entre nodos disponibles, ejecuta map en paralelo, y reduce los resultados. Tolerante a fallos: reasigna particiones si un nodo cae.'
+      },
+      { name: 'MapReduceStatus', type: 'tool',
+        desc: 'Estado de un job MapReduce en ejecuci\u00f3n',
+        params: [],
+        module: 'distributed_agents.rs',
+        notes: 'Campos: job_id, phase (Map/Shuffle/Reduce/Done), partitions_total, partitions_completed, failed_nodes, result (si Done).'
+      },
+    ]
+  },
+];
+
+// ============================================================
+// STATE
+// ============================================================
+
+let activeTab = 'all';
+let searchTerm = '';
+
+// ============================================================
+// RENDERING
+// ============================================================
+
+function countItems(catId) {
+  if (catId === 'all') return CATEGORIES.reduce((sum, c) => sum + c.items.length, 0);
+  const cat = CATEGORIES.find(c => c.id === catId);
+  return cat ? cat.items.length : 0;
+}
+
+function countByType(type) {
+  return CATEGORIES.reduce((sum, c) => sum + c.items.filter(i => i.type === type).length, 0);
+}
+
+function renderBanner() {
+  const el = document.getElementById('banner');
+  const totalTools = countByType('tool');
+  const totalResources = countByType('resource');
+  const totalPrompts = countByType('prompt');
+  const total = totalTools + totalResources + totalPrompts;
+
+  el.innerHTML = `
+    <div class="protocol-stat"><div class="value">${total}</div><div class="label">Capacidades MCP</div></div>
+    <div class="protocol-stat"><div class="value">${totalTools}</div><div class="label">Tools</div></div>
+    <div class="protocol-stat"><div class="value">${totalResources}</div><div class="label">Resources</div></div>
+    <div class="protocol-stat"><div class="value">${totalPrompts}</div><div class="label">Prompts</div></div>
+    <div class="protocol-stat"><div class="value">2024-11-05</div><div class="label">MCP Version</div></div>
+    <div class="protocol-stat"><div class="value">2338</div><div class="label">Tests</div></div>
+    <div class="protocol-stat"><div class="value">6</div><div class="label">Benchmarks</div></div>
+    <div class="protocol-stat"><div class="value">13</div><div class="label">Examples</div></div>
+  `;
+}
+
+function renderTabs() {
+  const el = document.getElementById('tabBar');
+  const tabs = [
+    { id: 'all', label: 'Todos' },
+    { id: 'tool', label: 'Tools', filter: 'type' },
+    { id: 'resource', label: 'Resources', filter: 'type' },
+    { id: 'prompt', label: 'Prompts', filter: 'type' },
+    { id: 'sep', label: '|' },
+  ];
+
+  CATEGORIES.forEach(c => tabs.push({ id: c.id, label: c.name }));
+
+  el.innerHTML = tabs.map(t => {
+    if (t.id === 'sep') return '<span style="color:var(--border);font-size:1.2rem;line-height:2">|</span>';
+    const count = t.filter === 'type' ? countByType(t.id) : (t.id === 'all' ? countItems('all') : countItems(t.id));
+    return `<button class="tab-btn${activeTab === t.id ? ' active' : ''}" onclick="setTab('${t.id}')">${t.label}<span class="count">${count}</span></button>`;
+  }).join('');
+}
+
+function matchesSearch(item) {
+  if (!searchTerm) return true;
+  const s = searchTerm.toLowerCase();
+  return item.name.toLowerCase().includes(s)
+    || item.desc.toLowerCase().includes(s)
+    || (item.module && item.module.toLowerCase().includes(s))
+    || (item.notes && item.notes.toLowerCase().includes(s))
+    || (item.params && item.params.some(p => p.name.toLowerCase().includes(s)));
+}
+
+function matchesTab(cat, item) {
+  if (activeTab === 'all') return true;
+  if (activeTab === 'tool' || activeTab === 'resource' || activeTab === 'prompt') return item.type === activeTab;
+  return cat.id === activeTab;
+}
+
+function renderCatalog() {
+  const container = document.getElementById('catalogContainer');
+  let html = '';
+
+  CATEGORIES.forEach(cat => {
+    const visibleItems = cat.items.filter(item => matchesTab(cat, item) && matchesSearch(item));
+    if (visibleItems.length === 0) return;
+
+    html += `<div class="category" id="cat-${cat.id}">`;
+    html += `<div class="category-header" onclick="toggleCategory('${cat.id}')">`;
+    html += `<span class="icon">${cat.icon}</span>`;
+    html += `<h2>${cat.name}</h2>`;
+    html += `<span class="badge ${cat.featureInFull ? 'badge-core' : 'badge-feature'}">${cat.feature}${cat.featureInFull ? ' (in full)' : ''}</span>`;
+    html += `<span class="collapse-icon">\u25BC</span>`;
+    html += `</div>`;
+    html += `<div class="category-body">`;
+    html += `<div class="category-desc">${cat.desc}</div>`;
+
+    visibleItems.forEach(item => {
+      const typeClass = item.type === 'tool' ? 'type-tool' : item.type === 'resource' ? 'type-resource' : 'type-prompt';
+      html += `<div class="tool-card" onclick="toggleCard(this)">`;
+      html += `<div class="tool-summary">`;
+      html += `<span class="tool-type-badge ${typeClass}">${item.type}</span>`;
+      html += `<span class="tool-name">${item.name}</span>`;
+      html += `<span class="tool-desc">${item.desc}</span>`;
+      html += `<span class="tool-expand-icon">\u25B6</span>`;
+      html += `</div>`;
+
+      // Details (hidden by default)
+      html += `<div class="tool-details">`;
+
+      // Parameters
+      if (item.params && item.params.length > 0) {
+        html += `<div class="detail-section">`;
+        html += `<div class="detail-label">Par\u00e1metros</div>`;
+        html += `<table class="params-table"><tr><th>Nombre</th><th>Tipo</th><th>Req.</th><th>Descripci\u00f3n</th></tr>`;
+        item.params.forEach(p => {
+          html += `<tr>`;
+          html += `<td><span class="param-name">${p.name}</span></td>`;
+          html += `<td><span class="param-type">${p.type}</span></td>`;
+          html += `<td><span class="param-required ${p.required ? 'req-yes' : 'req-no'}">${p.required ? 'req' : 'opt'}</span></td>`;
+          html += `<td>${p.desc}</td>`;
+          html += `</tr>`;
+        });
+        html += `</table></div>`;
+      } else {
+        html += `<div class="detail-section"><div class="detail-label">Par\u00e1metros</div><div class="detail-note">Sin par\u00e1metros</div></div>`;
+      }
+
+      // Tags
+      html += `<div class="detail-section"><div class="detail-label">Metadata</div><div class="detail-tags">`;
+      html += `<span class="detail-tag tag-module">${item.module}</span>`;
+      html += `<span class="detail-tag tag-feature">${cat.feature}</span>`;
+      if (item.feature_extra) html += `<span class="detail-tag tag-feature">${item.feature_extra}</span>`;
+      if (item.sandbox) html += `<span class="detail-tag tag-sandbox">\uD83D\uDEE1\uFE0F sandbox: ${item.sandbox}</span>`;
+      if (item.platform) html += `<span class="detail-tag tag-platform">\uD83D\uDDA5\uFE0F platform-specific</span>`;
+      html += `</div></div>`;
+
+      // Notes
+      if (item.notes) {
+        html += `<div class="detail-section"><div class="detail-label">Notas</div><div class="detail-note">${item.notes}</div></div>`;
+      }
+
+      html += `</div>`; // tool-details
+      html += `</div>`; // tool-card
+    });
+
+    html += `</div></div>`; // category-body, category
+  });
+
+  container.innerHTML = html;
+}
+
+// ============================================================
+// INTERACTIONS
+// ============================================================
+
+function setTab(id) {
+  activeTab = id;
+  renderTabs();
+  renderCatalog();
+}
+
+function filterCards() {
+  searchTerm = document.getElementById('searchInput').value;
+  renderCatalog();
+}
+
+function toggleCategory(catId) {
+  const el = document.getElementById('cat-' + catId);
+  if (el) el.classList.toggle('collapsed');
+}
+
+function toggleCard(cardEl) {
+  cardEl.classList.toggle('expanded');
+}
+
+// ============================================================
+// INIT
+// ============================================================
+
+renderBanner();
+renderTabs();
+renderCatalog();
+</script>
+
+</body>
+</html>

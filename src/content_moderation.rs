@@ -10,8 +10,8 @@
 //! - **Multi-language support**: Detect content in multiple languages
 //! - **Custom blocklists**: Add custom terms to block
 
-use std::collections::{HashMap, HashSet};
 use regex::Regex;
+use std::collections::{HashMap, HashSet};
 
 /// Configuration for content moderation
 #[derive(Debug, Clone)]
@@ -172,10 +172,14 @@ struct PatternEntry {
 impl ContentModerator {
     /// Create a new content moderator
     pub fn new(config: ModerationConfig) -> Self {
-        let blocked_set: HashSet<_> = config.blocked_terms.iter()
+        let blocked_set: HashSet<_> = config
+            .blocked_terms
+            .iter()
             .map(|t| t.to_lowercase())
             .collect();
-        let allowed_set: HashSet<_> = config.allowed_terms.iter()
+        let allowed_set: HashSet<_> = config
+            .allowed_terms
+            .iter()
             .map(|t| t.to_lowercase())
             .collect();
 
@@ -257,7 +261,13 @@ impl ContentModerator {
         );
     }
 
-    fn add_pattern(&mut self, category: ModerationCategory, pattern: &str, weight: f64, reason: &str) {
+    fn add_pattern(
+        &mut self,
+        category: ModerationCategory,
+        pattern: &str,
+        weight: f64,
+        reason: &str,
+    ) {
         if let Ok(re) = Regex::new(&format!("(?i){}", pattern)) {
             self.patterns
                 .entry(category)
@@ -289,7 +299,9 @@ impl ContentModerator {
                         end: pos + term.len(),
                         reason: "Blocked term".to_string(),
                     });
-                    *category_scores.entry(ModerationCategory::Custom).or_insert(0.0) = 1.0;
+                    *category_scores
+                        .entry(ModerationCategory::Custom)
+                        .or_insert(0.0) = 1.0;
                 }
             }
         }
@@ -346,12 +358,14 @@ impl ContentModerator {
         // Process text based on action
         let (processed, action_taken) = if !passed {
             match &self.config.action {
-                ModerationAction::Block => {
-                    ("[CONTENT BLOCKED]".to_string(), Some(ModerationAction::Block))
-                }
-                ModerationAction::Replace(replacement) => {
-                    (replacement.clone(), Some(ModerationAction::Replace(replacement.clone())))
-                }
+                ModerationAction::Block => (
+                    "[CONTENT BLOCKED]".to_string(),
+                    Some(ModerationAction::Block),
+                ),
+                ModerationAction::Replace(replacement) => (
+                    replacement.clone(),
+                    Some(ModerationAction::Replace(replacement.clone())),
+                ),
                 ModerationAction::Filter => {
                     let filtered = self.filter_content(text, &flags);
                     (filtered, Some(ModerationAction::Filter))
@@ -457,7 +471,9 @@ impl ModerationStats {
         }
 
         // Update average
-        self.avg_risk_score = (self.avg_risk_score * (self.total_checks - 1) as f64 + result.risk_score) / self.total_checks as f64;
+        self.avg_risk_score = (self.avg_risk_score * (self.total_checks - 1) as f64
+            + result.risk_score)
+            / self.total_checks as f64;
     }
 
     /// Get pass rate
@@ -558,7 +574,10 @@ mod tests {
         let result = moderator.moderate("This contains badword in it");
 
         assert!(!result.passed);
-        assert!(result.flags.iter().any(|f| f.category == ModerationCategory::Custom));
+        assert!(result
+            .flags
+            .iter()
+            .any(|f| f.category == ModerationCategory::Custom));
     }
 
     #[test]

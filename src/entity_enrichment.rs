@@ -316,11 +316,7 @@ impl EntityEnricher {
     }
 
     /// Merge two entities into one using the configured merge strategy.
-    pub fn merge_entities(
-        &self,
-        a: &EnrichableEntity,
-        b: &EnrichableEntity,
-    ) -> EnrichableEntity {
+    pub fn merge_entities(&self, a: &EnrichableEntity, b: &EnrichableEntity) -> EnrichableEntity {
         match self.config.merge_strategy {
             MergeStrategy::KeepFirst => {
                 let mut merged = a.clone();
@@ -436,7 +432,10 @@ impl EntityEnricher {
         source: &EnrichmentSource,
     ) -> Result<Option<EnrichmentData>> {
         let encoded_query = urlencoding::encode(&entity.text);
-        let url = format!("{}{}?q={}", source.base_url, source.search_path, encoded_query);
+        let url = format!(
+            "{}{}?q={}",
+            source.base_url, source.search_path, encoded_query
+        );
 
         let response = ureq::get(&url).call();
 
@@ -488,10 +487,7 @@ impl EntityEnricher {
                 }
 
                 // If no useful data was extracted, return None
-                if attributes.is_empty()
-                    && description.is_none()
-                    && related_entities.is_empty()
-                {
+                if attributes.is_empty() && description.is_none() && related_entities.is_empty() {
                     return Ok(None);
                 }
 
@@ -593,10 +589,7 @@ fn normalize(text: &str) -> String {
 ///
 /// Creates a tag from the entity type's display name, plus one tag for each
 /// attribute key that has a non-empty value.
-fn generate_tags(
-    attributes: &HashMap<String, String>,
-    entity_type: &EntityType,
-) -> Vec<String> {
+fn generate_tags(attributes: &HashMap<String, String>, entity_type: &EntityType) -> Vec<String> {
     let mut tags = Vec::new();
 
     // Tag from entity type
@@ -656,13 +649,21 @@ mod tests {
     #[test]
     fn test_fuzzy_similarity_identical_strings() {
         let sim = fuzzy_similarity("hello world", "hello world");
-        assert!((sim - 1.0).abs() < f32::EPSILON, "Identical strings should have similarity 1.0, got {}", sim);
+        assert!(
+            (sim - 1.0).abs() < f32::EPSILON,
+            "Identical strings should have similarity 1.0, got {}",
+            sim
+        );
     }
 
     #[test]
     fn test_fuzzy_similarity_completely_different() {
         let sim = fuzzy_similarity("abc", "xyz");
-        assert!(sim < 0.1, "Completely different strings should have very low similarity, got {}", sim);
+        assert!(
+            sim < 0.1,
+            "Completely different strings should have very low similarity, got {}",
+            sim
+        );
     }
 
     #[test]
@@ -717,11 +718,14 @@ mod tests {
         let enricher = EntityEnricher::new(config);
 
         let mut a = make_entity("Entity A", EntityType::Person);
-        a.attributes.insert("role".to_string(), "developer".to_string());
+        a.attributes
+            .insert("role".to_string(), "developer".to_string());
 
         let mut b = make_entity("Entity B", EntityType::Person);
-        b.attributes.insert("role".to_string(), "manager".to_string());
-        b.attributes.insert("dept".to_string(), "engineering".to_string());
+        b.attributes
+            .insert("role".to_string(), "manager".to_string());
+        b.attributes
+            .insert("dept".to_string(), "engineering".to_string());
 
         let merged = enricher.merge_entities(&a, &b);
         assert_eq!(merged.text, "Entity A");
@@ -744,7 +748,8 @@ mod tests {
 
         let mut b = make_entity("Entity B", EntityType::Organization);
         b.attributes.insert("country".to_string(), "UK".to_string());
-        b.attributes.insert("sector".to_string(), "tech".to_string());
+        b.attributes
+            .insert("sector".to_string(), "tech".to_string());
         b.confidence = 0.6;
 
         let merged = enricher.merge_entities(&a, &b);

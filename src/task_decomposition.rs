@@ -124,33 +124,42 @@ impl TaskDecomposer {
 
     fn init_keyword_patterns(&mut self) {
         // Sequential keywords
-        self.keyword_patterns.insert("sequential".to_string(), vec![
-            "first".to_string(),
-            "then".to_string(),
-            "after".to_string(),
-            "finally".to_string(),
-            "next".to_string(),
-        ]);
+        self.keyword_patterns.insert(
+            "sequential".to_string(),
+            vec![
+                "first".to_string(),
+                "then".to_string(),
+                "after".to_string(),
+                "finally".to_string(),
+                "next".to_string(),
+            ],
+        );
 
         // Functional keywords
-        self.keyword_patterns.insert("functional".to_string(), vec![
-            "component".to_string(),
-            "module".to_string(),
-            "feature".to_string(),
-            "function".to_string(),
-            "part".to_string(),
-        ]);
+        self.keyword_patterns.insert(
+            "functional".to_string(),
+            vec![
+                "component".to_string(),
+                "module".to_string(),
+                "feature".to_string(),
+                "function".to_string(),
+                "part".to_string(),
+            ],
+        );
 
         // Action keywords that often need subtasks
-        self.keyword_patterns.insert("actions".to_string(), vec![
-            "create".to_string(),
-            "implement".to_string(),
-            "build".to_string(),
-            "develop".to_string(),
-            "design".to_string(),
-            "test".to_string(),
-            "deploy".to_string(),
-        ]);
+        self.keyword_patterns.insert(
+            "actions".to_string(),
+            vec![
+                "create".to_string(),
+                "implement".to_string(),
+                "build".to_string(),
+                "develop".to_string(),
+                "design".to_string(),
+                "test".to_string(),
+                "deploy".to_string(),
+            ],
+        );
     }
 
     pub fn decompose(&self, description: &str) -> TaskNode {
@@ -236,7 +245,10 @@ impl TaskDecomposer {
         ];
 
         for (keyword, comp_desc) in components {
-            if description.contains(keyword) || description.contains("full") || description.contains("complete") {
+            if description.contains(keyword)
+                || description.contains("full")
+                || description.contains("complete")
+            {
                 let id = uuid::Uuid::new_v4().to_string();
                 subtasks.push(TaskNode::new(&id, comp_desc));
             }
@@ -244,8 +256,14 @@ impl TaskDecomposer {
 
         // If no specific components found, create generic ones
         if subtasks.is_empty() {
-            subtasks.push(TaskNode::new(&uuid::Uuid::new_v4().to_string(), "Core functionality"));
-            subtasks.push(TaskNode::new(&uuid::Uuid::new_v4().to_string(), "Supporting features"));
+            subtasks.push(TaskNode::new(
+                &uuid::Uuid::new_v4().to_string(),
+                "Core functionality",
+            ));
+            subtasks.push(TaskNode::new(
+                &uuid::Uuid::new_v4().to_string(),
+                "Supporting features",
+            ));
         }
 
         subtasks
@@ -300,9 +318,14 @@ impl TaskDecomposer {
     }
 
     fn extract_actions(&self, description: &str) -> Vec<String> {
-        let actions = self.keyword_patterns.get("actions").cloned().unwrap_or_default();
+        let actions = self
+            .keyword_patterns
+            .get("actions")
+            .cloned()
+            .unwrap_or_default();
 
-        actions.into_iter()
+        actions
+            .into_iter()
             .filter(|a| description.contains(a))
             .collect()
     }
@@ -317,9 +340,7 @@ impl TaskDecomposer {
                 self.calculate_complexities(subtask);
             }
             // Parent complexity is sum of children
-            node.estimated_complexity = node.subtasks.iter()
-                .map(|s| s.estimated_complexity)
-                .sum();
+            node.estimated_complexity = node.subtasks.iter().map(|s| s.estimated_complexity).sum();
         }
     }
 
@@ -365,8 +386,7 @@ impl TaskDecomposer {
                     continue;
                 }
 
-                let deps_met = task.dependencies.iter()
-                    .all(|d| completed.contains(d));
+                let deps_met = task.dependencies.iter().all(|d| completed.contains(d));
 
                 if deps_met && task.is_leaf {
                     order.push(task.id.clone());
@@ -422,7 +442,8 @@ impl TaskDecomposer {
         let leaf_tasks: Vec<_> = flat.iter().filter(|t| t.is_leaf).collect();
 
         // Count parallelizable tasks (no dependencies on incomplete tasks)
-        let parallelizable = leaf_tasks.iter()
+        let parallelizable = leaf_tasks
+            .iter()
             .filter(|t| t.dependencies.is_empty())
             .count();
 

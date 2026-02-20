@@ -56,7 +56,12 @@ impl ModelPricing {
     }
 
     /// Calculate cost including images
-    pub fn calculate_with_images(&self, input_tokens: usize, output_tokens: usize, images: usize) -> f64 {
+    pub fn calculate_with_images(
+        &self,
+        input_tokens: usize,
+        output_tokens: usize,
+        images: usize,
+    ) -> f64 {
         let base_cost = self.calculate(input_tokens, output_tokens);
         let image_cost = self.image_cost.unwrap_or(0.0) * images as f64;
         base_cost + image_cost
@@ -64,7 +69,9 @@ impl ModelPricing {
 
     /// Check if this pricing matches a model name
     pub fn matches(&self, model_name: &str) -> bool {
-        model_name.to_lowercase().contains(&self.model_pattern.to_lowercase())
+        model_name
+            .to_lowercase()
+            .contains(&self.model_pattern.to_lowercase())
     }
 }
 
@@ -93,11 +100,15 @@ impl CostEstimate {
     /// Format as human-readable string
     pub fn format(&self) -> String {
         if self.cost < 0.01 {
-            format!("${:.4} {} ({} in / {} out)",
-                self.cost, self.currency, self.input_tokens, self.output_tokens)
+            format!(
+                "${:.4} {} ({} in / {} out)",
+                self.cost, self.currency, self.input_tokens, self.output_tokens
+            )
         } else {
-            format!("${:.2} {} ({} in / {} out)",
-                self.cost, self.currency, self.input_tokens, self.output_tokens)
+            format!(
+                "${:.2} {} ({} in / {} out)",
+                self.cost, self.currency, self.input_tokens, self.output_tokens
+            )
         }
     }
 
@@ -151,7 +162,8 @@ impl CostTracker {
         self.total_cost += estimate.cost;
         self.request_count += 1;
 
-        *self.cost_by_model
+        *self
+            .cost_by_model
             .entry(estimate.model.clone())
             .or_insert(0.0) += estimate.cost;
 
@@ -237,68 +249,42 @@ impl CostEstimator {
         self.pricing.push(
             ModelPricing::new("gpt-4o", 2.50, 10.00)
                 .with_provider("openai")
-                .with_image_cost(0.00255)
+                .with_image_cost(0.00255),
         );
-        self.pricing.push(
-            ModelPricing::new("gpt-4-turbo", 10.00, 30.00)
-                .with_provider("openai")
-        );
-        self.pricing.push(
-            ModelPricing::new("gpt-4", 30.00, 60.00)
-                .with_provider("openai")
-        );
-        self.pricing.push(
-            ModelPricing::new("gpt-3.5-turbo", 0.50, 1.50)
-                .with_provider("openai")
-        );
+        self.pricing
+            .push(ModelPricing::new("gpt-4-turbo", 10.00, 30.00).with_provider("openai"));
+        self.pricing
+            .push(ModelPricing::new("gpt-4", 30.00, 60.00).with_provider("openai"));
+        self.pricing
+            .push(ModelPricing::new("gpt-3.5-turbo", 0.50, 1.50).with_provider("openai"));
 
         // Anthropic models
-        self.pricing.push(
-            ModelPricing::new("claude-3-opus", 15.00, 75.00)
-                .with_provider("anthropic")
-        );
-        self.pricing.push(
-            ModelPricing::new("claude-3-sonnet", 3.00, 15.00)
-                .with_provider("anthropic")
-        );
-        self.pricing.push(
-            ModelPricing::new("claude-3-haiku", 0.25, 1.25)
-                .with_provider("anthropic")
-        );
+        self.pricing
+            .push(ModelPricing::new("claude-3-opus", 15.00, 75.00).with_provider("anthropic"));
+        self.pricing
+            .push(ModelPricing::new("claude-3-sonnet", 3.00, 15.00).with_provider("anthropic"));
+        self.pricing
+            .push(ModelPricing::new("claude-3-haiku", 0.25, 1.25).with_provider("anthropic"));
 
         // Google models
-        self.pricing.push(
-            ModelPricing::new("gemini-pro", 0.50, 1.50)
-                .with_provider("google")
-        );
-        self.pricing.push(
-            ModelPricing::new("gemini-ultra", 7.00, 21.00)
-                .with_provider("google")
-        );
+        self.pricing
+            .push(ModelPricing::new("gemini-pro", 0.50, 1.50).with_provider("google"));
+        self.pricing
+            .push(ModelPricing::new("gemini-ultra", 7.00, 21.00).with_provider("google"));
 
         // Together.ai / Replicate pricing examples
-        self.pricing.push(
-            ModelPricing::new("llama-3-70b", 0.90, 0.90)
-                .with_provider("together")
-        );
-        self.pricing.push(
-            ModelPricing::new("llama-3-8b", 0.20, 0.20)
-                .with_provider("together")
-        );
-        self.pricing.push(
-            ModelPricing::new("mixtral-8x7b", 0.60, 0.60)
-                .with_provider("together")
-        );
-        self.pricing.push(
-            ModelPricing::new("mistral-7b", 0.20, 0.20)
-                .with_provider("together")
-        );
+        self.pricing
+            .push(ModelPricing::new("llama-3-70b", 0.90, 0.90).with_provider("together"));
+        self.pricing
+            .push(ModelPricing::new("llama-3-8b", 0.20, 0.20).with_provider("together"));
+        self.pricing
+            .push(ModelPricing::new("mixtral-8x7b", 0.60, 0.60).with_provider("together"));
+        self.pricing
+            .push(ModelPricing::new("mistral-7b", 0.20, 0.20).with_provider("together"));
 
         // Groq (very fast, lower cost)
-        self.pricing.push(
-            ModelPricing::new("groq", 0.05, 0.08)
-                .with_provider("groq")
-        );
+        self.pricing
+            .push(ModelPricing::new("groq", 0.05, 0.08).with_provider("groq"));
     }
 
     /// Add custom pricing
@@ -327,7 +313,9 @@ impl CostEstimator {
     /// Check if a model is considered local/free
     pub fn is_local_model(&self, model_name: &str, provider: &str) -> bool {
         let local_providers = ["ollama", "lm-studio", "localai", "kobold", "text-gen"];
-        local_providers.iter().any(|p| provider.to_lowercase().contains(p))
+        local_providers
+            .iter()
+            .any(|p| provider.to_lowercase().contains(p))
             || model_name.to_lowercase().contains("local")
     }
 

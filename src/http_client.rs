@@ -55,7 +55,8 @@ impl HttpClient for UreqClient {
             .timeout(std::time::Duration::from_secs(timeout_secs))
             .call()
             .with_context(|| format!("GET request failed: {}", url))?;
-        response.into_json()
+        response
+            .into_json()
             .context("Failed to parse JSON response")
     }
 
@@ -69,7 +70,8 @@ impl HttpClient for UreqClient {
             .timeout(std::time::Duration::from_secs(timeout_secs))
             .send_json(body)
             .with_context(|| format!("POST request failed: {}", url))?;
-        response.into_json()
+        response
+            .into_json()
             .context("Failed to parse JSON response")
     }
 
@@ -107,7 +109,11 @@ pub fn parse_ollama_models(body: &serde_json::Value) -> Vec<ModelInfo> {
                     name: name.to_string(),
                     provider: AiProvider::Ollama,
                     size: model.get("size").and_then(|s| s.as_u64()).map(format_size),
-                    modified_at: model.get("modified_at").and_then(|m| m.as_str()).map(|s| s.to_string()),
+                    modified_at: model
+                        .get("modified_at")
+                        .and_then(|m| m.as_str())
+                        .map(|s| s.to_string()),
+                    capabilities: None,
                 });
             }
         }
@@ -126,6 +132,7 @@ pub fn parse_openai_models(body: &serde_json::Value, provider: AiProvider) -> Ve
                     provider: provider.clone(),
                     size: None,
                     modified_at: None,
+                    capabilities: None,
                 });
             }
         }
@@ -143,6 +150,7 @@ pub fn parse_kobold_models(body: &serde_json::Value) -> Vec<ModelInfo> {
                 provider: AiProvider::KoboldCpp,
                 size: None,
                 modified_at: None,
+                capabilities: None,
             });
         }
     }
@@ -155,7 +163,8 @@ pub fn parse_kobold_models(body: &serde_json::Value) -> Vec<ModelInfo> {
 /// The public `fetch_ollama_models` in providers.rs delegates to this.
 pub fn fetch_ollama_models_with(client: &dyn HttpClient, base_url: &str) -> Result<Vec<ModelInfo>> {
     let url = format!("{}/api/tags", base_url);
-    let body = client.get_json(&url, 5)
+    let body = client
+        .get_json(&url, 5)
         .context("Failed to connect to Ollama")?;
     Ok(parse_ollama_models(&body))
 }
@@ -167,7 +176,8 @@ pub fn fetch_openai_models_with(
     provider: AiProvider,
 ) -> Result<Vec<ModelInfo>> {
     let url = format!("{}/v1/models", base_url);
-    let body = client.get_json(&url, 5)
+    let body = client
+        .get_json(&url, 5)
         .context("Failed to connect to OpenAI-compatible API")?;
     Ok(parse_openai_models(&body, provider))
 }
@@ -175,7 +185,8 @@ pub fn fetch_openai_models_with(
 /// Fetch Kobold.cpp models using a provided HttpClient.
 pub fn fetch_kobold_models_with(client: &dyn HttpClient, base_url: &str) -> Result<Vec<ModelInfo>> {
     let url = format!("{}/api/v1/model", base_url);
-    let body = client.get_json(&url, 5)
+    let body = client
+        .get_json(&url, 5)
         .context("Failed to connect to Kobold.cpp")?;
     Ok(parse_kobold_models(&body))
 }
@@ -332,7 +343,8 @@ mod tests {
             ]
         }));
 
-        let models = fetch_openai_models_with(&mock, "http://localhost:1234", AiProvider::LMStudio).unwrap();
+        let models =
+            fetch_openai_models_with(&mock, "http://localhost:1234", AiProvider::LMStudio).unwrap();
         assert_eq!(models.len(), 2);
     }
 
@@ -352,11 +364,13 @@ mod tests {
             "done": false
         }));
 
-        let reader = mock.post_streaming(
-            "http://localhost:11434/api/chat",
-            &serde_json::json!({}),
-            300,
-        ).unwrap();
+        let reader = mock
+            .post_streaming(
+                "http://localhost:11434/api/chat",
+                &serde_json::json!({}),
+                300,
+            )
+            .unwrap();
 
         let mut content = String::new();
         std::io::Read::read_to_string(&mut { reader }, &mut content).unwrap();

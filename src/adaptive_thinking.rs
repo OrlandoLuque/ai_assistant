@@ -48,9 +48,9 @@
 //! assert!(strategy.temperature < 0.5); // Lower temperature for precise reasoning
 //! ```
 
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
 use crate::intent::IntentClassifier;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 // ============================================================================
 // Enums
@@ -310,39 +310,105 @@ pub struct QueryClassifier {
 
 // Keyword lists as constants for pattern matching
 const COMPARISON_KEYWORDS: &[&str] = &[
-    "compare", "comparison", "versus", " vs ", " vs.", "difference between",
-    "differences between", "better than", "worse than", "advantages of",
-    "disadvantages of", "pros and cons", "trade-off", "tradeoff", "trade off",
+    "compare",
+    "comparison",
+    "versus",
+    " vs ",
+    " vs.",
+    "difference between",
+    "differences between",
+    "better than",
+    "worse than",
+    "advantages of",
+    "disadvantages of",
+    "pros and cons",
+    "trade-off",
+    "tradeoff",
+    "trade off",
 ];
 
 const ANALYSIS_KEYWORDS: &[&str] = &[
-    "analyze", "analyse", "evaluate", "assess", "implications",
-    "impact", "consequences", "critically", "in depth", "in-depth",
+    "analyze",
+    "analyse",
+    "evaluate",
+    "assess",
+    "implications",
+    "impact",
+    "consequences",
+    "critically",
+    "in depth",
+    "in-depth",
 ];
 
 const CODE_KEYWORDS: &[&str] = &[
-    "code", "function", "implement", "programming", "algorithm", "syntax",
-    "debug", "compile", "runtime", "variable", "struct", "class", "method",
-    "```", "fn ", "def ", "int ", "void ",
+    "code",
+    "function",
+    "implement",
+    "programming",
+    "algorithm",
+    "syntax",
+    "debug",
+    "compile",
+    "runtime",
+    "variable",
+    "struct",
+    "class",
+    "method",
+    "```",
+    "fn ",
+    "def ",
+    "int ",
+    "void ",
 ];
 
 const EXPERT_PATTERNS: &[&str] = &[
-    "comprehensive analysis", "critically analyze", "critically analyse",
-    "compare and contrast", "evaluate the trade-offs", "evaluate the tradeoffs",
-    "design implications", "architectural", "in-depth analysis",
-    "multiple perspectives", "from multiple angles",
+    "comprehensive analysis",
+    "critically analyze",
+    "critically analyse",
+    "compare and contrast",
+    "evaluate the trade-offs",
+    "evaluate the tradeoffs",
+    "design implications",
+    "architectural",
+    "in-depth analysis",
+    "multiple perspectives",
+    "from multiple angles",
 ];
 
 const MULTI_PART_INDICATORS: &[&str] = &[
-    " also ", " additionally ", " moreover ", " furthermore ", " besides ",
-    " as well as ", " on top of ",
+    " also ",
+    " additionally ",
+    " moreover ",
+    " furthermore ",
+    " besides ",
+    " as well as ",
+    " on top of ",
 ];
 
 const TRIVIAL_PATTERNS: &[&str] = &[
-    "hi", "hello", "hey", "hola", "thanks", "thank you", "gracias",
-    "bye", "goodbye", "adiós", "adios", "ok", "okay", "sure", "yes", "no",
-    "good morning", "good afternoon", "good evening", "good night",
-    "buenos días", "buenas tardes", "buenas noches",
+    "hi",
+    "hello",
+    "hey",
+    "hola",
+    "thanks",
+    "thank you",
+    "gracias",
+    "bye",
+    "goodbye",
+    "adiós",
+    "adios",
+    "ok",
+    "okay",
+    "sure",
+    "yes",
+    "no",
+    "good morning",
+    "good afternoon",
+    "good evening",
+    "good night",
+    "buenos días",
+    "buenas tardes",
+    "buenas noches",
 ];
 
 impl QueryClassifier {
@@ -362,7 +428,9 @@ impl QueryClassifier {
     pub fn classify(&self, query: &str) -> ThinkingStrategy {
         let signals = self.analyze_signals(query);
         let raw_depth = self.determine_depth(&signals);
-        let clamped = raw_depth.max(self.config.min_depth).min(self.config.max_depth);
+        let clamped = raw_depth
+            .max(self.config.min_depth)
+            .min(self.config.max_depth);
         self.build_strategy(clamped, signals)
     }
 
@@ -381,7 +449,8 @@ impl QueryClassifier {
         let mut depth = self.determine_depth(&signals);
 
         // Upgrade depth for follow-up questions in long, topic-rich conversations
-        if conversation_length > 10 && previous_topics.len() >= 3 && depth < ThinkingDepth::Moderate {
+        if conversation_length > 10 && previous_topics.len() >= 3 && depth < ThinkingDepth::Moderate
+        {
             depth = ThinkingDepth::Moderate;
         }
 
@@ -446,7 +515,10 @@ impl QueryClassifier {
         // 1. Trivial: short messages matching trivial patterns
         if signals.word_count <= 5 {
             let intent = signals.detected_intent.as_str();
-            if matches!(intent, "Greeting" | "Farewell" | "Thanks" | "Confirmation" | "Negation") {
+            if matches!(
+                intent,
+                "Greeting" | "Farewell" | "Thanks" | "Confirmation" | "Negation"
+            ) {
                 return ThinkingDepth::Trivial;
             }
             // Also check pattern list for edge cases the intent classifier might miss
@@ -501,9 +573,15 @@ impl QueryClassifier {
     }
 
     /// Build a complete `ThinkingStrategy` from a determined depth and signals.
-    fn build_strategy(&self, depth: ThinkingDepth, signals: ClassificationSignals) -> ThinkingStrategy {
+    fn build_strategy(
+        &self,
+        depth: ThinkingDepth,
+        signals: ClassificationSignals,
+    ) -> ThinkingStrategy {
         let temperature = if self.config.adjust_temperature {
-            self.config.temperature_map.as_ref()
+            self.config
+                .temperature_map
+                .as_ref()
                 .and_then(|m| m.get(&depth).copied())
                 .unwrap_or_else(|| Self::default_temperature(depth))
         } else {
@@ -511,7 +589,9 @@ impl QueryClassifier {
         };
 
         let max_tokens = if self.config.adjust_max_tokens {
-            self.config.max_tokens_map.as_ref()
+            self.config
+                .max_tokens_map
+                .as_ref()
                 .and_then(|m| m.get(&depth).copied())
                 .or_else(|| Self::default_max_tokens(depth))
         } else {
@@ -563,10 +643,9 @@ impl QueryClassifier {
                 signals.detected_intent.as_str(),
                 "Greeting" | "Farewell" | "Thanks" | "Confirmation" | "Negation" | "Chitchat"
             ),
-            ThinkingDepth::Simple => matches!(
-                signals.detected_intent.as_str(),
-                "Question" | "Command"
-            ),
+            ThinkingDepth::Simple => {
+                matches!(signals.detected_intent.as_str(), "Question" | "Command")
+            }
             ThinkingDepth::Moderate => matches!(
                 signals.detected_intent.as_str(),
                 "Explanation" | "Request" | "Clarification" | "Code Request"
@@ -580,7 +659,9 @@ impl QueryClassifier {
                 "Comparison" | "Explanation"
             ),
         };
-        if intent_agrees { agreement += 1; }
+        if intent_agrees {
+            agreement += 1;
+        }
 
         // Word count agreement
         total += 1;
@@ -591,18 +672,28 @@ impl QueryClassifier {
             ThinkingDepth::Complex => signals.word_count > 15,
             ThinkingDepth::Expert => signals.word_count > 30,
         };
-        if wc_agrees { agreement += 1; }
+        if wc_agrees {
+            agreement += 1;
+        }
 
         // Structural agreement
         total += 1;
         let struct_agrees = match depth {
-            ThinkingDepth::Trivial => !signals.has_comparison && !signals.has_analysis && !signals.is_multi_part,
+            ThinkingDepth::Trivial => {
+                !signals.has_comparison && !signals.has_analysis && !signals.is_multi_part
+            }
             ThinkingDepth::Simple => !signals.has_comparison && !signals.has_analysis,
             ThinkingDepth::Moderate => true, // moderate is the catch-all
-            ThinkingDepth::Complex => signals.has_comparison || signals.has_analysis || signals.is_multi_part,
-            ThinkingDepth::Expert => signals.has_expert_patterns || (signals.has_comparison && signals.has_analysis),
+            ThinkingDepth::Complex => {
+                signals.has_comparison || signals.has_analysis || signals.is_multi_part
+            }
+            ThinkingDepth::Expert => {
+                signals.has_expert_patterns || (signals.has_comparison && signals.has_analysis)
+            }
         };
-        if struct_agrees { agreement += 1; }
+        if struct_agrees {
+            agreement += 1;
+        }
 
         agreement as f32 / total as f32
     }
@@ -652,17 +743,19 @@ impl QueryClassifier {
     fn default_cot_instructions(depth: ThinkingDepth) -> &'static str {
         match depth {
             ThinkingDepth::Trivial | ThinkingDepth::Simple => "",
-            ThinkingDepth::Moderate =>
+            ThinkingDepth::Moderate => {
                 "When answering, organize your response clearly with relevant context. \
-                 If the topic requires explanation, provide a structured answer.",
-            ThinkingDepth::Complex =>
+                 If the topic requires explanation, provide a structured answer."
+            }
+            ThinkingDepth::Complex => {
                 "This is a complex question. Think through it step by step:\n\
                  1. Identify the key components of the question\n\
                  2. Address each component with evidence and reasoning\n\
                  3. Synthesize your findings into a coherent answer\n\
                  4. Note any caveats or limitations\n\
-                 Be thorough but stay focused on what was asked.",
-            ThinkingDepth::Expert =>
+                 Be thorough but stay focused on what was asked."
+            }
+            ThinkingDepth::Expert => {
                 "This requires deep, expert-level analysis. Use rigorous step-by-step reasoning:\n\
                  1. Break down the problem into its fundamental parts\n\
                  2. Analyze each part independently with detailed evidence\n\
@@ -670,7 +763,8 @@ impl QueryClassifier {
                  4. Evaluate trade-offs and implications\n\
                  5. Synthesize everything into a comprehensive, well-structured answer\n\
                  6. Explicitly state your confidence level and any assumptions\n\
-                 Take your time and be thorough. Quality over brevity.",
+                 Take your time and be thorough. Quality over brevity."
+            }
         }
     }
 }
@@ -692,7 +786,9 @@ fn count_concepts(words: &[&str]) -> usize {
         // Capitalized word not at sentence start
         let first_char = clean.chars().next().unwrap_or(' ');
         let is_sentence_start = i == 0
-            || words.get(i.wrapping_sub(1)).map_or(false, |prev| prev.ends_with('.') || prev.ends_with('?') || prev.ends_with('!'));
+            || words.get(i.wrapping_sub(1)).map_or(false, |prev| {
+                prev.ends_with('.') || prev.ends_with('?') || prev.ends_with('!')
+            });
 
         if first_char.is_uppercase() && !is_sentence_start && clean.len() > 1 {
             concepts.insert(clean.to_lowercase());
@@ -771,7 +867,7 @@ pub struct ThinkingTagParser {
 
 const OPEN_TAG: &str = "<think>";
 const CLOSE_TAG: &str = "</think>";
-const OPEN_TAG_LEN: usize = 7;  // "<think>".len()
+const OPEN_TAG_LEN: usize = 7; // "<think>".len()
 const CLOSE_TAG_LEN: usize = 8; // "</think>".len()
 
 impl ThinkingTagParser {
@@ -832,7 +928,8 @@ impl ThinkingTagParser {
                         self.visible_content.push_str(&visible_part);
                     } else {
                         visible_output.push_str(&self.buffer[..start_pos + OPEN_TAG_LEN]);
-                        self.visible_content.push_str(&self.buffer[..start_pos + OPEN_TAG_LEN]);
+                        self.visible_content
+                            .push_str(&self.buffer[..start_pos + OPEN_TAG_LEN]);
                     }
                     self.buffer = self.buffer[start_pos + OPEN_TAG_LEN..].to_string();
                     self.in_thinking_block = true;
@@ -925,7 +1022,9 @@ pub fn is_trivial_query(query: &str) -> bool {
     if word_count > 5 {
         return false;
     }
-    TRIVIAL_PATTERNS.iter().any(|p| lower == *p || lower.starts_with(&format!("{} ", p)))
+    TRIVIAL_PATTERNS
+        .iter()
+        .any(|p| lower == *p || lower.starts_with(&format!("{} ", p)))
 }
 
 // ============================================================================
@@ -937,7 +1036,10 @@ mod tests {
     use super::*;
 
     fn enabled_config() -> AdaptiveThinkingConfig {
-        AdaptiveThinkingConfig { enabled: true, ..Default::default() }
+        AdaptiveThinkingConfig {
+            enabled: true,
+            ..Default::default()
+        }
     }
 
     // === ThinkingDepth tests ===
@@ -1007,7 +1109,10 @@ mod tests {
     fn test_classify_trivial_thanks() {
         let classifier = QueryClassifier::new(enabled_config());
         assert_eq!(classifier.classify("thanks").depth, ThinkingDepth::Trivial);
-        assert_eq!(classifier.classify("thank you").depth, ThinkingDepth::Trivial);
+        assert_eq!(
+            classifier.classify("thank you").depth,
+            ThinkingDepth::Trivial
+        );
     }
 
     #[test]
@@ -1024,16 +1129,22 @@ mod tests {
     fn test_classify_simple_factual() {
         let classifier = QueryClassifier::new(enabled_config());
         let strategy = classifier.classify("What is Rust?");
-        assert!(strategy.depth <= ThinkingDepth::Simple,
-            "Expected Simple or Trivial, got {:?}", strategy.depth);
+        assert!(
+            strategy.depth <= ThinkingDepth::Simple,
+            "Expected Simple or Trivial, got {:?}",
+            strategy.depth
+        );
     }
 
     #[test]
     fn test_classify_simple_short_question() {
         let classifier = QueryClassifier::new(enabled_config());
         let strategy = classifier.classify("Who created Linux?");
-        assert!(strategy.depth <= ThinkingDepth::Simple,
-            "Expected Simple or Trivial, got {:?}", strategy.depth);
+        assert!(
+            strategy.depth <= ThinkingDepth::Simple,
+            "Expected Simple or Trivial, got {:?}",
+            strategy.depth
+        );
     }
 
     // === QueryClassifier: moderate detection ===
@@ -1041,17 +1152,25 @@ mod tests {
     #[test]
     fn test_classify_moderate_explanation() {
         let classifier = QueryClassifier::new(enabled_config());
-        let strategy = classifier.classify("Explain how async await works in Rust and when to use it");
-        assert!(strategy.depth >= ThinkingDepth::Moderate,
-            "Expected Moderate or higher, got {:?}", strategy.depth);
+        let strategy =
+            classifier.classify("Explain how async await works in Rust and when to use it");
+        assert!(
+            strategy.depth >= ThinkingDepth::Moderate,
+            "Expected Moderate or higher, got {:?}",
+            strategy.depth
+        );
     }
 
     #[test]
     fn test_classify_moderate_how_to() {
         let classifier = QueryClassifier::new(enabled_config());
-        let strategy = classifier.classify("How do I set up a Rust project with Cargo and configure dependencies?");
-        assert!(strategy.depth >= ThinkingDepth::Moderate,
-            "Expected Moderate or higher, got {:?}", strategy.depth);
+        let strategy = classifier
+            .classify("How do I set up a Rust project with Cargo and configure dependencies?");
+        assert!(
+            strategy.depth >= ThinkingDepth::Moderate,
+            "Expected Moderate or higher, got {:?}",
+            strategy.depth
+        );
     }
 
     // === QueryClassifier: complex detection ===
@@ -1060,10 +1179,13 @@ mod tests {
     fn test_classify_complex_comparison() {
         let classifier = QueryClassifier::new(enabled_config());
         let strategy = classifier.classify(
-            "Compare the performance of HashMap and BTreeMap in Rust and explain when to use each"
+            "Compare the performance of HashMap and BTreeMap in Rust and explain when to use each",
         );
-        assert!(strategy.depth >= ThinkingDepth::Complex,
-            "Expected Complex or Expert, got {:?}", strategy.depth);
+        assert!(
+            strategy.depth >= ThinkingDepth::Complex,
+            "Expected Complex or Expert, got {:?}",
+            strategy.depth
+        );
     }
 
     #[test]
@@ -1072,8 +1194,11 @@ mod tests {
         let strategy = classifier.classify(
             "What are the differences between async runtimes? How do they handle I/O? Which is best for web servers?"
         );
-        assert!(strategy.depth >= ThinkingDepth::Complex,
-            "Expected Complex or Expert, got {:?}", strategy.depth);
+        assert!(
+            strategy.depth >= ThinkingDepth::Complex,
+            "Expected Complex or Expert, got {:?}",
+            strategy.depth
+        );
     }
 
     // === QueryClassifier: expert detection ===
@@ -1100,8 +1225,11 @@ mod tests {
         };
         let classifier = QueryClassifier::new(config);
         let strategy = classifier.classify("hello");
-        assert!(strategy.depth >= ThinkingDepth::Moderate,
-            "min_depth not respected: got {:?}", strategy.depth);
+        assert!(
+            strategy.depth >= ThinkingDepth::Moderate,
+            "min_depth not respected: got {:?}",
+            strategy.depth
+        );
     }
 
     #[test]
@@ -1116,8 +1244,11 @@ mod tests {
             "Provide a comprehensive analysis of the trade-offs between multiple concurrency models \
              and critically analyze their implications for distributed and embedded systems"
         );
-        assert!(strategy.depth <= ThinkingDepth::Complex,
-            "max_depth not respected: got {:?}", strategy.depth);
+        assert!(
+            strategy.depth <= ThinkingDepth::Complex,
+            "max_depth not respected: got {:?}",
+            strategy.depth
+        );
     }
 
     // === ThinkingStrategy parameter tests ===
@@ -1127,10 +1258,14 @@ mod tests {
         let classifier = QueryClassifier::new(enabled_config());
         let trivial = classifier.classify("hi");
         let complex = classifier.classify(
-            "Compare and contrast the performance implications of different memory allocators"
+            "Compare and contrast the performance implications of different memory allocators",
         );
-        assert!(trivial.temperature > complex.temperature,
-            "Trivial temp ({}) should be > Complex temp ({})", trivial.temperature, complex.temperature);
+        assert!(
+            trivial.temperature > complex.temperature,
+            "Trivial temp ({}) should be > Complex temp ({})",
+            trivial.temperature,
+            complex.temperature
+        );
     }
 
     #[test]
@@ -1151,21 +1286,27 @@ mod tests {
     fn test_strategy_cot_empty_for_trivial() {
         let classifier = QueryClassifier::new(enabled_config());
         let strategy = classifier.classify("hi");
-        assert!(strategy.system_prompt_addition.is_empty(),
-            "Trivial should have empty CoT, got: '{}'", strategy.system_prompt_addition);
+        assert!(
+            strategy.system_prompt_addition.is_empty(),
+            "Trivial should have empty CoT, got: '{}'",
+            strategy.system_prompt_addition
+        );
     }
 
     #[test]
     fn test_strategy_cot_has_content_for_complex() {
         let classifier = QueryClassifier::new(enabled_config());
-        let strategy = classifier.classify(
-            "Compare the differences between X and Y and explain the implications"
+        let strategy = classifier
+            .classify("Compare the differences between X and Y and explain the implications");
+        assert!(
+            !strategy.system_prompt_addition.is_empty(),
+            "Complex should have CoT instructions"
         );
-        assert!(!strategy.system_prompt_addition.is_empty(),
-            "Complex should have CoT instructions");
-        assert!(strategy.system_prompt_addition.contains("step by step") ||
-                strategy.system_prompt_addition.contains("structured"),
-            "CoT should mention step-by-step reasoning");
+        assert!(
+            strategy.system_prompt_addition.contains("step by step")
+                || strategy.system_prompt_addition.contains("structured"),
+            "CoT should mention step-by-step reasoning"
+        );
     }
 
     #[test]
@@ -1193,15 +1334,21 @@ mod tests {
         let complex = classifier.classify(
             "Compare and contrast multiple approaches to garbage collection in programming languages"
         );
-        assert!(complex.rag_complexity_hint == "complex" || complex.rag_complexity_hint == "reasoning",
-            "Complex query should have complex/reasoning hint, got: {}", complex.rag_complexity_hint);
+        assert!(
+            complex.rag_complexity_hint == "complex" || complex.rag_complexity_hint == "reasoning",
+            "Complex query should have complex/reasoning hint, got: {}",
+            complex.rag_complexity_hint
+        );
     }
 
     #[test]
     fn test_strategy_profile_suggestions() {
         let classifier = QueryClassifier::new(enabled_config());
         let trivial = classifier.classify("hello");
-        assert_eq!(trivial.profile_suggestion.as_deref(), Some("conversational"));
+        assert_eq!(
+            trivial.profile_suggestion.as_deref(),
+            Some("conversational")
+        );
 
         let expert = classifier.classify(
             "Provide a comprehensive analysis of the trade-offs between different concurrency models"
@@ -1236,7 +1383,7 @@ mod tests {
     fn test_signals_multi_part_detection() {
         let classifier = QueryClassifier::new(enabled_config());
         let strategy = classifier.classify(
-            "What is X and how does it relate to Y? Also explain the performance characteristics"
+            "What is X and how does it relate to Y? Also explain the performance characteristics",
         );
         assert!(strategy.signals.is_multi_part);
     }
@@ -1259,13 +1406,15 @@ mod tests {
 
     #[test]
     fn test_parse_simple_thinking_tags() {
-        let result = parse_thinking_tags(
-            "<think>I need to reason about this.</think>The answer is 42."
-        );
+        let result =
+            parse_thinking_tags("<think>I need to reason about this.</think>The answer is 42.");
         assert!(result.had_thinking_tags);
         assert_eq!(result.thinking_block_count, 1);
         assert_eq!(result.visible_response, "The answer is 42.");
-        assert_eq!(result.thinking.as_deref(), Some("I need to reason about this."));
+        assert_eq!(
+            result.thinking.as_deref(),
+            Some("I need to reason about this.")
+        );
     }
 
     #[test]
@@ -1273,14 +1422,17 @@ mod tests {
         let result = parse_thinking_tags("Just a normal response without any tags.");
         assert!(!result.had_thinking_tags);
         assert_eq!(result.thinking_block_count, 0);
-        assert_eq!(result.visible_response, "Just a normal response without any tags.");
+        assert_eq!(
+            result.visible_response,
+            "Just a normal response without any tags."
+        );
         assert!(result.thinking.is_none());
     }
 
     #[test]
     fn test_parse_multiple_thinking_blocks() {
         let result = parse_thinking_tags(
-            "<think>First thought.</think>Part 1. <think>Second thought.</think>Part 2."
+            "<think>First thought.</think>Part 1. <think>Second thought.</think>Part 2.",
         );
         assert_eq!(result.thinking_block_count, 2);
         assert!(result.visible_response.contains("Part 1."));
@@ -1315,7 +1467,10 @@ mod tests {
         let result = parse_thinking_tags("<think>All reasoning, no visible output.</think>");
         assert!(result.had_thinking_tags);
         assert_eq!(result.visible_response, "");
-        assert_eq!(result.thinking.as_deref(), Some("All reasoning, no visible output."));
+        assert_eq!(
+            result.thinking.as_deref(),
+            Some("All reasoning, no visible output.")
+        );
     }
 
     #[test]
@@ -1387,7 +1542,10 @@ mod tests {
         // Ensure that angle brackets that aren't think tags don't confuse the parser
         let result = parse_thinking_tags("Use Vec<String> for the collection.");
         assert!(!result.had_thinking_tags);
-        assert_eq!(result.visible_response, "Use Vec<String> for the collection.");
+        assert_eq!(
+            result.visible_response,
+            "Use Vec<String> for the collection."
+        );
     }
 
     // === Config tests ===
@@ -1455,8 +1613,11 @@ mod tests {
         // "ok" in a long conversation with many topics → at least Moderate
         let topics = vec!["rust".into(), "concurrency".into(), "performance".into()];
         let strategy = classifier.classify_with_context("yes", 15, &topics);
-        assert!(strategy.depth >= ThinkingDepth::Moderate,
-            "Long conversation context should upgrade depth, got {:?}", strategy.depth);
+        assert!(
+            strategy.depth >= ThinkingDepth::Moderate,
+            "Long conversation context should upgrade depth, got {:?}",
+            strategy.depth
+        );
     }
 
     // === Confidence tests ===
@@ -1464,10 +1625,19 @@ mod tests {
     #[test]
     fn test_confidence_is_between_zero_and_one() {
         let classifier = QueryClassifier::new(enabled_config());
-        for query in &["hi", "What is Rust?", "Compare X vs Y in detail", "Analyze the implications"] {
+        for query in &[
+            "hi",
+            "What is Rust?",
+            "Compare X vs Y in detail",
+            "Analyze the implications",
+        ] {
             let strategy = classifier.classify(query);
-            assert!(strategy.confidence >= 0.0 && strategy.confidence <= 1.0,
-                "Confidence {} out of range for query '{}'", strategy.confidence, query);
+            assert!(
+                strategy.confidence >= 0.0 && strategy.confidence <= 1.0,
+                "Confidence {} out of range for query '{}'",
+                strategy.confidence,
+                query
+            );
         }
     }
 }

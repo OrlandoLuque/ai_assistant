@@ -27,9 +27,9 @@
 //! manager.register(Box::new(MyPlugin));
 //! ```
 
+use std::any::Any;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use std::any::Any;
 
 /// Plugin trait that all plugins must implement
 pub trait Plugin: Send + Sync {
@@ -231,7 +231,8 @@ impl PluginManager {
 
     /// Get plugin by name
     pub fn get(&self, name: &str) -> Option<&dyn Plugin> {
-        self.plugins.iter()
+        self.plugins
+            .iter()
             .find(|(i, _)| i.name == name)
             .map(|(_, p)| p.as_ref())
     }
@@ -273,7 +274,8 @@ impl PluginManager {
 
     /// List enabled plugins
     pub fn enabled(&self) -> Vec<&PluginInfo> {
-        self.plugins.iter()
+        self.plugins
+            .iter()
             .filter(|(i, _)| i.enabled)
             .map(|(i, _)| i)
             .collect()
@@ -281,7 +283,8 @@ impl PluginManager {
 
     /// Get plugins with a specific capability
     pub fn with_capability(&self, cap: PluginCapability) -> Vec<&dyn Plugin> {
-        self.plugins.iter()
+        self.plugins
+            .iter()
             .filter(|(i, _)| i.enabled && i.capabilities.contains(&cap))
             .map(|(_, p)| p.as_ref())
             .collect()
@@ -594,8 +597,8 @@ mod tests {
     fn test_message_processor() {
         let mut manager = PluginManager::new();
 
-        let processor = MessageProcessorPlugin::new("uppercase")
-            .on_before_send(|msg| Some(msg.to_uppercase()));
+        let processor =
+            MessageProcessorPlugin::new("uppercase").on_before_send(|msg| Some(msg.to_uppercase()));
 
         manager.register(Box::new(processor)).unwrap();
 

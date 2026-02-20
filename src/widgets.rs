@@ -3,11 +3,11 @@
 //! This module provides reusable UI components for building chat interfaces
 //! with egui. Enable with the `egui-widgets` feature.
 
-use egui::{Color32, RichText, Ui, Vec2};
+use crate::context::ContextUsage;
 use crate::messages::ChatMessage;
 use crate::models::ModelInfo;
-use crate::context::ContextUsage;
 use crate::session::ChatSession;
+use egui::{Color32, RichText, Ui, Vec2};
 
 /// Colors for chat UI
 pub struct ChatColors {
@@ -68,11 +68,7 @@ pub fn chat_message(ui: &mut Ui, msg: &ChatMessage, colors: &ChatColors, max_wid
 
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(icon).size(14.0));
-                        ui.label(
-                            RichText::new(role_name)
-                                .size(12.0)
-                                .color(colors.muted_text)
-                        );
+                        ui.label(RichText::new(role_name).size(12.0).color(colors.muted_text));
                     });
 
                     ui.add_space(4.0);
@@ -92,11 +88,7 @@ pub fn chat_message(ui: &mut Ui, msg: &ChatMessage, colors: &ChatColors, max_wid
 
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(icon).size(14.0));
-                        ui.label(
-                            RichText::new(role_name)
-                                .size(12.0)
-                                .color(colors.muted_text)
-                        );
+                        ui.label(RichText::new(role_name).size(12.0).color(colors.muted_text));
                     });
 
                     ui.add_space(4.0);
@@ -124,7 +116,7 @@ pub fn streaming_response(ui: &mut Ui, current_text: &str, colors: &ChatColors, 
                     ui.label(
                         RichText::new("Assistant")
                             .size(12.0)
-                            .color(colors.muted_text)
+                            .color(colors.muted_text),
                     );
                 });
 
@@ -134,7 +126,7 @@ pub fn streaming_response(ui: &mut Ui, current_text: &str, colors: &ChatColors, 
                     ui.label(
                         RichText::new("Thinking...")
                             .italics()
-                            .color(colors.muted_text)
+                            .color(colors.muted_text),
                     );
                 } else {
                     ui.add(egui::Label::new(current_text).wrap(true));
@@ -157,7 +149,7 @@ pub fn thinking_indicator(ui: &mut Ui, colors: &ChatColors) {
                     ui.label(
                         RichText::new("Thinking...")
                             .italics()
-                            .color(colors.muted_text)
+                            .color(colors.muted_text),
                     );
                 });
             });
@@ -175,11 +167,7 @@ pub fn error_message(ui: &mut Ui, error: &str, colors: &ChatColors) {
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("⚠").size(14.0).color(colors.error_text));
-                    ui.label(
-                        RichText::new("Error")
-                            .size(12.0)
-                            .color(colors.error_text)
-                    );
+                    ui.label(RichText::new("Error").size(12.0).color(colors.error_text));
                 });
 
                 ui.add_space(4.0);
@@ -211,7 +199,10 @@ pub fn model_selector(
             for model in models {
                 let label = model.display_name_with_icon();
 
-                if ui.selectable_label(*selected_model == model.name, &label).clicked() {
+                if ui
+                    .selectable_label(*selected_model == model.name, &label)
+                    .clicked()
+                {
                     *selected_model = model.name.clone();
                     selected = Some(model.clone());
                 }
@@ -224,19 +215,25 @@ pub fn model_selector(
 /// Context usage progress bar
 pub fn context_usage_bar(ui: &mut Ui, usage: &ContextUsage, width: f32) {
     let (bar_color, text_color) = if usage.is_critical {
-        (Color32::from_rgb(200, 60, 60), Color32::from_rgb(255, 150, 150))
+        (
+            Color32::from_rgb(200, 60, 60),
+            Color32::from_rgb(255, 150, 150),
+        )
     } else if usage.is_warning {
-        (Color32::from_rgb(200, 150, 60), Color32::from_rgb(255, 220, 150))
+        (
+            Color32::from_rgb(200, 150, 60),
+            Color32::from_rgb(255, 220, 150),
+        )
     } else {
-        (Color32::from_rgb(60, 150, 60), Color32::from_rgb(150, 255, 150))
+        (
+            Color32::from_rgb(60, 150, 60),
+            Color32::from_rgb(150, 255, 150),
+        )
     };
 
     let progress = usage.usage_percent / 100.0;
 
-    let (rect, response) = ui.allocate_exact_size(
-        Vec2::new(width, 14.0),
-        egui::Sense::hover()
-    );
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 14.0), egui::Sense::hover());
 
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
@@ -250,7 +247,7 @@ pub fn context_usage_bar(ui: &mut Ui, usage: &ContextUsage, width: f32) {
             painter.rect_filled(
                 egui::Rect::from_min_size(rect.min, Vec2::new(fill_width, rect.height())),
                 2.0,
-                bar_color
+                bar_color,
             );
         }
 
@@ -260,7 +257,7 @@ pub fn context_usage_bar(ui: &mut Ui, usage: &ContextUsage, width: f32) {
             egui::Align2::CENTER_CENTER,
             format!("{:.0}%", usage.usage_percent),
             egui::FontId::proportional(10.0),
-            Color32::WHITE
+            Color32::WHITE,
         );
     }
 
@@ -331,15 +328,24 @@ pub fn session_list(
                         .show(ui, |ui| {
                             ui.set_min_width(150.0);
 
-                            if ui.selectable_label(is_current, &session.name).clicked() && !is_current {
+                            if ui.selectable_label(is_current, &session.name).clicked()
+                                && !is_current
+                            {
                                 response.session_to_load = Some(session.id.clone());
                             }
 
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if ui.small_button("🗑").on_hover_text("Delete session").clicked() {
-                                    response.session_to_delete = Some(session.id.clone());
-                                }
-                            });
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if ui
+                                        .small_button("🗑")
+                                        .on_hover_text("Delete session")
+                                        .clicked()
+                                    {
+                                        response.session_to_delete = Some(session.id.clone());
+                                    }
+                                },
+                            );
                         });
                 });
             }
@@ -348,7 +354,7 @@ pub fn session_list(
                 ui.label(
                     RichText::new("No sessions yet")
                         .color(Color32::GRAY)
-                        .size(11.0)
+                        .size(11.0),
                 );
             }
         });
@@ -372,11 +378,14 @@ pub fn chat_input(
             Vec2::new(ui.available_width() - 70.0, 28.0),
             egui::TextEdit::singleline(input_text)
                 .hint_text(placeholder)
-                .interactive(!is_generating)
+                .interactive(!is_generating),
         );
 
         // Submit on Enter
-        if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && !input_text.trim().is_empty() {
+        if response.lost_focus()
+            && ui.input(|i| i.key_pressed(egui::Key::Enter))
+            && !input_text.trim().is_empty()
+        {
             submitted = Some(input_text.trim().to_string());
             input_text.clear();
         }
@@ -413,11 +422,14 @@ pub fn chat_input_multiline(
             egui::TextEdit::multiline(input_text)
                 .hint_text(placeholder)
                 .interactive(!is_generating)
-                .desired_rows(1)
+                .desired_rows(1),
         );
 
         // Submit on Ctrl+Enter for multiline
-        if response.has_focus() && ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Enter)) && !input_text.trim().is_empty() {
+        if response.has_focus()
+            && ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Enter))
+            && !input_text.trim().is_empty()
+        {
             submitted = Some(input_text.trim().to_string());
             input_text.clear();
         }
@@ -433,7 +445,7 @@ pub fn chat_input_multiline(
             ui.label(
                 RichText::new("Ctrl+Enter")
                     .size(9.0)
-                    .color(Color32::DARK_GRAY)
+                    .color(Color32::DARK_GRAY),
             );
         });
     });
@@ -486,31 +498,27 @@ pub fn welcome_screen(
 }
 
 /// Connection status indicator
-pub fn connection_status(
-    ui: &mut Ui,
-    is_fetching: bool,
-    model_count: usize,
-) {
+pub fn connection_status(ui: &mut Ui, is_fetching: bool, model_count: usize) {
     if is_fetching {
         ui.horizontal(|ui| {
             ui.spinner();
             ui.label(
                 RichText::new("Searching...")
                     .color(Color32::YELLOW)
-                    .size(11.0)
+                    .size(11.0),
             );
         });
     } else if model_count == 0 {
         ui.label(
             RichText::new("⚪ No models found")
                 .color(Color32::GRAY)
-                .size(11.0)
+                .size(11.0),
         );
     } else {
         ui.label(
             RichText::new(format!("🟢 {} models", model_count))
                 .color(Color32::LIGHT_GREEN)
-                .size(11.0)
+                .size(11.0),
         );
     }
 }
@@ -630,7 +638,10 @@ pub fn rag_controls(
             ui.checkbox(&mut knowledge, &config.knowledge_label)
         } else {
             // Show as disabled checkbox
-            ui.add_enabled(false, egui::Checkbox::new(&mut knowledge, &config.knowledge_label))
+            ui.add_enabled(
+                false,
+                egui::Checkbox::new(&mut knowledge, &config.knowledge_label),
+            )
         };
 
         if !config.knowledge_tooltip.is_empty() {
@@ -649,7 +660,10 @@ pub fn rag_controls(
         let conversation_response = if config.conversation_rag_editable {
             ui.checkbox(&mut conversation, &config.conversation_label)
         } else {
-            ui.add_enabled(false, egui::Checkbox::new(&mut conversation, &config.conversation_label))
+            ui.add_enabled(
+                false,
+                egui::Checkbox::new(&mut conversation, &config.conversation_label),
+            )
         };
 
         if !config.conversation_tooltip.is_empty() {
@@ -676,16 +690,18 @@ pub fn rag_status_compact(ui: &mut Ui, status: &RagStatus) {
             ui.label(
                 RichText::new(format!("📚 {} chunks", status.knowledge_chunks))
                     .size(10.0)
-                    .color(Color32::LIGHT_BLUE)
-            ).on_hover_text(format!("{} tokens indexed", status.knowledge_tokens));
+                    .color(Color32::LIGHT_BLUE),
+            )
+            .on_hover_text(format!("{} tokens indexed", status.knowledge_tokens));
         }
 
         if status.conversation_enabled && status.archived_messages > 0 {
             ui.label(
                 RichText::new(format!("💬 {} archived", status.archived_messages))
                     .size(10.0)
-                    .color(Color32::LIGHT_GREEN)
-            ).on_hover_text(format!("{} tokens in archive", status.archived_tokens));
+                    .color(Color32::LIGHT_GREEN),
+            )
+            .on_hover_text(format!("{} tokens in archive", status.archived_tokens));
         }
     });
 }
@@ -726,7 +742,7 @@ pub fn context_full_hint(
                 ui.label(
                     RichText::new("Context is getting full!")
                         .color(Color32::from_rgb(255, 220, 100))
-                        .size(12.0)
+                        .size(12.0),
                 );
             });
 
@@ -747,7 +763,7 @@ pub fn context_full_hint(
                     estimated_savings
                 ))
                 .size(11.0)
-                .color(Color32::LIGHT_GRAY)
+                .color(Color32::LIGHT_GRAY),
             );
 
             ui.add_space(4.0);
@@ -765,8 +781,10 @@ pub fn context_full_hint(
                     }
                 }
 
-                if can_help_knowledge && can_help_conversation
-                    && config.knowledge_rag_editable && config.conversation_rag_editable
+                if can_help_knowledge
+                    && can_help_conversation
+                    && config.knowledge_rag_editable
+                    && config.conversation_rag_editable
                 {
                     if ui.small_button("Enable Both").clicked() {
                         enable_knowledge = true;
@@ -785,7 +803,7 @@ pub fn rag_status_panel(ui: &mut Ui, status: &RagStatus) {
         ui.label(
             RichText::new("RAG not initialized")
                 .color(Color32::GRAY)
-                .size(11.0)
+                .size(11.0),
         );
         return;
     }
@@ -798,17 +816,15 @@ pub fn rag_status_panel(ui: &mut Ui, status: &RagStatus) {
             ui.label(RichText::new("Knowledge RAG:").size(11.0));
             if status.knowledge_enabled {
                 ui.label(
-                    RichText::new(format!("✓ {} chunks ({} tokens)",
-                        status.knowledge_chunks, status.knowledge_tokens))
-                        .color(Color32::LIGHT_GREEN)
-                        .size(11.0)
+                    RichText::new(format!(
+                        "✓ {} chunks ({} tokens)",
+                        status.knowledge_chunks, status.knowledge_tokens
+                    ))
+                    .color(Color32::LIGHT_GREEN)
+                    .size(11.0),
                 );
             } else {
-                ui.label(
-                    RichText::new("Disabled")
-                        .color(Color32::GRAY)
-                        .size(11.0)
-                );
+                ui.label(RichText::new("Disabled").color(Color32::GRAY).size(11.0));
             }
             ui.end_row();
 
@@ -816,17 +832,15 @@ pub fn rag_status_panel(ui: &mut Ui, status: &RagStatus) {
             ui.label(RichText::new("Conversation RAG:").size(11.0));
             if status.conversation_enabled {
                 ui.label(
-                    RichText::new(format!("✓ {} archived ({} tokens)",
-                        status.archived_messages, status.archived_tokens))
-                        .color(Color32::LIGHT_GREEN)
-                        .size(11.0)
+                    RichText::new(format!(
+                        "✓ {} archived ({} tokens)",
+                        status.archived_messages, status.archived_tokens
+                    ))
+                    .color(Color32::LIGHT_GREEN)
+                    .size(11.0),
                 );
             } else {
-                ui.label(
-                    RichText::new("Disabled")
-                        .color(Color32::GRAY)
-                        .size(11.0)
-                );
+                ui.label(RichText::new("Disabled").color(Color32::GRAY).size(11.0));
             }
             ui.end_row();
         });
@@ -1036,7 +1050,11 @@ impl NotesManager {
             // Knowledge notes button
             if self.config.knowledge_enabled {
                 let label = format!("📚 {}", self.config.knowledge_label);
-                if ui.button(&label).on_hover_text(&self.config.knowledge_tooltip).clicked() {
+                if ui
+                    .button(&label)
+                    .on_hover_text(&self.config.knowledge_tooltip)
+                    .clicked()
+                {
                     open_knowledge = true;
                 }
             }
@@ -1079,7 +1097,9 @@ impl NotesManager {
                 }
             }
             NotesEditorType::Knowledge => {
-                if let Some((source, notes)) = self.render_knowledge_editor(ctx, available_sources, get_knowledge_notes) {
+                if let Some((source, notes)) =
+                    self.render_knowledge_editor(ctx, available_sources, get_knowledge_notes)
+                {
                     response.knowledge_saved = Some((source, notes));
                 }
             }
@@ -1099,9 +1119,11 @@ impl NotesManager {
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
                 ui.label(
-                    RichText::new("Add notes to help the AI understand context for this conversation:")
-                        .size(11.0)
-                        .color(Color32::GRAY)
+                    RichText::new(
+                        "Add notes to help the AI understand context for this conversation:",
+                    )
+                    .size(11.0)
+                    .color(Color32::GRAY),
                 );
                 ui.add_space(8.0);
 
@@ -1112,7 +1134,9 @@ impl NotesManager {
                             egui::TextEdit::multiline(&mut self.state.edit_buffer)
                                 .desired_width(f32::INFINITY)
                                 .desired_rows(8)
-                                .hint_text("e.g., 'I prefer concise answers' or 'Focus on combat ships'")
+                                .hint_text(
+                                    "e.g., 'I prefer concise answers' or 'Focus on combat ships'",
+                                ),
                         );
                         if response.changed() {
                             self.state.has_changes = true;
@@ -1157,7 +1181,7 @@ impl NotesManager {
                 ui.label(
                     RichText::new("Global notes apply to ALL conversations:")
                         .size(11.0)
-                        .color(Color32::GRAY)
+                        .color(Color32::GRAY),
                 );
                 ui.add_space(8.0);
 
@@ -1168,7 +1192,7 @@ impl NotesManager {
                             egui::TextEdit::multiline(&mut self.state.edit_buffer)
                                 .desired_width(f32::INFINITY)
                                 .desired_rows(8)
-                                .hint_text("e.g., 'My budget is $500' or 'I own a Cutlass Black'")
+                                .hint_text("e.g., 'My budget is $500' or 'I own a Cutlass Black'"),
                         );
                         if response.changed() {
                             self.state.has_changes = true;
@@ -1221,7 +1245,7 @@ impl NotesManager {
                 ui.label(
                     RichText::new("Add notes for specific knowledge guides:")
                         .size(11.0)
-                        .color(Color32::GRAY)
+                        .color(Color32::GRAY),
                 );
                 ui.add_space(8.0);
 
@@ -1229,7 +1253,9 @@ impl NotesManager {
                 ui.horizontal(|ui| {
                     ui.label("Select guide:");
 
-                    let current_text = self.state.selected_source
+                    let current_text = self
+                        .state
+                        .selected_source
                         .as_deref()
                         .unwrap_or("Choose a guide...");
 
@@ -1238,7 +1264,8 @@ impl NotesManager {
                         .width(250.0)
                         .show_ui(ui, |ui| {
                             for source in available_sources {
-                                let was_selected = self.state.selected_source.as_deref() == Some(source);
+                                let was_selected =
+                                    self.state.selected_source.as_deref() == Some(source);
                                 if ui.selectable_label(was_selected, source).clicked() {
                                     let notes = get_notes(source);
                                     self.state.selected_source = Some(source.clone());
@@ -1259,7 +1286,7 @@ impl NotesManager {
                                 egui::TextEdit::multiline(&mut self.state.edit_buffer)
                                     .desired_width(f32::INFINITY)
                                     .desired_rows(6)
-                                    .hint_text("Add notes about this guide")
+                                    .hint_text("Add notes about this guide"),
                             );
                             if response.changed() {
                                 self.state.has_changes = true;
@@ -1269,7 +1296,7 @@ impl NotesManager {
                     ui.label(
                         RichText::new("Select a guide from the dropdown above")
                             .color(Color32::GRAY)
-                            .italics()
+                            .italics(),
                     );
                 }
 
@@ -1287,7 +1314,9 @@ impl NotesManager {
                         close = true;
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if self.state.selected_source.is_some() && ui.small_button("Clear").clicked() {
+                        if self.state.selected_source.is_some()
+                            && ui.small_button("Clear").clicked()
+                        {
                             self.state.edit_buffer.clear();
                             self.state.has_changes = true;
                         }
@@ -1454,7 +1483,11 @@ pub fn notes_buttons(
         // Knowledge notes button
         if config.knowledge_notes_enabled {
             let label = format!("📚 {}", config.knowledge_button_label);
-            if ui.button(&label).on_hover_text(&config.knowledge_tooltip).clicked() {
+            if ui
+                .button(&label)
+                .on_hover_text(&config.knowledge_tooltip)
+                .clicked()
+            {
                 open_knowledge = true;
             }
         }
@@ -1486,7 +1519,7 @@ pub fn session_notes_editor(
             ui.label(
                 RichText::new("Add notes to help the AI understand context for this conversation:")
                     .size(11.0)
-                    .color(Color32::GRAY)
+                    .color(Color32::GRAY),
             );
             ui.add_space(8.0);
 
@@ -1497,7 +1530,9 @@ pub fn session_notes_editor(
                         egui::TextEdit::multiline(&mut state.session_notes_buffer)
                             .desired_width(f32::INFINITY)
                             .desired_rows(8)
-                            .hint_text("e.g., 'I prefer concise answers' or 'Focus on combat ships'")
+                            .hint_text(
+                                "e.g., 'I prefer concise answers' or 'Focus on combat ships'",
+                            ),
                     );
                 });
 
@@ -1604,7 +1639,7 @@ pub fn knowledge_notes_editor(
             ui.label(
                 RichText::new("Add notes for specific knowledge guides:")
                     .size(11.0)
-                    .color(Color32::GRAY)
+                    .color(Color32::GRAY),
             );
             ui.add_space(8.0);
 
@@ -1612,7 +1647,8 @@ pub fn knowledge_notes_editor(
             ui.horizontal(|ui| {
                 ui.label("Select guide:");
 
-                let current_text = state.selected_knowledge_source
+                let current_text = state
+                    .selected_knowledge_source
                     .as_deref()
                     .unwrap_or("Choose a guide...");
 
@@ -1621,7 +1657,8 @@ pub fn knowledge_notes_editor(
                     .width(250.0)
                     .show_ui(ui, |ui| {
                         for source in available_sources {
-                            let was_selected = state.selected_knowledge_source.as_deref() == Some(source);
+                            let was_selected =
+                                state.selected_knowledge_source.as_deref() == Some(source);
                             if ui.selectable_label(was_selected, source).clicked() {
                                 // Load notes for this source
                                 let notes = get_notes(source);
@@ -1643,14 +1680,16 @@ pub fn knowledge_notes_editor(
                             egui::TextEdit::multiline(&mut state.knowledge_notes_buffer)
                                 .desired_width(f32::INFINITY)
                                 .desired_rows(6)
-                                .hint_text("Add notes about this guide (priorities, clarifications, etc.)")
+                                .hint_text(
+                                    "Add notes about this guide (priorities, clarifications, etc.)",
+                                ),
                         );
                     });
             } else {
                 ui.label(
                     RichText::new("Select a guide from the dropdown above")
                         .color(Color32::GRAY)
-                        .italics()
+                        .italics(),
                 );
             }
 
@@ -1686,11 +1725,7 @@ pub fn knowledge_notes_editor(
 /// Widget showing the number of documents pending indexing
 ///
 /// Returns true if the user clicked to start indexing
-pub fn pending_documents_indicator(
-    ui: &mut Ui,
-    pending_count: usize,
-    is_indexing: bool,
-) -> bool {
+pub fn pending_documents_indicator(ui: &mut Ui, pending_count: usize, is_indexing: bool) -> bool {
     let mut start_indexing = false;
 
     if pending_count == 0 && !is_indexing {
@@ -1708,13 +1743,13 @@ pub fn pending_documents_indicator(
                     ui.label(
                         RichText::new("Indexing...")
                             .color(Color32::LIGHT_BLUE)
-                            .size(11.0)
+                            .size(11.0),
                     );
                 } else if pending_count > 0 {
                     ui.label(
                         RichText::new(format!("📄 {} pending", pending_count))
                             .color(Color32::YELLOW)
-                            .size(11.0)
+                            .size(11.0),
                     );
                     if ui.small_button("Index Now").clicked() {
                         start_indexing = true;
@@ -1729,12 +1764,7 @@ pub fn pending_documents_indicator(
 /// Widget showing indexing progress
 ///
 /// Call this each frame while `is_indexing` is true
-pub fn indexing_progress(
-    ui: &mut Ui,
-    current_document: &str,
-    current: usize,
-    total: usize,
-) {
+pub fn indexing_progress(ui: &mut Ui, current_document: &str, current: usize, total: usize) {
     let progress = if total > 0 {
         current as f32 / total as f32
     } else {
@@ -1749,19 +1779,20 @@ pub fn indexing_progress(
             ui.horizontal(|ui| {
                 ui.spinner();
                 ui.label(
-                    RichText::new(format!("Indexing {}/{}: {}", current, total, current_document))
-                        .color(Color32::LIGHT_BLUE)
-                        .size(11.0)
+                    RichText::new(format!(
+                        "Indexing {}/{}: {}",
+                        current, total, current_document
+                    ))
+                    .color(Color32::LIGHT_BLUE)
+                    .size(11.0),
                 );
             });
 
             ui.add_space(4.0);
 
             // Progress bar
-            let (rect, _response) = ui.allocate_exact_size(
-                Vec2::new(ui.available_width(), 6.0),
-                egui::Sense::hover()
-            );
+            let (rect, _response) =
+                ui.allocate_exact_size(Vec2::new(ui.available_width(), 6.0), egui::Sense::hover());
 
             if ui.is_rect_visible(rect) {
                 let painter = ui.painter();
@@ -1772,7 +1803,7 @@ pub fn indexing_progress(
                     painter.rect_filled(
                         egui::Rect::from_min_size(rect.min, Vec2::new(fill_width, rect.height())),
                         2.0,
-                        Color32::LIGHT_BLUE
+                        Color32::LIGHT_BLUE,
                     );
                 }
             }
@@ -1782,16 +1813,12 @@ pub fn indexing_progress(
 /// Document statistics display
 ///
 /// Shows a list of indexed documents with their stats
-pub fn document_stats_list(
-    ui: &mut Ui,
-    stats: &[DocumentStatsDisplay],
-    max_height: f32,
-) {
+pub fn document_stats_list(ui: &mut Ui, stats: &[DocumentStatsDisplay], max_height: f32) {
     if stats.is_empty() {
         ui.label(
             RichText::new("No documents indexed")
                 .color(Color32::GRAY)
-                .size(11.0)
+                .size(11.0),
         );
         return;
     }
@@ -1820,7 +1847,9 @@ pub fn document_stats_list(
                         let status = if stat.is_pending {
                             RichText::new("Pending").color(Color32::YELLOW).size(10.0)
                         } else {
-                            RichText::new("Indexed").color(Color32::LIGHT_GREEN).size(10.0)
+                            RichText::new("Indexed")
+                                .color(Color32::LIGHT_GREEN)
+                                .size(10.0)
                         };
                         ui.label(status);
                         ui.end_row();
@@ -1843,29 +1872,30 @@ pub struct DocumentStatsDisplay {
 }
 
 /// Document statistics panel with collapsible details
-pub fn document_stats_panel(
-    ui: &mut Ui,
-    stats: &[DocumentStatsDisplay],
-    title: &str,
-) {
+pub fn document_stats_panel(ui: &mut Ui, stats: &[DocumentStatsDisplay], title: &str) {
     let total_chunks: usize = stats.iter().map(|s| s.chunk_count).sum();
     let total_tokens: usize = stats.iter().map(|s| s.total_tokens).sum();
     let pending_count = stats.iter().filter(|s| s.is_pending).count();
 
     egui::CollapsingHeader::new(
-        RichText::new(format!("{} ({} docs)", title, stats.len()))
-            .size(12.0)
+        RichText::new(format!("{} ({} docs)", title, stats.len())).size(12.0),
     )
     .default_open(false)
     .show(ui, |ui| {
         // Summary
         ui.horizontal(|ui| {
-            ui.label(RichText::new(format!("📊 {} chunks, {} tokens", total_chunks, total_tokens)).size(10.0));
+            ui.label(
+                RichText::new(format!(
+                    "📊 {} chunks, {} tokens",
+                    total_chunks, total_tokens
+                ))
+                .size(10.0),
+            );
             if pending_count > 0 {
                 ui.label(
                     RichText::new(format!("({} pending)", pending_count))
                         .color(Color32::YELLOW)
-                        .size(10.0)
+                        .size(10.0),
                 );
             }
         });
@@ -1897,7 +1927,7 @@ pub fn indexing_status(
                 ui.label(
                     RichText::new("Indexing documents...")
                         .color(Color32::LIGHT_BLUE)
-                        .size(11.0)
+                        .size(11.0),
                 );
             });
         }
@@ -1910,21 +1940,26 @@ pub fn indexing_status(
 /// Export/Import buttons for knowledge base
 ///
 /// Returns (export_clicked, import_clicked)
-pub fn knowledge_export_import_buttons(
-    ui: &mut Ui,
-    has_knowledge: bool,
-) -> (bool, bool) {
+pub fn knowledge_export_import_buttons(ui: &mut Ui, has_knowledge: bool) -> (bool, bool) {
     let mut export = false;
     let mut import = false;
 
     ui.horizontal(|ui| {
         ui.add_enabled_ui(has_knowledge, |ui| {
-            if ui.button("📤 Export Knowledge").on_hover_text("Export knowledge base to a file").clicked() {
+            if ui
+                .button("📤 Export Knowledge")
+                .on_hover_text("Export knowledge base to a file")
+                .clicked()
+            {
                 export = true;
             }
         });
 
-        if ui.button("📥 Import Knowledge").on_hover_text("Import knowledge from a file").clicked() {
+        if ui
+            .button("📥 Import Knowledge")
+            .on_hover_text("Import knowledge from a file")
+            .clicked()
+        {
             import = true;
         }
     });
@@ -1988,13 +2023,17 @@ pub fn knowledge_search(
         let text_response = ui.add(
             egui::TextEdit::singleline(&mut state.query)
                 .hint_text("Search knowledge base...")
-                .desired_width(ui.available_width() - 70.0)
+                .desired_width(ui.available_width() - 70.0),
         );
 
         let search_enabled = !state.query.trim().is_empty() && !state.is_searching;
 
-        if ui.add_enabled(search_enabled, egui::Button::new("🔍 Search")).clicked()
-            || (text_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && search_enabled)
+        if ui
+            .add_enabled(search_enabled, egui::Button::new("🔍 Search"))
+            .clicked()
+            || (text_response.lost_focus()
+                && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                && search_enabled)
         {
             response.search_triggered = true;
             response.query = state.query.trim().to_string();
@@ -2010,9 +2049,13 @@ pub fn knowledge_search(
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             ui.label(
-                RichText::new(format!("Found {} results ({} tokens)", state.results.len(), state.total_tokens))
-                    .size(10.0)
-                    .color(Color32::GRAY)
+                RichText::new(format!(
+                    "Found {} results ({} tokens)",
+                    state.results.len(),
+                    state.total_tokens
+                ))
+                .size(10.0)
+                .color(Color32::GRAY),
             );
         });
     }
@@ -2035,36 +2078,44 @@ pub fn knowledge_search(
                                     RichText::new(&result.source)
                                         .size(11.0)
                                         .color(Color32::LIGHT_BLUE)
-                                        .strong()
+                                        .strong(),
                                 );
                                 if !result.section.is_empty() {
                                     ui.label(
                                         RichText::new(format!("› {}", result.section))
                                             .size(10.0)
-                                            .color(Color32::GRAY)
+                                            .color(Color32::GRAY),
                                     );
                                 }
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(
-                                        RichText::new(format!("{} tokens", result.token_count))
-                                            .size(9.0)
-                                            .color(Color32::DARK_GRAY)
-                                    );
-                                });
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        ui.label(
+                                            RichText::new(format!("{} tokens", result.token_count))
+                                                .size(9.0)
+                                                .color(Color32::DARK_GRAY),
+                                        );
+                                    },
+                                );
                             });
 
                             // Content snippet
                             ui.add_space(2.0);
-                            let content_preview: String = result.content.chars().take(200).collect();
+                            let content_preview: String =
+                                result.content.chars().take(200).collect();
                             let display_text = if result.content.len() > 200 {
                                 format!("{}...", content_preview)
                             } else {
                                 content_preview
                             };
 
-                            if ui.add(egui::Label::new(
-                                RichText::new(&display_text).size(10.0)
-                            ).sense(egui::Sense::click())).clicked() {
+                            if ui
+                                .add(
+                                    egui::Label::new(RichText::new(&display_text).size(10.0))
+                                        .sense(egui::Sense::click()),
+                                )
+                                .clicked()
+                            {
                                 response.result_clicked = Some(idx);
                             }
 
@@ -2103,11 +2154,7 @@ pub struct RetrievedChunkInfo {
 }
 
 /// Render a collapsible panel showing retrieved chunks
-pub fn retrieved_chunks_panel(
-    ui: &mut Ui,
-    chunks: &[RetrievedChunkInfo],
-    title: &str,
-) {
+pub fn retrieved_chunks_panel(ui: &mut Ui, chunks: &[RetrievedChunkInfo], title: &str) {
     if chunks.is_empty() {
         return;
     }
@@ -2116,34 +2163,48 @@ pub fn retrieved_chunks_panel(
     let total_tokens: usize = chunks.iter().filter(|c| c.used).map(|c| c.tokens).sum();
 
     egui::CollapsingHeader::new(
-        RichText::new(format!("{} ({}/{} chunks, {} tokens)", title, used_count, chunks.len(), total_tokens))
-            .size(11.0)
+        RichText::new(format!(
+            "{} ({}/{} chunks, {} tokens)",
+            title,
+            used_count,
+            chunks.len(),
+            total_tokens
+        ))
+        .size(11.0),
     )
     .default_open(false)
     .show(ui, |ui| {
         for chunk in chunks {
             ui.horizontal(|ui| {
                 let icon = if chunk.used { "✓" } else { "○" };
-                let color = if chunk.used { Color32::LIGHT_GREEN } else { Color32::GRAY };
+                let color = if chunk.used {
+                    Color32::LIGHT_GREEN
+                } else {
+                    Color32::GRAY
+                };
 
                 ui.label(RichText::new(icon).color(color).size(10.0));
                 ui.label(
                     RichText::new(&chunk.source)
                         .size(10.0)
-                        .color(if chunk.used { Color32::LIGHT_BLUE } else { Color32::DARK_GRAY })
+                        .color(if chunk.used {
+                            Color32::LIGHT_BLUE
+                        } else {
+                            Color32::DARK_GRAY
+                        }),
                 );
                 if !chunk.section.is_empty() {
                     ui.label(
                         RichText::new(format!("› {}", chunk.section))
                             .size(9.0)
-                            .color(Color32::DARK_GRAY)
+                            .color(Color32::DARK_GRAY),
                     );
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(
                         RichText::new(format!("{} tok", chunk.tokens))
                             .size(9.0)
-                            .color(Color32::DARK_GRAY)
+                            .color(Color32::DARK_GRAY),
                     );
                 });
             });
@@ -2204,67 +2265,65 @@ pub fn provider_config_panel(
     let mut response = ProviderConfigResponse::default();
 
     for provider in providers.iter_mut() {
-        egui::CollapsingHeader::new(
-            RichText::new(&provider.name).size(12.0)
-        )
-        .default_open(provider.enabled)
-        .show(ui, |ui| {
-            // Enabled toggle
-            ui.horizontal(|ui| {
-                let mut enabled = provider.enabled;
-                if ui.checkbox(&mut enabled, "Enabled").changed() {
-                    response.toggled = Some((provider.name.clone(), enabled));
-                    provider.enabled = enabled;
-                }
+        egui::CollapsingHeader::new(RichText::new(&provider.name).size(12.0))
+            .default_open(provider.enabled)
+            .show(ui, |ui| {
+                // Enabled toggle
+                ui.horizontal(|ui| {
+                    let mut enabled = provider.enabled;
+                    if ui.checkbox(&mut enabled, "Enabled").changed() {
+                        response.toggled = Some((provider.name.clone(), enabled));
+                        provider.enabled = enabled;
+                    }
 
-                // Status indicator
-                match &provider.status {
-                    ProviderStatus::Unknown => {
-                        ui.label(RichText::new("⚪").color(Color32::GRAY));
+                    // Status indicator
+                    match &provider.status {
+                        ProviderStatus::Unknown => {
+                            ui.label(RichText::new("⚪").color(Color32::GRAY));
+                        }
+                        ProviderStatus::Checking => {
+                            ui.spinner();
+                        }
+                        ProviderStatus::Connected => {
+                            ui.label(
+                                RichText::new(format!("🟢 {} models", provider.model_count))
+                                    .color(Color32::LIGHT_GREEN)
+                                    .size(10.0),
+                            );
+                        }
+                        ProviderStatus::Error(msg) => {
+                            ui.label(
+                                RichText::new(format!("🔴 {}", msg))
+                                    .color(Color32::from_rgb(255, 100, 100))
+                                    .size(10.0),
+                            );
+                        }
                     }
-                    ProviderStatus::Checking => {
-                        ui.spinner();
-                    }
-                    ProviderStatus::Connected => {
-                        ui.label(
-                            RichText::new(format!("🟢 {} models", provider.model_count))
-                                .color(Color32::LIGHT_GREEN)
-                                .size(10.0)
-                        );
-                    }
-                    ProviderStatus::Error(msg) => {
-                        ui.label(
-                            RichText::new(format!("🔴 {}", msg))
-                                .color(Color32::from_rgb(255, 100, 100))
-                                .size(10.0)
-                        );
-                    }
-                }
-            });
+                });
 
-            // URL configuration
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("URL:").size(10.0));
-                let url_response = ui.add(
-                    egui::TextEdit::singleline(&mut provider.url)
-                        .desired_width(200.0)
-                        .hint_text("http://localhost:11434")
-                );
-                if url_response.lost_focus() {
-                    response.url_changed = Some((provider.name.clone(), provider.url.clone()));
-                }
-            });
+                // URL configuration
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("URL:").size(10.0));
+                    let url_response = ui.add(
+                        egui::TextEdit::singleline(&mut provider.url)
+                            .desired_width(200.0)
+                            .hint_text("http://localhost:11434"),
+                    );
+                    if url_response.lost_focus() {
+                        response.url_changed = Some((provider.name.clone(), provider.url.clone()));
+                    }
+                });
 
-            // Actions
-            ui.horizontal(|ui| {
-                if ui.small_button("Test Connection").clicked() {
-                    response.test_connection = Some(provider.name.clone());
-                }
-                if ui.small_button("Refresh Models").clicked() {
-                    response.refresh_models = Some(provider.name.clone());
-                }
+                // Actions
+                ui.horizontal(|ui| {
+                    if ui.small_button("Test Connection").clicked() {
+                        response.test_connection = Some(provider.name.clone());
+                    }
+                    if ui.small_button("Refresh Models").clicked() {
+                        response.refresh_models = Some(provider.name.clone());
+                    }
+                });
             });
-        });
     }
 
     response
@@ -2272,7 +2331,7 @@ pub fn provider_config_panel(
 
 // === Metrics Display Widgets ===
 
-use crate::metrics::{SessionMetrics, MessageMetrics, RagQualityMetrics};
+use crate::metrics::{MessageMetrics, RagQualityMetrics, SessionMetrics};
 
 /// Render compact session metrics
 pub fn session_metrics_compact(ui: &mut Ui, metrics: &SessionMetrics) {
@@ -2280,17 +2339,20 @@ pub fn session_metrics_compact(ui: &mut Ui, metrics: &SessionMetrics) {
         ui.label(
             RichText::new(format!("📊 {} msgs", metrics.message_count))
                 .size(10.0)
-                .color(Color32::LIGHT_GRAY)
+                .color(Color32::LIGHT_GRAY),
         );
         ui.label(
             RichText::new(format!("⏱ {:.0}ms avg", metrics.avg_response_time_ms))
                 .size(10.0)
-                .color(Color32::LIGHT_GRAY)
+                .color(Color32::LIGHT_GRAY),
         );
         ui.label(
-            RichText::new(format!("🔤 {} in / {} out", metrics.total_input_tokens, metrics.total_output_tokens))
-                .size(10.0)
-                .color(Color32::LIGHT_GRAY)
+            RichText::new(format!(
+                "🔤 {} in / {} out",
+                metrics.total_input_tokens, metrics.total_output_tokens
+            ))
+            .size(10.0)
+            .color(Color32::LIGHT_GRAY),
         );
     });
 }
@@ -2298,8 +2360,7 @@ pub fn session_metrics_compact(ui: &mut Ui, metrics: &SessionMetrics) {
 /// Render detailed session metrics panel
 pub fn session_metrics_panel(ui: &mut Ui, metrics: &SessionMetrics) {
     egui::CollapsingHeader::new(
-        RichText::new(format!("Session Metrics ({})", metrics.session_id))
-            .size(12.0)
+        RichText::new(format!("Session Metrics ({})", metrics.session_id)).size(12.0),
     )
     .default_open(false)
     .show(ui, |ui| {
@@ -2333,8 +2394,13 @@ pub fn session_metrics_panel(ui: &mut Ui, metrics: &SessionMetrics) {
 
                 ui.label("Context limit warnings:");
                 ui.label(
-                    RichText::new(metrics.context_limit_warnings.to_string())
-                        .color(if metrics.context_limit_warnings > 0 { Color32::YELLOW } else { Color32::WHITE })
+                    RichText::new(metrics.context_limit_warnings.to_string()).color(
+                        if metrics.context_limit_warnings > 0 {
+                            Color32::YELLOW
+                        } else {
+                            Color32::WHITE
+                        },
+                    ),
                 );
                 ui.end_row();
 
@@ -2347,51 +2413,53 @@ pub fn session_metrics_panel(ui: &mut Ui, metrics: &SessionMetrics) {
 
 /// Render RAG quality metrics
 pub fn rag_quality_metrics_panel(ui: &mut Ui, metrics: &RagQualityMetrics) {
-    egui::CollapsingHeader::new(
-        RichText::new("RAG Quality Metrics").size(12.0)
-    )
-    .default_open(false)
-    .show(ui, |ui| {
-        egui::Grid::new("rag_quality_grid")
-            .num_columns(2)
-            .spacing([20.0, 4.0])
-            .show(ui, |ui| {
-                ui.label("Total queries:");
-                ui.label(metrics.total_queries.to_string());
-                ui.end_row();
+    egui::CollapsingHeader::new(RichText::new("RAG Quality Metrics").size(12.0))
+        .default_open(false)
+        .show(ui, |ui| {
+            egui::Grid::new("rag_quality_grid")
+                .num_columns(2)
+                .spacing([20.0, 4.0])
+                .show(ui, |ui| {
+                    ui.label("Total queries:");
+                    ui.label(metrics.total_queries.to_string());
+                    ui.end_row();
 
-                ui.label("Queries with results:");
-                ui.label(format!("{} ({:.0}%)",
-                    metrics.queries_with_results,
-                    if metrics.total_queries > 0 {
-                        metrics.queries_with_results as f64 / metrics.total_queries as f64 * 100.0
-                    } else { 0.0 }
-                ));
-                ui.end_row();
+                    ui.label("Queries with results:");
+                    ui.label(format!(
+                        "{} ({:.0}%)",
+                        metrics.queries_with_results,
+                        if metrics.total_queries > 0 {
+                            metrics.queries_with_results as f64 / metrics.total_queries as f64
+                                * 100.0
+                        } else {
+                            0.0
+                        }
+                    ));
+                    ui.end_row();
 
-                ui.label("Avg chunks per query:");
-                ui.label(format!("{:.1}", metrics.avg_chunks_per_query));
-                ui.end_row();
+                    ui.label("Avg chunks per query:");
+                    ui.label(format!("{:.1}", metrics.avg_chunks_per_query));
+                    ui.end_row();
 
-                ui.label("Avg tokens per query:");
-                ui.label(format!("{:.0}", metrics.avg_tokens_per_query));
-                ui.end_row();
+                    ui.label("Avg tokens per query:");
+                    ui.label(format!("{:.0}", metrics.avg_tokens_per_query));
+                    ui.end_row();
 
-                ui.label("Cache hit rate:");
-                ui.label(format!("{:.0}%", metrics.cache_hit_rate * 100.0));
-                ui.end_row();
-            });
-
-        if !metrics.top_sources.is_empty() {
-            ui.add_space(8.0);
-            ui.label(RichText::new("Top accessed sources:").size(11.0).strong());
-            for (source, count) in &metrics.top_sources {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(format!("  {} ({})", source, count)).size(10.0));
+                    ui.label("Cache hit rate:");
+                    ui.label(format!("{:.0}%", metrics.cache_hit_rate * 100.0));
+                    ui.end_row();
                 });
+
+            if !metrics.top_sources.is_empty() {
+                ui.add_space(8.0);
+                ui.label(RichText::new("Top accessed sources:").size(11.0).strong());
+                for (source, count) in &metrics.top_sources {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(format!("  {} ({})", source, count)).size(10.0));
+                    });
+                }
             }
-        }
-    });
+        });
 }
 
 /// Render a single message metrics display
@@ -2400,25 +2468,25 @@ pub fn message_metrics_inline(ui: &mut Ui, metrics: &MessageMetrics) {
         ui.label(
             RichText::new(format!("{}ms", metrics.total_response_time_ms))
                 .size(9.0)
-                .color(Color32::DARK_GRAY)
+                .color(Color32::DARK_GRAY),
         );
         if let Some(ttft) = metrics.time_to_first_token_ms {
             ui.label(
                 RichText::new(format!("(TTFT: {}ms)", ttft))
                     .size(9.0)
-                    .color(Color32::DARK_GRAY)
+                    .color(Color32::DARK_GRAY),
             );
         }
         ui.label(
             RichText::new(format!("{} tok", metrics.output_tokens))
                 .size(9.0)
-                .color(Color32::DARK_GRAY)
+                .color(Color32::DARK_GRAY),
         );
         if metrics.knowledge_chunks_retrieved > 0 {
             ui.label(
                 RichText::new(format!("📚{}", metrics.knowledge_chunks_retrieved))
                     .size(9.0)
-                    .color(Color32::LIGHT_BLUE)
+                    .color(Color32::LIGHT_BLUE),
             );
         }
     });
@@ -2426,7 +2494,7 @@ pub fn message_metrics_inline(ui: &mut Ui, metrics: &MessageMetrics) {
 
 // === Test Results Widget ===
 
-use crate::metrics::{TestSuiteResults, TestCaseResult};
+use crate::metrics::{TestCaseResult, TestSuiteResults};
 
 /// Render test suite results panel
 pub fn test_results_panel(ui: &mut Ui, results: &TestSuiteResults) {
@@ -2441,17 +2509,23 @@ pub fn test_results_panel(ui: &mut Ui, results: &TestSuiteResults) {
     egui::CollapsingHeader::new(
         RichText::new(format!(
             "Test Results: {} - {}/{} passed ({:.0}%)",
-            results.suite_name, results.passed, results.total_tests, results.pass_rate * 100.0
+            results.suite_name,
+            results.passed,
+            results.total_tests,
+            results.pass_rate * 100.0
         ))
         .size(12.0)
-        .color(pass_color)
+        .color(pass_color),
     )
     .default_open(results.failed > 0)
     .show(ui, |ui| {
         ui.label(
-            RichText::new(format!("Avg response time: {:.0}ms", results.avg_response_time_ms))
-                .size(10.0)
-                .color(Color32::GRAY)
+            RichText::new(format!(
+                "Avg response time: {:.0}ms",
+                results.avg_response_time_ms
+            ))
+            .size(10.0)
+            .color(Color32::GRAY),
         );
 
         ui.add_space(4.0);
@@ -2472,7 +2546,7 @@ fn test_case_result_row(ui: &mut Ui, result: &TestCaseResult) {
     egui::CollapsingHeader::new(
         RichText::new(format!("{} {}", icon, result.name))
             .size(11.0)
-            .color(color)
+            .color(color),
     )
     .default_open(!result.passed)
     .show(ui, |ui| {
@@ -2481,11 +2555,10 @@ fn test_case_result_row(ui: &mut Ui, result: &TestCaseResult) {
             ui.label(
                 RichText::new(format!(
                     "{}ms | {} tokens",
-                    result.metrics.total_response_time_ms,
-                    result.metrics.output_tokens
+                    result.metrics.total_response_time_ms, result.metrics.output_tokens
                 ))
                 .size(9.0)
-                .color(Color32::GRAY)
+                .color(Color32::GRAY),
             );
         });
 
@@ -2496,7 +2569,7 @@ fn test_case_result_row(ui: &mut Ui, result: &TestCaseResult) {
                 ui.label(
                     RichText::new(format!("  ⚠ {}", reason))
                         .size(10.0)
-                        .color(Color32::YELLOW)
+                        .color(Color32::YELLOW),
                 );
             }
         }
@@ -2512,7 +2585,7 @@ fn test_case_result_row(ui: &mut Ui, result: &TestCaseResult) {
             })
             .size(9.0)
             .color(Color32::DARK_GRAY)
-            .italics()
+            .italics(),
         );
     });
 }
@@ -2542,7 +2615,7 @@ pub fn sentiment_analysis_panel(ui: &mut Ui, analysis: &SentimentAnalysis) {
     egui::CollapsingHeader::new(
         RichText::new("📊 Sentiment Analysis")
             .size(12.0)
-            .color(Color32::WHITE)
+            .color(Color32::WHITE),
     )
     .default_open(false)
     .show(ui, |ui| {
@@ -2552,12 +2625,12 @@ pub fn sentiment_analysis_panel(ui: &mut Ui, analysis: &SentimentAnalysis) {
             ui.label(
                 RichText::new(format!("Score: {:.2}", analysis.score))
                     .size(10.0)
-                    .color(Color32::GRAY)
+                    .color(Color32::GRAY),
             );
             ui.label(
                 RichText::new(format!("Confidence: {:.0}%", analysis.confidence * 100.0))
                     .size(10.0)
-                    .color(Color32::GRAY)
+                    .color(Color32::GRAY),
             );
         });
 
@@ -2565,14 +2638,22 @@ pub fn sentiment_analysis_panel(ui: &mut Ui, analysis: &SentimentAnalysis) {
         if !analysis.positive_indicators.is_empty() {
             ui.add_space(4.0);
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("Positive:").size(9.0).color(Color32::LIGHT_GREEN));
+                ui.label(
+                    RichText::new("Positive:")
+                        .size(9.0)
+                        .color(Color32::LIGHT_GREEN),
+                );
                 for indicator in &analysis.positive_indicators {
                     egui::Frame::none()
                         .fill(Color32::from_rgb(40, 60, 40))
                         .rounding(4.0)
                         .inner_margin(egui::Margin::symmetric(4.0, 2.0))
                         .show(ui, |ui| {
-                            ui.label(RichText::new(indicator).size(9.0).color(Color32::LIGHT_GREEN));
+                            ui.label(
+                                RichText::new(indicator)
+                                    .size(9.0)
+                                    .color(Color32::LIGHT_GREEN),
+                            );
                         });
                 }
             });
@@ -2582,14 +2663,22 @@ pub fn sentiment_analysis_panel(ui: &mut Ui, analysis: &SentimentAnalysis) {
         if !analysis.negative_indicators.is_empty() {
             ui.add_space(2.0);
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("Negative:").size(9.0).color(Color32::from_rgb(255, 150, 150)));
+                ui.label(
+                    RichText::new("Negative:")
+                        .size(9.0)
+                        .color(Color32::from_rgb(255, 150, 150)),
+                );
                 for indicator in &analysis.negative_indicators {
                     egui::Frame::none()
                         .fill(Color32::from_rgb(60, 40, 40))
                         .rounding(4.0)
                         .inner_margin(egui::Margin::symmetric(4.0, 2.0))
                         .show(ui, |ui| {
-                            ui.label(RichText::new(indicator).size(9.0).color(Color32::from_rgb(255, 150, 150)));
+                            ui.label(
+                                RichText::new(indicator)
+                                    .size(9.0)
+                                    .color(Color32::from_rgb(255, 150, 150)),
+                            );
                         });
                 }
             });
@@ -2607,35 +2696,37 @@ pub fn topics_panel(ui: &mut Ui, topics: &[Topic]) {
         return;
     }
 
-    egui::CollapsingHeader::new(
-        RichText::new("🏷️ Topics")
-            .size(12.0)
-            .color(Color32::WHITE)
-    )
-    .default_open(false)
-    .show(ui, |ui| {
-        ui.horizontal_wrapped(|ui| {
-            for topic in topics {
-                let color = topic_color(&topic.name);
-                egui::Frame::none()
-                    .fill(color)
-                    .rounding(4.0)
-                    .inner_margin(egui::Margin::symmetric(6.0, 3.0))
-                    .show(ui, |ui| {
-                        ui.label(
-                            RichText::new(format!("{} ({:.0}%)", topic.name, topic.relevance * 100.0))
+    egui::CollapsingHeader::new(RichText::new("🏷️ Topics").size(12.0).color(Color32::WHITE))
+        .default_open(false)
+        .show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                for topic in topics {
+                    let color = topic_color(&topic.name);
+                    egui::Frame::none()
+                        .fill(color)
+                        .rounding(4.0)
+                        .inner_margin(egui::Margin::symmetric(6.0, 3.0))
+                        .show(ui, |ui| {
+                            ui.label(
+                                RichText::new(format!(
+                                    "{} ({:.0}%)",
+                                    topic.name,
+                                    topic.relevance * 100.0
+                                ))
                                 .size(10.0)
-                                .color(Color32::WHITE)
-                        );
-                    });
-            }
+                                .color(Color32::WHITE),
+                            );
+                        });
+                }
+            });
         });
-    });
 }
 
 fn topic_color(topic: &str) -> Color32 {
     // Generate consistent color from topic name
-    let hash: u32 = topic.bytes().fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
+    let hash: u32 = topic
+        .bytes()
+        .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
     Color32::from_rgb(
         ((hash >> 16) & 0xFF) as u8 / 2 + 40,
         ((hash >> 8) & 0xFF) as u8 / 2 + 40,
@@ -2650,7 +2741,7 @@ pub fn session_summary_panel(ui: &mut Ui, summary: &SessionSummary) {
     egui::CollapsingHeader::new(
         RichText::new("📋 Session Summary")
             .size(12.0)
-            .color(Color32::WHITE)
+            .color(Color32::WHITE),
     )
     .default_open(true)
     .show(ui, |ui| {
@@ -2659,13 +2750,13 @@ pub fn session_summary_panel(ui: &mut Ui, summary: &SessionSummary) {
             ui.label(
                 RichText::new(format!("Messages: {}", summary.message_count))
                     .size(10.0)
-                    .color(Color32::GRAY)
+                    .color(Color32::GRAY),
             );
             ui.separator();
             ui.label(
                 RichText::new(format!("Sentiment: {}", summary.sentiment))
                     .size(10.0)
-                    .color(Color32::GRAY)
+                    .color(Color32::GRAY),
             );
         });
 
@@ -2683,13 +2774,17 @@ pub fn session_summary_panel(ui: &mut Ui, summary: &SessionSummary) {
         // User questions
         if !summary.user_questions.is_empty() {
             ui.add_space(4.0);
-            ui.label(RichText::new("Questions asked:").size(10.0).color(Color32::LIGHT_BLUE));
+            ui.label(
+                RichText::new("Questions asked:")
+                    .size(10.0)
+                    .color(Color32::LIGHT_BLUE),
+            );
             for question in summary.user_questions.iter().take(3) {
                 let preview: String = question.chars().take(60).collect();
                 ui.label(
                     RichText::new(format!("  • {}...", preview))
                         .size(9.0)
-                        .color(Color32::LIGHT_GRAY)
+                        .color(Color32::LIGHT_GRAY),
                 );
             }
         }
@@ -2697,9 +2792,17 @@ pub fn session_summary_panel(ui: &mut Ui, summary: &SessionSummary) {
         // Key points
         if !summary.key_points.is_empty() {
             ui.add_space(4.0);
-            ui.label(RichText::new("Key Points:").size(10.0).color(Color32::WHITE));
+            ui.label(
+                RichText::new("Key Points:")
+                    .size(10.0)
+                    .color(Color32::WHITE),
+            );
             for point in &summary.key_points {
-                ui.label(RichText::new(format!("  • {}", point)).size(9.0).color(Color32::LIGHT_GRAY));
+                ui.label(
+                    RichText::new(format!("  • {}", point))
+                        .size(9.0)
+                        .color(Color32::LIGHT_GRAY),
+                );
             }
         }
 
@@ -2709,7 +2812,7 @@ pub fn session_summary_panel(ui: &mut Ui, summary: &SessionSummary) {
             RichText::new(&summary.summary)
                 .size(10.0)
                 .color(Color32::WHITE)
-                .italics()
+                .italics(),
         );
     });
 }
@@ -2733,7 +2836,7 @@ pub fn branch_selector(
     egui::CollapsingHeader::new(
         RichText::new(format!("🌿 Branches ({})", branches.len()))
             .size(12.0)
-            .color(Color32::WHITE)
+            .color(Color32::WHITE),
     )
     .default_open(false)
     .show(ui, |ui| {
@@ -2746,13 +2849,16 @@ pub fn branch_selector(
             };
 
             ui.horizontal(|ui| {
-                if ui.selectable_label(is_active, RichText::new(&branch.name).color(color)).clicked() {
+                if ui
+                    .selectable_label(is_active, RichText::new(&branch.name).color(color))
+                    .clicked()
+                {
                     selected = Some(branch.id.clone());
                 }
                 ui.label(
                     RichText::new(format!("@ msg {}", branch.branch_index))
                         .size(9.0)
-                        .color(Color32::DARK_GRAY)
+                        .color(Color32::DARK_GRAY),
                 );
             });
         }
@@ -2763,10 +2869,12 @@ pub fn branch_selector(
 
 /// Display cancel button for streaming responses
 pub fn cancel_button(ui: &mut Ui, token: &CancellationToken) -> bool {
-    let clicked = ui.add(
-        egui::Button::new(RichText::new("⏹ Cancel").size(11.0))
-            .fill(Color32::from_rgb(100, 50, 50))
-    ).clicked();
+    let clicked = ui
+        .add(
+            egui::Button::new(RichText::new("⏹ Cancel").size(11.0))
+                .fill(Color32::from_rgb(100, 50, 50)),
+        )
+        .clicked();
 
     if clicked {
         token.cancel();
@@ -2777,7 +2885,7 @@ pub fn cancel_button(ui: &mut Ui, token: &CancellationToken) -> bool {
 
 // === Rate Limiting Widget ===
 
-use crate::security::{RateLimiter, AuditEvent, AuditEventType};
+use crate::security::{AuditEvent, AuditEventType, RateLimiter};
 
 /// Display rate limit status
 pub fn rate_limit_status(ui: &mut Ui, limiter: &RateLimiter) {
@@ -2796,11 +2904,10 @@ pub fn rate_limit_status(ui: &mut Ui, limiter: &RateLimiter) {
         ui.label(
             RichText::new(format!(
                 "{}/{} requests",
-                status.requests_remaining,
-                status.requests_per_minute
+                status.requests_remaining, status.requests_per_minute
             ))
             .size(10.0)
-            .color(color)
+            .color(color),
         );
 
         if status.tokens_remaining < status.tokens_per_minute {
@@ -2808,11 +2915,10 @@ pub fn rate_limit_status(ui: &mut Ui, limiter: &RateLimiter) {
             ui.label(
                 RichText::new(format!(
                     "{}/{} tokens",
-                    status.tokens_remaining,
-                    status.tokens_per_minute
+                    status.tokens_remaining, status.tokens_per_minute
                 ))
                 .size(10.0)
-                .color(Color32::GRAY)
+                .color(Color32::GRAY),
             );
         }
 
@@ -2821,7 +2927,7 @@ pub fn rate_limit_status(ui: &mut Ui, limiter: &RateLimiter) {
             ui.label(
                 RichText::new(format!("⏳ {}s", cooldown))
                     .size(10.0)
-                    .color(Color32::from_rgb(255, 100, 100))
+                    .color(Color32::from_rgb(255, 100, 100)),
             );
         }
     });
@@ -2834,7 +2940,7 @@ pub fn audit_log_panel(ui: &mut Ui, events: &[AuditEvent], max_events: usize) {
     egui::CollapsingHeader::new(
         RichText::new("📝 Audit Log")
             .size(12.0)
-            .color(Color32::WHITE)
+            .color(Color32::WHITE),
     )
     .default_open(false)
     .show(ui, |ui| {
@@ -2848,24 +2954,22 @@ pub fn audit_log_panel(ui: &mut Ui, events: &[AuditEvent], max_events: usize) {
                 ui.label(
                     RichText::new(event.timestamp.format("%H:%M:%S").to_string())
                         .size(9.0)
-                        .color(Color32::DARK_GRAY)
+                        .color(Color32::DARK_GRAY),
                 );
                 ui.label(
                     RichText::new(format!("{:?}", event.event_type))
                         .size(9.0)
-                        .color(color)
+                        .color(color),
                 );
                 if !event.details.is_empty() {
-                    let details_str: String = event.details.iter()
+                    let details_str: String = event
+                        .details
+                        .iter()
                         .take(2)
                         .map(|(k, v)| format!("{}={}", k, v))
                         .collect::<Vec<_>>()
                         .join(", ");
-                    ui.label(
-                        RichText::new(details_str)
-                            .size(9.0)
-                            .color(Color32::GRAY)
-                    );
+                    ui.label(RichText::new(details_str).size(9.0).color(Color32::GRAY));
                 }
             });
         }
@@ -2903,61 +3007,69 @@ pub fn backup_status_panel(
 ) -> BackupAction {
     let mut action = BackupAction::None;
 
-    egui::CollapsingHeader::new(
-        RichText::new("💾 Backup")
-            .size(12.0)
-            .color(Color32::WHITE)
-    )
-    .default_open(false)
-    .show(ui, |ui| {
-        if let Some(backup) = last_backup {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("Last backup:").size(10.0).color(Color32::GRAY));
+    egui::CollapsingHeader::new(RichText::new("💾 Backup").size(12.0).color(Color32::WHITE))
+        .default_open(false)
+        .show(ui, |ui| {
+            if let Some(backup) = last_backup {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new("Last backup:")
+                            .size(10.0)
+                            .color(Color32::GRAY),
+                    );
+                    ui.label(
+                        RichText::new(backup.created_at.format("%Y-%m-%d %H:%M").to_string())
+                            .size(10.0)
+                            .color(Color32::WHITE),
+                    );
+                });
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Size:").size(9.0).color(Color32::GRAY));
+                    ui.label(
+                        RichText::new(format_bytes(backup.size_bytes))
+                            .size(9.0)
+                            .color(Color32::GRAY),
+                    );
+                });
+            } else {
                 ui.label(
-                    RichText::new(backup.created_at.format("%Y-%m-%d %H:%M").to_string())
+                    RichText::new("No backups yet")
                         .size(10.0)
-                        .color(Color32::WHITE)
-                );
-            });
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("Size:").size(9.0).color(Color32::GRAY));
-                ui.label(
-                    RichText::new(format_bytes(backup.size_bytes))
-                        .size(9.0)
                         .color(Color32::GRAY)
+                        .italics(),
                 );
+            }
+
+            ui.add_space(4.0);
+
+            ui.horizontal(|ui| {
+                if ui
+                    .button(RichText::new("📦 Backup Now").size(10.0))
+                    .clicked()
+                {
+                    action = BackupAction::CreateBackup;
+                }
+                if last_backup.is_some()
+                    && ui.button(RichText::new("🔄 Restore").size(10.0)).clicked()
+                {
+                    action = BackupAction::RestoreBackup;
+                }
             });
-        } else {
-            ui.label(
-                RichText::new("No backups yet")
-                    .size(10.0)
-                    .color(Color32::GRAY)
-                    .italics()
-            );
-        }
 
-        ui.add_space(4.0);
-
-        ui.horizontal(|ui| {
-            if ui.button(RichText::new("📦 Backup Now").size(10.0)).clicked() {
-                action = BackupAction::CreateBackup;
-            }
-            if last_backup.is_some() && ui.button(RichText::new("🔄 Restore").size(10.0)).clicked() {
-                action = BackupAction::RestoreBackup;
-            }
+            ui.horizontal(|ui| {
+                let mut enabled = auto_backup_enabled;
+                if ui
+                    .checkbox(&mut enabled, RichText::new("Auto-backup").size(10.0))
+                    .changed()
+                {
+                    action = if enabled {
+                        BackupAction::EnableAutoBackup
+                    } else {
+                        BackupAction::DisableAutoBackup
+                    };
+                }
+            });
         });
-
-        ui.horizontal(|ui| {
-            let mut enabled = auto_backup_enabled;
-            if ui.checkbox(&mut enabled, RichText::new("Auto-backup").size(10.0)).changed() {
-                action = if enabled {
-                    BackupAction::EnableAutoBackup
-                } else {
-                    BackupAction::DisableAutoBackup
-                };
-            }
-        });
-    });
 
     action
 }
@@ -2983,14 +3095,14 @@ fn format_bytes(bytes: u64) -> String {
 
 // === Tool Calling Widget ===
 
-use crate::tools::{ToolDefinition, ToolCall, ToolResult};
+use crate::tools::{ToolCall, ToolDefinition, ToolResult};
 
 /// Display available tools
 pub fn tools_panel(ui: &mut Ui, tools: &[ToolDefinition]) {
     egui::CollapsingHeader::new(
         RichText::new(format!("🔧 Tools ({})", tools.len()))
             .size(12.0)
-            .color(Color32::WHITE)
+            .color(Color32::WHITE),
     )
     .default_open(false)
     .show(ui, |ui| {
@@ -2998,14 +3110,14 @@ pub fn tools_panel(ui: &mut Ui, tools: &[ToolDefinition]) {
             egui::CollapsingHeader::new(
                 RichText::new(&tool.name)
                     .size(11.0)
-                    .color(Color32::LIGHT_BLUE)
+                    .color(Color32::LIGHT_BLUE),
             )
             .default_open(false)
             .show(ui, |ui| {
                 ui.label(
                     RichText::new(&tool.description)
                         .size(9.0)
-                        .color(Color32::GRAY)
+                        .color(Color32::GRAY),
                 );
 
                 if !tool.parameters.is_empty() {
@@ -3017,19 +3129,19 @@ pub fn tools_panel(ui: &mut Ui, tools: &[ToolDefinition]) {
                             ui.label(
                                 RichText::new(format!("  {}{}", param.name, required_mark))
                                     .size(9.0)
-                                    .color(Color32::LIGHT_GREEN)
+                                    .color(Color32::LIGHT_GREEN),
                             );
                             ui.label(
                                 RichText::new(format!("({:?})", param.param_type))
                                     .size(9.0)
-                                    .color(Color32::GRAY)
+                                    .color(Color32::GRAY),
                             );
                         });
                         if !param.description.is_empty() {
                             ui.label(
                                 RichText::new(format!("    {}", param.description))
                                     .size(8.0)
-                                    .color(Color32::DARK_GRAY)
+                                    .color(Color32::DARK_GRAY),
                             );
                         }
                     }
@@ -3051,7 +3163,7 @@ pub fn tool_call_bubble(ui: &mut Ui, call: &ToolCall, result: Option<&ToolResult
                 ui.label(
                     RichText::new(&call.name)
                         .size(11.0)
-                        .color(Color32::LIGHT_BLUE)
+                        .color(Color32::LIGHT_BLUE),
                 );
             });
 
@@ -3063,12 +3175,12 @@ pub fn tool_call_bubble(ui: &mut Ui, call: &ToolCall, result: Option<&ToolResult
                         ui.label(
                             RichText::new(format!("  {}: ", key))
                                 .size(9.0)
-                                .color(Color32::GRAY)
+                                .color(Color32::GRAY),
                         );
                         ui.label(
                             RichText::new(format!("{}", value))
                                 .size(9.0)
-                                .color(Color32::WHITE)
+                                .color(Color32::WHITE),
                         );
                     });
                 }
@@ -3093,7 +3205,7 @@ pub fn tool_call_bubble(ui: &mut Ui, call: &ToolCall, result: Option<&ToolResult
                             content_preview
                         })
                         .size(9.0)
-                        .color(Color32::GRAY)
+                        .color(Color32::GRAY),
                     );
                 });
             }
@@ -3111,7 +3223,7 @@ pub fn hybrid_search_results(ui: &mut Ui, results: &[HybridSearchResult]) {
             RichText::new("No results found")
                 .size(10.0)
                 .color(Color32::GRAY)
-                .italics()
+                .italics(),
         );
         return;
     }
@@ -3126,12 +3238,12 @@ pub fn hybrid_search_results(ui: &mut Ui, results: &[HybridSearchResult]) {
                     ui.label(
                         RichText::new(format!("#{}", i + 1))
                             .size(10.0)
-                            .color(Color32::GRAY)
+                            .color(Color32::GRAY),
                     );
                     ui.label(
                         RichText::new(format!("Score: {:.3}", result.combined_score))
                             .size(9.0)
-                            .color(Color32::LIGHT_GREEN)
+                            .color(Color32::LIGHT_GREEN),
                     );
 
                     // Show individual scores
@@ -3139,14 +3251,14 @@ pub fn hybrid_search_results(ui: &mut Ui, results: &[HybridSearchResult]) {
                         ui.label(
                             RichText::new(format!("KW: {:.2}", result.keyword_score))
                                 .size(8.0)
-                                .color(Color32::DARK_GRAY)
+                                .color(Color32::DARK_GRAY),
                         );
                     }
                     if result.semantic_score > 0.0 {
                         ui.label(
                             RichText::new(format!("Sem: {:.2}", result.semantic_score))
                                 .size(8.0)
-                                .color(Color32::DARK_GRAY)
+                                .color(Color32::DARK_GRAY),
                         );
                     }
                 });
@@ -3162,7 +3274,7 @@ pub fn hybrid_search_results(ui: &mut Ui, results: &[HybridSearchResult]) {
                         preview
                     })
                     .size(10.0)
-                    .color(Color32::WHITE)
+                    .color(Color32::WHITE),
                 );
             });
 
@@ -3197,10 +3309,14 @@ pub fn variant_selector(
                 Color32::GRAY
             };
 
-            if ui.selectable_label(
-                is_active,
-                RichText::new(format!("{}", i + 1)).size(10.0).color(color)
-            ).clicked() && !is_active {
+            if ui
+                .selectable_label(
+                    is_active,
+                    RichText::new(format!("{}", i + 1)).size(10.0).color(color),
+                )
+                .clicked()
+                && !is_active
+            {
                 selected = Some(i);
             }
         }
@@ -3209,7 +3325,7 @@ pub fn variant_selector(
         ui.label(
             RichText::new(format!("T={:.1}", variants[active_index].temperature))
                 .size(8.0)
-                .color(Color32::DARK_GRAY)
+                .color(Color32::DARK_GRAY),
         );
     });
 
@@ -3223,7 +3339,7 @@ pub fn advanced_metrics_panel(ui: &mut Ui, metrics_history: &[MessageMetrics]) {
     egui::CollapsingHeader::new(
         RichText::new("📈 Performance Metrics")
             .size(12.0)
-            .color(Color32::WHITE)
+            .color(Color32::WHITE),
     )
     .default_open(false)
     .show(ui, |ui| {
@@ -3232,22 +3348,27 @@ pub fn advanced_metrics_panel(ui: &mut Ui, metrics_history: &[MessageMetrics]) {
                 RichText::new("No metrics data yet")
                     .size(10.0)
                     .color(Color32::GRAY)
-                    .italics()
+                    .italics(),
             );
             return;
         }
 
         // Calculate averages
-        let avg_response_time: f64 = metrics_history.iter()
+        let avg_response_time: f64 = metrics_history
+            .iter()
             .map(|m| m.total_response_time_ms as f64)
-            .sum::<f64>() / metrics_history.len() as f64;
+            .sum::<f64>()
+            / metrics_history.len() as f64;
 
-        let avg_tokens: f64 = metrics_history.iter()
+        let avg_tokens: f64 = metrics_history
+            .iter()
             .map(|m| m.output_tokens as f64)
-            .sum::<f64>() / metrics_history.len() as f64;
+            .sum::<f64>()
+            / metrics_history.len() as f64;
 
         let avg_ttft: Option<f64> = {
-            let ttfts: Vec<u64> = metrics_history.iter()
+            let ttfts: Vec<u64> = metrics_history
+                .iter()
                 .filter_map(|m| m.time_to_first_token_ms)
                 .collect();
             if !ttfts.is_empty() {
@@ -3260,32 +3381,60 @@ pub fn advanced_metrics_panel(ui: &mut Ui, metrics_history: &[MessageMetrics]) {
         // Display stats
         ui.horizontal(|ui| {
             ui.label(RichText::new("Responses:").size(10.0).color(Color32::GRAY));
-            ui.label(RichText::new(format!("{}", metrics_history.len())).size(10.0).color(Color32::WHITE));
+            ui.label(
+                RichText::new(format!("{}", metrics_history.len()))
+                    .size(10.0)
+                    .color(Color32::WHITE),
+            );
         });
 
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Avg Response Time:").size(10.0).color(Color32::GRAY));
-            ui.label(RichText::new(format!("{:.0}ms", avg_response_time)).size(10.0).color(Color32::LIGHT_GREEN));
+            ui.label(
+                RichText::new("Avg Response Time:")
+                    .size(10.0)
+                    .color(Color32::GRAY),
+            );
+            ui.label(
+                RichText::new(format!("{:.0}ms", avg_response_time))
+                    .size(10.0)
+                    .color(Color32::LIGHT_GREEN),
+            );
         });
 
         if let Some(ttft) = avg_ttft {
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Avg TTFT:").size(10.0).color(Color32::GRAY));
-                ui.label(RichText::new(format!("{:.0}ms", ttft)).size(10.0).color(Color32::LIGHT_BLUE));
+                ui.label(
+                    RichText::new(format!("{:.0}ms", ttft))
+                        .size(10.0)
+                        .color(Color32::LIGHT_BLUE),
+                );
             });
         }
 
         ui.horizontal(|ui| {
             ui.label(RichText::new("Avg Tokens:").size(10.0).color(Color32::GRAY));
-            ui.label(RichText::new(format!("{:.0}", avg_tokens)).size(10.0).color(Color32::WHITE));
+            ui.label(
+                RichText::new(format!("{:.0}", avg_tokens))
+                    .size(10.0)
+                    .color(Color32::WHITE),
+            );
         });
 
         // Simple bar chart for recent response times
         ui.add_space(8.0);
-        ui.label(RichText::new("Recent Response Times:").size(10.0).color(Color32::GRAY));
+        ui.label(
+            RichText::new("Recent Response Times:")
+                .size(10.0)
+                .color(Color32::GRAY),
+        );
 
         let recent: Vec<_> = metrics_history.iter().rev().take(10).collect();
-        let max_time = recent.iter().map(|m| m.total_response_time_ms).max().unwrap_or(1000);
+        let max_time = recent
+            .iter()
+            .map(|m| m.total_response_time_ms)
+            .max()
+            .unwrap_or(1000);
 
         ui.horizontal(|ui| {
             for metrics in recent.iter().rev() {
@@ -3304,10 +3453,10 @@ pub fn advanced_metrics_panel(ui: &mut Ui, metrics_history: &[MessageMetrics]) {
                 ui.painter().rect_filled(
                     egui::Rect::from_min_size(
                         rect.min + Vec2::new(0.0, 44.0 - height),
-                        Vec2::new(6.0, height)
+                        Vec2::new(6.0, height),
                     ),
                     2.0,
-                    color
+                    color,
                 );
             }
         });
@@ -3355,7 +3504,9 @@ impl KnowledgeSelectionMode {
     pub fn from_sources(selected: Vec<String>, all_sources: &[String]) -> Self {
         if selected.is_empty() {
             KnowledgeSelectionMode::None
-        } else if selected.len() == all_sources.len() && all_sources.iter().all(|s| selected.contains(s)) {
+        } else if selected.len() == all_sources.len()
+            && all_sources.iter().all(|s| selected.contains(s))
+        {
             KnowledgeSelectionMode::All
         } else if selected.len() == 1 {
             KnowledgeSelectionMode::Single(selected[0].clone())
@@ -3564,7 +3715,8 @@ pub fn knowledge_source_selector(
             }
 
             for source in available_sources {
-                let is_selected = matches!(&state.selection, KnowledgeSelectionMode::Single(s) if s == source);
+                let is_selected =
+                    matches!(&state.selection, KnowledgeSelectionMode::Single(s) if s == source);
                 if ui.selectable_label(is_selected, source).clicked() && !is_selected {
                     state.selection = KnowledgeSelectionMode::Single(source.clone());
                     response.changed = true;
@@ -3628,7 +3780,8 @@ pub fn knowledge_source_multi_selector(
 
                 // Find stats if available
                 let stat_text = if config.show_stats {
-                    stats.and_then(|s| s.iter().find(|st| st.name == *source))
+                    stats
+                        .and_then(|s| s.iter().find(|st| st.name == *source))
                         .map(|s| format!(" ({} chunks)", s.chunk_count))
                         .unwrap_or_default()
                 } else {
@@ -3647,7 +3800,8 @@ pub fn knowledge_source_multi_selector(
                         current.retain(|s| s != source);
                     }
 
-                    state.selection = KnowledgeSelectionMode::from_sources(current, available_sources);
+                    state.selection =
+                        KnowledgeSelectionMode::from_sources(current, available_sources);
                     response.changed = true;
                     response.selection = Some(state.selection.clone());
                 }
@@ -3684,7 +3838,11 @@ pub fn knowledge_source_chips(
         // Quick toggle buttons
         if config.allow_none {
             let is_none = state.selection.is_none();
-            if ui.selectable_label(is_none, RichText::new("None").size(10.0)).clicked() && !is_none {
+            if ui
+                .selectable_label(is_none, RichText::new("None").size(10.0))
+                .clicked()
+                && !is_none
+            {
                 state.selection = KnowledgeSelectionMode::None;
                 response.changed = true;
                 response.selection = Some(KnowledgeSelectionMode::None);
@@ -3693,7 +3851,11 @@ pub fn knowledge_source_chips(
 
         if config.allow_all && !available_sources.is_empty() {
             let is_all = state.selection.is_all();
-            if ui.selectable_label(is_all, RichText::new("All").size(10.0)).clicked() && !is_all {
+            if ui
+                .selectable_label(is_all, RichText::new("All").size(10.0))
+                .clicked()
+                && !is_all
+            {
                 state.selection = KnowledgeSelectionMode::All;
                 response.changed = true;
                 response.selection = Some(KnowledgeSelectionMode::All);
@@ -3728,7 +3890,11 @@ pub fn knowledge_source_chips(
                     ui.label(RichText::new(source).size(10.0).color(text_color));
                 });
 
-            if chip_response.response.interact(egui::Sense::click()).clicked() {
+            if chip_response
+                .response
+                .interact(egui::Sense::click())
+                .clicked()
+            {
                 let mut current = state.selection.to_sources(available_sources);
 
                 if is_selected {
@@ -3767,9 +3933,11 @@ pub fn knowledge_selection_display(
             };
             ("📚", text, Color32::LIGHT_BLUE)
         }
-        KnowledgeSelectionMode::All => {
-            ("📚", format!("All ({} sources)", available_sources.len()), Color32::LIGHT_GREEN)
-        }
+        KnowledgeSelectionMode::All => (
+            "📚",
+            format!("All ({} sources)", available_sources.len()),
+            Color32::LIGHT_GREEN,
+        ),
     };
 
     ui.horizontal(|ui| {
@@ -3869,7 +4037,7 @@ pub fn knowledge_selection_external(
 // RAG Tier Selection Widgets
 // ============================================================================
 
-use crate::rag_tiers::{RagTier, RagConfig, RagFeatures};
+use crate::rag_tiers::{RagConfig, RagFeatures, RagTier};
 
 /// Colors for RAG tier UI elements
 #[derive(Clone)]
@@ -3943,11 +4111,7 @@ impl RagTierResponse {
 /// Render a compact RAG tier selector as a dropdown
 ///
 /// Shows the current tier with an emoji indicator and allows selection from all tiers.
-pub fn rag_tier_dropdown(
-    ui: &mut Ui,
-    current_tier: &mut RagTier,
-    label: &str,
-) -> RagTierResponse {
+pub fn rag_tier_dropdown(ui: &mut Ui, current_tier: &mut RagTier, label: &str) -> RagTierResponse {
     let mut response = RagTierResponse::default();
 
     ui.horizontal(|ui| {
@@ -4018,7 +4182,7 @@ pub fn rag_tier_button_bar(
             let button = egui::Button::new(
                 RichText::new(&label_text)
                     .color(text_color)
-                    .size(if compact { 14.0 } else { 11.0 })
+                    .size(if compact { 14.0 } else { 11.0 }),
             )
             .fill(bg_color)
             .rounding(4.0);
@@ -4039,7 +4203,11 @@ pub fn rag_tier_button_bar(
                 let max_str = max.map(|m| m.to_string()).unwrap_or("∞".to_string());
                 ui.label(format!("LLM calls: {}-{}", min, max_str));
                 if tier.requires_embeddings() {
-                    ui.label(RichText::new("Requires embeddings").color(Color32::YELLOW).size(10.0));
+                    ui.label(
+                        RichText::new("Requires embeddings")
+                            .color(Color32::YELLOW)
+                            .size(10.0),
+                    );
                 }
             });
 
@@ -4079,30 +4247,40 @@ pub fn rag_tier_radio_list(
 
             // Tier button/label
             let frame = egui::Frame::none()
-                .fill(if is_selected { colors.for_tier(*tier).linear_multiply(0.3) } else { Color32::TRANSPARENT })
+                .fill(if is_selected {
+                    colors.for_tier(*tier).linear_multiply(0.3)
+                } else {
+                    Color32::TRANSPARENT
+                })
                 .rounding(4.0)
                 .inner_margin(4.0);
 
-            let resp = frame.show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(tier.emoji()).size(14.0));
-                    ui.vertical(|ui| {
-                        ui.label(RichText::new(tier.display_name()).strong().size(12.0));
-                        ui.label(RichText::new(tier.description()).size(10.0).color(Color32::LIGHT_GRAY));
+            let resp = frame
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(tier.emoji()).size(14.0));
+                        ui.vertical(|ui| {
+                            ui.label(RichText::new(tier.display_name()).strong().size(12.0));
+                            ui.label(
+                                RichText::new(tier.description())
+                                    .size(10.0)
+                                    .color(Color32::LIGHT_GRAY),
+                            );
 
-                        // Show call estimate
-                        let (min, max) = tier.estimated_extra_calls();
-                        let calls_text = if max == Some(0) {
-                            "No extra LLM calls".to_string()
-                        } else if let Some(m) = max {
-                            format!("{}-{} LLM calls", min, m)
-                        } else {
-                            format!("{}+ LLM calls (unbounded)", min)
-                        };
-                        ui.label(RichText::new(calls_text).size(9.0).color(Color32::GRAY));
+                            // Show call estimate
+                            let (min, max) = tier.estimated_extra_calls();
+                            let calls_text = if max == Some(0) {
+                                "No extra LLM calls".to_string()
+                            } else if let Some(m) = max {
+                                format!("{}-{} LLM calls", min, m)
+                            } else {
+                                format!("{}+ LLM calls (unbounded)", min)
+                            };
+                            ui.label(RichText::new(calls_text).size(9.0).color(Color32::GRAY));
+                        });
                     });
-                });
-            }).response;
+                })
+                .response;
 
             if resp.hovered() {
                 response.hovered_tier = Some(*tier);
@@ -4123,11 +4301,7 @@ pub fn rag_tier_radio_list(
 /// Render a slider-based tier selector
 ///
 /// Shows tiers on a horizontal slider, useful for quick adjustment.
-pub fn rag_tier_slider(
-    ui: &mut Ui,
-    current_tier: &mut RagTier,
-    label: &str,
-) -> RagTierResponse {
+pub fn rag_tier_slider(ui: &mut Ui, current_tier: &mut RagTier, label: &str) -> RagTierResponse {
     let mut response = RagTierResponse::default();
 
     // Skip Custom tier for slider (use standard tiers only)
@@ -4145,7 +4319,7 @@ pub fn rag_tier_slider(
         let slider_resp = ui.add(
             egui::Slider::new(&mut level, 0..=7)
                 .show_value(false)
-                .text(current_tier.display_name())
+                .text(current_tier.display_name()),
         );
 
         if slider_resp.changed() {
@@ -4168,12 +4342,10 @@ pub fn rag_tier_slider(
 /// Render a tier info panel showing current configuration details
 ///
 /// Displays the features enabled for the current tier and requirements.
-pub fn rag_tier_info_panel(
-    ui: &mut Ui,
-    tier: RagTier,
-    config: Option<&RagConfig>,
-) {
-    let features = config.map(|c| c.effective_features()).unwrap_or_else(|| tier.to_features());
+pub fn rag_tier_info_panel(ui: &mut Ui, tier: RagTier, config: Option<&RagConfig>) {
+    let features = config
+        .map(|c| c.effective_features())
+        .unwrap_or_else(|| tier.to_features());
 
     egui::Frame::none()
         .fill(Color32::from_rgb(30, 30, 35))
@@ -4186,7 +4358,11 @@ pub fn rag_tier_info_panel(
                 ui.label(RichText::new(tier.display_name()).strong().size(14.0));
             });
 
-            ui.label(RichText::new(tier.description()).size(11.0).color(Color32::LIGHT_GRAY));
+            ui.label(
+                RichText::new(tier.description())
+                    .size(11.0)
+                    .color(Color32::LIGHT_GRAY),
+            );
             ui.add_space(4.0);
 
             // Call estimate
@@ -4206,11 +4382,19 @@ pub fn rag_tier_info_panel(
             // Enabled features (in a grid)
             let enabled = features.enabled_features();
             if !enabled.is_empty() {
-                ui.label(RichText::new("Enabled Features:").size(10.0).color(Color32::GRAY));
+                ui.label(
+                    RichText::new("Enabled Features:")
+                        .size(10.0)
+                        .color(Color32::GRAY),
+                );
                 ui.horizontal_wrapped(|ui| {
                     for feature in enabled {
                         let nice_name = feature.replace('_', " ");
-                        ui.label(RichText::new(format!("• {}", nice_name)).size(9.0).color(Color32::LIGHT_GREEN));
+                        ui.label(
+                            RichText::new(format!("• {}", nice_name))
+                                .size(9.0)
+                                .color(Color32::LIGHT_GREEN),
+                        );
                     }
                 });
             }
@@ -4220,9 +4404,17 @@ pub fn rag_tier_info_panel(
                 let reqs = cfg.check_requirements();
                 if !reqs.is_empty() {
                     ui.add_space(4.0);
-                    ui.label(RichText::new("Requirements:").size(10.0).color(Color32::GRAY));
+                    ui.label(
+                        RichText::new("Requirements:")
+                            .size(10.0)
+                            .color(Color32::GRAY),
+                    );
                     for req in reqs {
-                        ui.label(RichText::new(format!("⚠ {}", req.display_name())).size(9.0).color(Color32::YELLOW));
+                        ui.label(
+                            RichText::new(format!("⚠ {}", req.display_name()))
+                                .size(9.0)
+                                .color(Color32::YELLOW),
+                        );
                     }
                 }
             }
@@ -4230,11 +4422,7 @@ pub fn rag_tier_info_panel(
 }
 
 /// Render a compact tier badge for display in headers/status bars
-pub fn rag_tier_badge(
-    ui: &mut Ui,
-    tier: RagTier,
-    colors: &RagTierColors,
-) {
+pub fn rag_tier_badge(ui: &mut Ui, tier: RagTier, colors: &RagTierColors) {
     let bg_color = colors.for_tier(tier);
 
     egui::Frame::none()
@@ -4245,7 +4433,7 @@ pub fn rag_tier_badge(
             ui.label(
                 RichText::new(format!("{} {}", tier.emoji(), tier.short_label()))
                     .size(10.0)
-                    .color(colors.selected_text)
+                    .color(colors.selected_text),
             );
         });
 }
@@ -4291,10 +4479,7 @@ pub fn rag_tier_selector_full(
 /// Render feature toggles for custom RAG configuration
 ///
 /// Allows enabling/disabling individual RAG features when using Custom tier.
-pub fn rag_features_editor(
-    ui: &mut Ui,
-    features: &mut RagFeatures,
-) -> bool {
+pub fn rag_features_editor(ui: &mut Ui, features: &mut RagFeatures) -> bool {
     let mut changed = false;
 
     egui::Grid::new("rag_features_grid")
@@ -4305,12 +4490,20 @@ pub fn rag_features_editor(
             ui.label(RichText::new("Retrieval").strong().size(11.0));
             ui.end_row();
 
-            changed |= ui.checkbox(&mut features.fts_search, "Full-text search").changed();
-            changed |= ui.checkbox(&mut features.semantic_search, "Semantic search").changed();
+            changed |= ui
+                .checkbox(&mut features.fts_search, "Full-text search")
+                .changed();
+            changed |= ui
+                .checkbox(&mut features.semantic_search, "Semantic search")
+                .changed();
             ui.end_row();
 
-            changed |= ui.checkbox(&mut features.hybrid_search, "Hybrid search").changed();
-            changed |= ui.checkbox(&mut features.fusion_rrf, "RRF fusion").changed();
+            changed |= ui
+                .checkbox(&mut features.hybrid_search, "Hybrid search")
+                .changed();
+            changed |= ui
+                .checkbox(&mut features.fusion_rrf, "RRF fusion")
+                .changed();
             ui.end_row();
 
             ui.add_space(4.0);
@@ -4320,11 +4513,17 @@ pub fn rag_features_editor(
             ui.label(RichText::new("Query Enhancement").strong().size(11.0));
             ui.end_row();
 
-            changed |= ui.checkbox(&mut features.synonym_expansion, "Synonym expansion").changed();
-            changed |= ui.checkbox(&mut features.query_expansion, "Query expansion (LLM)").changed();
+            changed |= ui
+                .checkbox(&mut features.synonym_expansion, "Synonym expansion")
+                .changed();
+            changed |= ui
+                .checkbox(&mut features.query_expansion, "Query expansion (LLM)")
+                .changed();
             ui.end_row();
 
-            changed |= ui.checkbox(&mut features.multi_query, "Multi-query").changed();
+            changed |= ui
+                .checkbox(&mut features.multi_query, "Multi-query")
+                .changed();
             changed |= ui.checkbox(&mut features.hyde, "HyDE").changed();
             ui.end_row();
 
@@ -4335,15 +4534,25 @@ pub fn rag_features_editor(
             ui.label(RichText::new("Result Processing").strong().size(11.0));
             ui.end_row();
 
-            changed |= ui.checkbox(&mut features.reranking, "Reranking (LLM)").changed();
-            changed |= ui.checkbox(&mut features.cross_encoder_rerank, "Cross-encoder").changed();
+            changed |= ui
+                .checkbox(&mut features.reranking, "Reranking (LLM)")
+                .changed();
+            changed |= ui
+                .checkbox(&mut features.cross_encoder_rerank, "Cross-encoder")
+                .changed();
             ui.end_row();
 
-            changed |= ui.checkbox(&mut features.contextual_compression, "Compression").changed();
-            changed |= ui.checkbox(&mut features.sentence_window, "Sentence window").changed();
+            changed |= ui
+                .checkbox(&mut features.contextual_compression, "Compression")
+                .changed();
+            changed |= ui
+                .checkbox(&mut features.sentence_window, "Sentence window")
+                .changed();
             ui.end_row();
 
-            changed |= ui.checkbox(&mut features.parent_document, "Parent document").changed();
+            changed |= ui
+                .checkbox(&mut features.parent_document, "Parent document")
+                .changed();
             ui.end_row();
 
             ui.add_space(4.0);
@@ -4353,11 +4562,17 @@ pub fn rag_features_editor(
             ui.label(RichText::new("Self-Improvement").strong().size(11.0));
             ui.end_row();
 
-            changed |= ui.checkbox(&mut features.self_reflection, "Self-reflection").changed();
-            changed |= ui.checkbox(&mut features.corrective_rag, "Corrective RAG").changed();
+            changed |= ui
+                .checkbox(&mut features.self_reflection, "Self-reflection")
+                .changed();
+            changed |= ui
+                .checkbox(&mut features.corrective_rag, "Corrective RAG")
+                .changed();
             ui.end_row();
 
-            changed |= ui.checkbox(&mut features.adaptive_strategy, "Adaptive strategy").changed();
+            changed |= ui
+                .checkbox(&mut features.adaptive_strategy, "Adaptive strategy")
+                .changed();
             ui.end_row();
 
             ui.add_space(4.0);
@@ -4367,12 +4582,16 @@ pub fn rag_features_editor(
             ui.label(RichText::new("Advanced").strong().size(11.0));
             ui.end_row();
 
-            changed |= ui.checkbox(&mut features.agentic_mode, "Agentic mode").changed();
+            changed |= ui
+                .checkbox(&mut features.agentic_mode, "Agentic mode")
+                .changed();
             changed |= ui.checkbox(&mut features.graph_rag, "Graph RAG").changed();
             ui.end_row();
 
             changed |= ui.checkbox(&mut features.raptor, "RAPTOR").changed();
-            changed |= ui.checkbox(&mut features.multimodal, "Multimodal").changed();
+            changed |= ui
+                .checkbox(&mut features.multimodal, "Multimodal")
+                .changed();
             ui.end_row();
         });
 

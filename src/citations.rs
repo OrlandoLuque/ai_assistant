@@ -107,7 +107,11 @@ pub enum SourceType {
 
 impl Source {
     /// Create a new source
-    pub fn new(id: impl Into<String>, title: impl Into<String>, content: impl Into<String>) -> Self {
+    pub fn new(
+        id: impl Into<String>,
+        title: impl Into<String>,
+        content: impl Into<String>,
+    ) -> Self {
         Self {
             id: id.into(),
             title: title.into(),
@@ -236,9 +240,11 @@ impl CitationGenerator {
                 // Create citations for top matches
                 let mut claim_citations = Vec::new();
 
-                for (source_id, similarity) in matches.iter().take(self.config.max_citations_per_claim) {
+                for (source_id, similarity) in
+                    matches.iter().take(self.config.max_citations_per_claim)
+                {
                     self.citation_count += 1;
-                    let formatted = self.format_citation(&source_id, self.citation_count);
+                    let formatted = self.format_citation(source_id, self.citation_count);
 
                     claim_citations.push(Citation {
                         source_id: source_id.clone(),
@@ -254,11 +260,16 @@ impl CitationGenerator {
 
                 // Add citation markers to text
                 if !claim_citations.is_empty() {
-                    let citation_marker = if self.config.group_citations && claim_citations.len() > 1 {
-                        self.format_grouped_citations(&claim_citations)
-                    } else {
-                        claim_citations.iter().map(|c| c.formatted.clone()).collect::<Vec<_>>().join("")
-                    };
+                    let citation_marker =
+                        if self.config.group_citations && claim_citations.len() > 1 {
+                            self.format_grouped_citations(&claim_citations)
+                        } else {
+                            claim_citations
+                                .iter()
+                                .map(|c| c.formatted.clone())
+                                .collect::<Vec<_>>()
+                                .join("")
+                        };
 
                     // Find position to insert citation
                     if let Some(claim_pos) = text.find(claim_trimmed) {
@@ -296,7 +307,8 @@ impl CitationGenerator {
 
         for (id, source) in &self.sources {
             let content_lower = source.content.to_lowercase();
-            let content_words: std::collections::HashSet<_> = content_lower.split_whitespace().collect();
+            let content_words: std::collections::HashSet<_> =
+                content_lower.split_whitespace().collect();
 
             // Simple word overlap similarity
             let intersection = claim_words.intersection(&content_words).count();
@@ -326,7 +338,11 @@ impl CitationGenerator {
             CitationStyle::Superscript => format!("<sup>{}</sup>", number),
             CitationStyle::AuthorYear => {
                 if let Some(source) = source {
-                    let author = source.authors.first().map(|a| a.as_str()).unwrap_or("Unknown");
+                    let author = source
+                        .authors
+                        .first()
+                        .map(|a| a.as_str())
+                        .unwrap_or("Unknown");
                     let year = source.date.as_deref().unwrap_or("n.d.");
                     format!("({}, {})", author, year)
                 } else {
@@ -342,10 +358,9 @@ impl CitationGenerator {
                 }
             }
             CitationStyle::Wikipedia => format!("[{}]", number),
-            CitationStyle::Custom(fmt) => {
-                fmt.replace("{n}", &number.to_string())
-                    .replace("{id}", source_id)
-            }
+            CitationStyle::Custom(fmt) => fmt
+                .replace("{n}", &number.to_string())
+                .replace("{id}", source_id),
         }
     }
 
@@ -355,15 +370,30 @@ impl CitationGenerator {
 
         match &self.config.style {
             CitationStyle::Numeric | CitationStyle::Wikipedia => {
-                format!("[{}]", numbers.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(","))
+                format!(
+                    "[{}]",
+                    numbers
+                        .iter()
+                        .map(|n| n.to_string())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                )
             }
             CitationStyle::Superscript => {
                 format!(
                     "<sup>{}</sup>",
-                    numbers.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",")
+                    numbers
+                        .iter()
+                        .map(|n| n.to_string())
+                        .collect::<Vec<_>>()
+                        .join(",")
                 )
             }
-            _ => citations.iter().map(|c| c.formatted.clone()).collect::<Vec<_>>().join("")
+            _ => citations
+                .iter()
+                .map(|c| c.formatted.clone())
+                .collect::<Vec<_>>()
+                .join(""),
         }
     }
 
@@ -574,10 +604,14 @@ mod tests {
 
     #[test]
     fn test_source_creation() {
-        let source = Source::new("src1", "Test Document", "This is test content about machine learning.")
-            .with_authors(vec!["Alice", "Bob"])
-            .with_url("https://example.com")
-            .with_type(SourceType::Document);
+        let source = Source::new(
+            "src1",
+            "Test Document",
+            "This is test content about machine learning.",
+        )
+        .with_authors(vec!["Alice", "Bob"])
+        .with_url("https://example.com")
+        .with_type(SourceType::Document);
 
         assert_eq!(source.title, "Test Document");
         assert_eq!(source.authors.len(), 2);
@@ -596,7 +630,8 @@ mod tests {
         );
 
         // Use a longer claim that shares more words with the source
-        let cited = generator.cite("Machine learning is a type of artificial intelligence technology.");
+        let cited =
+            generator.cite("Machine learning is a type of artificial intelligence technology.");
         // Citation might or might not be added depending on similarity threshold
         // Just verify the function runs without error
         assert!(!cited.cited_text.is_empty());
@@ -614,11 +649,15 @@ mod tests {
         generator.add_source(
             Source::new("src1", "Test", "Content here is important data")
                 .with_authors(vec!["Smith"])
-                .with_date("2023")
+                .with_date("2023"),
         );
 
         let cited = generator.cite("Content here is important data for analysis.");
-        assert!(cited.cited_text.contains("Smith") || cited.cited_text.contains("2023") || !cited.citations.is_empty());
+        assert!(
+            cited.cited_text.contains("Smith")
+                || cited.cited_text.contains("2023")
+                || !cited.citations.is_empty()
+        );
     }
 
     #[test]
@@ -626,12 +665,10 @@ mod tests {
         let mut generator = CitationGenerator::default();
 
         generator.add_source(
-            Source::new("src1", "First Document", "First content")
-                .with_authors(vec!["Author A"])
+            Source::new("src1", "First Document", "First content").with_authors(vec!["Author A"]),
         );
         generator.add_source(
-            Source::new("src2", "Second Document", "Second content")
-                .with_authors(vec!["Author B"])
+            Source::new("src2", "Second Document", "Second content").with_authors(vec!["Author B"]),
         );
 
         let cited = generator.cite("First content. Second content.");

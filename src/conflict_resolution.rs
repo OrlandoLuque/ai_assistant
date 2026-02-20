@@ -134,7 +134,8 @@ impl ConflictResolver {
     }
 
     pub fn set_strategy_for_type(&mut self, entity_type: &str, strategy: ResolutionStrategy) {
-        self.type_strategies.insert(entity_type.to_string(), strategy);
+        self.type_strategies
+            .insert(entity_type.to_string(), strategy);
     }
 
     pub fn set_merge_handler<F>(&mut self, handler: F)
@@ -157,9 +158,7 @@ impl ConflictResolver {
             (Some(_), Some(_)) if local_version != remote_version => {
                 ConflictType::ConcurrentModification
             }
-            (None, Some(_)) | (Some(_), None) => {
-                ConflictType::DeleteModify
-            }
+            (None, Some(_)) | (Some(_), None) => ConflictType::DeleteModify,
             _ => return None,
         };
 
@@ -169,20 +168,24 @@ impl ConflictResolver {
             entity_id,
             local_value.map(|s| s.to_string()),
             remote_value.map(|s| s.to_string()),
-        ).with_versions(local_version, remote_version);
+        )
+        .with_versions(local_version, remote_version);
 
         self.pending_conflicts.push(conflict.clone());
         Some(conflict)
     }
 
     pub fn resolve(&mut self, conflict_id: &str) -> Result<Resolution, ConflictError> {
-        let idx = self.pending_conflicts.iter()
+        let idx = self
+            .pending_conflicts
+            .iter()
             .position(|c| c.id == conflict_id)
             .ok_or(ConflictError::NotFound)?;
 
         let conflict = &self.pending_conflicts[idx];
 
-        let strategy = self.type_strategies
+        let strategy = self
+            .type_strategies
             .get(&conflict.entity_type)
             .copied()
             .unwrap_or(self.default_strategy);
@@ -202,7 +205,9 @@ impl ConflictResolver {
         conflict_id: &str,
         strategy: ResolutionStrategy,
     ) -> Result<Resolution, ConflictError> {
-        let idx = self.pending_conflicts.iter()
+        let idx = self
+            .pending_conflicts
+            .iter()
             .position(|c| c.id == conflict_id)
             .ok_or(ConflictError::NotFound)?;
 
@@ -223,7 +228,9 @@ impl ConflictResolver {
         value: &str,
         resolved_by: &str,
     ) -> Result<Resolution, ConflictError> {
-        let idx = self.pending_conflicts.iter()
+        let idx = self
+            .pending_conflicts
+            .iter()
             .position(|c| c.id == conflict_id)
             .ok_or(ConflictError::NotFound)?;
 
@@ -290,11 +297,14 @@ impl ConflictResolver {
     }
 
     pub fn auto_resolve_all(&mut self) -> Vec<Result<Resolution, ConflictError>> {
-        let conflict_ids: Vec<_> = self.pending_conflicts.iter()
+        let conflict_ids: Vec<_> = self
+            .pending_conflicts
+            .iter()
             .map(|c| c.id.clone())
             .collect();
 
-        conflict_ids.into_iter()
+        conflict_ids
+            .into_iter()
             .map(|id| self.resolve(&id))
             .collect()
     }
@@ -357,7 +367,10 @@ impl ThreeWayMerge {
         let mut result = Vec::new();
         let mut conflicts = Vec::new();
 
-        let max_len = base_lines.len().max(local_lines.len()).max(remote_lines.len());
+        let max_len = base_lines
+            .len()
+            .max(local_lines.len())
+            .max(remote_lines.len());
 
         for i in 0..max_len {
             let base_line = base_lines.get(i).copied();
@@ -380,7 +393,10 @@ impl ThreeWayMerge {
                         local: l.to_string(),
                         remote: r.to_string(),
                     });
-                    result.push(format!("<<<<<<< LOCAL\n{}\n=======\n{}\n>>>>>>> REMOTE", l, r));
+                    result.push(format!(
+                        "<<<<<<< LOCAL\n{}\n=======\n{}\n>>>>>>> REMOTE",
+                        l, r
+                    ));
                 }
                 (_, Some(l), None) => {
                     result.push(l.to_string());
@@ -442,14 +458,7 @@ mod tests {
     fn test_auto_resolve() {
         let mut resolver = ConflictResolver::new(ResolutionStrategy::KeepLocal);
 
-        resolver.detect_conflict(
-            "message",
-            "1",
-            Some("local"),
-            Some("remote"),
-            1,
-            2,
-        );
+        resolver.detect_conflict("message", "1", Some("local"), Some("remote"), 1, 2);
 
         let results = resolver.auto_resolve_all();
         assert_eq!(results.len(), 1);
@@ -460,14 +469,9 @@ mod tests {
     fn test_manual_resolve() {
         let mut resolver = ConflictResolver::default();
 
-        let conflict = resolver.detect_conflict(
-            "message",
-            "1",
-            Some("local"),
-            Some("remote"),
-            1,
-            2,
-        ).unwrap();
+        let conflict = resolver
+            .detect_conflict("message", "1", Some("local"), Some("remote"), 1, 2)
+            .unwrap();
 
         let resolution = resolver.resolve_manual(&conflict.id, "manual value", "user1");
         assert!(resolution.is_ok());

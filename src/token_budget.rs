@@ -278,7 +278,11 @@ impl BudgetManager {
             }
         };
 
-        let usage = self.usage.get(key).cloned().unwrap_or_else(BudgetUsage::new);
+        let usage = self
+            .usage
+            .get(key)
+            .cloned()
+            .unwrap_or_else(BudgetUsage::new);
 
         let new_used = usage.used + tokens;
         let limit = usage.effective_limit(&budget);
@@ -424,7 +428,9 @@ impl BudgetManager {
     }
 
     fn maybe_reset(&mut self, key: &str) {
-        let needs_reset = self.usage.get(key)
+        let needs_reset = self
+            .usage
+            .get(key)
             .and_then(|u| self.budgets.get(key).map(|b| u.needs_reset(&b.period)))
             .unwrap_or(false);
 
@@ -477,7 +483,8 @@ impl TokenEstimator {
 
     /// Estimate tokens for chat history
     pub fn estimate_chat(messages: &[(String, String)]) -> usize {
-        messages.iter()
+        messages
+            .iter()
             .map(|(role, content)| Self::estimate_message(role, content))
             .sum()
     }
@@ -597,17 +604,26 @@ mod tests {
         // Should still be allowed (soft limit)
         let result = manager.check("user1", 100);
         assert!(result.allowed);
-        assert!(matches!(result.alert, Some(BudgetAlert::LimitExceeded { .. })));
+        assert!(matches!(
+            result.alert,
+            Some(BudgetAlert::LimitExceeded { .. })
+        ));
     }
 
     #[test]
     fn test_alert_threshold() {
         let mut manager = BudgetManager::new();
-        manager.set_budget("user1", Budget::new(1000, BudgetPeriod::Daily).with_alert_threshold(0.8));
+        manager.set_budget(
+            "user1",
+            Budget::new(1000, BudgetPeriod::Daily).with_alert_threshold(0.8),
+        );
 
         // Use 80% of budget
         let result = manager.record_usage("user1", 800);
-        assert!(matches!(result.alert, Some(BudgetAlert::ApproachingLimit { .. })));
+        assert!(matches!(
+            result.alert,
+            Some(BudgetAlert::ApproachingLimit { .. })
+        ));
     }
 
     #[test]

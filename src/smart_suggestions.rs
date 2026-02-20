@@ -37,6 +37,36 @@ impl Suggestion {
     }
 }
 
+/// Compute the Jaccard similarity between the words in `suggestion_text` and the
+/// words in the concatenated `context` strings.
+///
+/// Jaccard = |A intersection B| / |A union B|.
+/// Returns 0.0 if both sets are empty.
+pub fn compute_relevance(suggestion_text: &str, context: &[String]) -> f64 {
+    let to_word_set = |s: &str| -> HashSet<String> {
+        s.split_whitespace()
+            .map(|w| {
+                w.to_lowercase()
+                    .trim_matches(|c: char| !c.is_alphanumeric())
+                    .to_string()
+            })
+            .filter(|w| !w.is_empty())
+            .collect()
+    };
+
+    let set_a = to_word_set(suggestion_text);
+    let context_combined: String = context.join(" ");
+    let set_b = to_word_set(&context_combined);
+
+    let union_size = set_a.union(&set_b).count();
+    if union_size == 0 {
+        return 0.0;
+    }
+
+    let intersection_size = set_a.intersection(&set_b).count();
+    intersection_size as f64 / union_size as f64
+}
+
 /// Suggestion generator
 pub struct SuggestionGenerator {
     templates: Vec<SuggestionTemplate>,
@@ -99,13 +129,22 @@ impl SuggestionGenerator {
         let lower_query = query.to_lowercase();
         let lower_response = response.to_lowercase();
 
+        // Build context for relevance computation
+        let context: Vec<String> = vec![query.to_string(), response.to_string()];
+        let has_context = !query.is_empty() || !response.is_empty();
+
         // Pattern-based suggestions
         for template in &self.templates {
-            if template.pattern.is_empty() ||
-               lower_query.contains(template.pattern) ||
-               lower_response.contains(template.pattern) {
+            if template.pattern.is_empty()
+                || lower_query.contains(template.pattern)
+                || lower_response.contains(template.pattern)
+            {
                 for text in &template.suggestions {
-                    suggestions.push(Suggestion::new(text, template.suggestion_type));
+                    let mut suggestion = Suggestion::new(text, template.suggestion_type);
+                    if has_context {
+                        suggestion.relevance = compute_relevance(text, &context);
+                    }
+                    suggestions.push(suggestion);
                 }
             }
         }
@@ -113,25 +152,37 @@ impl SuggestionGenerator {
         // Topic-based suggestions
         let topics = self.extract_topics(response);
         for topic in topics.iter().take(3) {
-            suggestions.push(Suggestion::new(
-                &format!("Tell me more about {}", topic),
-                SuggestionType::Related,
-            ));
+            let text = format!("Tell me more about {}", topic);
+            let relevance = if has_context {
+                compute_relevance(&text, &context)
+            } else {
+                1.0
+            };
+            suggestions
+                .push(Suggestion::new(&text, SuggestionType::Related).with_relevance(relevance));
         }
 
         // Question suggestions based on response content
         if lower_response.contains("however") || lower_response.contains("although") {
-            suggestions.push(Suggestion::new(
-                "What are the alternatives?",
-                SuggestionType::Alternative,
-            ));
+            let text = "What are the alternatives?";
+            let relevance = if has_context {
+                compute_relevance(text, &context)
+            } else {
+                1.0
+            };
+            suggestions
+                .push(Suggestion::new(text, SuggestionType::Alternative).with_relevance(relevance));
         }
 
         if lower_response.contains("example") {
-            suggestions.push(Suggestion::new(
-                "Can you show another example?",
-                SuggestionType::FollowUp,
-            ));
+            let text = "Can you show another example?";
+            let relevance = if has_context {
+                compute_relevance(text, &context)
+            } else {
+                1.0
+            };
+            suggestions
+                .push(Suggestion::new(text, SuggestionType::FollowUp).with_relevance(relevance));
         }
 
         // Remove duplicates and limit
@@ -143,10 +194,12 @@ impl SuggestionGenerator {
     }
 
     fn extract_topics(&self, text: &str) -> Vec<String> {
-        let mut word_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        let mut word_counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
 
         for word in text.split_whitespace() {
-            let word = word.to_lowercase()
+            let word = word
+                .to_lowercase()
                 .trim_matches(|c: char| !c.is_alphanumeric())
                 .to_string();
 
@@ -155,7 +208,8 @@ impl SuggestionGenerator {
             }
         }
 
-        let mut topics: Vec<_> = word_counts.into_iter()
+        let mut topics: Vec<_> = word_counts
+            .into_iter()
             .filter(|(_, count)| *count >= 2)
             .collect();
 
@@ -178,11 +232,10 @@ struct SuggestionTemplate {
 
 fn is_common_word(word: &str) -> bool {
     const COMMON: &[&str] = &[
-        "the", "and", "for", "are", "but", "not", "you", "all", "can",
-        "had", "her", "was", "one", "our", "out", "have", "been", "were",
-        "being", "their", "there", "would", "could", "should", "about",
-        "which", "when", "what", "this", "that", "with", "from", "your",
-        "they", "will", "more", "some", "into", "just", "also", "than",
+        "the", "and", "for", "are", "but", "not", "you", "all", "can", "had", "her", "was", "one",
+        "our", "out", "have", "been", "were", "being", "their", "there", "would", "could",
+        "should", "about", "which", "when", "what", "this", "that", "with", "from", "your", "they",
+        "will", "more", "some", "into", "just", "also", "than",
     ];
     COMMON.contains(&word)
 }
@@ -236,7 +289,49 @@ mod tests {
             5,
         );
 
-        assert!(suggestions.iter().any(|s| s.text.contains("error handling") ||
-                                          s.text.contains("test")));
+        assert!(suggestions
+            .iter()
+            .any(|s| s.text.contains("error handling") || s.text.contains("test")));
+    }
+
+    #[test]
+    fn test_relevance_high_for_matching_context() {
+        let context = vec![
+            "How do I test error handling in Rust?".to_string(),
+            "You can use Result and the ? operator for error handling.".to_string(),
+        ];
+        let relevance = compute_relevance("Can you add error handling?", &context);
+        assert!(
+            relevance > 0.0,
+            "Relevance should be > 0.0 when words overlap, got {}",
+            relevance
+        );
+    }
+
+    #[test]
+    fn test_relevance_low_for_unrelated() {
+        let context = vec!["Tell me about quantum physics and particle accelerators.".to_string()];
+        let relevance = compute_relevance("How do I bake chocolate cookies?", &context);
+        assert!(
+            relevance < 0.1,
+            "Relevance should be near 0.0 for unrelated content, got {}",
+            relevance
+        );
+    }
+
+    #[test]
+    fn test_relevance_jaccard_correctness() {
+        // suggestion words: {"the", "cat", "sat"}
+        // context words:    {"the", "cat", "ran"}
+        // intersection: {"the", "cat"} => 2
+        // union: {"the", "cat", "sat", "ran"} => 4
+        // Jaccard = 2/4 = 0.5
+        let context = vec!["the cat ran".to_string()];
+        let relevance = compute_relevance("the cat sat", &context);
+        assert!(
+            (relevance - 0.5).abs() < f64::EPSILON,
+            "Expected Jaccard 0.5, got {}",
+            relevance
+        );
     }
 }
