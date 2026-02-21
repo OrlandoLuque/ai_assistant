@@ -133,6 +133,7 @@ pub mod fallback;
 pub mod formatting;
 pub mod http_client;
 pub mod internal_storage;
+pub mod llm_judge;
 pub mod log_redaction;
 pub mod memory_management;
 pub mod persistence;
@@ -276,6 +277,11 @@ pub use internal_storage::{
     file_info, load_internal, save_internal, serialize_internal, InternalFileInfo, StorageFormat,
 };
 
+pub use llm_judge::{
+    BatchEvalResult, EvalCriterion, JudgeResult, LlmJudge, PairwiseResult,
+    RagFaithfulnessResult,
+};
+
 pub use log_redaction::{contains_sensitive, redact, redact_with_config, RedactionConfig};
 
 pub use http_client::{
@@ -368,7 +374,14 @@ pub use agent::{
 // =============================================================================
 
 #[cfg(feature = "async-runtime")]
+pub mod async_provider_plugin;
+#[cfg(feature = "async-runtime")]
 pub mod async_providers;
+
+#[cfg(feature = "async-runtime")]
+pub use async_provider_plugin::{
+    AsyncProviderPlugin, AsyncProviderRegistry, AsyncToSyncAdapter, SyncToAsyncAdapter,
+};
 
 #[cfg(feature = "async-runtime")]
 pub use async_providers::{
@@ -572,6 +585,8 @@ pub mod content_moderation;
 #[cfg(feature = "security")]
 pub mod data_anonymization;
 #[cfg(feature = "security")]
+pub mod guardrail_pipeline;
+#[cfg(feature = "security")]
 pub mod injection_detection;
 #[cfg(feature = "security")]
 pub mod pii_detection;
@@ -629,6 +644,12 @@ pub use advanced_guardrails::{
     ConstitutionalConfig, ConstitutionalEvaluation, ConstitutionalPrinciple, DetectedAttack,
     FullSafetyCheck, GuardrailsManager, InputCheckResult, OutputCheckResult, PrincipleViolation,
     ToxicityCategory, ToxicityConfig, ToxicityDetector, ToxicityResult,
+};
+
+#[cfg(feature = "security")]
+pub use guardrail_pipeline::{
+    AttackGuard, ContentLengthGuard, Guard, GuardAction, GuardCheckResult, GuardStage,
+    GuardrailPipeline, PatternGuard, PiiGuard, PipelineResult, RateLimitGuard, ToxicityGuard,
 };
 
 // =============================================================================
@@ -738,6 +759,8 @@ pub use vision::{
 #[cfg(feature = "embeddings")]
 pub mod embedding_cache;
 #[cfg(feature = "embeddings")]
+pub mod embedding_providers;
+#[cfg(feature = "embeddings")]
 pub mod embeddings;
 #[cfg(feature = "embeddings")]
 pub mod hnsw;
@@ -785,6 +808,12 @@ pub use neural_embeddings::{
 
 #[cfg(feature = "embeddings")]
 pub use hnsw::{HnswConfig, HnswIndex, HnswVectorDb};
+
+#[cfg(feature = "embeddings")]
+pub use embedding_providers::{
+    create_embedding_provider, EmbeddingProvider, HuggingFaceEmbeddings, LocalTfIdfEmbedding,
+    OllamaEmbeddings, OpenAIEmbeddings,
+};
 
 // =============================================================================
 // ADVANCED STREAMING FEATURE
@@ -834,6 +863,8 @@ pub use resumable_streaming::{
 #[cfg(feature = "adapters")]
 pub mod anthropic_adapter;
 #[cfg(feature = "adapters")]
+pub mod gemini_provider;
+#[cfg(feature = "adapters")]
 pub mod huggingface_connector;
 #[cfg(feature = "adapters")]
 pub mod openai_adapter;
@@ -850,6 +881,9 @@ pub use anthropic_adapter::{
     AnthropicClient, AnthropicConfig, AnthropicMessage, AnthropicModel, AnthropicRequest,
     AnthropicResponse,
 };
+
+#[cfg(feature = "adapters")]
+pub use gemini_provider::GeminiProvider;
 
 #[cfg(feature = "adapters")]
 pub use huggingface_connector::{HfClient, HfConfig, HfRequest, HfResponse, HfTask};

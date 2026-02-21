@@ -14,9 +14,7 @@
     - feature_matrix_2026-02-20_2330_pre-phase10-update.html (v5 snapshot before Phase 10 additions)
     - feature_matrix_2026-02-21_0100_pre-phase11-update.html (v6 snapshot before Phase 11 additions)
     - feature_matrix_2026-02-21_pre-v2p1-update.html      (v7 snapshot before v2 Phase 1 additions)
-    - feature_matrix_2026-02-21_0500_pre-v2phase2-3-docs.html (v8 snapshot before v2 Phases 2-3 additions)
-    - feature_matrix_2026-02-21_1100_pre-v2phase3-4-completion.html (v9 snapshot before v2 Phases 3-4 completion)
-    - feature_matrix.html                                 (v10: v2 Phases 3-4 — Ollama tool calling, PromptToolFallback, GuardrailPipeline (6 guards), CI/CD, 2510 tests, 215 source files)
+    - feature_matrix.html                                 (v8: v2 Phase 1 — EmbeddingProvider trait, GeminiProvider, 7 new AiProvider presets, 2458 tests, 211 source files)
 -->
 <html lang="es">
 <head>
@@ -720,7 +718,7 @@
 <body>
 
 <h1>AI Assistant &mdash; Matriz Casos de Uso vs Tecnolog&iacute;as</h1>
-<p class="subtitle">v10 (2026-02-21) &mdash; 2510 tests | 6 benchmarks | 19 examples | 215 source files | 0 warnings &mdash; Haz clic en cualquier celda para editarla.</p>
+<p class="subtitle">v8 (2026-02-21) &mdash; 2458 tests | 6 benchmarks | 19 examples | 211 source files | 0 warnings &mdash; Haz clic en cualquier celda para editarla.</p>
 
 <div class="legend">
   <div class="legend-item"><div class="legend-dot" style="background:var(--core)"></div>Core (siempre activo)</div>
@@ -832,16 +830,16 @@
   <h2>Grupos de tecnolog&iacute;as (filas)</h2>
   <p>Las filas est&aacute;n organizadas en 10 grupos colapsables:</p>
   <ul>
-    <li><strong>Core &amp; Providers</strong> &mdash; Providers de LLM, config, sesiones, HTTP client, AWS Bedrock SigV4, provider plugins (7 presets), model registry, EmbeddingProvider trait (4 backends), GeminiProvider nativo, AsyncProviderPlugin (sync/async bridge), Ollama tool calling nativo, PromptToolFallback</li>
+    <li><strong>Core &amp; Providers</strong> &mdash; Providers de LLM, config, sesiones, HTTP client, AWS Bedrock SigV4, provider plugins (7 presets), model registry, EmbeddingProvider trait (4 backends), GeminiProvider nativo</li>
     <li><strong>RAG &amp; Knowledge</strong> &mdash; RAG, embeddings, graphs, documentos (CSV, PPTX, XLSX, EML), feeds, KPKG, pgvector, semantic chunking</li>
-    <li><strong>Security &amp; Access Control</strong> &mdash; Sanitizaci&oacute;n, PII, moderaci&oacute;n, RBAC, cifrado, SHA-256/HMAC signing, GuardrailPipeline (6 guards)</li>
+    <li><strong>Security &amp; Access Control</strong> &mdash; Sanitizaci&oacute;n, PII, moderaci&oacute;n, RBAC, cifrado, SHA-256/HMAC signing</li>
     <li><strong>Tools &amp; Agent</strong> &mdash; Tool registry, agentic loop, MCP, prompt chaining</li>
     <li><strong>Autonomous Agent</strong> &mdash; Loop aut&oacute;nomo, pol&iacute;ticas, sandbox, OS tools, scheduler, butler, browser CDP, code sandbox</li>
     <li><strong>Multi-Agent &amp; Orchestration</strong> &mdash; Orquestador, memoria compartida, task decomposition, agentes distribuidos</li>
     <li><strong>Networking &amp; Distribution</strong> &mdash; DHT, CRDT, MapReduce, QUIC, Merkle sync, P2P manager</li>
     <li><strong>HTTP Server &amp; API</strong> &mdash; REST server, SSE, WebSocket, resumable streaming, OpenAPI, webhooks, colas</li>
-    <li><strong>Analytics &amp; Evaluation</strong> &mdash; M&eacute;tricas, analytics, confianza, alucinaciones, ensembles, A/B testing, LLM-as-Judge (6 criteria, pairwise, RAG faithfulness), forecasting</li>
-    <li><strong>Cross-Cutting Utilities</strong> &mdash; Adaptive thinking, memoria, event bus, caching, plugins, i18n, OTel, cloud connectors, WASM, smart suggestions, CI/CD pipeline, etc.</li>
+    <li><strong>Analytics &amp; Evaluation</strong> &mdash; M&eacute;tricas, analytics, confianza, alucinaciones, ensembles, A/B testing, LLM-as-judge, forecasting</li>
+    <li><strong>Cross-Cutting Utilities</strong> &mdash; Adaptive thinking, memoria, event bus, caching, plugins, i18n, OTel, cloud connectors, WASM, smart suggestions, etc.</li>
   </ul>
   <p>La etiqueta <span style="color:#fbbf24;font-size:0.75rem">[nombre-flag]</span> junto al nombre de una tecnolog&iacute;a indica qu&eacute; feature flag la activa.</p>
 
@@ -923,9 +921,7 @@
     <li><code>feature_matrix_2026-02-20_2330_pre-phase10-update.html</code> &mdash; v5 snapshot antes de Phase 10</li>
     <li><code>feature_matrix_2026-02-21_0100_pre-phase11-update.html</code> &mdash; v6 snapshot antes de Phase 11</li>
     <li><code>feature_matrix_2026-02-21_pre-v2p1-update.html</code> &mdash; v7 snapshot antes de v2 Phase 1</li>
-    <li><code>feature_matrix_2026-02-21_0500_pre-v2phase2-3-docs.html</code> &mdash; v8 snapshot antes de v2 Phases 2-3</li>
-    <li><code>feature_matrix_2026-02-21_1100_pre-v2phase3-4-completion.html</code> &mdash; v9 snapshot antes de v2 Phases 3-4 completion</li>
-    <li><code>feature_matrix.html</code> &mdash; v10 (actual): v2 Phases 3-4 — Ollama tool calling nativo, PromptToolFallback, GuardrailPipeline (6 guards), CI/CD (GitHub Actions), 2510 tests, 215 source files, 0 warnings</li>
+    <li><code>feature_matrix.html</code> &mdash; v8 (actual): v2 Phase 1 — EmbeddingProvider trait (4 backends), GeminiProvider (native API), 7 new AiProvider presets (Groq, Together, Fireworks, DeepSeek, Mistral, Perplexity, OpenRouter), 2458 tests, 211 source files, 0 warnings</li>
   </ul>
   <p><strong>Pol&iacute;tica de backups:</strong> antes de cambios significativos, crear copia con formato <code>feature_matrix_YYYY-MM-DD_HHMM_descripcion.html</code>.</p>
 
@@ -1055,14 +1051,6 @@ const GROUPS = [
         cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
         typical: ['basic_chat','rag_chat','agent_tools','autonomous','multi_agent','http_server'],
         notes: 'Siempre compilado. ProviderPlugin nativo para Google Gemini: generate, streaming SSE, embeddings, tool calling, model listing. Ruta nativa en providers.rs en vez de OpenAI-compat. v2 Phase 1.' },
-      { tech: 'AsyncProviderPlugin (sync/async bridge)', flag: 'async-runtime',
-        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
-        typical: ['http_server','autonomous','multi_agent'],
-        notes: 'Feature flag async-runtime. Async counterpart to ProviderPlugin con Pin<Box<dyn Future>> pattern. AsyncProviderPlugin trait, SyncToAsyncAdapter, AsyncToSyncAdapter, AsyncProviderRegistry. 690 lines, 12 tests. v2 Phase 2.' },
-      { tech: 'Ollama Tool Calling + PromptToolFallback', flag: 'adapters',
-        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
-        typical: ['agent_tools','autonomous','multi_agent','basic_chat'],
-        notes: 'Feature flag adapters. Ollama generate_with_tools() soporte nativo + PromptToolFallback struct para tool calling basado en prompt (funciona con KoboldCpp y cualquier provider). Ambos Ollama y KoboldCpp reportan tool_calling: true. v2 Phase 3 (3.3).' },
     ]
   },
   {
@@ -1160,10 +1148,6 @@ const GROUPS = [
       { tech: 'Log Redaction', flag: null,
         cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
         notes: 'Siempre compilado. Redacción de datos sensibles en logs, siempre útil.' },
-      { tech: 'Guardrail Pipeline (6 built-in guards)', flag: 'security',
-        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
-        typical: ['multi_user','agent_tools','autonomous','multi_agent','http_server'],
-        notes: 'Feature flag security. Guard trait unificado + GuardrailPipeline orchestrator con 6 guards: ContentLengthGuard, RateLimitGuard, PatternGuard, ToxicityGuard, PiiGuard, AttackGuard. Stages PreSend/PostReceive, umbrales configurables, audit trail de violaciones. guardrail_pipeline.rs (770 lines). v2 Phase 3 (3.5).' },
     ]
   },
   {
@@ -1370,10 +1354,10 @@ const GROUPS = [
         cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
         typical: ['autonomous','multi_agent','http_server','multi_user'],
         notes: 'Siempre compilado. CostDashboard, CostMiddleware, CostAwareConfig, RequestCostEntry. Per-request cost tracking with budget alerts and model-aware pricing. 12 tests.' },
-      { tech: 'LLM-as-Judge (full evaluation system)', flag: null,
-        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
+      { tech: 'LLM-as-Judge Evaluator', flag: 'eval',
+        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['autonomous','multi_agent','rag_chat'],
-        notes: 'Siempre compilado. LlmJudge, EvalCriterion (6 criteria), JudgeResult, PairwiseResult, RagFaithfulnessResult, BatchEvalResult. Prompt building + response parsing para quality assessment. 746 lines, 15 tests. v2 Phase 3.' },
+        notes: 'Feature flag eval. Usa un LLM como juez para evaluar calidad de respuestas, coherencia y fidelidad al contexto.' },
       { tech: 'Quality Scoring', flag: 'eval',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['rag_chat','http_server'],
@@ -1495,10 +1479,6 @@ const GROUPS = [
         cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
         typical: ['autonomous','multi_agent','distributed'],
         notes: 'Siempre compilado. AgentGraph, AgentNode, AgentEdge, EdgeType, ExecutionTrace, TraceStep, GraphAnalytics (critical path, bottlenecks, utilization). Exportación DOT/Mermaid/JSON. from_dag() conversion. 17 tests.' },
-      { tech: 'CI/CD Pipeline (GitHub Actions)', flag: null,
-        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
-        typical: ['basic_chat','rag_chat','multi_user','agent_tools','autonomous','multi_agent','http_server','distributed','p2p'],
-        notes: 'Siempre disponible. GitHub Actions CI workflow con jobs de check, test, clippy y fmt. Automatización de calidad para todo el proyecto. .github/workflows/ci.yml. v2 Phase 4 (4.4).' },
     ]
   },
 ];

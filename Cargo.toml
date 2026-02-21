@@ -273,6 +273,18 @@ name = "ui_hooks_demo"
 [[example]]
 name = "agent_graph_demo"
 
+[[example]]
+name = "basic_chat"
+
+[[example]]
+name = "dag_workflow"
+
+[[example]]
+name = "quality_tests"
+
+[[example]]
+name = "streaming"
+
 [dev-dependencies]
 tempfile = "3"
 criterion = { version = "0.5", features = ["html_reports"] }

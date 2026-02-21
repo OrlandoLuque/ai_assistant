@@ -6,7 +6,7 @@ The project has two testing layers:
 
 | Layer | Tests | Run Command |
 |-------|-------|-------------|
-| Unit tests (`#[test]`) | 2393 | `cargo test --lib --features full` |
+| Unit tests (`#[test]`) | 2472 | `cargo test --lib --features full` |
 | Integration tests | 38 | `cargo test --test integration_tests --features full` |
 | Test harness (CLI) | ~436 | `cargo run --bin ai_test_harness -- --all` (sin P2P) |
 | Distributed networking tests | 115 | `cargo test --features "full,distributed-network"` |
@@ -15,7 +15,7 @@ The project has two testing layers:
 | Test harness P2P categories | 16 | `cargo run --bin ai_test_harness --features "full,p2p" -- --category=p2p_nat` |
 | Benchmarks | 6 | `cargo bench --bench core_benchmarks --features full` |
 
-**Total: 2,431 tests** (2393 lib + 38 integration, verified with `cargo test --features "full,p2p,distributed-network,autonomous,scheduler,butler,browser,distributed-agents"`)
+**Total: 2,510 tests** (2472 lib + 38 integration, verified with `cargo test --features "full,p2p,distributed-network,autonomous,scheduler,butler,browser,distributed-agents"`)
 
 ## Quick Start
 
@@ -132,6 +132,18 @@ Unit tests live inside each source file in `crates/ai_assistant/src/` using `#[c
 **UI Framework Hooks & Agent Graph Visualization** (Phase 11):
 - `ui_hooks.rs` — 16 tests (ChatStreamEvent, ChatHooks, StreamAdapter, ChatSession, status transitions)
 - `agent_graph.rs` — 17 tests (AgentGraph CRUD, topological sort, cycle detection, DOT/Mermaid/JSON export, from_dag, ExecutionTrace, GraphAnalytics)
+
+**v2 Phase 1 — Provider Ecosystem Expansion** (+27 tests):
+- `embedding_providers.rs` — 15 tests (EmbeddingProvider trait, LocalTfIdf, Ollama/OpenAI/HuggingFace provider construction, factory function, batch embedding, dimension defaults)
+- `gemini_provider.rs` — 12 tests (GeminiProvider ProviderPlugin, generateContent, streamGenerateContent SSE, embedContent, function calling, model listing, error handling)
+
+**v2 Phases 2-3 — Async Parity + Advanced Evaluation** (+27 tests):
+- `async_provider.rs` — 15 tests (AsyncProviderPlugin trait, SyncToAsyncAdapter spawn_blocking, AsyncToSyncAdapter Runtime::block_on, AsyncProviderRegistry register/get/set_default/list, default method error returns)
+- `evaluation.rs` (llm_judge) — 12 tests (LlmJudge build_judge_prompt, parse_judge_response, evaluate_all multi-criterion, build_pairwise_prompt, parse_pairwise_response, build_rag_faithfulness_prompt, parse_rag_faithfulness, aggregate_results, EvalCriterion variants including Custom)
+
+**v2 Phases 3-4 — Tool Calling + Guardrails + CI/CD** (+25 tests):
+- `provider_plugins.rs` (tool calling) — 7 tests (PromptToolFallback build_tool_prompt, build_prompt_no_tools, parse_tool_call, parse_code_block, parse_no_tool_calls, parse_multiple_tool_calls, koboldcpp_tool_calling_capability)
+- `guardrail_pipeline.rs` — 18 tests (Guard trait, GuardrailPipeline orchestration, ContentLengthGuard, RateLimitGuard, PatternGuard, ToxicityGuard, PiiGuard, AttackGuard, check_input/check_output stage filtering, block_threshold, violation logging/audit trail, PipelineResult)
 
 **Analysis & NLP** (Phase 7-8):
 - `analysis.rs` - Text analysis, topic extraction, summarization

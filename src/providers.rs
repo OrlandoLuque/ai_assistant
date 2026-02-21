@@ -320,8 +320,14 @@ pub fn generate_openai_streaming(
         AiProvider::OpenAICompatible { base_url } => base_url.clone(),
         AiProvider::OpenAI
         | AiProvider::Anthropic
-        | AiProvider::Gemini
-        | AiProvider::Bedrock { .. } => config.get_base_url(),
+        | AiProvider::Bedrock { .. }
+        | AiProvider::Groq
+        | AiProvider::Together
+        | AiProvider::Fireworks
+        | AiProvider::DeepSeek
+        | AiProvider::Mistral
+        | AiProvider::Perplexity
+        | AiProvider::OpenRouter => config.get_base_url(),
         _ => {
             return Err(anyhow::anyhow!(
                 "Invalid provider for OpenAI-compatible API"
@@ -439,8 +445,14 @@ pub fn generate_openai_response(
         AiProvider::OpenAICompatible { base_url } => base_url.clone(),
         AiProvider::OpenAI
         | AiProvider::Anthropic
-        | AiProvider::Gemini
-        | AiProvider::Bedrock { .. } => config.get_base_url(),
+        | AiProvider::Bedrock { .. }
+        | AiProvider::Groq
+        | AiProvider::Together
+        | AiProvider::Fireworks
+        | AiProvider::DeepSeek
+        | AiProvider::Mistral
+        | AiProvider::Perplexity
+        | AiProvider::OpenRouter => config.get_base_url(),
         _ => {
             return Err(anyhow::anyhow!(
                 "Invalid provider for OpenAI-compatible API"
@@ -558,9 +570,21 @@ pub fn generate_response_streaming(
         | AiProvider::OpenAICompatible { .. }
         | AiProvider::OpenAI
         | AiProvider::Anthropic
-        | AiProvider::Gemini
-        | AiProvider::Bedrock { .. } => {
+        | AiProvider::Bedrock { .. }
+        | AiProvider::Groq
+        | AiProvider::Together
+        | AiProvider::Fireworks
+        | AiProvider::DeepSeek
+        | AiProvider::Mistral
+        | AiProvider::Perplexity
+        | AiProvider::OpenRouter => {
             generate_openai_streaming(config, conversation, system_prompt, tx)
+        }
+        AiProvider::Gemini => {
+            // Gemini uses its own API format, not OpenAI-compatible
+            let response = crate::cloud_providers::generate_gemini_cloud(config, conversation, system_prompt)?;
+            let _ = tx.send(AiResponse::Complete(response));
+            Ok(())
         }
     }
 }
@@ -580,9 +604,18 @@ pub fn generate_response(
         | AiProvider::OpenAICompatible { .. }
         | AiProvider::OpenAI
         | AiProvider::Anthropic
-        | AiProvider::Gemini
-        | AiProvider::Bedrock { .. } => {
+        | AiProvider::Bedrock { .. }
+        | AiProvider::Groq
+        | AiProvider::Together
+        | AiProvider::Fireworks
+        | AiProvider::DeepSeek
+        | AiProvider::Mistral
+        | AiProvider::Perplexity
+        | AiProvider::OpenRouter => {
             generate_openai_response(config, conversation, system_prompt)
+        }
+        AiProvider::Gemini => {
+            crate::cloud_providers::generate_gemini_cloud(config, conversation, system_prompt)
         }
     }
 }
@@ -673,8 +706,14 @@ pub fn generate_openai_streaming_cancellable(
         AiProvider::OpenAICompatible { base_url } => base_url.clone(),
         AiProvider::OpenAI
         | AiProvider::Anthropic
-        | AiProvider::Gemini
-        | AiProvider::Bedrock { .. } => config.get_base_url(),
+        | AiProvider::Bedrock { .. }
+        | AiProvider::Groq
+        | AiProvider::Together
+        | AiProvider::Fireworks
+        | AiProvider::DeepSeek
+        | AiProvider::Mistral
+        | AiProvider::Perplexity
+        | AiProvider::OpenRouter => config.get_base_url(),
         _ => {
             return Err(anyhow::anyhow!(
                 "Invalid provider for OpenAI-compatible API"
@@ -795,14 +834,29 @@ pub fn generate_response_streaming_cancellable(
         | AiProvider::OpenAICompatible { .. }
         | AiProvider::OpenAI
         | AiProvider::Anthropic
-        | AiProvider::Gemini
-        | AiProvider::Bedrock { .. } => generate_openai_streaming_cancellable(
+        | AiProvider::Bedrock { .. }
+        | AiProvider::Groq
+        | AiProvider::Together
+        | AiProvider::Fireworks
+        | AiProvider::DeepSeek
+        | AiProvider::Mistral
+        | AiProvider::Perplexity
+        | AiProvider::OpenRouter => generate_openai_streaming_cancellable(
             config,
             conversation,
             system_prompt,
             tx,
             cancel_token,
         ),
+        AiProvider::Gemini => {
+            if cancel_token.is_cancelled() {
+                let _ = tx.send(AiResponse::Cancelled(String::new()));
+                return Ok(());
+            }
+            let response = crate::cloud_providers::generate_gemini_cloud(config, conversation, system_prompt)?;
+            let _ = tx.send(AiResponse::Complete(response));
+            Ok(())
+        }
     }
 }
 
@@ -854,6 +908,34 @@ pub fn fetch_model_context_size(config: &AiConfig, model_name: &str) -> Option<u
             // Bedrock typically runs Claude models with 200K context
             Some(200_000)
         }
+        AiProvider::Groq => {
+            match model_name {
+                m if m.contains("llama-3.3-70b") => Some(128_000),
+                m if m.contains("llama-3.1") => Some(131_072),
+                m if m.contains("mixtral") => Some(32_768),
+                m if m.contains("gemma") => Some(8_192),
+                _ => Some(128_000),
+            }
+        }
+        AiProvider::Together | AiProvider::Fireworks => Some(128_000),
+        AiProvider::DeepSeek => {
+            match model_name {
+                m if m.contains("deepseek-chat") || m.contains("deepseek-v3") => Some(64_000),
+                m if m.contains("deepseek-coder") => Some(128_000),
+                m if m.contains("deepseek-reasoner") => Some(64_000),
+                _ => Some(64_000),
+            }
+        }
+        AiProvider::Mistral => {
+            match model_name {
+                m if m.contains("large") => Some(128_000),
+                m if m.contains("medium") || m.contains("small") => Some(32_000),
+                m if m.contains("codestral") => Some(256_000),
+                _ => Some(128_000),
+            }
+        }
+        AiProvider::Perplexity => Some(128_000),
+        AiProvider::OpenRouter => Some(128_000),
     }
 }
 

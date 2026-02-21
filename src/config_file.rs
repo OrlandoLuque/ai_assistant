@@ -561,6 +561,13 @@ impl ConfigFile {
                     .to_string();
                 AiProvider::Bedrock { region }
             }
+            "groq" => AiProvider::Groq,
+            "together" => AiProvider::Together,
+            "fireworks" => AiProvider::Fireworks,
+            "deepseek" => AiProvider::DeepSeek,
+            "mistral" => AiProvider::Mistral,
+            "perplexity" => AiProvider::Perplexity,
+            "openrouter" => AiProvider::OpenRouter,
             _ => AiProvider::Ollama,
         };
 
@@ -595,6 +602,13 @@ impl ConfigFile {
             AiProvider::Anthropic => ("anthropic".to_string(), None),
             AiProvider::Gemini => ("gemini".to_string(), None),
             AiProvider::Bedrock { ref region } => ("bedrock".to_string(), Some(region.clone())),
+            AiProvider::Groq => ("groq".to_string(), None),
+            AiProvider::Together => ("together".to_string(), None),
+            AiProvider::Fireworks => ("fireworks".to_string(), None),
+            AiProvider::DeepSeek => ("deepseek".to_string(), None),
+            AiProvider::Mistral => ("mistral".to_string(), None),
+            AiProvider::Perplexity => ("perplexity".to_string(), None),
+            AiProvider::OpenRouter => ("openrouter".to_string(), None),
         };
 
         Self {

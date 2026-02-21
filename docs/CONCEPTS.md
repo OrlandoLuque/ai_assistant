@@ -58,6 +58,9 @@ Read this for understanding, inspiration, and to demystify the magic.
 48. [WASM: Running in the Browser](#48-wasm-running-in-the-browser)
 49. [UI Framework Hooks: Typed Event Streaming](#49-ui-framework-hooks-typed-event-streaming)
 50. [Agent Graphs: Visualizing Workflows](#50-agent-graphs-visualizing-workflows)
+51. [Embedding Providers: Local vs. Remote Embeddings](#51-embedding-providers-local-vs-remote-embeddings)
+52. [LLM-as-Judge: Automated Quality Evaluation](#52-llm-as-judge-automated-quality-evaluation)
+53. [Guardrail Pipelines: Safety at Every Stage](#53-guardrail-pipelines-safety-at-every-stage)
 
 ---
 
@@ -2102,3 +2105,121 @@ Complex systems fail in complex ways. When a 5-agent pipeline produces wrong res
 4. Where the chain broke (error tracing)
 
 Without visualization, you're reading log files. With it, you see the story at a glance.
+
+---
+
+## 51. Embedding Providers: Local vs. Remote Embeddings
+
+### Why a Dedicated Embedding Trait?
+
+Text generation and embedding are fundamentally different operations. Generation takes a prompt and produces text token-by-token. Embedding takes text and produces a fixed-size numeric vector that captures its meaning. They have different APIs, different latency profiles, and different cost structures.
+
+The `ProviderPlugin` trait handles generation (chat, completion, streaming). Mixing embedding into it would pollute the interface -- most generation providers don't even offer embeddings, and embedding-only services don't do generation. A separate `EmbeddingProvider` trait keeps both abstractions clean and composable.
+
+### Local vs. Remote: The Trade-Off
+
+**Local embeddings (TF-IDF)**: Zero network latency, zero cost, works offline. The trade-off is quality -- TF-IDF captures word frequency patterns but misses semantic meaning. "Dog" and "canine" produce completely different vectors. Good enough for keyword-level similarity and testing, insufficient for production semantic search.
+
+**Remote embeddings (OpenAI, Ollama, HuggingFace)**: Neural models trained on billions of text pairs. "Dog" and "canine" produce nearly identical vectors because the model learned they mean the same thing. The cost is latency (network round-trip) and potentially money (API fees per token).
+
+**Ollama** sits in the middle -- it runs a neural model locally, so you get semantic quality without network cost, but you need GPU memory and setup.
+
+### Batch Embedding
+
+Embedding one text at a time is wasteful when you have hundreds of documents to index. Every API call has overhead: TCP handshake, TLS negotiation, HTTP framing, JSON parsing. Batch embedding sends multiple texts in a single request, amortizing that overhead.
+
+The `embed_batch()` method on `EmbeddingProvider` handles this. Local providers process the batch in a loop. Remote providers send a single batched API request. The caller doesn't need to know the difference.
+
+### Dimensions and Model Selection
+
+Each embedding model produces vectors of a specific size (dimensions). OpenAI's `text-embedding-3-small` produces 1536-dimensional vectors. Ollama models typically produce 768 or 1024 dimensions. TF-IDF uses a configurable vocabulary size (default 100 dimensions in this crate).
+
+The dimension count matters because:
+- **Storage**: Higher dimensions = more bytes per document in your vector database
+- **Search speed**: Cosine similarity over 1536 floats is slower than over 100
+- **Quality**: More dimensions generally capture more nuance, up to a point
+
+The `dimensions()` method on `EmbeddingProvider` reports the output size, so vector databases can allocate storage correctly. The factory function `create_embedding_provider(name, model)` lets you select both the provider and the specific model, giving you control over this trade-off.
+
+---
+
+## 52. LLM-as-Judge: Automated Quality Evaluation
+
+### The Problem: How Do You Know if an LLM Response is Good?
+
+Evaluating LLM output is one of the hardest problems in AI engineering. Traditional NLP metrics like BLEU and ROUGE count word overlaps -- they can tell you if a translation matches a reference, but they cannot assess whether an answer is helpful, whether it hallucinated facts, or whether it is safe to show a user.
+
+Human evaluation is the gold standard, but it does not scale. A human reviewer can assess perhaps 50-100 responses per hour. If you are running an LLM application serving thousands of users, you need automated quality monitoring that runs at machine speed.
+
+### The Idea: Use an LLM to Judge Other LLMs
+
+LLM-as-Judge is the insight that modern LLMs are good enough at reasoning to evaluate text quality. You give a "judge" LLM a structured prompt containing the original question, the response to evaluate, and a rubric (what "good" means), and the judge returns a score with reasoning.
+
+This is not circular reasoning -- the judge LLM is not evaluating its own output. Typically you use a stronger or different model as the judge (e.g., GPT-4 judging GPT-3.5 outputs, or a large model judging a smaller fine-tuned model). Research has shown that LLM judges correlate well with human preferences, especially when given clear criteria.
+
+### Common Use Cases
+
+**Automated quality monitoring**: Run your production LLM responses through a judge on a sample basis. Track average scores over time. If quality drops after a model update or prompt change, you catch it in hours instead of weeks.
+
+**A/B testing**: When comparing two prompt strategies or two models, LLM-as-Judge can evaluate hundreds of response pairs to determine which variant produces better results, far faster than collecting human ratings.
+
+**RAG faithfulness checking**: In Retrieval-Augmented Generation, the LLM is supposed to answer based on retrieved documents. A judge can verify whether each claim in the response is actually supported by the source context, catching hallucinations that simple overlap metrics would miss.
+
+**Content safety screening**: A judge can evaluate responses for toxicity, bias, or policy violations at scale, serving as an automated content review layer.
+
+### The Decoupled Design
+
+The key architectural decision in this crate is that the judge module builds prompts and parses responses, but never calls an LLM itself. The caller is responsible for sending the prompt to their chosen provider. This means:
+
+- **Provider-agnostic**: The same judge prompts work with Ollama, OpenAI, Gemini, or any custom provider
+- **Sync or async**: The caller decides whether to use synchronous or asynchronous LLM calls
+- **Testable**: Unit tests verify prompt structure and response parsing without needing a live LLM
+- **Cost-controlled**: The caller decides which model to use as judge and how many evaluations to run
+
+### Evaluation Criteria
+
+The judge evaluates responses against specific criteria. Six are built-in (Relevance, Coherence, Faithfulness, Toxicity, Helpfulness) and custom criteria can be defined with a name and description. Each criterion produces a score on a 1-5 scale, a boolean pass/fail, and written reasoning explaining the verdict.
+
+### Pairwise Comparison
+
+Sometimes absolute scores are less useful than relative rankings. Pairwise comparison shows the judge two responses to the same query and asks "which is better?" This eliminates the calibration problem (different judges might use different score scales) and produces clean A-vs-B decisions suitable for ELO rating systems or tournament-style evaluations.
+
+### Aggregation
+
+Individual scores become actionable when aggregated. Batch aggregation computes average scores, pass rates (what fraction of responses meet the quality bar), and score distributions (histograms showing how many responses scored 1, 2, 3, 4, or 5). These summary statistics feed dashboards, alerts, and automated quality gates in CI/CD pipelines.
+
+---
+
+## 53. Guardrail Pipelines: Safety at Every Stage
+
+### The Problem: LLMs Have No Built-In Safety
+
+An LLM will happily generate toxic content, leak PII from its context, or follow prompt injection attacks -- it has no inherent sense of what is appropriate. Safety must be enforced externally, and there are many different dimensions to check: content length, rate limits, PII, toxicity, prompt injection, policy compliance, and domain-specific rules.
+
+Without a unified system, each check is a separate if-statement scattered across the codebase. Guards get skipped. New safety requirements require editing multiple code paths. There is no audit trail.
+
+### The Idea: The Guard Trait and Pipeline Orchestrator
+
+A guardrail pipeline is a chain-of-responsibility pattern applied to text safety. Every safety check is a "guard" that implements a single trait with three methods: what is your name, when do you run (before sending to the LLM, after receiving, or both), and check this text.
+
+The pipeline orchestrator holds an ordered list of guards and runs them at the appropriate stage. Each guard returns a score (0.0 to 1.0) and an action (pass, warn, or block). If any guard's score exceeds a configurable threshold, the pipeline blocks the content. All blocking events are optionally logged to an audit trail.
+
+### Why Two Stages?
+
+Input guards (pre-send) protect the LLM from adversarial or expensive inputs. Rate limiting prevents abuse. Attack detection catches prompt injection before it reaches the model. Content length guards prevent context window overflow.
+
+Output guards (post-receive) protect the user from harmful LLM responses. Toxicity detection catches offensive language. PII detection prevents the LLM from leaking sensitive data that appeared in its context. Pattern guards catch domain-specific policy violations.
+
+Some guards run at both stages -- for instance, a content length guard might enforce a maximum on both input and output, and a pattern guard might block certain terms in either direction.
+
+### The Threshold Model
+
+Each guard returns a severity score between 0.0 (completely safe) and 1.0 (maximum severity). The pipeline has a configurable block threshold (default 0.8). A guard can return a warning-level score (say 0.3) that gets recorded but does not block, or a high score that triggers a block. This avoids binary pass/fail brittleness -- a mild PII detection (a first name mentioned in passing) might score lower than a definite SSN match.
+
+### Extensibility via the Guard Trait
+
+The six built-in guards cover the most common safety needs, but the `Guard` trait is the extension point. A custom guard might check for domain-specific compliance rules, verify that output matches a required schema, or consult an external moderation API. Because the trait requires only `Send + Sync` (no async), guards can be composed freely without runtime complexity.
+
+### Audit Trail
+
+When violation logging is enabled, every guard result that meets the block threshold is appended to an internal log. This log is accessible via `violations()` and can be exported for compliance reporting. Each entry records which guard triggered, what it found, the severity score, and human-readable details. This turns the pipeline from a simple pass/fail gate into a compliance and debugging tool.

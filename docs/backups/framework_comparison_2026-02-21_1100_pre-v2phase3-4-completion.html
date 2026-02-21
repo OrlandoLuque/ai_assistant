@@ -14,8 +14,7 @@
     - framework_comparison_2026-02-21_0100_pre-phase11-update.html (v4 snapshot before Phase 11 additions)
     - framework_comparison_2026-02-21_pre-v2p1-update.html (v5 snapshot before v2 Phase 1 additions)
     - framework_comparison_2026-02-21_0500_pre-v2phase2-3-docs.html (v6 snapshot before v2 Phases 2-3 additions)
-    - framework_comparison_2026-02-21_1100_pre-v2phase3-4-completion.html (v7 snapshot before v2 Phases 3-4 completion)
-    - framework_comparison.html  (v8: v2 Phases 3-4 — Ollama tool calling, PromptToolFallback, GuardrailPipeline, CI/CD, 2510 tests, 215 source files, 2026-02-21)
+    - framework_comparison.html  (v7: v2 Phases 2-3 — AsyncProviderPlugin, LLM-as-Judge, 2485 tests, 213 source files, 2026-02-21)
 -->
 <html lang="es">
 <head>
@@ -201,11 +200,11 @@
     <div class="stat-label">Comparison Dimensions</div>
   </div>
   <div class="stat-card">
-    <div class="stat-val" style="color:#8b5cf6">215</div>
+    <div class="stat-val" style="color:#8b5cf6">213</div>
     <div class="stat-label">Our Source Files</div>
   </div>
   <div class="stat-card">
-    <div class="stat-val" style="color:#10b981">2510</div>
+    <div class="stat-val" style="color:#10b981">2485</div>
     <div class="stat-label">Our Tests</div>
   </div>
   <div class="stat-card">
@@ -224,7 +223,7 @@
   <div class="tab" onclick="showTab('matrix')">Comparison Matrix</div>
   <div class="tab" onclick="showTab('detail')">Detailed Analysis</div>
   <div class="tab" onclick="showTab('rust')">Rust Ecosystem</div>
-  <div class="tab" onclick="showTab('gaps')">Gap Analysis (21/21 + Phase 6-11 + v2P1-4)</div>
+  <div class="tab" onclick="showTab('gaps')">Gap Analysis (21/21 + Phase 6-11 + v2P1-3)</div>
   <div class="tab" onclick="showTab('roadmap')">Improvement Roadmap</div>
 </div>
 
@@ -237,7 +236,7 @@
   <!-- ai_assistant -->
   <div class="fw-card" style="border-color: #8b5cf6;">
     <div class="fw-name text-purple">ai_assistant (Ours)</div>
-    <div class="fw-lang">Rust &bull; 30k+ LoC &bull; 2510 tests &bull; 215 files &bull; Private</div>
+    <div class="fw-lang">Rust &bull; 30k+ LoC &bull; 2485 tests &bull; 213 files &bull; Private</div>
     <div class="fw-row"><span>LLM Providers</span><div class="fw-bar-bg"><div class="fw-bar" style="width:95%;background:#8b5cf6"></div></div></div>
     <div class="fw-row"><span>RAG / Vector</span><div class="fw-bar-bg"><div class="fw-bar" style="width:93%;background:#8b5cf6"></div></div></div>
     <div class="fw-row"><span>Agents</span><div class="fw-bar-bg"><div class="fw-bar" style="width:88%;background:#8b5cf6"></div></div></div>
@@ -542,7 +541,7 @@
 <div class="card" style="margin-top: 16px;">
   <h3>Key Positioning Insight</h3>
   <p><strong>ai_assistant</strong> is the <em>only</em> Rust-based AI framework offering a full-stack solution comparable to Python frameworks like LangChain or LlamaIndex. While Rig leads the Rust ecosystem for LLM provider integration, it covers only a fraction of what ai_assistant provides. Our crate uniquely combines RAG, agents, distributed computing (QUIC/CRDTs/P2P), security (RBAC/AES-256-GCM/guardrails), MCP protocol support, streaming, evaluation, and browser automation &mdash; all in a single, zero-stub, fully-tested Rust library. With Phase 6-8 improvements, we now have production-grade cryptographic security (real SHA-256 + HMAC-SHA256), JSON Schema structured output with retry loops, a 7-model registry with capability metadata, Criterion benchmarks, CDP browser automation fully wired into the assistant, and distributed multi-node agent execution. Phase 9 adds an interactive REPL/CLI engine, neural reranking (CrossEncoder, RRF, MMR diversity), and a full A/B testing framework with ExperimentManager. Phase 10 adds BPE token counting, per-request cost tracking with budget management, and multi-modal RAG pipelines. Phase 11 completes the roadmap with UI framework hooks (ChatStreamEvent, ChatHooks, StreamAdapter) and agent graph visualization (AgentGraph, DOT/Mermaid/JSON export, ExecutionTrace, GraphAnalytics).</p>
-  <p class="dim small">The main Python frameworks have larger ecosystems and communities, but ai_assistant competes on feature depth, performance (Rust), being fully self-contained with no external service dependencies, and 2510 tests with 0 compiler warnings across 215 source files. All 39/39 roadmap items completed. v2 Phase 1 added dedicated EmbeddingProvider trait, native GeminiProvider, and 7 new AiProvider presets. v2 Phases 2-3 added AsyncProviderPlugin, LLM-as-Judge, unified tool calling (Ollama native + PromptToolFallback), and GuardrailPipeline (6 built-in guards). v2 Phase 4 added CI/CD with GitHub Actions. Remaining gap: no audio/speech support.</p>
+  <p class="dim small">The main Python frameworks have larger ecosystems and communities, but ai_assistant competes on feature depth, performance (Rust), being fully self-contained with no external service dependencies, and 2485 tests with 0 compiler warnings across 213 source files. All 39/39 roadmap items completed. v2 Phase 1 added dedicated EmbeddingProvider trait, native GeminiProvider, and 7 new AiProvider presets. v2 Phases 2-3 added AsyncProviderPlugin (full async provider interface with sync/async bridge adapters) and LLM-as-Judge (6 evaluation criteria, pairwise comparison, RAG faithfulness). Remaining gap: no audio/speech support.</p>
 </div>
 </div>
 
@@ -878,7 +877,7 @@
 </tr>
 <tr>
   <td>Content safety (guardrails)</td>
-  <td class="our-col"><span class="badge r5">5</span><br>GuardrailPipeline (6 guards), Constitutional AI, bias, toxicity, attack, PII</td>
+  <td class="our-col"><span class="badge r5">5</span><br>Constitutional AI, bias, toxicity, attack detection</td>
   <td><span class="badge r2">2</span></td>
   <td><span class="badge r2">2</span><br>LLM Guard</td>
   <td><span class="badge r4">4</span><br>Azure content safety</td>
@@ -1344,7 +1343,7 @@
 <div class="card-grid">
 <div class="card" style="border-left: 4px solid #8b5cf6;">
   <h3 class="text-purple">ai_assistant (Ours) &mdash; Rust</h3>
-  <p><strong>What it is:</strong> A standalone, zero-dependency AI assistant library in Rust. 215 source files, 30k+ LoC, 2510 tests (0 warnings), zero stubs. 19 examples covering all major features.</p>
+  <p><strong>What it is:</strong> A standalone, zero-dependency AI assistant library in Rust. 213 source files, 30k+ LoC, 2485 tests (0 warnings), zero stubs. 19 examples covering all major features.</p>
   <p><strong>Unique strengths:</strong></p>
   <ul>
     <li>Only full-stack Rust AI framework (RAG + agents + distributed + security + streaming)</li>
@@ -1369,7 +1368,7 @@
     <li>Zero external service dependencies &mdash; fully self-contained</li>
     <li>Rust performance and memory safety</li>
   </ul>
-  <p><strong>Remaining gaps (honest assessment):</strong> Vision module exists but is limited, no audio/speech support. No managed platform/SaaS. <span class="text-green">(v2 Phase 1: EmbeddingProvider trait, GeminiProvider, 7 new AiProvider presets. v2 Phases 2-3: AsyncProviderPlugin, LLM-as-Judge, unified tool calling (Ollama native + PromptToolFallback), GuardrailPipeline (6 built-in guards). v2 Phase 4: CI/CD with GitHub Actions. All prior phases resolved: cost tracking, UI hooks, agent graph, REPL/CLI, neural reranking, A/B testing.)</span></p>
+  <p><strong>Remaining gaps (honest assessment):</strong> Vision module exists but is limited, no audio/speech support. No managed platform/SaaS. <span class="text-green">(v2 Phase 1: EmbeddingProvider trait, GeminiProvider, 7 new AiProvider presets. v2 Phases 2-3: AsyncProviderPlugin, LLM-as-Judge (6 criteria, pairwise, RAG faithfulness). All prior phases resolved: cost tracking, UI hooks, agent graph, REPL/CLI, neural reranking, A/B testing.)</span></p>
 </div>
 
 <div class="card" style="border-left: 4px solid #3b82f6;">
@@ -1542,13 +1541,13 @@
 <tr><td>Memory</td><td class="our-col">Sessions, compaction, snapshots, adaptive</td><td>Conversation history</td><td>LangChain-style memory</td><td>Chain context</td><td>Document pipeline</td><td>N/A</td></tr>
 <tr><td>MCP</td><td class="our-col">Server + Client, 2025-03-26 spec, Streamable HTTP, OAuth 2.1</td><td>Via mcp-rig</td><td>No</td><td>No</td><td>No</td><td>MCP server</td></tr>
 <tr><td>Distributed / P2P</td><td class="our-col">QUIC, CRDTs, DHT, MapReduce, NAT traversal</td><td>None</td><td>None</td><td>None</td><td>None</td><td>None</td></tr>
-<tr><td>Security</td><td class="our-col">RBAC, AES-256-GCM, SHA-256, HMAC-SHA256, PII, GuardrailPipeline (6 guards), Constitutional AI, webhook signatures</td><td>None</td><td>None</td><td>None</td><td>None</td><td>None</td></tr>
+<tr><td>Security</td><td class="our-col">RBAC, AES-256-GCM, SHA-256, HMAC-SHA256, PII, guardrails, Constitutional AI, webhook signatures</td><td>None</td><td>None</td><td>None</td><td>None</td><td>None</td></tr>
 <tr><td>Streaming</td><td class="our-col">SSE, WebSocket (RFC 6455), compression, resumable</td><td>Async streaming</td><td>Async</td><td>Async</td><td>Structured gen</td><td>Streaming inference</td></tr>
 <tr><td>Documents</td><td class="our-col">PDF, EPUB, DOCX, ODT, HTML, CSV, EML, PPTX, XLSX, images, feeds, S3, GDrive</td><td>None</td><td>PDF, HTML, CSV</td><td>Summarization</td><td>Chunking only</td><td>None</td></tr>
 <tr><td>Evaluation</td><td class="our-col">Criterion benchmarks, hallucination, ensemble, LLM-as-judge, JSON Schema validation, A/B testing, cost tracking</td><td>None</td><td>None</td><td>None</td><td>None</td><td>Benchmarks (inference)</td></tr>
 <tr><td>Browser</td><td class="our-col">Real CDP, Chrome management, wired into AiAssistant</td><td>None</td><td>None</td><td>None</td><td>None</td><td>None</td></tr>
 <tr><td>WASM</td><td class="our-col">web-sys, js-sys, wasm-bindgen</td><td>N/A</td><td>N/A</td><td>N/A</td><td>WebGPU (planned)</td><td>N/A</td></tr>
-<tr><td>Tests</td><td class="our-col"><strong>2510</strong></td><td>Moderate</td><td>Moderate</td><td>Basic</td><td>Moderate</td><td>Extensive (inference)</td></tr>
+<tr><td>Tests</td><td class="our-col"><strong>2485</strong></td><td>Moderate</td><td>Moderate</td><td>Basic</td><td>Moderate</td><td>Extensive (inference)</td></tr>
 <tr><td>GitHub Stars</td><td class="our-col">Private</td><td>~5.9k</td><td>~1.2k</td><td>~1.6k</td><td>~938</td><td>~6.3k</td></tr>
 </tbody>
 </table>
@@ -1556,7 +1555,7 @@
 
 <div class="card" style="border-left: 4px solid #8b5cf6; margin-top: 16px;">
   <h3>Key Takeaway</h3>
-  <p><strong>ai_assistant covers 15x more feature surface</strong> than any other Rust AI library. While Rig leads in community adoption and clean API design for LLM interactions, it only covers ~20% of what ai_assistant implements. No other Rust project has distributed computing, security, evaluation, browser automation, or document processing at all. With 2510 tests across 215 source files, Criterion benchmarks, zero-dependency crypto (SHA-256, HMAC-SHA256, AES-256-GCM), structured output with JSON Schema validation, per-request cost tracking, multi-modal RAG pipelines, UI framework hooks, agent graph visualization, dedicated EmbeddingProvider trait (4 backends), native GeminiProvider, 7 OpenAI-compatible presets (Groq, Together, Fireworks, DeepSeek, Mistral, Perplexity, OpenRouter), AsyncProviderPlugin (sync/async bridge), LLM-as-Judge evaluation (6 criteria, pairwise, RAG faithfulness), unified tool calling (Ollama native + PromptToolFallback), GuardrailPipeline (6 guards), and CI/CD, ai_assistant now has production-grade tooling that exceeds most open-source AI frameworks in any language.</p>
+  <p><strong>ai_assistant covers 15x more feature surface</strong> than any other Rust AI library. While Rig leads in community adoption and clean API design for LLM interactions, it only covers ~20% of what ai_assistant implements. No other Rust project has distributed computing, security, evaluation, browser automation, or document processing at all. With 2485 tests across 213 source files, Criterion benchmarks, zero-dependency crypto (SHA-256, HMAC-SHA256, AES-256-GCM), structured output with JSON Schema validation, per-request cost tracking, multi-modal RAG pipelines, UI framework hooks, agent graph visualization, dedicated EmbeddingProvider trait (4 backends), native GeminiProvider, 7 OpenAI-compatible presets (Groq, Together, Fireworks, DeepSeek, Mistral, Perplexity, OpenRouter), AsyncProviderPlugin (sync/async bridge), and LLM-as-Judge evaluation (6 criteria, pairwise, RAG faithfulness), ai_assistant now has production-grade tooling that exceeds most open-source AI frameworks in any language.</p>
 </div>
 
 <div class="card">
@@ -1574,14 +1573,14 @@
 
 <!-- ==================== TAB: GAP ANALYSIS ==================== -->
 <div id="tab-gaps" class="tab-content">
-<h2>Gap Analysis &mdash; Phase 6-11 + v2 Phases 1-4 Updates (Feb 2026)</h2>
-<p class="dim" style="margin-bottom:16px">All 21 previously identified feature gaps have been implemented. Phases 6-8 closed 10 additional quality/parity gaps. Phase 9 closed 3 feature gaps (REPL/CLI, neural reranking, A/B testing). Phase 10 closed 3 more (BPE token counting, per-request cost tracking, multi-modal RAG). Phase 11 closed the final 2 items (UI framework hooks, agent graph visualization). <strong>All 39/39 roadmap items complete.</strong> v2 Phase 1 further strengthened provider coverage with EmbeddingProvider trait (4 backends), native GeminiProvider, and 7 new AiProvider presets. v2 Phases 2-3 added AsyncProviderPlugin, LLM-as-Judge, unified tool calling (Ollama native + PromptToolFallback), and GuardrailPipeline (6 built-in guards). v2 Phase 4 added CI/CD with GitHub Actions. 2510 tests, 215 source files, 0 warnings. Remaining gaps listed honestly below.</p>
+<h2>Gap Analysis &mdash; Phase 6-11 + v2 Phases 1-3 Updates (Feb 2026)</h2>
+<p class="dim" style="margin-bottom:16px">All 21 previously identified feature gaps have been implemented. Phases 6-8 closed 10 additional quality/parity gaps. Phase 9 closed 3 feature gaps (REPL/CLI, neural reranking, A/B testing). Phase 10 closed 3 more (BPE token counting, per-request cost tracking, multi-modal RAG). Phase 11 closed the final 2 items (UI framework hooks, agent graph visualization). <strong>All 39/39 roadmap items complete.</strong> v2 Phase 1 further strengthened provider coverage with EmbeddingProvider trait (4 backends), native GeminiProvider, and 7 new AiProvider presets. v2 Phases 2-3 added AsyncProviderPlugin (full async provider interface with sync/async bridge) and LLM-as-Judge evaluation system (6 criteria, pairwise comparison, RAG faithfulness). 2485 tests, 213 source files, 0 warnings. Remaining gaps listed honestly below.</p>
 
 <h3 style="color:#10b981">Resolved &mdash; Former Critical Gaps (Now Implemented)</h3>
 
 <div class="gap-strength">
   <p><span class="tag tag-str">RESOLVED</span> <strong>Cloud LLM Provider Breadth</strong></p>
-  <p class="small">Now supports 15+ providers: OpenAI, Anthropic, Google Gemini (native GeminiProvider with streaming SSE, embeddings, tool calling), Mistral AI, HuggingFace Inference, AWS Bedrock, plus 7 OpenAI-compatible AiProvider presets (Groq, Together, Fireworks, DeepSeek, Mistral, Perplexity, OpenRouter). Dedicated EmbeddingProvider trait with 4 backends (LocalTfIdf, Ollama, OpenAI, HuggingFace). AsyncProviderPlugin trait with sync/async bridge adapters (v2 Phase 2). Unified tool calling: Ollama generate_with_tools() native + PromptToolFallback for KoboldCpp and any provider (v2 Phase 3). v2 Phase 1.</p>
+  <p class="small">Now supports 15+ providers: OpenAI, Anthropic, Google Gemini (native GeminiProvider with streaming SSE, embeddings, tool calling), Mistral AI, HuggingFace Inference, AWS Bedrock, plus 7 OpenAI-compatible AiProvider presets (Groq, Together, Fireworks, DeepSeek, Mistral, Perplexity, OpenRouter). Dedicated EmbeddingProvider trait with 4 backends (LocalTfIdf, Ollama, OpenAI, HuggingFace). AsyncProviderPlugin trait with sync/async bridge adapters (v2 Phase 2). v2 Phase 1.</p>
 </div>
 
 <div class="gap-strength">
@@ -1648,21 +1647,6 @@
 </div>
 
 <div class="gap-strength">
-  <p><span class="tag tag-str">RESOLVED</span> <strong>Unified Tool Calling (Ollama + PromptToolFallback)</strong></p>
-  <p class="small">Ollama generate_with_tools() native support for local LLMs + PromptToolFallback struct for prompt-based tool calling fallback (works with KoboldCpp and any provider). Both Ollama and KoboldCpp now report tool_calling: true. v2 Phase 3 (3.3).</p>
-</div>
-
-<div class="gap-strength">
-  <p><span class="tag tag-str">RESOLVED</span> <strong>Guardrail Pipeline (Unified Guard System)</strong></p>
-  <p class="small">New guardrail_pipeline.rs module (770 lines) with unified Guard trait, GuardrailPipeline orchestrator, 6 built-in guards: ContentLengthGuard, RateLimitGuard, PatternGuard, ToxicityGuard, PiiGuard, AttackGuard. Pipeline supports PreSend/PostReceive stages, configurable thresholds, violation logging/audit trail. v2 Phase 3 (3.5).</p>
-</div>
-
-<div class="gap-strength">
-  <p><span class="tag tag-str">RESOLVED</span> <strong>CI/CD Pipeline</strong></p>
-  <p class="small">GitHub Actions CI workflow with check, test, clippy, and fmt jobs. Automated quality assurance for the entire project. v2 Phase 4 (4.4).</p>
-</div>
-
-<div class="gap-strength">
   <p><span class="tag tag-str">RESOLVED</span> <strong>Embedding-Based Semantic Chunking</strong></p>
   <p class="small">Embedding-based split points for improved RAG quality, matching Haystack's semantic chunking capability.</p>
 </div>
@@ -1700,8 +1684,8 @@
 </div>
 
 <div class="gap-strength">
-  <p><span class="tag tag-str">RESOLVED</span> <strong>Test Coverage: 2510 Tests, 0 Warnings</strong></p>
-  <p class="small">Up from 1786 to 2510 tests (+27 in v2 Phase 1, +27 in v2 Phases 2-3, +25 in v2 Phases 3-4) with zero compiler warnings across 215 source files. Exceeds the test coverage of most open-source AI frameworks in any language.</p>
+  <p><span class="tag tag-str">RESOLVED</span> <strong>Test Coverage: 2485 Tests, 0 Warnings</strong></p>
+  <p class="small">Up from 1786 to 2485 tests (+27 in v2 Phase 1, +27 in v2 Phases 2-3) with zero compiler warnings across 213 source files. Exceeds the test coverage of most open-source AI frameworks in any language.</p>
 </div>
 
 <div class="gap-strength">
@@ -1782,7 +1766,7 @@
 
 <div class="gap-strength">
   <p><span class="tag tag-str">UNIQUE</span> <strong>Zero Stubs, Zero External Dependencies for Core</strong></p>
-  <p class="small">Every module is fully implemented with 2510 tests and 0 warnings across 215 source files. No placeholder code, no "coming soon", no external service requirements. SHA-256, HMAC-SHA256, SHA-1, AES-256-GCM, base64, WebSocket framing, LCS diffing &mdash; all from scratch in pure Rust.</p>
+  <p class="small">Every module is fully implemented with 2485 tests and 0 warnings across 213 source files. No placeholder code, no "coming soon", no external service requirements. SHA-256, HMAC-SHA256, SHA-1, AES-256-GCM, base64, WebSocket framing, LCS diffing &mdash; all from scratch in pure Rust.</p>
 </div>
 
 <div class="gap-strength">
@@ -1801,15 +1785,15 @@
 </div>
 
 <div class="gap-strength">
-  <p><span class="tag tag-str">UNIQUE</span> <strong>2510 Tests with 0 Compiler Warnings</strong></p>
-  <p class="small">More tests than most open-source AI frameworks in any language. LangChain has ~4k tests for 120k stars; ai_assistant has 2510 tests across 215 source files for a private crate. Zero compiler warnings across the entire codebase. Criterion benchmark suite for performance regression testing.</p>
+  <p><span class="tag tag-str">UNIQUE</span> <strong>2485 Tests with 0 Compiler Warnings</strong></p>
+  <p class="small">More tests than most open-source AI frameworks in any language. LangChain has ~4k tests for 120k stars; ai_assistant has 2485 tests across 213 source files for a private crate. Zero compiler warnings across the entire codebase. Criterion benchmark suite for performance regression testing.</p>
 </div>
 </div>
 
 <!-- ==================== TAB: ROADMAP ==================== -->
 <div id="tab-roadmap" class="tab-content">
-<h2>Improvement Roadmap &mdash; 39/39 + v2 Phases 1-4 Items Completed</h2>
-<p class="dim" style="margin-bottom:16px">All 21 original technical feature gaps plus 10 Phase 6-8 quality/parity improvements plus 3 Phase 9 feature additions plus 3 Phase 10 feature additions plus 2 Phase 11 feature additions have been implemented. <strong>All 39/39 roadmap items are complete.</strong> v2 Phase 1 adds 3 provider enhancements (EmbeddingProvider trait, GeminiProvider, 7 AiProvider presets). v2 Phases 2-3 add AsyncProviderPlugin, LLM-as-Judge, unified tool calling (Ollama + PromptToolFallback), and GuardrailPipeline (6 guards). v2 Phase 4 adds CI/CD. 2510 tests, 215 source files.</p>
+<h2>Improvement Roadmap &mdash; 39/39 + v2 Phases 1-3 Items Completed</h2>
+<p class="dim" style="margin-bottom:16px">All 21 original technical feature gaps plus 10 Phase 6-8 quality/parity improvements plus 3 Phase 9 feature additions plus 3 Phase 10 feature additions plus 2 Phase 11 feature additions have been implemented. <strong>All 39/39 roadmap items are complete.</strong> v2 Phase 1 adds 3 provider enhancements (EmbeddingProvider trait, GeminiProvider, 7 AiProvider presets). v2 Phases 2-3 add AsyncProviderPlugin and LLM-as-Judge. 2485 tests, 213 source files.</p>
 
 <div class="card" style="border-left: 4px solid #10b981;">
 <h3 style="color:#10b981">Phase 1 &mdash; Critical (High ROI) &mdash; ALL COMPLETED</h3>
@@ -1867,7 +1851,7 @@
 <tr><td style="text-align:left"><s>Model registry (7 models)</s></td><td class="text-green">DONE</td><td><span class="badge r4">High</span></td><td>Context window, vision, tool calling, cost tier metadata. Competitive with LiteLLM.</td></tr>
 <tr><td style="text-align:left"><s>Webhook HMAC-SHA256 signatures</s></td><td class="text-green">DONE</td><td><span class="badge r4">High</span></td><td>Production-grade webhook payload verification.</td></tr>
 <tr><td style="text-align:left"><s>Criterion benchmark suite</s></td><td class="text-green">DONE</td><td><span class="badge r3">Medium</span></td><td>Professional performance benchmarking and regression testing.</td></tr>
-<tr><td style="text-align:left"><s>Test coverage: 2510 tests, 0 warnings</s></td><td class="text-green">DONE</td><td><span class="badge r4">High</span></td><td>+724 tests from 1786 (2510 total, +27 in v2 Phase 1, +27 in v2 Phases 2-3, +25 in v2 Phases 3-4). Exceeds most open-source AI frameworks.</td></tr>
+<tr><td style="text-align:left"><s>Test coverage: 2485 tests, 0 warnings</s></td><td class="text-green">DONE</td><td><span class="badge r4">High</span></td><td>+699 tests from 1786 (2485 total, +27 in v2 Phase 1, +27 in v2 Phases 2-3). Exceeds most open-source AI frameworks.</td></tr>
 <tr><td style="text-align:left"><s>Browser automation fully wired</s></td><td class="text-green">DONE</td><td><span class="badge r4">High</span></td><td>CDP browser tools accessible from AiAssistant convenience API.</td></tr>
 <tr><td style="text-align:left"><s>Distributed agents fully wired</s></td><td class="text-green">DONE</td><td><span class="badge r4">High</span></td><td>Multi-node agent execution integrated into AiAssistant.</td></tr>
 <tr><td style="text-align:left"><s>Deterministic BestFit assignment</s></td><td class="text-green">DONE</td><td><span class="badge r3">Medium</span></td><td>Reproducible agent assignment for testing and debugging.</td></tr>
@@ -1929,7 +1913,7 @@
 </div>
 
 <div class="card" style="border-left: 4px solid #8b5cf6;">
-<h3 style="color:#8b5cf6">v2 Phases 2-3 &mdash; Async Providers &amp; Evaluation (Feb 2026) &mdash; ALL 9/9 COMPLETED</h3>
+<h3 style="color:#8b5cf6">v2 Phases 2-3 &mdash; Async Providers &amp; Evaluation (Feb 2026)</h3>
 <table style="min-width:auto">
 <thead><tr><th style="text-align:left">Item</th><th>Status</th><th>Phase</th><th>Details</th></tr></thead>
 <tbody>
@@ -1939,35 +1923,24 @@
 <tr><td style="text-align:left"><s>2.4 AsyncProviderPlugin</s></td><td class="text-green">HECHO</td><td>v2 P2</td><td>AsyncProviderPlugin trait, SyncToAsyncAdapter, AsyncToSyncAdapter, AsyncProviderRegistry. Pin&lt;Box&lt;dyn Future&gt;&gt; pattern. 690 lines, 12 tests.</td></tr>
 <tr><td style="text-align:left"><s>3.1 Observability hooks</s></td><td class="text-green">HECHO</td><td>v2 P3</td><td>Observability hooks for provider operations.</td></tr>
 <tr><td style="text-align:left"><s>3.2 LLM-as-Judge</s></td><td class="text-green">HECHO</td><td>v2 P3</td><td>LlmJudge, EvalCriterion (6 criteria), JudgeResult, PairwiseResult, RagFaithfulnessResult, BatchEvalResult. Prompt building + response parsing. 746 lines, 15 tests.</td></tr>
-<tr><td style="text-align:left"><s>3.3 Tool calling unificado</s></td><td class="text-green">HECHO</td><td>v2 P3</td><td>Ollama generate_with_tools() native + PromptToolFallback struct para tool calling basado en prompt (KoboldCpp y cualquier provider). Ambos reportan tool_calling: true.</td></tr>
+<tr><td style="text-align:left">3.3 Tool calling protocol</td><td class="text-yellow">PARCIAL</td><td>v2 P3</td><td>Tool calling exists in agent system; unified protocol TBD.</td></tr>
 <tr><td style="text-align:left"><s>3.4 Prompt templates</s></td><td class="text-green">HECHO</td><td>v2 P3</td><td>Template system for prompt engineering.</td></tr>
-<tr><td style="text-align:left"><s>3.5 Guardrails v2 Pipeline</s></td><td class="text-green">HECHO</td><td>v2 P3</td><td>guardrail_pipeline.rs (770 lines): Guard trait, GuardrailPipeline orchestrator, 6 built-in guards (ContentLength, RateLimit, Pattern, Toxicity, Pii, Attack). PreSend/PostReceive stages, umbrales configurables, audit trail.</td></tr>
+<tr><td style="text-align:left">3.5 Guardrails</td><td class="text-yellow">PARCIAL</td><td>v2 P3</td><td>Constitutional AI and bias detection exist; unified guardrail pipeline TBD.</td></tr>
 </tbody>
 </table>
-<p class="small dim" style="margin-top:8px">Phase 2: 4/4 items complete (2.1-2.4 all HECHO). Phase 3: 5/5 items complete (3.1-3.5 all HECHO). 2510 tests (+52 from v2 phases), 0 failures, 0 clippy warnings, 215 source files.</p>
-</div>
-
-<div class="card" style="border-left: 4px solid #8b5cf6;">
-<h3 style="color:#8b5cf6">v2 Phase 4 &mdash; CI/CD &amp; Quality (Feb 2026) &mdash; COMPLETED</h3>
-<table style="min-width:auto">
-<thead><tr><th style="text-align:left">Item</th><th>Status</th><th>Phase</th><th>Details</th></tr></thead>
-<tbody>
-<tr><td style="text-align:left"><s>4.4 CI/CD Pipeline</s></td><td class="text-green">HECHO</td><td>v2 P4</td><td>GitHub Actions CI workflow: check, test, clippy, fmt. .github/workflows/ci.yml. Automated quality assurance.</td></tr>
-</tbody>
-</table>
-<p class="small dim" style="margin-top:8px">2510 tests, 0 failures, 0 clippy warnings, 215 source files.</p>
+<p class="small dim" style="margin-top:8px">Phase 2: 4/4 items complete (2.1-2.4 all HECHO). Phase 3: 3/5 items complete (3.1, 3.2, 3.4 HECHO; 3.3, 3.5 PARCIAL). 2485 tests (+27), 0 failures, 0 clippy warnings, 213 source files.</p>
 </div>
 
 <div class="card" style="border-left: 4px solid #10b981;">
 <h3 style="color:#10b981">Strategic Recommendations (Updated Feb 2026)</h3>
 <ul>
-  <li><strong>Publish to crates.io</strong> &mdash; With 39/39 gaps closed, 2510 tests, 215 source files, v2 Phase 1 provider expansion (15+ providers including native Gemini), v2 Phases 2-3 (AsyncProviderPlugin, LLM-as-Judge, unified tool calling, GuardrailPipeline), and v2 Phase 4 (CI/CD), ai_assistant is the most comprehensive Rust AI library. A 0.1.0 release would be highly competitive.</li>
+  <li><strong>Publish to crates.io</strong> &mdash; With 39/39 gaps closed, 2485 tests, 213 source files, v2 Phase 1 provider expansion (15+ providers including native Gemini), and v2 Phases 2-3 (AsyncProviderPlugin + LLM-as-Judge), ai_assistant is the most comprehensive Rust AI library. A 0.1.0 release would be highly competitive.</li>
   <li><s><strong>Adopt rmcp</strong></s> &mdash; <span class="text-green">DONE.</span> MCP upgraded to 2025-03-26 spec.</li>
   <li><s><strong>Generic OpenAI-compatible adapter</strong></s> &mdash; <span class="text-green">DONE.</span> Now 7 presets: Groq, Together, Fireworks, DeepSeek, Mistral, Perplexity, OpenRouter (v2 Phase 1).</li>
-  <li><strong>Position as "LangChain for Rust"</strong> &mdash; With 15+ LLM providers (including native GeminiProvider, EmbeddingProvider trait with 4 backends, AsyncProviderPlugin with sync/async bridge, unified tool calling), 7 vector DBs, 12+ document formats, full MCP support, JSON Schema structured output, LLM-as-Judge evaluation, GuardrailPipeline (6 guards), model registry, and CI/CD, the "full-stack" claim is backed by comprehensive coverage.</li>
+  <li><strong>Position as "LangChain for Rust"</strong> &mdash; With 15+ LLM providers (including native GeminiProvider, EmbeddingProvider trait with 4 backends, AsyncProviderPlugin with sync/async bridge), 7 vector DBs, 12+ document formats, full MCP support, JSON Schema structured output, LLM-as-Judge evaluation, and model registry, the "full-stack" claim is backed by comprehensive coverage.</li>
   <li><strong>Leverage distributed uniqueness</strong> &mdash; No competitor has built-in P2P, CRDTs, or QUIC. Distributed agents now fully wired. This is a differentiator worth marketing.</li>
-  <li><strong>Security-first messaging</strong> &mdash; Our zero-dependency crypto stack (SHA-256, HMAC-SHA256, AES-256-GCM) plus RBAC, PII, Constitutional AI, bias detection, and now a full GuardrailPipeline with 6 built-in guards (content length, rate limit, pattern, toxicity, PII, attack) is unmatched. Webhook signatures are production-grade. Enterprise buyers care deeply about this.</li>
-  <li><strong>Address remaining gaps honestly</strong> &mdash; Audio/speech support is the only significant remaining gap for competitive parity. All 39/39 roadmap items are complete. v2 Phase 1 expanded provider coverage to 15+ providers with native Gemini, EmbeddingProvider trait, and 7 OpenAI-compatible presets. v2 Phases 2-3 added async provider interface, LLM-as-Judge evaluation, unified tool calling (Ollama + PromptToolFallback), and GuardrailPipeline. v2 Phase 4 added CI/CD. Community and ecosystem growth are the main areas for improvement.</li>
+  <li><strong>Security-first messaging</strong> &mdash; Our zero-dependency crypto stack (SHA-256, HMAC-SHA256, AES-256-GCM) plus RBAC, PII, Constitutional AI, and bias detection is unmatched. Webhook signatures are production-grade. Enterprise buyers care deeply about this.</li>
+  <li><strong>Address remaining gaps honestly</strong> &mdash; Audio/speech support is the only significant remaining gap for competitive parity. All 39/39 roadmap items are complete. v2 Phase 1 expanded provider coverage to 15+ providers with native Gemini, EmbeddingProvider trait, and 7 OpenAI-compatible presets. v2 Phases 2-3 added async provider interface and LLM-as-Judge evaluation. Community and ecosystem growth are the main areas for improvement.</li>
 </ul>
 </div>
 </div>
@@ -1982,7 +1955,7 @@ function showTab(name) {
 </script>
 
 <p class="dim small" style="text-align:center; margin-top:30px; padding-top:16px; border-top:1px solid var(--border);">
-  Updated 2026-02-21 (v2 Phases 3-4) &bull; ai_assistant Framework Comparison &bull;
+  Updated 2026-02-21 (v2 Phases 2-3) &bull; ai_assistant Framework Comparison &bull;
   Data sources: GitHub, official docs, crates.io, PyPI, npm, web research
 </p>
 

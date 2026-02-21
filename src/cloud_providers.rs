@@ -30,6 +30,13 @@ pub fn resolve_api_key(config: &AiConfig) -> Result<String> {
             AiProvider::Anthropic => "ANTHROPIC_API_KEY",
             AiProvider::Gemini => "GOOGLE_API_KEY",
             AiProvider::Bedrock { .. } => "AWS_ACCESS_KEY_ID",
+            AiProvider::Groq => "GROQ_API_KEY",
+            AiProvider::Together => "TOGETHER_API_KEY",
+            AiProvider::Fireworks => "FIREWORKS_API_KEY",
+            AiProvider::DeepSeek => "DEEPSEEK_API_KEY",
+            AiProvider::Mistral => "MISTRAL_API_KEY",
+            AiProvider::Perplexity => "PERPLEXITY_API_KEY",
+            AiProvider::OpenRouter => "OPENROUTER_API_KEY",
             _ => "API_KEY",
         };
         anyhow::anyhow!(
@@ -332,6 +339,13 @@ pub fn generate_cloud_response(
         AiProvider::OpenAI => generate_openai_cloud(config, messages, system_prompt),
         AiProvider::Anthropic => generate_anthropic_cloud(config, messages, system_prompt),
         AiProvider::Gemini => generate_gemini_cloud(config, messages, system_prompt),
+        AiProvider::Groq
+        | AiProvider::Together
+        | AiProvider::Fireworks
+        | AiProvider::DeepSeek
+        | AiProvider::Mistral
+        | AiProvider::Perplexity
+        | AiProvider::OpenRouter => generate_openai_cloud(config, messages, system_prompt),
         AiProvider::Bedrock { .. } => {
             anyhow::bail!("AWS Bedrock requires the `aws-bedrock` feature flag.")
         }
@@ -354,6 +368,47 @@ pub fn fetch_cloud_models(config: &AiConfig) -> Result<Vec<String>> {
             "anthropic.claude-3-opus-20240229-v1:0".to_string(),
             "amazon.titan-text-express-v1".to_string(),
             "meta.llama3-1-70b-instruct-v1:0".to_string(),
+        ]),
+        AiProvider::Groq => Ok(vec![
+            "llama-3.3-70b-versatile".to_string(),
+            "llama-3.1-8b-instant".to_string(),
+            "mixtral-8x7b-32768".to_string(),
+            "gemma2-9b-it".to_string(),
+        ]),
+        AiProvider::Together => Ok(vec![
+            "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo".to_string(),
+            "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo".to_string(),
+            "mistralai/Mixtral-8x7B-Instruct-v0.1".to_string(),
+            "Qwen/Qwen2.5-72B-Instruct-Turbo".to_string(),
+        ]),
+        AiProvider::Fireworks => Ok(vec![
+            "accounts/fireworks/models/llama-v3p1-70b-instruct".to_string(),
+            "accounts/fireworks/models/llama-v3p1-8b-instruct".to_string(),
+            "accounts/fireworks/models/mixtral-8x7b-instruct".to_string(),
+        ]),
+        AiProvider::DeepSeek => Ok(vec![
+            "deepseek-chat".to_string(),
+            "deepseek-coder".to_string(),
+            "deepseek-reasoner".to_string(),
+        ]),
+        AiProvider::Mistral => Ok(vec![
+            "mistral-large-latest".to_string(),
+            "mistral-medium-latest".to_string(),
+            "mistral-small-latest".to_string(),
+            "codestral-latest".to_string(),
+            "open-mistral-nemo".to_string(),
+        ]),
+        AiProvider::Perplexity => Ok(vec![
+            "sonar-pro".to_string(),
+            "sonar".to_string(),
+            "sonar-reasoning-pro".to_string(),
+            "sonar-reasoning".to_string(),
+        ]),
+        AiProvider::OpenRouter => Ok(vec![
+            "openai/gpt-4o".to_string(),
+            "anthropic/claude-3.5-sonnet".to_string(),
+            "meta-llama/llama-3.1-70b-instruct".to_string(),
+            "google/gemini-2.0-flash-001".to_string(),
         ]),
         _ => anyhow::bail!(
             "{} is not a cloud provider.",
