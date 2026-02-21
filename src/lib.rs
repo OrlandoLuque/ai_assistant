@@ -491,6 +491,8 @@ pub mod interactive_commands;
 #[cfg(feature = "autonomous")]
 pub mod mode_manager;
 #[cfg(feature = "autonomous")]
+pub mod container_tools;
+#[cfg(feature = "autonomous")]
 pub mod os_tools;
 #[cfg(feature = "scheduler")]
 pub mod scheduler;
@@ -1689,3 +1691,68 @@ pub use binary_integrity::{
     hash_bytes, hash_file, startup_integrity_check, IntegrityChecker, IntegrityConfig,
     IntegrityResult,
 };
+
+// =============================================================================
+// SHARED FOLDER (host/container file sharing)
+// =============================================================================
+
+#[cfg(feature = "containers")]
+pub mod shared_folder;
+
+#[cfg(feature = "containers")]
+pub use shared_folder::SharedFolder;
+
+// =============================================================================
+// CONTAINER EXECUTOR (Docker-based sandboxed execution)
+// =============================================================================
+
+#[cfg(feature = "containers")]
+pub mod container_executor;
+
+#[cfg(feature = "containers")]
+pub use container_executor::{
+    ContainerCleanupPolicy, ContainerConfig, ContainerError, ContainerExecutor, ContainerRecord,
+    ContainerStatus, CreateOptions, ExecResult, NetworkMode,
+};
+
+// =============================================================================
+// CONTAINER SANDBOX (Docker-based isolated code execution)
+// =============================================================================
+
+#[cfg(feature = "containers")]
+pub mod container_sandbox;
+
+#[cfg(feature = "containers")]
+pub use container_sandbox::{
+    ContainerSandbox, ContainerSandboxConfig, ExecutionBackend,
+};
+
+// =============================================================================
+// DOCUMENT PIPELINE (container-based document creation & conversion)
+// =============================================================================
+
+#[cfg(feature = "containers")]
+pub mod document_pipeline;
+
+#[cfg(feature = "containers")]
+pub use document_pipeline::{
+    DocumentError, DocumentPipeline, DocumentPipelineConfig, DocumentRequest, DocumentResult,
+    OutputFormat as DocumentOutputFormat, SourceFormat,
+};
+
+// =============================================================================
+// SPEECH (STT / TTS via cloud APIs)
+// =============================================================================
+
+#[cfg(feature = "audio")]
+pub mod speech;
+
+#[cfg(feature = "audio")]
+pub use speech::{
+    create_speech_provider, AudioFormat, CoquiTtsProvider, GoogleSpeechProvider,
+    LocalSpeechProvider, OpenAISpeechProvider, PiperTtsProvider, SpeechConfig, SpeechProvider,
+    SynthesisOptions, SynthesisResult, TranscriptionResult, TranscriptionSegment,
+};
+
+#[cfg(feature = "whisper-local")]
+pub use speech::WhisperLocalProvider;

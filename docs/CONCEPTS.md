@@ -61,6 +61,10 @@ Read this for understanding, inspiration, and to demystify the magic.
 51. [Embedding Providers: Local vs. Remote Embeddings](#51-embedding-providers-local-vs-remote-embeddings)
 52. [LLM-as-Judge: Automated Quality Evaluation](#52-llm-as-judge-automated-quality-evaluation)
 53. [Guardrail Pipelines: Safety at Every Stage](#53-guardrail-pipelines-safety-at-every-stage)
+54. [Container Isolation: Real Process Boundaries](#54-container-isolation-real-process-boundaries)
+55. [Shared Folders: Host/Container File Exchange](#55-shared-folders-hostcontainer-file-exchange)
+56. [Speech Pipeline: Unified STT and TTS](#56-speech-pipeline-unified-stt-and-tts)
+57. [Whisper Local: Offline Speech Recognition](#57-whisper-local-offline-speech-recognition)
 
 ---
 
@@ -2223,3 +2227,27 @@ The six built-in guards cover the most common safety needs, but the `Guard` trai
 ### Audit Trail
 
 When violation logging is enabled, every guard result that meets the block threshold is appended to an internal log. This log is accessible via `violations()` and can be exported for compliance reporting. Each entry records which guard triggered, what it found, the severity score, and human-readable details. This turns the pipeline from a simple pass/fail gate into a compliance and debugging tool.
+
+---
+
+## 54. Container Isolation: Real Process Boundaries
+
+Process-based sandboxing (`CodeSandbox`) runs untrusted code as a child process on the host OS. It can set timeouts and capture output, but the code shares the host filesystem, network stack, and system resources -- a determined program can read files, open sockets, or exhaust memory. `ContainerSandbox` wraps a Docker container around each execution, providing kernel-level namespace isolation: separate filesystem root, no network access by default (`NetworkMode::None`), and configurable CPU/memory limits enforced by the container runtime. The `ExecutionBackend` enum makes this transparent to callers -- `ExecutionBackend::auto()` probes for a running Docker daemon and returns a `Container` variant if available, falling back to `Process` otherwise. This auto-detection pattern means application code never needs to branch on infrastructure availability; the same `execute()` call works in both environments with different isolation guarantees.
+
+---
+
+## 55. Shared Folders: Host/Container File Exchange
+
+Docker containers have isolated filesystems, which raises a practical problem: how does the host send input files to the container, and how does it retrieve output files? `SharedFolder` solves this with a bind-mounted directory -- a host-side directory that appears inside the container at a fixed mount point (default `/workspace`). The host writes input files before execution and reads output files after. `SharedFolder::temp()` creates a temporary directory that is automatically deleted when the struct is dropped, preventing disk accumulation from repeated executions. An optional `max_size_bytes` field provides advisory size limits, checked on demand. For workflows that need results persisted beyond the local machine, `SharedFolder` integrates with the `CloudStorage` trait from `cloud_connectors`, enabling upload to S3 or Google Drive after container execution completes.
+
+---
+
+## 56. Speech Pipeline: Unified STT and TTS
+
+The `SpeechProvider` trait combines speech-to-text (`transcribe`) and text-to-speech (`synthesize`) into a single interface, reflecting the reality that most speech-capable applications need both directions. Providers form a natural hierarchy: cloud APIs (OpenAI Whisper, Google Cloud) offer the highest quality but require API keys and network access; local HTTP servers (Piper for TTS, Coqui for TTS, whisper.cpp for STT) run on the same machine without cloud dependencies; native bindings (`whisper-rs`) run entirely in-process with no HTTP overhead. `LocalSpeechProvider` is a composite that wraps one STT provider and one TTS provider into a single `SpeechProvider`, letting callers mix and match (e.g., whisper-rs for transcription + Piper for synthesis). The `Butler` auto-detection system probes local ports and environment variables to suggest the best available speech configuration, feeding into the autonomous agent setup.
+
+---
+
+## 57. Whisper Local: Offline Speech Recognition
+
+`WhisperLocalProvider` wraps the `whisper-rs` crate, which provides Rust bindings to the C++ `whisper.cpp` library for running OpenAI Whisper models entirely offline. It loads a GGML-format model file (typically 75 MB for `base`, 500 MB for `medium`) into memory and performs inference on CPU. Input audio must be 16 kHz mono PCM float32 -- the `audio_to_f32_pcm` helper function handles WAV file parsing, extracting sample rate and bit depth from the WAV header and converting to the required format. Thread count is configurable via `with_threads()` to balance speed against CPU usage on the host. This provider is gated behind the `whisper-local` feature flag (separate from `audio`) because `whisper-rs` brings in native C++ compilation dependencies that significantly increase build time and require a working C++ toolchain.

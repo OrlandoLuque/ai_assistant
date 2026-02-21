@@ -3422,6 +3422,151 @@ impl AiAssistant {
             hooks.emit(event);
         }
     }
+
+    // === Container Execution ===
+
+    /// Create a new container executor with default configuration.
+    #[cfg(feature = "containers")]
+    pub fn create_container_executor(&self) -> Result<crate::container_executor::ContainerExecutor> {
+        crate::container_executor::ContainerExecutor::new(
+            crate::container_executor::ContainerConfig::default(),
+        )
+        .map_err(|e| anyhow::anyhow!(e))
+    }
+
+    /// Create a container executor with custom configuration.
+    #[cfg(feature = "containers")]
+    pub fn create_container_executor_with_config(
+        &self,
+        config: crate::container_executor::ContainerConfig,
+    ) -> Result<crate::container_executor::ContainerExecutor> {
+        crate::container_executor::ContainerExecutor::new(config)
+            .map_err(|e| anyhow::anyhow!(e))
+    }
+
+    /// Execute code in an isolated Docker container.
+    ///
+    /// Automatically selects the appropriate Docker image based on language.
+    /// Falls back to process-based execution if Docker is unavailable.
+    #[cfg(feature = "containers")]
+    pub fn run_code_isolated(
+        &self,
+        code: &str,
+        language: &crate::code_sandbox::Language,
+    ) -> Result<crate::code_sandbox::ExecutionResult> {
+        let mut sandbox = crate::container_sandbox::ContainerSandbox::new(
+            crate::container_sandbox::ContainerSandboxConfig::default(),
+        )
+        .map_err(|e| anyhow::anyhow!(e))?;
+        Ok(sandbox.execute(language, code))
+    }
+
+    /// Create a shared folder for container file exchange.
+    #[cfg(feature = "containers")]
+    pub fn create_shared_folder(&self) -> Result<crate::shared_folder::SharedFolder> {
+        crate::shared_folder::SharedFolder::temp()
+    }
+
+    // === Document Creation ===
+
+    /// Create a document pipeline with default settings.
+    ///
+    /// Internally creates a `ContainerExecutor` and a temporary `SharedFolder`.
+    #[cfg(feature = "containers")]
+    pub fn create_document_pipeline(
+        &self,
+    ) -> Result<crate::document_pipeline::DocumentPipeline> {
+        let executor = crate::container_executor::ContainerExecutor::new(
+            crate::container_executor::ContainerConfig::default(),
+        )
+        .map_err(|e| anyhow::anyhow!(e))?;
+        let shared_folder = crate::shared_folder::SharedFolder::temp()?;
+        Ok(crate::document_pipeline::DocumentPipeline::new(
+            crate::document_pipeline::DocumentPipelineConfig::default(),
+            std::sync::Arc::new(std::sync::RwLock::new(executor)),
+            shared_folder,
+        ))
+    }
+
+    /// Create a document by converting content to the specified format.
+    ///
+    /// Uses container-based pandoc/LibreOffice for conversion.
+    #[cfg(feature = "containers")]
+    pub fn create_document(
+        &self,
+        content: &str,
+        source_format: crate::document_pipeline::SourceFormat,
+        output_format: crate::document_pipeline::OutputFormat,
+    ) -> Result<crate::document_pipeline::DocumentResult> {
+        let executor = crate::container_executor::ContainerExecutor::new(
+            crate::container_executor::ContainerConfig::default(),
+        )
+        .map_err(|e| anyhow::anyhow!(e))?;
+        let shared_folder = crate::shared_folder::SharedFolder::temp()?;
+        let mut pipeline = crate::document_pipeline::DocumentPipeline::new(
+            crate::document_pipeline::DocumentPipelineConfig::default(),
+            std::sync::Arc::new(std::sync::RwLock::new(executor)),
+            shared_folder,
+        );
+        let request = crate::document_pipeline::DocumentRequest {
+            content: content.to_string(),
+            source_format,
+            output_format,
+            output_name: "document".into(),
+            stylesheet: None,
+            extra_args: Vec::new(),
+            metadata: std::collections::HashMap::new(),
+        };
+        pipeline.create(&request).map_err(|e| anyhow::anyhow!(e))
+    }
+
+    // === Speech (STT / TTS) ===
+
+    /// Transcribe audio to text using the specified speech provider.
+    ///
+    /// # Arguments
+    /// * `provider_name` - Provider name ("openai", "google", "whisper", "local")
+    /// * `audio` - Raw audio bytes
+    /// * `format` - Audio encoding format
+    /// * `language` - Optional language hint (ISO 639-1)
+    #[cfg(feature = "audio")]
+    pub fn transcribe(
+        &self,
+        provider_name: &str,
+        audio: &[u8],
+        format: crate::speech::AudioFormat,
+        language: Option<&str>,
+    ) -> Result<crate::speech::TranscriptionResult> {
+        let provider = crate::speech::create_speech_provider(provider_name)?;
+        provider.transcribe(audio, format, language)
+    }
+
+    /// Synthesize text to audio using the specified speech provider.
+    ///
+    /// # Arguments
+    /// * `provider_name` - Provider name ("openai", "google", "piper", "coqui", "local")
+    /// * `text` - Text to synthesize
+    /// * `options` - Synthesis options (voice, format, speed)
+    #[cfg(feature = "audio")]
+    pub fn synthesize(
+        &self,
+        provider_name: &str,
+        text: &str,
+        options: &crate::speech::SynthesisOptions,
+    ) -> Result<crate::speech::SynthesisResult> {
+        let provider = crate::speech::create_speech_provider(provider_name)?;
+        provider.synthesize(text, options)
+    }
+
+    /// Get the recommended speech configuration from butler (if available).
+    ///
+    /// Returns (stt_provider, tts_provider) suggestions based on detected environment.
+    #[cfg(all(feature = "audio", feature = "butler"))]
+    pub fn suggest_speech_providers(&mut self) -> (Option<String>, Option<String>) {
+        let mut butler = crate::butler::Butler::new();
+        butler.scan();
+        butler.suggest_speech_config()
+    }
 }
 
 /// Generate a conversation summary using the AI model
@@ -3694,5 +3839,59 @@ mod tests {
     fn test_api_key_no_manager_returns_none() {
         let mut ai = AiAssistant::new();
         assert!(ai.get_current_api_key("openai").is_none());
+    }
+
+    // === Container Convenience Tests ===
+
+    #[cfg(feature = "containers")]
+    #[test]
+    fn test_create_shared_folder() {
+        let ai = AiAssistant::new();
+        // SharedFolder::temp() creates a temp dir
+        let folder = ai.create_shared_folder();
+        assert!(folder.is_ok());
+    }
+
+    // === Speech Convenience Tests ===
+
+    #[cfg(feature = "audio")]
+    #[test]
+    fn test_transcribe_unknown_provider() {
+        let ai = AiAssistant::new();
+        let result = ai.transcribe("nonexistent", &[0u8; 10], crate::speech::AudioFormat::Wav, None);
+        assert!(result.is_err());
+    }
+
+    #[cfg(feature = "audio")]
+    #[test]
+    fn test_synthesize_unknown_provider() {
+        let ai = AiAssistant::new();
+        let result = ai.synthesize(
+            "nonexistent",
+            "hello",
+            &crate::speech::SynthesisOptions::default(),
+        );
+        assert!(result.is_err());
+    }
+
+    #[cfg(feature = "audio")]
+    #[test]
+    fn test_transcribe_piper_no_stt() {
+        let ai = AiAssistant::new();
+        // Piper is TTS-only, transcribe should fail
+        let result = ai.transcribe("piper", &[0u8; 10], crate::speech::AudioFormat::Wav, None);
+        assert!(result.is_err());
+    }
+
+    #[cfg(feature = "audio")]
+    #[test]
+    fn test_synthesize_empty_text() {
+        let ai = AiAssistant::new();
+        let result = ai.synthesize(
+            "piper",
+            "",
+            &crate::speech::SynthesisOptions::default(),
+        );
+        assert!(result.is_err());
     }
 }
