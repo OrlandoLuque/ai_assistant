@@ -17,8 +17,6 @@
     - feature_matrix_2026-02-21_0500_pre-v2phase2-3-docs.html (v8 snapshot before v2 Phases 2-3 additions)
     - feature_matrix_2026-02-21_1100_pre-v2phase3-4-completion.html (v9 snapshot before v2 Phases 3-4 completion)
     - feature_matrix.html                                 (v10: v2 Phases 3-4 — Ollama tool calling, PromptToolFallback, GuardrailPipeline (6 guards), CI/CD, 2510 tests, 215 source files)
-    - feature_matrix_2026-02-21_2300_pre-v3-speech-containers.html (v10 snapshot before v3 containers/speech/audio additions)
-    - feature_matrix.html                                 (v11: v3 — ContainerExecutor, ContainerSandbox, SharedFolder, DocumentPipeline, Speech STT/TTS (6 providers), Butler speech detection, CI/CD maturity, 2766 tests, 221 source files)
 -->
 <html lang="es">
 <head>
@@ -722,7 +720,7 @@
 <body>
 
 <h1>AI Assistant &mdash; Matriz Casos de Uso vs Tecnolog&iacute;as</h1>
-<p class="subtitle">v11 (2026-02-21) &mdash; 2766 tests | 6 benchmarks | 20 examples | 221 source files | 0 warnings &mdash; Haz clic en cualquier celda para editarla.</p>
+<p class="subtitle">v10 (2026-02-21) &mdash; 2510 tests | 6 benchmarks | 19 examples | 215 source files | 0 warnings &mdash; Haz clic en cualquier celda para editarla.</p>
 
 <div class="legend">
   <div class="legend-item"><div class="legend-dot" style="background:var(--core)"></div>Core (siempre activo)</div>
@@ -832,16 +830,14 @@
   </table>
 
   <h2>Grupos de tecnolog&iacute;as (filas)</h2>
-  <p>Las filas est&aacute;n organizadas en 12 grupos colapsables:</p>
+  <p>Las filas est&aacute;n organizadas en 10 grupos colapsables:</p>
   <ul>
     <li><strong>Core &amp; Providers</strong> &mdash; Providers de LLM, config, sesiones, HTTP client, AWS Bedrock SigV4, provider plugins (7 presets), model registry, EmbeddingProvider trait (4 backends), GeminiProvider nativo, AsyncProviderPlugin (sync/async bridge), Ollama tool calling nativo, PromptToolFallback</li>
     <li><strong>RAG &amp; Knowledge</strong> &mdash; RAG, embeddings, graphs, documentos (CSV, PPTX, XLSX, EML), feeds, KPKG, pgvector, semantic chunking</li>
     <li><strong>Security &amp; Access Control</strong> &mdash; Sanitizaci&oacute;n, PII, moderaci&oacute;n, RBAC, cifrado, SHA-256/HMAC signing, GuardrailPipeline (6 guards)</li>
     <li><strong>Tools &amp; Agent</strong> &mdash; Tool registry, agentic loop, MCP, prompt chaining</li>
-    <li><strong>Autonomous Agent</strong> &mdash; Loop aut&oacute;nomo, pol&iacute;ticas, sandbox, OS tools, scheduler, butler (con detecci&oacute;n de speech), browser CDP, code sandbox, container tools</li>
+    <li><strong>Autonomous Agent</strong> &mdash; Loop aut&oacute;nomo, pol&iacute;ticas, sandbox, OS tools, scheduler, butler, browser CDP, code sandbox</li>
     <li><strong>Multi-Agent &amp; Orchestration</strong> &mdash; Orquestador, memoria compartida, task decomposition, agentes distribuidos</li>
-    <li><strong>Containers &amp; Documents</strong> &mdash; ContainerExecutor (Docker/bollard), ContainerSandbox (ejecuci&oacute;n aislada), SharedFolder (bind mounts + cloud sync), DocumentPipeline (PDF, DOCX, PPTX via pandoc)</li>
-    <li><strong>Audio &amp; Speech</strong> &mdash; SpeechProvider trait, STT (OpenAI Whisper, whisper.cpp local, Google Cloud), TTS (OpenAI, Google, Piper, Coqui), factory (6 providers)</li>
     <li><strong>Networking &amp; Distribution</strong> &mdash; DHT, CRDT, MapReduce, QUIC, Merkle sync, P2P manager</li>
     <li><strong>HTTP Server &amp; API</strong> &mdash; REST server, SSE, WebSocket, resumable streaming, OpenAPI, webhooks, colas</li>
     <li><strong>Analytics &amp; Evaluation</strong> &mdash; M&eacute;tricas, analytics, confianza, alucinaciones, ensembles, A/B testing, LLM-as-Judge (6 criteria, pairwise, RAG faithfulness), forecasting</li>
@@ -915,9 +911,6 @@
     <tr><td><code>otel</code></td><td>No</td><td>&mdash;</td></tr>
     <tr><td><code>code-sandbox</code></td><td>No</td><td>requiere <code>autonomous</code></td></tr>
     <tr><td><code>cloud-connectors</code></td><td>No</td><td>&mdash;</td></tr>
-    <tr><td><code>containers</code></td><td>No</td><td>bollard, tokio, futures (requiere Docker)</td></tr>
-    <tr><td><code>audio</code></td><td>No</td><td>&mdash;</td></tr>
-    <tr><td><code>whisper-local</code></td><td>No</td><td>whisper-rs (requiere <code>audio</code>)</td></tr>
     <tr><td><code>wasm</code></td><td>No</td><td>web-sys, js-sys, getrandom (solo wasm32)</td></tr>
   </table>
 
@@ -932,9 +925,7 @@
     <li><code>feature_matrix_2026-02-21_pre-v2p1-update.html</code> &mdash; v7 snapshot antes de v2 Phase 1</li>
     <li><code>feature_matrix_2026-02-21_0500_pre-v2phase2-3-docs.html</code> &mdash; v8 snapshot antes de v2 Phases 2-3</li>
     <li><code>feature_matrix_2026-02-21_1100_pre-v2phase3-4-completion.html</code> &mdash; v9 snapshot antes de v2 Phases 3-4 completion</li>
-    <li><code>feature_matrix_2026-02-21_1100_pre-v2phase3-4-completion.html</code> &mdash; v10: v2 Phases 3-4 — Ollama tool calling nativo, PromptToolFallback, GuardrailPipeline (6 guards), CI/CD (GitHub Actions), 2510 tests, 215 source files, 0 warnings</li>
-    <li><code>feature_matrix_2026-02-21_2300_pre-v3-speech-containers.html</code> &mdash; v10 snapshot antes de v3 containers/speech/audio</li>
-    <li><code>feature_matrix.html</code> &mdash; v11 (actual): v3 — ContainerExecutor, ContainerSandbox, SharedFolder, DocumentPipeline, Speech STT/TTS (6 providers), Butler speech detection, CI/CD maturity (matrix testing, coverage, release automation, benchmarks), 2766 tests, 221 source files, 0 warnings</li>
+    <li><code>feature_matrix.html</code> &mdash; v10 (actual): v2 Phases 3-4 — Ollama tool calling nativo, PromptToolFallback, GuardrailPipeline (6 guards), CI/CD (GitHub Actions), 2510 tests, 215 source files, 0 warnings</li>
   </ul>
   <p><strong>Pol&iacute;tica de backups:</strong> antes de cambios significativos, crear copia con formato <code>feature_matrix_YYYY-MM-DD_HHMM_descripcion.html</code>.</p>
 
@@ -1239,10 +1230,10 @@ const GROUPS = [
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['autonomous'],
         notes: 'Feature flag scheduler. Triggers por eventos (archivos, feeds, cron).' },
-      { tech: 'Butler (env auto-detection + speech)', flag: 'butler',
+      { tech: 'Butler (env auto-detection)', flag: 'butler',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['autonomous'],
-        notes: 'Feature flag butler (requiere autonomous). Detección de entorno útil para auto-configuración. v3: WhisperDetector, PiperDetector, CoquiDetector. suggest_speech_config() recomienda mejor combo STT+TTS. 3 nuevas capabilities: whisper_stt, piper_tts, coqui_tts. 1808 lines, 30 tests.' },
+        notes: 'Feature flag butler (requiere autonomous). Detección de entorno útil para auto-configuración.' },
       { tech: 'Browser Tools (CDP)', flag: 'browser',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['autonomous'],
@@ -1251,10 +1242,6 @@ const GROUPS = [
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['autonomous','multi_agent','agent_tools'],
         notes: 'Feature flag code-sandbox (requiere autonomous). Ejecución aislada de código generado por agentes. Sandbox con timeouts, permisos y limpieza automática.' },
-      { tech: 'Container Tools (8 tools)', flag: 'autonomous',
-        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
-        typical: ['autonomous','multi_agent','agent_tools'],
-        notes: 'Feature flag autonomous (+ containers runtime). 8 herramientas registradas en ToolRegistry: container_create, container_start/stop, container_remove, container_exec, container_logs/list, container_run_code. Permission model con auto-approve para owner-agent. 1412 lines, 29 tests. v3 Phase 1.' },
     ]
   },
   {
@@ -1276,80 +1263,6 @@ const GROUPS = [
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['multi_agent','distributed'],
         notes: 'Feature flag distributed-agents (requiere autonomous + distributed-network). Agentes en nodos remotos, wired en lib.rs y AiAssistant.' },
-    ]
-  },
-  {
-    name: 'Containers & Documents',
-    rows: [
-      { tech: 'ContainerExecutor (Docker API / bollard)', flag: 'containers',
-        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
-        typical: ['autonomous','multi_agent','agent_tools'],
-        notes: 'Feature flag containers (dep: bollard, tokio, futures). Docker API client: create, start, stop, remove, exec, logs, list, copy_to, copy_from. ContainerConfig, ContainerCleanupPolicy (max_per_session: 5, max_total: 20), labels managed. Patrón tokio runtime + block_on. 1935 lines, 39 tests. v3 Phase 1.' },
-      { tech: 'ContainerSandbox (isolated code exec)', flag: 'containers',
-        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
-        typical: ['autonomous','multi_agent','agent_tools'],
-        notes: 'Feature flag containers. Drop-in replacement para CodeSandbox con aislamiento Docker real. Misma interfaz ExecutionResult. Images: python:3.12-slim, node:20-slim, ubuntu:24.04. ExecutionBackend enum: Container | Process (auto-detection). 590 lines, 18 tests. v3 Phase 1.' },
-      { tech: 'SharedFolder (bind mounts + cloud sync)', flag: 'containers',
-        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
-        typical: ['autonomous','multi_agent','agent_tools'],
-        notes: 'Feature flag containers. Directorio local bind-mounted en containers en /workspace. sync_to_cloud/sync_from_cloud via CloudStorage trait. Carpetas temporales auto-eliminadas en Drop. Size limit enforcement, content type detection. 822 lines, 21 tests. v3 Phase 1.' },
-      { tech: 'DocumentPipeline (PDF, DOCX, PPTX creation)', flag: 'containers',
-        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
-        typical: ['autonomous','multi_agent','agent_tools'],
-        notes: 'Feature flag containers. OutputFormat: PDF, DOCX, PPTX, XLSX, ODT, HTML, LaTeX, EPUB, PNG, SVG. DocumentRequest + DocumentPipeline crea documentos en container con pandoc/LibreOffice. Docker image: pandoc/extra:latest. Workflow: Markdown/HTML -> pipeline -> output en SharedFolder. sync_to_cloud(). 1140 lines, 20 tests. v3 Phase 2.' },
-    ]
-  },
-  {
-    name: 'Audio & Speech',
-    rows: [
-      { tech: 'SpeechProvider Trait + Types', flag: 'audio',
-        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'na', p2p:'na' },
-        typical: ['basic_chat','autonomous','multi_agent','agent_tools','http_server'],
-        na_reasons: {
-          distributed: 'Audio processing es una operación local del nodo; no tiene sentido distribuir STT/TTS a través de QUIC/CRDT.',
-          p2p: 'El audio se procesa localmente o via API cloud; no se transmite entre peers P2P.',
-        },
-        notes: 'Feature flag audio. SpeechProvider trait: transcribe() (STT) + synthesize() (TTS). AudioFormat (WAV, MP3, OGG, FLAC, PCM, Opus, AAC), TranscriptionResult, SynthesisResult, SynthesisOptions. v3 Phase 3.' },
-      { tech: 'OpenAI Speech (Whisper STT + TTS)', flag: 'audio',
-        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'na', p2p:'na' },
-        typical: ['basic_chat','autonomous','multi_agent','http_server'],
-        na_reasons: {
-          distributed: 'Audio processing es una operación local del nodo; no tiene sentido distribuir STT/TTS a través de QUIC/CRDT.',
-          p2p: 'El audio se procesa localmente o via API cloud; no se transmite entre peers P2P.',
-        },
-        notes: 'Feature flag audio. STT: POST /v1/audio/transcriptions (Whisper). TTS: POST /v1/audio/speech (6 voices: alloy, echo, fable, onyx, nova, shimmer). with_base_url() builder para servidores locales. Multipart upload STT, JSON body TTS. v3 Phase 3.' },
-      { tech: 'Google Cloud Speech (STT + TTS)', flag: 'audio',
-        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'na', p2p:'na' },
-        typical: ['basic_chat','autonomous','multi_agent','http_server'],
-        na_reasons: {
-          distributed: 'Audio processing es una operación local del nodo; no tiene sentido distribuir STT/TTS a través de QUIC/CRDT.',
-          p2p: 'El audio se procesa localmente o via API cloud; no se transmite entre peers P2P.',
-        },
-        notes: 'Feature flag audio. STT: speech.googleapis.com/v1/speech:recognize. TTS: texttospeech.googleapis.com/v1/text:synthesize. Base64 audio encoding/decoding inline sin deps. v3 Phase 3.' },
-      { tech: 'Local Speech (Piper TTS + Coqui TTS)', flag: 'audio',
-        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'na', p2p:'na' },
-        typical: ['basic_chat','autonomous'],
-        na_reasons: {
-          distributed: 'Audio processing es una operación local del nodo; no tiene sentido distribuir STT/TTS a través de QUIC/CRDT.',
-          p2p: 'El audio se procesa localmente o via API cloud; no se transmite entre peers P2P.',
-        },
-        notes: 'Feature flag audio. PiperTtsProvider: TTS local via Piper HTTP server (localhost:5000). CoquiTtsProvider: TTS local via Coqui TTS server (localhost:5002). LocalSpeechProvider: composite STT+TTS combina cualquier par de providers. v3 Phase 3.' },
-      { tech: 'Whisper Local (offline STT)', flag: 'whisper-local',
-        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'na', p2p:'na' },
-        typical: ['basic_chat','autonomous'],
-        na_reasons: {
-          distributed: 'Audio processing es una operación local del nodo; no tiene sentido distribuir STT/TTS a través de QUIC/CRDT.',
-          p2p: 'El audio se procesa localmente o via API cloud; no se transmite entre peers P2P.',
-        },
-        notes: 'Feature flag whisper-local (dep: whisper-rs, requiere audio). WhisperLocalProvider: STT offline via whisper.cpp. Modelos descargables en ~/.cache/whisper/. Sin conexión a internet requerida. v3 Phase 3.' },
-      { tech: 'Speech Factory (6 providers)', flag: 'audio',
-        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'na', p2p:'na' },
-        typical: ['basic_chat','autonomous','multi_agent'],
-        na_reasons: {
-          distributed: 'Audio processing es una operación local del nodo; no tiene sentido distribuir STT/TTS a través de QUIC/CRDT.',
-          p2p: 'El audio se procesa localmente o via API cloud; no se transmite entre peers P2P.',
-        },
-        notes: 'Feature flag audio. create_speech_provider(name) factory con 6 providers: openai, google, piper, coqui, whisper, local. Tools: transcribe_audio, synthesize_speech. Integración con AiAssistant (transcribe(), synthesize(), suggest_speech_providers()). 2245 lines total, 76 tests. v3 Phase 3.' },
     ]
   },
   {
@@ -1585,7 +1498,7 @@ const GROUPS = [
       { tech: 'CI/CD Pipeline (GitHub Actions)', flag: null,
         cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
         typical: ['basic_chat','rag_chat','multi_user','agent_tools','autonomous','multi_agent','http_server','distributed','p2p'],
-        notes: 'Siempre disponible. GitHub Actions CI: check, test, clippy, fmt. v3: feature matrix testing (19 flag combos), cargo-llvm-cov + Codecov, release automation (tag-triggered, softprops/action-gh-release@v2), Criterion benchmark CI (200% regression alert). .github/workflows/ci.yml. v2 Phase 4 + v3 Phase 4.' },
+        notes: 'Siempre disponible. GitHub Actions CI workflow con jobs de check, test, clippy y fmt. Automatización de calidad para todo el proyecto. .github/workflows/ci.yml. v2 Phase 4 (4.4).' },
     ]
   },
 ];

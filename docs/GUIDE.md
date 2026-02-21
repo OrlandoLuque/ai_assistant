@@ -89,6 +89,11 @@ This guide covers every feature in the `ai_assistant` crate. Each section explai
 81. [Cloud Provider Presets](#81-cloud-provider-presets)
 82. [AsyncProviderPlugin](#82-asyncproviderplugin)
 83. [LLM-as-Judge Evaluation](#83-llm-as-judge-evaluation)
+84. [Guardrail Pipeline](#84-guardrail-pipeline)
+85. [Unified Tool Calling](#85-unified-tool-calling)
+86. [Container Execution](#86-container-execution)
+87. [Document Creation Pipeline](#87-document-creation-pipeline)
+88. [Speech — STT and TTS](#88-speech--stt-and-tts)
 
 ---
 
@@ -4496,3 +4501,244 @@ let tool_calls = PromptToolFallback::parse_tool_calls_from_text(&response);
 1. `build_tool_prompt()` appends a structured "Available tools:" section to the system prompt, listing each tool's name, description, and parameters, plus instructions for the LLM to emit `{"tool_call": {"name": "...", "arguments": {...}}}` when it wants to invoke a tool
 2. `parse_tool_calls_from_text()` scans the LLM's text output for JSON objects matching the `tool_call` schema (both inline and inside code blocks), deserializes them, and returns `Vec<ToolCall>` with sequential IDs (`fallback_call_0`, `fallback_call_1`, etc.)
 3. If no tool calls are found, an empty vector is returned -- the response is treated as normal text
+
+---
+
+## 86. Container Execution
+
+**What**: A Docker-based execution engine that provides real process, filesystem, and network isolation for running untrusted code. `ContainerExecutor` is the low-level Docker API client (built on the `bollard` crate). `ContainerSandbox` wraps it to provide the same interface as `CodeSandbox` but with container isolation. `ExecutionBackend` auto-selects between container and process-based execution depending on whether Docker is available. `SharedFolder` provides bind-mounted directories for host/container file exchange.
+
+**Why**: Process-based sandboxing (`CodeSandbox`) relies on OS-level restrictions that are limited on some platforms — code can still read files, use the network, or interfere with other processes. Docker containers provide true isolation: separate filesystem, no network (by default), memory and CPU limits, and automatic cleanup. `ExecutionBackend::auto()` makes the choice transparent: if Docker is running, you get container isolation; if not, you fall back to process isolation without changing your code.
+
+**Feature gate**: `containers` — **not** included in `full` (requires Docker daemon and the `bollard` crate)
+
+**Core types**:
+
+| Type | Role |
+|------|------|
+| `ContainerExecutor` | Low-level Docker API: create, start, stop, exec, logs, upload/download files |
+| `ContainerConfig` | Executor settings: Docker socket URL, default timeouts, resource limits |
+| `ContainerSandbox` | High-level sandbox: wraps `ContainerExecutor`, same API as `CodeSandbox` |
+| `ContainerSandboxConfig` | Sandbox settings: Docker image per language, reuse policy, shared folder path |
+| `ExecutionBackend` | Auto-selecting backend: `Container(ContainerSandbox)` or `Process(CodeSandbox)` |
+| `SharedFolder` | Bind-mounted directory for host/container file exchange, optional cloud sync |
+| `NetworkMode` | Container network policy: `None` (isolated), `Bridge`, `Host`, `Custom(name)` |
+| `CreateOptions` | Per-container overrides: env vars, port mappings, bind mounts, resource limits |
+
+**Container tools**: 8 tools registered in the `ToolRegistry` via `register_container_tools()`:
+
+| Tool | Description |
+|------|-------------|
+| `container_create` | Create a new container from an image |
+| `container_start` | Start a stopped container |
+| `container_stop` | Stop a running container |
+| `container_remove` | Remove a container |
+| `container_exec` | Execute a command inside a running container |
+| `container_logs` | Retrieve container logs |
+| `container_list` | List all managed containers |
+| `container_run_code` | Write code to a file and execute it in a container |
+
+**Creating and using a container executor**:
+
+```rust
+use ai_assistant::{ContainerExecutor, ContainerConfig};
+use ai_assistant::container_executor::CreateOptions;
+use std::time::Duration;
+
+let config = ContainerConfig::default();
+let mut executor = ContainerExecutor::new(config)?;
+
+// Create and start a container
+let id = executor.create("python:3.12-slim", "my_sandbox", CreateOptions::default())?;
+executor.start(&id)?;
+
+// Execute code inside the container
+let result = executor.exec(&id, &["python", "-c", "print('hello')"], Duration::from_secs(30))?;
+assert_eq!(result.exit_code, 0);
+assert!(result.stdout.contains("hello"));
+
+// Cleanup
+executor.stop(&id, 10)?;
+executor.remove(&id, false)?;
+```
+
+**Using the auto-selecting backend**:
+
+```rust
+use ai_assistant::container_sandbox::{ExecutionBackend, ContainerSandboxConfig};
+use ai_assistant::code_sandbox::Language;
+
+// Auto-detect: uses Docker if available, falls back to process
+let mut backend = ExecutionBackend::auto();
+println!("Using backend: {}", backend.backend_name()); // "container" or "process"
+
+let result = backend.execute(&Language::Python, "print(2 + 2)");
+assert!(result.stdout.contains("4"));
+```
+
+**Shared folder for file exchange**:
+
+```rust
+use ai_assistant::SharedFolder;
+
+let folder = SharedFolder::temp()?;
+folder.put_file("input.txt", b"some data")?;
+
+// Mount into a container via bind_mount_spec()
+let mount_spec = folder.bind_mount_spec();
+// e.g. "/tmp/ai_shared_abc123:/workspace"
+
+// After container runs, read output files
+let output = folder.get_file("result.csv")?;
+```
+
+---
+
+## 87. Document Creation Pipeline
+
+**What**: A container-based document generation and conversion pipeline. `DocumentPipeline` uses Docker containers equipped with Pandoc, LibreOffice, and wkhtmltopdf to convert Markdown or HTML content into professional document formats: PDF, DOCX, PPTX, XLSX, ODT, HTML, LaTeX, EPUB, PNG, and SVG.
+
+**Why**: Generating documents beyond plain text is a common need for AI assistants — creating reports, slide decks, spreadsheets, and PDFs from LLM output. Rather than depending on platform-specific tools installed on the host, the pipeline runs everything inside Docker containers that have the necessary tools pre-installed. This works identically on any OS that runs Docker.
+
+**Feature gate**: `containers` (same as container execution — uses Docker under the hood)
+
+**Core types**:
+
+| Type | Role |
+|------|------|
+| `DocumentPipeline` | Main entry point: manages containers and conversion workflow |
+| `DocumentPipelineConfig` | Settings: container image, timeouts, default stylesheet, resource limits |
+| `DocumentRequest` | What to create: content + output format + optional name/metadata/stylesheet |
+| `DocumentResult` | Result: output bytes + file path in shared folder + metadata |
+| `OutputFormat` | Target format: `Pdf`, `Docx`, `Pptx`, `Xlsx`, `Odt`, `Html`, `Latex`, `Epub`, `Png`, `Svg` |
+| `SourceFormat` | Input format: `Markdown`, `Html`, `Latex`, `ReStructuredText` |
+| `DocumentError` | Error type: container, conversion, format, and I/O errors |
+
+**Creating a document from Markdown**:
+
+```rust
+use ai_assistant::{DocumentPipeline, DocumentPipelineConfig, DocumentRequest, SourceFormat};
+use ai_assistant::document_pipeline::OutputFormat;
+
+let config = DocumentPipelineConfig::default();
+let mut pipeline = DocumentPipeline::new(config)?;
+
+let request = DocumentRequest::new("# Quarterly Report\n\nRevenue increased by 15%.", OutputFormat::Pdf)
+    .with_name("Q4_report")
+    .with_source_format(SourceFormat::Markdown);
+
+let result = pipeline.create(&request)?;
+println!("PDF created: {} bytes", result.output.len());
+```
+
+**Batch document creation**:
+
+```rust
+let requests = vec![
+    DocumentRequest::new("# Report", OutputFormat::Pdf),
+    DocumentRequest::new("# Report", OutputFormat::Docx),
+    DocumentRequest::new("<h1>Slides</h1>", OutputFormat::Pptx)
+        .with_source_format(SourceFormat::Html),
+];
+
+let results = pipeline.create_batch(&requests)?;
+for r in &results {
+    println!("{}: {} bytes", r.file_path.display(), r.output.len());
+}
+```
+
+**Converting between formats**:
+
+```rust
+let pdf_bytes = std::fs::read("input.docx")?;
+let result = pipeline.convert(&pdf_bytes, "input.docx", OutputFormat::Pdf)?;
+```
+
+**Workflow**: The pipeline writes the source content into a `SharedFolder`, runs the appropriate conversion tool (Pandoc for Markdown/LaTeX to PDF/DOCX/EPUB, LibreOffice for PPTX/XLSX/ODT, wkhtmltopdf for HTML to PDF/PNG) inside a Docker container, and reads the output file back from the shared folder.
+
+---
+
+## 88. Speech — STT and TTS
+
+**What**: A unified speech-to-text (STT) and text-to-speech (TTS) system. The `SpeechProvider` trait defines `transcribe()` (audio bytes to text) and `synthesize()` (text to audio bytes). Six provider implementations cover cloud APIs, local HTTP servers, and native offline inference.
+
+**Why**: Voice interfaces, audio transcription, and accessibility features are increasingly common in AI applications. Rather than coupling to a single speech API, this module provides a trait-based abstraction so you can swap providers based on requirements: cloud for quality, local for privacy, offline for air-gapped environments.
+
+**Feature gate**: `audio` for cloud providers (OpenAI, Google) and local HTTP providers (Piper, Coqui). `whisper-local` for offline STT via `whisper-rs` native bindings (heavy dependency, requires GGML model files).
+
+**Provider matrix**:
+
+| Provider | STT | TTS | Requires |
+|----------|-----|-----|----------|
+| `OpenAISpeechProvider` | Whisper API | TTS API | `audio` + `OPENAI_API_KEY` |
+| `GoogleSpeechProvider` | Cloud Speech-to-Text v1 | Cloud Text-to-Speech v1 | `audio` + `GOOGLE_API_KEY` |
+| `PiperTtsProvider` | -- | Piper HTTP server | `audio` + local Piper (port 5000) |
+| `CoquiTtsProvider` | -- | Coqui HTTP server | `audio` + local Coqui (port 5002) |
+| `WhisperLocalProvider` | whisper-rs (offline) | -- | `whisper-local` + GGML model file |
+| `LocalSpeechProvider` | composite | composite | `audio` — wraps one STT + one TTS provider |
+
+**Core types**:
+
+| Type | Role |
+|------|------|
+| `SpeechProvider` trait | Unified interface: `transcribe()` + `synthesize()` + `name()` |
+| `AudioFormat` | Audio encoding: `Wav`, `Mp3`, `Ogg`, `Flac`, `Pcm`, `Opus`, `Aac` |
+| `SpeechConfig` | Provider configuration: API key, base URL, model names, timeouts |
+| `TranscriptionResult` | STT output: text + language + duration + optional segments |
+| `TranscriptionSegment` | Timestamped segment: start/end time + text |
+| `SynthesisOptions` | TTS options: voice, speed, language |
+| `SynthesisResult` | TTS output: audio bytes + format + duration |
+
+**Transcribing audio (OpenAI Whisper)**:
+
+```rust
+use ai_assistant::{OpenAISpeechProvider, SpeechProvider, AudioFormat};
+
+let provider = OpenAISpeechProvider::from_env()?;
+let audio_bytes = std::fs::read("meeting.wav")?;
+let result = provider.transcribe(&audio_bytes, AudioFormat::Wav, Some("es"))?;
+println!("Transcription: {}", result.text);
+```
+
+**Synthesizing speech (OpenAI TTS)**:
+
+```rust
+use ai_assistant::speech::SynthesisOptions;
+
+let audio = provider.synthesize("Hello, welcome to the meeting.", &SynthesisOptions::default())?;
+std::fs::write("greeting.mp3", &audio.audio_data)?;
+```
+
+**Using a local whisper.cpp server**:
+
+```rust
+use ai_assistant::OpenAISpeechProvider;
+
+// whisper.cpp exposes an OpenAI-compatible /v1/audio/transcriptions endpoint
+let local = OpenAISpeechProvider::new("no-key")
+    .with_base_url("http://localhost:8080");
+let result = local.transcribe(&audio_bytes, AudioFormat::Wav, None)?;
+```
+
+**Offline STT with whisper-rs (requires `whisper-local` feature)**:
+
+```rust
+use ai_assistant::speech::WhisperLocalProvider;
+
+let provider = WhisperLocalProvider::new("/models/ggml-base.bin")
+    .with_language("en")
+    .with_threads(4);
+let result = provider.transcribe(&audio_bytes, AudioFormat::Wav, None)?;
+```
+
+**Factory function**:
+
+```rust
+use ai_assistant::speech::create_speech_provider;
+
+let provider = create_speech_provider("openai")?;  // or "google", "piper", "coqui", "whisper", "local"
+```
+
+The `"local"` variant automatically composes the best available local providers: Piper or Coqui for TTS (whichever server is running), and whisper-rs for STT (if the `whisper-local` feature is enabled and `WHISPER_MODEL_PATH` is set).
+
+**Butler integration**: When the `butler` feature is enabled, `Butler::suggest_speech_config()` scans the local environment for available speech engines (Piper on port 5000, Coqui on port 5002, whisper.cpp server, GGML model files) and returns `(Option<stt_name>, Option<tts_name>)` suggestions. This powers auto-configuration in the autonomous agent setup.

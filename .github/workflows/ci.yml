@@ -20,7 +20,7 @@ jobs:
       - name: Check (lightweight features)
         run: cargo check --features full
       - name: Check (all features)
-        run: cargo check --features "full,autonomous,scheduler,butler,browser,distributed-agents,distributed-network"
+        run: cargo check --features "full,autonomous,scheduler,butler,browser,distributed-agents,distributed-network,containers,audio"
 
   test:
     name: Tests
@@ -30,7 +30,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Run tests
-        run: cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents" --lib
+        run: cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio" --lib
 
   clippy:
     name: Clippy
@@ -42,7 +42,7 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: Run clippy
-        run: cargo clippy --features "full,autonomous,scheduler,butler,browser,distributed-agents" -- -W clippy::all
+        run: cargo clippy --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio" -- -W clippy::all
 
   fmt:
     name: Format
@@ -54,3 +54,98 @@ jobs:
           components: rustfmt
       - name: Check formatting
         run: cargo fmt -- --check
+
+  feature-matrix:
+    name: Feature Matrix (${{ matrix.features }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        features:
+          - "core"
+          - "multi-agent"
+          - "security"
+          - "analytics"
+          - "vision"
+          - "embeddings"
+          - "advanced-streaming"
+          - "adapters"
+          - "tools"
+          - "documents"
+          - "eval"
+          - "rag"
+          - "distributed"
+          - "autonomous"
+          - "autonomous,scheduler"
+          - "autonomous,butler"
+          - "autonomous,browser"
+          - "containers"
+          - "audio"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.features }}
+      - name: Check ${{ matrix.features }}
+        run: cargo check --features "${{ matrix.features }}"
+      - name: Test ${{ matrix.features }}
+        run: cargo test --features "${{ matrix.features }}" --lib
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: Swatinem/rust-cache@v2
+      - name: Generate coverage
+        run: cargo llvm-cov --features "full,autonomous,scheduler,butler,browser,distributed-agents" --lib --lcov --output-path lcov.info
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files: lcov.info
+          fail_ci_if_error: false
+
+  benchmark:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run benchmarks
+        run: cargo bench --features full -- --output-format bencher | tee output.txt
+      - name: Store benchmark results
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          tool: 'cargo'
+          output-file-path: output.txt
+          alert-threshold: '200%'
+          comment-on-alert: true
+          fail-on-alert: false
+          auto-push: false
+
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [check, test, clippy, fmt]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run full test suite
+        run: cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio" --lib
+      - name: Build release
+        run: cargo build --release --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio"
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          draft: false
+          prerelease: false

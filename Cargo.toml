@@ -147,6 +147,17 @@ code-sandbox = ["autonomous"]
 # Cloud connectors: S3 and Google Drive storage integration
 cloud-connectors = []
 
+# Container execution: Docker-based sandboxed code execution and document generation
+# Not in 'full' by default — requires Docker installed. Opt-in: --features containers
+containers = ["dep:bollard", "dep:tokio", "dep:futures"]
+
+# Audio/Speech: STT (speech-to-text) and TTS (text-to-speech) via cloud APIs
+audio = []
+
+# Local Whisper STT: offline speech-to-text via whisper.cpp bindings
+# Not in 'full' by default — heavy native C++ dep. Opt-in: --features whisper-local
+whisper-local = ["dep:whisper-rs", "audio"]
+
 [dependencies]
 anyhow = "1"
 log = "0.4"
@@ -201,6 +212,10 @@ web-sys = { version = "0.3", features = ["console", "Window"], optional = true }
 js-sys = { version = "0.3", optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
 getrandom = { version = "0.2", features = ["js"], optional = true }
+# Optional Docker API client for container-based execution
+bollard = { version = "0.18", optional = true, default-features = false, features = ["ssl", "time"] }
+# Optional whisper.cpp bindings for local STT (heavy native dep, links to C++)
+whisper-rs = { version = "0.15", optional = true }
 
 [[bin]]
 name = "ai_test_harness"
@@ -284,6 +299,14 @@ name = "quality_tests"
 
 [[example]]
 name = "streaming"
+
+[[example]]
+name = "container_sandbox"
+required-features = ["containers"]
+
+[[example]]
+name = "document_creation"
+required-features = ["containers"]
 
 [dev-dependencies]
 tempfile = "3"

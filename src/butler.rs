@@ -658,6 +658,212 @@ impl ResourceDetector for NetworkDetector {
     }
 }
 
+/// Detects local Whisper resources: whisper.cpp HTTP server and/or model files.
+pub struct WhisperDetector;
+
+impl ResourceDetector for WhisperDetector {
+    fn name(&self) -> &str {
+        "whisper_local"
+    }
+
+    fn detect(&self) -> DetectionResult {
+        let mut details = HashMap::new();
+        let mut detected = false;
+
+        // 1. Check for whisper.cpp server (default port 8080, OpenAI-compatible)
+        let server_url = std::env::var("WHISPER_SERVER_URL")
+            .unwrap_or_else(|_| "http://localhost:8080".to_string());
+        match ureq::get(&format!("{}/v1/models", server_url))
+            .timeout(std::time::Duration::from_secs(2))
+            .call()
+        {
+            Ok(_) => {
+                details.insert("whisper_server".to_string(), server_url);
+                details.insert("server_available".to_string(), "true".to_string());
+                detected = true;
+            }
+            Err(_) => {
+                details.insert("server_available".to_string(), "false".to_string());
+            }
+        }
+
+        // 2. Check for WHISPER_MODEL_PATH env var
+        if let Ok(model_path) = std::env::var("WHISPER_MODEL_PATH") {
+            let path = std::path::Path::new(&model_path);
+            if path.exists() {
+                details.insert("model_path".to_string(), model_path);
+                details.insert("model_exists".to_string(), "true".to_string());
+                detected = true;
+            } else {
+                details.insert("model_path".to_string(), model_path);
+                details.insert("model_exists".to_string(), "false".to_string());
+            }
+        }
+
+        // 3. Check common whisper model locations
+        let common_paths = [
+            "models/ggml-base.en.bin",
+            "models/ggml-small.en.bin",
+            "models/ggml-medium.en.bin",
+            "models/ggml-large.bin",
+        ];
+        for path_str in &common_paths {
+            let path = std::path::Path::new(path_str);
+            if path.exists() {
+                details.insert("discovered_model".to_string(), path_str.to_string());
+                detected = true;
+                break;
+            }
+        }
+
+        // 4. Check ~/.cache/whisper/ (common download location)
+        if let Some(home) = dirs_home() {
+            let whisper_cache = home.join(".cache").join("whisper");
+            if whisper_cache.is_dir() {
+                if let Ok(entries) = std::fs::read_dir(&whisper_cache) {
+                    let models: Vec<String> = entries
+                        .flatten()
+                        .filter_map(|e| {
+                            let name = e.file_name().to_string_lossy().to_string();
+                            if name.ends_with(".bin") {
+                                Some(name)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    if !models.is_empty() {
+                        details.insert("cached_models".to_string(), models.join(", "));
+                        detected = true;
+                    }
+                }
+            }
+        }
+
+        if !detected {
+            details.insert(
+                "suggestion".to_string(),
+                "Set WHISPER_MODEL_PATH or start whisper.cpp server on port 8080".to_string(),
+            );
+        }
+
+        DetectionResult {
+            detected,
+            details,
+            suggested_config: if detected {
+                Some("whisper-local STT available".to_string())
+            } else {
+                None
+            },
+        }
+    }
+}
+
+/// Detects a local Piper TTS HTTP server.
+pub struct PiperDetector {
+    pub base_url: String,
+}
+
+impl PiperDetector {
+    pub fn new() -> Self {
+        let base_url = std::env::var("PIPER_URL")
+            .unwrap_or_else(|_| "http://localhost:5000".to_string());
+        Self { base_url }
+    }
+}
+
+impl ResourceDetector for PiperDetector {
+    fn name(&self) -> &str {
+        "piper_tts"
+    }
+
+    fn detect(&self) -> DetectionResult {
+        let mut details = HashMap::new();
+        details.insert("url".to_string(), self.base_url.clone());
+
+        match ureq::get(&self.base_url)
+            .timeout(std::time::Duration::from_secs(2))
+            .call()
+        {
+            Ok(_) => {
+                details.insert("available".to_string(), "true".to_string());
+                DetectionResult {
+                    detected: true,
+                    details,
+                    suggested_config: Some("Piper TTS available for local speech synthesis".to_string()),
+                }
+            }
+            Err(ureq::Error::Status(_, _)) => {
+                // Any HTTP status means server is up (e.g. 400 = missing text)
+                details.insert("available".to_string(), "true".to_string());
+                DetectionResult {
+                    detected: true,
+                    details,
+                    suggested_config: Some("Piper TTS available for local speech synthesis".to_string()),
+                }
+            }
+            Err(_) => {
+                details.insert("available".to_string(), "false".to_string());
+                details.insert("error".to_string(), "Connection refused or timeout".to_string());
+                DetectionResult {
+                    detected: false,
+                    details,
+                    suggested_config: None,
+                }
+            }
+        }
+    }
+}
+
+/// Detects a local Coqui TTS HTTP server.
+pub struct CoquiDetector {
+    pub base_url: String,
+}
+
+impl CoquiDetector {
+    pub fn new() -> Self {
+        let base_url = std::env::var("COQUI_URL")
+            .unwrap_or_else(|_| "http://localhost:5002".to_string());
+        Self { base_url }
+    }
+}
+
+impl ResourceDetector for CoquiDetector {
+    fn name(&self) -> &str {
+        "coqui_tts"
+    }
+
+    fn detect(&self) -> DetectionResult {
+        let mut details = HashMap::new();
+        details.insert("url".to_string(), self.base_url.clone());
+
+        match ureq::get(&self.base_url)
+            .timeout(std::time::Duration::from_secs(2))
+            .call()
+        {
+            Ok(resp) => {
+                if resp.status() == 200 {
+                    details.insert("available".to_string(), "true".to_string());
+                    DetectionResult {
+                        detected: true,
+                        details,
+                        suggested_config: Some("Coqui TTS available for local speech synthesis".to_string()),
+                    }
+                } else {
+                    details.insert("available".to_string(), "false".to_string());
+                    details.insert("status".to_string(), resp.status().to_string());
+                    DetectionResult { detected: false, details, suggested_config: None }
+                }
+            }
+            Err(_) => {
+                details.insert("available".to_string(), "false".to_string());
+                details.insert("error".to_string(), "Connection refused or timeout".to_string());
+                DetectionResult { detected: false, details, suggested_config: None }
+            }
+        }
+    }
+}
+
 // =============================================================================
 // Butler
 // =============================================================================
@@ -687,6 +893,9 @@ impl Butler {
             Box::new(GpuDetector),
             Box::new(BrowserDetector),
             Box::new(NetworkDetector),
+            Box::new(WhisperDetector),
+            Box::new(PiperDetector::new()),
+            Box::new(CoquiDetector::new()),
         ];
         Self {
             detectors,
@@ -863,6 +1072,27 @@ impl Butler {
             }
         }
 
+        // Speech — Whisper local STT
+        if let Some(r) = self.cache.get("whisper_local") {
+            if r.detected {
+                capabilities.push("whisper_stt".to_string());
+            }
+        }
+
+        // Speech — Piper TTS
+        if let Some(r) = self.cache.get("piper_tts") {
+            if r.detected {
+                capabilities.push("piper_tts".to_string());
+            }
+        }
+
+        // Speech — Coqui TTS
+        if let Some(r) = self.cache.get("coqui_tts") {
+            if r.detected {
+                capabilities.push("coqui_tts".to_string());
+            }
+        }
+
         let runtime = RuntimeInfo {
             os: std::env::consts::OS.to_string(),
             arch: std::env::consts::ARCH.to_string(),
@@ -1002,6 +1232,71 @@ impl Butler {
             }
         }
     }
+
+    /// Suggest a speech provider configuration based on detected capabilities.
+    ///
+    /// Returns a tuple of (stt_provider_name, tts_provider_name) suggestions.
+    /// Either may be `None` if no suitable provider was detected.
+    pub fn suggest_speech_config(&self) -> (Option<String>, Option<String>) {
+        // STT: prefer local whisper > cloud OpenAI
+        let stt = if self
+            .cache
+            .get("whisper_local")
+            .map(|r| r.detected)
+            .unwrap_or(false)
+        {
+            let has_server = self
+                .cache
+                .get("whisper_local")
+                .and_then(|r| r.details.get("server_available"))
+                .map(|v| v == "true")
+                .unwrap_or(false);
+            if has_server {
+                Some("openai+local".to_string())
+            } else {
+                Some("whisper-local".to_string())
+            }
+        } else if self
+            .cache
+            .get("cloud_api")
+            .and_then(|r| r.details.get("openai"))
+            .map(|v| v == "true")
+            .unwrap_or(false)
+        {
+            Some("openai".to_string())
+        } else {
+            None
+        };
+
+        // TTS: prefer Piper > Coqui > cloud OpenAI
+        let tts = if self
+            .cache
+            .get("piper_tts")
+            .map(|r| r.detected)
+            .unwrap_or(false)
+        {
+            Some("piper".to_string())
+        } else if self
+            .cache
+            .get("coqui_tts")
+            .map(|r| r.detected)
+            .unwrap_or(false)
+        {
+            Some("coqui".to_string())
+        } else if self
+            .cache
+            .get("cloud_api")
+            .and_then(|r| r.details.get("openai"))
+            .map(|v| v == "true")
+            .unwrap_or(false)
+        {
+            Some("openai".to_string())
+        } else {
+            None
+        };
+
+        (stt, tts)
+    }
 }
 
 impl Default for Butler {
@@ -1052,6 +1347,18 @@ fn has_file_with_extension(dir: &Path, ext: &str) -> bool {
         }
     }
     false
+}
+
+/// Get the user's home directory (cross-platform).
+fn dirs_home() -> Option<std::path::PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        std::env::var("USERPROFILE").ok().map(std::path::PathBuf::from)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::env::var("HOME").ok().map(std::path::PathBuf::from)
+    }
 }
 
 // =============================================================================
@@ -1138,8 +1445,8 @@ mod tests {
     #[test]
     fn test_butler_new() {
         let butler = Butler::new();
-        // Should have 9 built-in detectors
-        assert_eq!(butler.detectors.len(), 9);
+        // Should have 12 built-in detectors
+        assert_eq!(butler.detectors.len(), 12);
         assert!(butler.cache.is_empty());
     }
 
@@ -1365,5 +1672,137 @@ mod tests {
                 .map(|v| v == "unavailable")
                 .unwrap_or(false));
         }
+    }
+
+    // ==========================================
+    // Speech detector tests
+    // ==========================================
+
+    #[test]
+    fn test_whisper_detector_name() {
+        let d = WhisperDetector;
+        assert_eq!(d.name(), "whisper_local");
+    }
+
+    #[test]
+    fn test_whisper_detector_returns_valid_result() {
+        let d = WhisperDetector;
+        let result = d.detect();
+        // Structure is valid regardless of detection
+        assert!(result.details.contains_key("server_available"));
+    }
+
+    #[test]
+    fn test_piper_detector_name() {
+        let d = PiperDetector::new();
+        assert_eq!(d.name(), "piper_tts");
+    }
+
+    #[test]
+    fn test_piper_detector_returns_valid_result() {
+        let d = PiperDetector::new();
+        let result = d.detect();
+        assert!(result.details.contains_key("url"));
+        assert!(result.details.contains_key("available"));
+    }
+
+    #[test]
+    fn test_coqui_detector_name() {
+        let d = CoquiDetector::new();
+        assert_eq!(d.name(), "coqui_tts");
+    }
+
+    #[test]
+    fn test_coqui_detector_returns_valid_result() {
+        let d = CoquiDetector::new();
+        let result = d.detect();
+        assert!(result.details.contains_key("url"));
+        assert!(result.details.contains_key("available"));
+    }
+
+    #[test]
+    fn test_butler_has_12_detectors() {
+        let butler = Butler::new();
+        assert_eq!(butler.detectors.len(), 12);
+    }
+
+    #[test]
+    fn test_suggest_speech_config_empty_cache() {
+        let butler = Butler {
+            detectors: vec![],
+            cache: HashMap::new(),
+        };
+        let (stt, tts) = butler.suggest_speech_config();
+        assert!(stt.is_none());
+        assert!(tts.is_none());
+    }
+
+    #[test]
+    fn test_suggest_speech_config_with_piper() {
+        let mut cache = HashMap::new();
+        cache.insert("piper_tts".to_string(), DetectionResult::found({
+            let mut d = HashMap::new();
+            d.insert("available".to_string(), "true".to_string());
+            d
+        }));
+        let butler = Butler {
+            detectors: vec![],
+            cache,
+        };
+        let (stt, tts) = butler.suggest_speech_config();
+        assert!(stt.is_none());
+        assert_eq!(tts, Some("piper".to_string()));
+    }
+
+    #[test]
+    fn test_suggest_speech_config_with_whisper_server() {
+        let mut cache = HashMap::new();
+        cache.insert("whisper_local".to_string(), DetectionResult::found({
+            let mut d = HashMap::new();
+            d.insert("server_available".to_string(), "true".to_string());
+            d
+        }));
+        let butler = Butler {
+            detectors: vec![],
+            cache,
+        };
+        let (stt, tts) = butler.suggest_speech_config();
+        assert_eq!(stt, Some("openai+local".to_string()));
+        assert!(tts.is_none());
+    }
+
+    #[test]
+    fn test_suggest_speech_config_with_coqui() {
+        let mut cache = HashMap::new();
+        cache.insert("coqui_tts".to_string(), DetectionResult::found({
+            let mut d = HashMap::new();
+            d.insert("available".to_string(), "true".to_string());
+            d
+        }));
+        let butler = Butler {
+            detectors: vec![],
+            cache,
+        };
+        let (stt, tts) = butler.suggest_speech_config();
+        assert!(stt.is_none());
+        assert_eq!(tts, Some("coqui".to_string()));
+    }
+
+    #[test]
+    fn test_suggest_speech_config_whisper_model_only() {
+        let mut cache = HashMap::new();
+        cache.insert("whisper_local".to_string(), DetectionResult::found({
+            let mut d = HashMap::new();
+            d.insert("server_available".to_string(), "false".to_string());
+            d.insert("model_exists".to_string(), "true".to_string());
+            d
+        }));
+        let butler = Butler {
+            detectors: vec![],
+            cache,
+        };
+        let (stt, tts) = butler.suggest_speech_config();
+        assert_eq!(stt, Some("whisper-local".to_string()));
+        assert!(tts.is_none());
     }
 }
