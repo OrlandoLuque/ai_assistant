@@ -6,6 +6,7 @@
 
 use anyhow::{Context, Result};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::mpsc::Sender;
 use std::time::Duration;
 
@@ -91,8 +92,8 @@ impl ProviderPlugin for OllamaProvider {
     fn capabilities(&self) -> ProviderCapabilities {
         ProviderCapabilities {
             streaming: true,
-            tool_calling: false, // Ollama has limited tool support
-            vision: true,        // Some models support vision
+            tool_calling: true, // Ollama supports tool calling via /api/chat
+            vision: true,       // Some models support vision
             embeddings: true,
             json_mode: true,
             system_prompt: true,
@@ -222,6 +223,93 @@ impl ProviderPlugin for OllamaProvider {
 
         let _ = tx.send(AiResponse::Complete(full_response));
         Ok(())
+    }
+
+    fn generate_with_tools(
+        &self,
+        config: &AiConfig,
+        messages: &[ChatMessage],
+        system_prompt: &str,
+        tools: &[ToolDefinition],
+    ) -> Result<(String, Vec<ToolCall>)> {
+        let url = format!("{}/api/chat", self.base_url);
+        let msgs = self.build_messages(messages, system_prompt);
+
+        // Build tool schemas in OpenAI-compatible format
+        let tool_schemas: Vec<Value> = tools
+            .iter()
+            .map(|t| {
+                serde_json::json!({
+                    "type": "function",
+                    "function": t.to_openai_function()
+                })
+            })
+            .collect();
+
+        let mut payload = serde_json::json!({
+            "model": config.selected_model,
+            "messages": msgs,
+            "stream": false,
+            "options": {
+                "temperature": config.temperature,
+            }
+        });
+
+        if !tool_schemas.is_empty() {
+            payload["tools"] = Value::Array(tool_schemas);
+        }
+
+        let resp = ureq::post(&url)
+            .timeout(self.timeout)
+            .send_json(&payload)
+            .context("Failed to send tool request to Ollama")?;
+
+        let body: Value = resp.into_json()?;
+
+        // Extract content from message (Ollama puts it directly on message, not choices[0])
+        let content = body
+            .get("message")
+            .and_then(|m| m.get("content"))
+            .and_then(|c| c.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        // Parse tool calls from Ollama response format
+        // Ollama returns tool_calls directly on message (no choices wrapper)
+        let tool_calls = if let Some(tc_array) = body
+            .get("message")
+            .and_then(|m| m.get("tool_calls"))
+            .and_then(|t| t.as_array())
+        {
+            tc_array
+                .iter()
+                .enumerate()
+                .filter_map(|(i, tc)| {
+                    let function = tc.get("function")?;
+                    let name = function.get("name")?.as_str()?.to_string();
+                    // Ollama returns arguments as an object directly, not a JSON string
+                    let arguments: HashMap<String, Value> =
+                        if let Some(args_obj) = function.get("arguments") {
+                            if let Some(s) = args_obj.as_str() {
+                                serde_json::from_str(s).unwrap_or_default()
+                            } else {
+                                serde_json::from_value(args_obj.clone()).unwrap_or_default()
+                            }
+                        } else {
+                            HashMap::new()
+                        };
+                    Some(ToolCall {
+                        name,
+                        arguments,
+                        id: format!("ollama_call_{}", i),
+                    })
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        Ok((content, tool_calls))
     }
 
     fn generate_embeddings(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
@@ -663,6 +751,136 @@ impl ProviderPlugin for TextGenWebUIProvider {
 }
 
 // ============================================================================
+// Prompt-Based Tool Fallback
+// ============================================================================
+
+/// Provides tool calling via prompt engineering for providers without native support.
+///
+/// This helper injects tool definitions into the system prompt and parses
+/// JSON-formatted tool calls from the LLM's text output. This allows any
+/// text-completion provider to participate in tool-calling workflows.
+pub struct PromptToolFallback;
+
+impl PromptToolFallback {
+    /// Builds an augmented system prompt with tool definitions injected.
+    ///
+    /// If `tools` is empty the original prompt is returned unchanged.
+    pub fn build_tool_prompt(system_prompt: &str, tools: &[ToolDefinition]) -> String {
+        if tools.is_empty() {
+            return system_prompt.to_string();
+        }
+
+        let mut prompt = system_prompt.to_string();
+        prompt.push_str("\n\nAvailable tools:\n");
+
+        for tool in tools {
+            let schema = tool.to_openai_function();
+            if let Ok(pretty) = serde_json::to_string_pretty(&schema) {
+                prompt.push_str(&pretty);
+                prompt.push('\n');
+            }
+        }
+
+        prompt.push_str(
+            "\nTo call a tool, respond with a JSON block in this exact format:\n\
+             ```json\n\
+             {\"tool_call\": {\"name\": \"tool_name\", \"arguments\": {\"arg\": \"value\"}}}\n\
+             ```\n\
+             You may include multiple tool_call blocks if needed. \
+             If you do not need to call a tool, respond normally.",
+        );
+
+        prompt
+    }
+
+    /// Parses tool calls from LLM text output.
+    ///
+    /// Looks for JSON objects containing a `"tool_call"` key. Accepts JSON
+    /// both inline and inside fenced code blocks (````json ... ````).
+    pub fn parse_tool_calls_from_text(response: &str) -> Vec<ToolCall> {
+        let mut calls = Vec::new();
+        let mut search = response;
+
+        // Iterate through potential JSON objects in the response
+        while let Some(start) = search.find('{') {
+            if let Some(json_str) = Self::extract_json_object(&search[start..]) {
+                if let Ok(parsed) = serde_json::from_str::<Value>(&json_str) {
+                    if let Some(tc) = parsed.get("tool_call") {
+                        if let Some(name) = tc.get("name").and_then(|n| n.as_str()) {
+                            let arguments: HashMap<String, Value> = tc
+                                .get("arguments")
+                                .and_then(|a| serde_json::from_value(a.clone()).ok())
+                                .unwrap_or_default();
+                            calls.push(ToolCall {
+                                name: name.to_string(),
+                                arguments,
+                                id: format!("fallback_call_{}", calls.len()),
+                            });
+                        }
+                    }
+                }
+                // Advance past this JSON object
+                let consumed = start + json_str.len();
+                if consumed < search.len() {
+                    search = &search[consumed..];
+                } else {
+                    break;
+                }
+            } else {
+                // No valid JSON object found starting here, advance past this brace
+                if start + 1 < search.len() {
+                    search = &search[start + 1..];
+                } else {
+                    break;
+                }
+            }
+        }
+
+        calls
+    }
+
+    /// Extract a balanced JSON object starting from the first `{`.
+    fn extract_json_object(s: &str) -> Option<String> {
+        let bytes = s.as_bytes();
+        if bytes.is_empty() || bytes[0] != b'{' {
+            return None;
+        }
+
+        let mut depth = 0i32;
+        let mut in_string = false;
+        let mut escape_next = false;
+
+        for (i, &b) in bytes.iter().enumerate() {
+            if escape_next {
+                escape_next = false;
+                continue;
+            }
+            if b == b'\\' && in_string {
+                escape_next = true;
+                continue;
+            }
+            if b == b'"' {
+                in_string = !in_string;
+                continue;
+            }
+            if in_string {
+                continue;
+            }
+            if b == b'{' {
+                depth += 1;
+            } else if b == b'}' {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(s[..=i].to_string());
+                }
+            }
+        }
+
+        None
+    }
+}
+
+// ============================================================================
 // Kobold.cpp Provider
 // ============================================================================
 
@@ -733,7 +951,7 @@ impl ProviderPlugin for KoboldCppProvider {
     fn capabilities(&self) -> ProviderCapabilities {
         ProviderCapabilities {
             streaming: true,
-            tool_calling: false,
+            tool_calling: true, // Via prompt-based fallback
             vision: false,
             embeddings: false,
             json_mode: false,
@@ -836,6 +1054,19 @@ impl ProviderPlugin for KoboldCppProvider {
 
         let _ = tx.send(AiResponse::Complete(full_response));
         Ok(())
+    }
+
+    fn generate_with_tools(
+        &self,
+        config: &AiConfig,
+        messages: &[ChatMessage],
+        system_prompt: &str,
+        tools: &[ToolDefinition],
+    ) -> Result<(String, Vec<ToolCall>)> {
+        let augmented_prompt = PromptToolFallback::build_tool_prompt(system_prompt, tools);
+        let response = self.generate(config, messages, &augmented_prompt)?;
+        let tool_calls = PromptToolFallback::parse_tool_calls_from_text(&response);
+        Ok((response, tool_calls))
     }
 }
 
@@ -1340,6 +1571,20 @@ impl OpenAICompatibleProvider {
         provider
     }
 
+    /// Create a Perplexity API provider.
+    ///
+    /// Uses PERPLEXITY_API_KEY from environment.
+    pub fn perplexity() -> Self {
+        Self::from_env("Perplexity", "https://api.perplexity.ai", "PERPLEXITY_API_KEY")
+    }
+
+    /// Create an OpenRouter API provider.
+    ///
+    /// Uses OPENROUTER_API_KEY from environment.
+    pub fn openrouter() -> Self {
+        Self::from_env("OpenRouter", "https://openrouter.ai/api", "OPENROUTER_API_KEY")
+    }
+
     /// Create a provider from environment variable name and base URL.
     pub fn from_env(name: &str, base_url: &str, env_var: &str) -> Self {
         let api_key = std::env::var(env_var).ok();
@@ -1655,5 +1900,195 @@ mod tests {
         assert!(provider.capabilities().embeddings);
         assert!(!provider.capabilities().streaming);
         assert!(!provider.capabilities().tool_calling);
+    }
+
+    // ====================================================================
+    // PromptToolFallback tests
+    // ====================================================================
+
+    #[test]
+    fn test_prompt_tool_fallback_build_prompt() {
+        let tool = ToolDefinition::new("get_weather", "Get the current weather");
+        let result = PromptToolFallback::build_tool_prompt("You are a helpful assistant.", &[tool]);
+        assert!(result.starts_with("You are a helpful assistant."));
+        assert!(result.contains("Available tools:"));
+        assert!(result.contains("get_weather"));
+        assert!(result.contains("tool_call"));
+    }
+
+    #[test]
+    fn test_prompt_tool_fallback_build_prompt_no_tools() {
+        let result =
+            PromptToolFallback::build_tool_prompt("You are a helpful assistant.", &[]);
+        assert_eq!(result, "You are a helpful assistant.");
+    }
+
+    #[test]
+    fn test_prompt_tool_fallback_parse_tool_call() {
+        let response = r#"I'll check the weather for you.
+{"tool_call": {"name": "get_weather", "arguments": {"city": "London"}}}
+"#;
+        let calls = PromptToolFallback::parse_tool_calls_from_text(response);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "get_weather");
+        assert_eq!(
+            calls[0].arguments.get("city").and_then(|v| v.as_str()),
+            Some("London")
+        );
+        assert_eq!(calls[0].id, "fallback_call_0");
+    }
+
+    #[test]
+    fn test_prompt_tool_fallback_parse_tool_call_in_code_block() {
+        let response = r#"Let me look that up.
+```json
+{"tool_call": {"name": "search", "arguments": {"query": "rust programming"}}}
+```
+"#;
+        let calls = PromptToolFallback::parse_tool_calls_from_text(response);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "search");
+        assert_eq!(
+            calls[0].arguments.get("query").and_then(|v| v.as_str()),
+            Some("rust programming")
+        );
+    }
+
+    #[test]
+    fn test_prompt_tool_fallback_parse_no_tool_calls() {
+        let response = "The weather in London is currently sunny with a high of 22C.";
+        let calls = PromptToolFallback::parse_tool_calls_from_text(response);
+        assert!(calls.is_empty());
+    }
+
+    #[test]
+    fn test_prompt_tool_fallback_parse_multiple_tool_calls() {
+        let response = r#"I need to check two things.
+{"tool_call": {"name": "get_weather", "arguments": {"city": "London"}}}
+And also:
+{"tool_call": {"name": "get_time", "arguments": {"timezone": "UTC"}}}
+"#;
+        let calls = PromptToolFallback::parse_tool_calls_from_text(response);
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].name, "get_weather");
+        assert_eq!(calls[1].name, "get_time");
+        assert_eq!(calls[0].id, "fallback_call_0");
+        assert_eq!(calls[1].id, "fallback_call_1");
+    }
+
+    // ====================================================================
+    // Ollama tool calling tests
+    // ====================================================================
+
+    #[test]
+    fn test_ollama_tool_schema_building() {
+        let tool = ToolDefinition::new("get_weather", "Get the current weather");
+        let schema = tool.to_openai_function();
+        assert_eq!(schema.get("name").unwrap().as_str().unwrap(), "get_weather");
+        assert_eq!(
+            schema.get("description").unwrap().as_str().unwrap(),
+            "Get the current weather"
+        );
+        assert!(schema.get("parameters").is_some());
+        assert_eq!(
+            schema
+                .get("parameters")
+                .unwrap()
+                .get("type")
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            "object"
+        );
+    }
+
+    #[test]
+    fn test_ollama_tool_call_response_parsing() {
+        // Simulate Ollama's response format (tool_calls directly on message, not choices)
+        let response_json: Value = serde_json::json!({
+            "message": {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "get_weather",
+                            "arguments": {"city": "Paris", "units": "celsius"}
+                        }
+                    }
+                ]
+            },
+            "done": true
+        });
+
+        // Parse the same way the implementation does
+        let tool_calls: Vec<ToolCall> = if let Some(tc_array) = response_json
+            .get("message")
+            .and_then(|m| m.get("tool_calls"))
+            .and_then(|t| t.as_array())
+        {
+            tc_array
+                .iter()
+                .enumerate()
+                .filter_map(|(i, tc)| {
+                    let function = tc.get("function")?;
+                    let name = function.get("name")?.as_str()?.to_string();
+                    let arguments: HashMap<String, Value> =
+                        if let Some(args_obj) = function.get("arguments") {
+                            if let Some(s) = args_obj.as_str() {
+                                serde_json::from_str(s).unwrap_or_default()
+                            } else {
+                                serde_json::from_value(args_obj.clone()).unwrap_or_default()
+                            }
+                        } else {
+                            HashMap::new()
+                        };
+                    Some(ToolCall {
+                        name,
+                        arguments,
+                        id: format!("ollama_call_{}", i),
+                    })
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0].name, "get_weather");
+        assert_eq!(
+            tool_calls[0].arguments.get("city").and_then(|v| v.as_str()),
+            Some("Paris")
+        );
+        assert_eq!(
+            tool_calls[0]
+                .arguments
+                .get("units")
+                .and_then(|v| v.as_str()),
+            Some("celsius")
+        );
+        assert_eq!(tool_calls[0].id, "ollama_call_0");
+    }
+
+    // ====================================================================
+    // Capability flag tests
+    // ====================================================================
+
+    #[test]
+    fn test_kobold_capabilities_updated() {
+        let provider = KoboldCppProvider::new("http://localhost:5001");
+        assert!(
+            provider.capabilities().tool_calling,
+            "KoboldCpp should report tool_calling: true (via prompt fallback)"
+        );
+    }
+
+    #[test]
+    fn test_ollama_capabilities_updated() {
+        let provider = OllamaProvider::new("http://localhost:11434");
+        assert!(
+            provider.capabilities().tool_calling,
+            "Ollama should report tool_calling: true"
+        );
     }
 }

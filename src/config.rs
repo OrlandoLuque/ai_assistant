@@ -27,6 +27,20 @@ pub enum AiProvider {
     Gemini,
     /// AWS Bedrock (requires AWS credentials)
     Bedrock { region: String },
+    /// Groq cloud API (OpenAI-compatible, requires API key)
+    Groq,
+    /// Together AI cloud API (OpenAI-compatible, requires API key)
+    Together,
+    /// Fireworks AI cloud API (OpenAI-compatible, requires API key)
+    Fireworks,
+    /// DeepSeek cloud API (OpenAI-compatible, requires API key)
+    DeepSeek,
+    /// Mistral AI cloud API (OpenAI-compatible, requires API key)
+    Mistral,
+    /// Perplexity cloud API (OpenAI-compatible, requires API key)
+    Perplexity,
+    /// OpenRouter cloud API (OpenAI-compatible, requires API key)
+    OpenRouter,
 }
 
 impl Default for AiProvider {
@@ -49,6 +63,13 @@ impl AiProvider {
             AiProvider::Anthropic => "Anthropic",
             AiProvider::Gemini => "Google Gemini",
             AiProvider::Bedrock { .. } => "AWS Bedrock",
+            AiProvider::Groq => "Groq",
+            AiProvider::Together => "Together AI",
+            AiProvider::Fireworks => "Fireworks AI",
+            AiProvider::DeepSeek => "DeepSeek",
+            AiProvider::Mistral => "Mistral AI",
+            AiProvider::Perplexity => "Perplexity",
+            AiProvider::OpenRouter => "OpenRouter",
         }
     }
 
@@ -65,6 +86,13 @@ impl AiProvider {
             AiProvider::Anthropic => "🏛️",
             AiProvider::Gemini => "💎",
             AiProvider::Bedrock { .. } => "☁️",
+            AiProvider::Groq => "⚡",
+            AiProvider::Together => "🤝",
+            AiProvider::Fireworks => "🎆",
+            AiProvider::DeepSeek => "🔍",
+            AiProvider::Mistral => "🌬️",
+            AiProvider::Perplexity => "🔮",
+            AiProvider::OpenRouter => "🔀",
         }
     }
 
@@ -77,6 +105,13 @@ impl AiProvider {
                 | AiProvider::LocalAI
                 | AiProvider::OpenAICompatible { .. }
                 | AiProvider::OpenAI
+                | AiProvider::Groq
+                | AiProvider::Together
+                | AiProvider::Fireworks
+                | AiProvider::DeepSeek
+                | AiProvider::Mistral
+                | AiProvider::Perplexity
+                | AiProvider::OpenRouter
         )
     }
 
@@ -88,6 +123,13 @@ impl AiProvider {
                 | AiProvider::Anthropic
                 | AiProvider::Gemini
                 | AiProvider::Bedrock { .. }
+                | AiProvider::Groq
+                | AiProvider::Together
+                | AiProvider::Fireworks
+                | AiProvider::DeepSeek
+                | AiProvider::Mistral
+                | AiProvider::Perplexity
+                | AiProvider::OpenRouter
         )
     }
 }
@@ -165,6 +207,13 @@ impl AiConfig {
             AiProvider::Bedrock { ref region } => {
                 format!("https://bedrock-runtime.{}.amazonaws.com", region)
             }
+            AiProvider::Groq => "https://api.groq.com/openai".to_string(),
+            AiProvider::Together => "https://api.together.xyz".to_string(),
+            AiProvider::Fireworks => "https://api.fireworks.ai/inference".to_string(),
+            AiProvider::DeepSeek => "https://api.deepseek.com".to_string(),
+            AiProvider::Mistral => "https://api.mistral.ai".to_string(),
+            AiProvider::Perplexity => "https://api.perplexity.ai".to_string(),
+            AiProvider::OpenRouter => "https://openrouter.ai/api".to_string(),
         }
     }
 
@@ -191,6 +240,13 @@ impl AiConfig {
                 // Return access key if available.
                 std::env::var("AWS_ACCESS_KEY_ID").ok()
             }
+            AiProvider::Groq => std::env::var("GROQ_API_KEY").ok(),
+            AiProvider::Together => std::env::var("TOGETHER_API_KEY").ok(),
+            AiProvider::Fireworks => std::env::var("FIREWORKS_API_KEY").ok(),
+            AiProvider::DeepSeek => std::env::var("DEEPSEEK_API_KEY").ok(),
+            AiProvider::Mistral => std::env::var("MISTRAL_API_KEY").ok(),
+            AiProvider::Perplexity => std::env::var("PERPLEXITY_API_KEY").ok(),
+            AiProvider::OpenRouter => std::env::var("OPENROUTER_API_KEY").ok(),
             _ => None,
         }
     }

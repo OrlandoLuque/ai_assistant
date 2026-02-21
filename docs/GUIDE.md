@@ -83,6 +83,12 @@ This guide covers every feature in the `ai_assistant` crate. Each section explai
 75. [Examples](#75-examples)
 76. [REPL/CLI, Neural Reranking & A/B Testing](#76-replcli-neural-reranking--ab-testing)
 77. [Cost Tracking & Multi-Modal RAG](#77-cost-tracking--multi-modal-rag)
+78. [UI Framework Hooks](#78-ui-framework-hooks)
+79. [Agent Graph Visualization](#79-agent-graph-visualization)
+80. [Embedding Providers: Unified Embedding API](#80-embedding-providers-unified-embedding-api)
+81. [Cloud Provider Presets](#81-cloud-provider-presets)
+82. [AsyncProviderPlugin](#82-asyncproviderplugin)
+83. [LLM-as-Judge Evaluation](#83-llm-as-judge-evaluation)
 
 ---
 
@@ -4033,3 +4039,460 @@ let critical = GraphAnalytics::critical_path(&graph, &trace);
 | `GraphAnalytics` | Critical path, bottlenecks, utilization |
 
 **Example:** `cargo run --example agent_graph_demo`
+
+---
+
+## 80. Embedding Providers: Unified Embedding API
+
+**What**: A unified `EmbeddingProvider` trait that abstracts over multiple embedding backends, letting you swap between local (TF-IDF) and remote (OpenAI, Ollama, HuggingFace) embeddings without changing application code.
+
+**Why**: Embeddings are separate from text generation. The `ProviderPlugin` trait handles chat/completion, but embedding endpoints have different APIs, dimensions, and batching semantics. A dedicated trait keeps the abstraction clean.
+
+**The trait**:
+
+```rust
+use ai_assistant::embedding_providers::{EmbeddingProvider, create_embedding_provider};
+
+// The trait every provider implements:
+// - embed(&self, text: &str) -> Result<Vec<f32>>
+// - embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>>
+// - dimensions(&self) -> usize
+// - provider_name(&self) -> &str
+```
+
+**Four implementations**:
+
+| Provider | Backend | Dimensions | Network |
+|----------|---------|------------|---------|
+| `LocalTfIdf` | In-process TF-IDF | 100 | No |
+| `OllamaEmbedding` | Ollama `/api/embeddings` | 768+ | Localhost |
+| `OpenAIEmbedding` | OpenAI `/v1/embeddings` | 1536 | Cloud |
+| `HuggingFaceEmbedding` | HuggingFace Inference API | model-dependent | Cloud |
+
+**Factory function**:
+
+```rust
+// Quick construction by name
+let provider = create_embedding_provider("openai", Some("text-embedding-3-small"));
+let provider = create_embedding_provider("local", None); // TF-IDF fallback
+```
+
+**Usage**:
+
+```rust
+let embedder = create_embedding_provider("local", None);
+let vector = embedder.embed("Hello world").unwrap();
+let batch = embedder.embed_batch(&["Hello", "World"]).unwrap();
+assert_eq!(vector.len(), embedder.dimensions());
+```
+
+---
+
+## 81. Cloud Provider Presets
+
+**What**: Seven new `AiProvider` variants (Groq, Together, Fireworks, DeepSeek, Mistral, Perplexity, OpenRouter) with preconfigured base URLs, environment variable names, default models, and context sizes. Plus a dedicated `GeminiProvider` for the Google Gemini native API.
+
+**Why**: Most cloud providers expose OpenAI-compatible endpoints, but each has a different base URL, API key env var, and model naming. Hardcoding these as `AiProvider` variants means zero-config setup -- just set the env var and go.
+
+**New AiProvider variants**:
+
+| Variant | Base URL | Env Var | Default Model | Context |
+|---------|----------|---------|---------------|---------|
+| `Groq` | `api.groq.com/openai/v1` | `GROQ_API_KEY` | `llama-3.3-70b-versatile` | 128K |
+| `Together` | `api.together.xyz/v1` | `TOGETHER_API_KEY` | `meta-llama/Llama-3.3-70B-Instruct-Turbo` | 128K |
+| `Fireworks` | `api.fireworks.ai/inference/v1` | `FIREWORKS_API_KEY` | `accounts/fireworks/models/llama-v3p3-70b-instruct` | 128K |
+| `DeepSeek` | `api.deepseek.com/v1` | `DEEPSEEK_API_KEY` | `deepseek-chat` | 64K |
+| `Mistral` | `api.mistral.ai/v1` | `MISTRAL_API_KEY` | `mistral-large-latest` | 128K |
+| `Perplexity` | `api.perplexity.ai` | `PERPLEXITY_API_KEY` | `sonar-pro` | 200K |
+| `OpenRouter` | `openrouter.ai/api/v1` | `OPENROUTER_API_KEY` | `openai/gpt-4o` | 128K |
+
+**GeminiProvider** (native API):
+
+The `GeminiProvider` implements `ProviderPlugin` for Google's native Gemini API (`generativelanguage.googleapis.com`), supporting:
+- `generateContent` for chat/completion
+- `streamGenerateContent` with SSE streaming
+- `embedContent` for embeddings
+- Function calling (tool_use)
+- Model listing
+
+```rust
+use ai_assistant::gemini_provider::GeminiProvider;
+
+let provider = GeminiProvider::new("your-api-key".to_string());
+let models = provider.list_models(); // Fetches from Gemini API
+```
+
+**Routing**: When `AiProvider::Gemini` is selected, the provider system routes requests through the native `GeminiProvider` instead of the OpenAI-compatible path, ensuring correct request/response format translation.
+
+---
+
+## 82. AsyncProviderPlugin
+
+**What**: An async version of the `ProviderPlugin` trait that uses `Pin<Box<dyn Future>>` return types instead of synchronous returns. This enables non-blocking LLM calls without pulling in the `async-trait` crate.
+
+**Why**: The original `ProviderPlugin` trait is synchronous -- every call blocks the thread until the LLM responds. For applications that need to call multiple providers concurrently, stream responses while doing other work, or run inside an async runtime (Tokio, etc.), blocking is unacceptable. `AsyncProviderPlugin` provides first-class async support without macro magic.
+
+**Feature gate**: `async-runtime`
+
+**Core trait methods**:
+
+```rust
+use ai_assistant::async_provider::{AsyncProviderPlugin, AsyncProviderRegistry};
+
+// The trait every async provider implements:
+// - is_available_async(&self) -> Pin<Box<dyn Future<Output = bool>>>
+// - list_models_async(&self) -> Pin<Box<dyn Future<Output = Result<Vec<ModelInfo>>>>>
+// - generate_async(&self, messages, config) -> Pin<Box<dyn Future<Output = Result<AiResponse>>>>
+// - generate_streaming_async(&self, messages, config) -> Pin<Box<dyn Future<Output = Result<StreamingResponse>>>>
+```
+
+All four core methods return `Pin<Box<dyn Future<Output = T> + Send>>`, making them object-safe and compatible with `dyn AsyncProviderPlugin`.
+
+**Default methods** (optional to override):
+- `generate_with_tools_async()` -- returns "tool use not supported" by default
+- `generate_embeddings_async()` -- returns "embeddings not supported" by default
+
+Providers that support tools or embeddings can override these; everyone else gets a sensible error without boilerplate.
+
+**SyncToAsyncAdapter**: Wraps any existing sync `ProviderPlugin` to make it usable in async contexts. Internally uses `tokio::task::spawn_blocking` to move the blocking call onto Tokio's blocking thread pool so it does not stall the async executor.
+
+```rust
+use ai_assistant::async_provider::SyncToAsyncAdapter;
+
+// Wrap any sync provider as async
+let sync_provider: Box<dyn ProviderPlugin> = /* ... */;
+let async_provider = SyncToAsyncAdapter::new(sync_provider);
+
+// Now usable in async code:
+let response = async_provider.generate_async(messages, config).await?;
+```
+
+**AsyncToSyncAdapter**: The reverse direction -- wraps an `AsyncProviderPlugin` for use in synchronous code. Creates a dedicated `tokio::runtime::Runtime` internally and uses `runtime.block_on()` to drive the futures. Useful when async-only providers need to integrate with synchronous pipelines.
+
+```rust
+use ai_assistant::async_provider::AsyncToSyncAdapter;
+
+let async_provider: Box<dyn AsyncProviderPlugin> = /* ... */;
+let sync_provider = AsyncToSyncAdapter::new(async_provider);
+
+// Callable from sync code:
+let response = sync_provider.generate(messages, &config)?;
+```
+
+**AsyncProviderRegistry**: Manages a collection of async providers, analogous to the sync provider registry. Supports:
+- `register(name, provider)` -- register an async provider under a name
+- `get(name)` -- look up a provider by name
+- `set_default(name)` -- designate a default provider
+- `default_provider()` -- retrieve the current default
+- `list_providers()` -- list all registered provider names
+
+```rust
+let mut registry = AsyncProviderRegistry::new();
+registry.register("ollama", Box::new(my_async_ollama));
+registry.set_default("ollama");
+
+let provider = registry.default_provider().unwrap();
+let models = provider.list_models_async().await?;
+```
+
+**Bridge pattern summary**:
+
+| Adapter | Input | Output | Mechanism |
+|---------|-------|--------|-----------|
+| `SyncToAsyncAdapter` | `dyn ProviderPlugin` | `dyn AsyncProviderPlugin` | `spawn_blocking` |
+| `AsyncToSyncAdapter` | `dyn AsyncProviderPlugin` | `dyn ProviderPlugin` | `Runtime::block_on` |
+
+This two-way bridge means you never need to rewrite a provider -- any sync provider works in async contexts and vice versa.
+
+---
+
+## 83. LLM-as-Judge Evaluation
+
+**What**: A framework for using one LLM to evaluate the quality of another LLM's responses. `LlmJudge` builds structured evaluation prompts and parses the LLM's JSON-formatted verdicts, but does not call any LLM itself -- the caller sends prompts to their chosen provider.
+
+**Why**: Human evaluation of LLM outputs is expensive and slow. Automated metrics (BLEU, ROUGE) miss nuance. LLM-as-Judge is the middle ground: an LLM can assess coherence, relevance, faithfulness, and toxicity with near-human accuracy, and it scales to thousands of evaluations per hour. By decoupling prompt building from LLM invocation, this module works with any provider (local, cloud, sync, async).
+
+**Feature gate**: `evaluation` (included in `full`)
+
+**EvalCriterion**: Six built-in criteria, plus custom:
+
+| Criterion | What it measures |
+|-----------|-----------------|
+| `Relevance` | Does the response address the question? |
+| `Coherence` | Is the response logically structured and clear? |
+| `Faithfulness` | Does it stick to provided context without fabrication? |
+| `Toxicity` | Does it contain harmful or offensive content? |
+| `Helpfulness` | Is the response practically useful to the user? |
+| `Custom(name, description)` | Any user-defined criterion |
+
+**Single criterion evaluation**:
+
+```rust
+use ai_assistant::evaluation::{LlmJudge, EvalCriterion};
+
+let judge = LlmJudge::new();
+
+// Step 1: Build a prompt for the judge LLM
+let prompt = judge.build_judge_prompt(
+    EvalCriterion::Relevance,
+    "What is the capital of France?",       // original query
+    "Paris is the capital of France.",       // response to evaluate
+);
+
+// Step 2: Send `prompt` to your LLM of choice and get back text
+let llm_output = my_provider.generate(&prompt)?;
+
+// Step 3: Parse the judge's verdict
+let result = judge.parse_judge_response(&llm_output)?;
+// result.score: f64 (1-5 scale)
+// result.reasoning: String
+// result.pass: bool (score >= threshold)
+```
+
+**Multi-criterion evaluation**: `evaluate_all()` returns a list of (criterion_name, prompt) pairs so you can batch-evaluate a response against multiple criteria in a single pass:
+
+```rust
+let criteria = vec![
+    EvalCriterion::Relevance,
+    EvalCriterion::Coherence,
+    EvalCriterion::Helpfulness,
+];
+
+let prompts = judge.evaluate_all(&criteria, query, response);
+// prompts: Vec<(String, String)> — e.g., [("relevance", "...prompt..."), ...]
+
+// Send each prompt to the LLM, then parse each response
+for (name, prompt) in &prompts {
+    let output = my_provider.generate(prompt)?;
+    let result = judge.parse_judge_response(&output)?;
+    println!("{}: score={}, pass={}", name, result.score, result.pass);
+}
+```
+
+**Pairwise comparison**: Compare two responses head-to-head to determine which is better:
+
+```rust
+let prompt = judge.build_pairwise_prompt(
+    "Explain quantum computing",   // query
+    "Response A text...",           // candidate A
+    "Response B text...",           // candidate B
+);
+
+let output = my_provider.generate(&prompt)?;
+let winner = judge.parse_pairwise_response(&output)?;
+// winner: PairwiseResult { winner: "A" | "B" | "tie", reasoning: String }
+```
+
+**RAG faithfulness checking**: Specifically evaluates whether a response is grounded in the provided context documents, catching hallucinated claims:
+
+```rust
+let prompt = judge.build_rag_faithfulness_prompt(
+    "What did the report say about Q3?",
+    "Revenue grew 15% in Q3...",                // response
+    "Q3 report: Revenue increased by 15%...",   // source context
+);
+
+let output = my_provider.generate(&prompt)?;
+let result = judge.parse_rag_faithfulness(&output)?;
+// result.faithful: bool
+// result.unsupported_claims: Vec<String>
+// result.score: f64
+```
+
+**Batch aggregation**: After collecting results from multiple evaluations, compute aggregate statistics:
+
+```rust
+let results: Vec<JudgeResult> = /* collect results from above */;
+let summary = judge.aggregate_results(&results);
+// summary.avg_score: f64
+// summary.pass_rate: f64 (fraction with pass=true)
+// summary.score_distribution: HashMap<u8, usize> (histogram of scores 1-5)
+```
+
+**Design philosophy**: `LlmJudge` never calls an LLM directly. It is a prompt-building and response-parsing library. This means:
+- No provider dependency -- works with Ollama, OpenAI, Gemini, or any custom provider
+- No async/sync coupling -- the caller decides how to invoke the LLM
+- Fully testable -- unit tests verify prompt structure and parsing without needing a live LLM
+- Composable -- combine with `AsyncProviderPlugin` for concurrent evaluations, or with the A/B testing module for automated quality monitoring
+
+---
+
+## 84. Guardrail Pipeline
+
+**What**: A unified pipeline that orchestrates multiple safety/validation guards on LLM input and output. The `Guard` trait is the extension point; `GuardrailPipeline` is the orchestrator. Six built-in guards ship with the crate, and custom guards can be added by implementing `Guard`.
+
+**Why**: Production LLM applications need multiple safety layers: content length limits, rate limiting, PII detection, toxicity screening, and attack detection. Without a unified pipeline, each check is ad-hoc and easy to forget. The pipeline ensures every message passes through all configured guards before reaching the model (pre-send) and before reaching the user (post-receive).
+
+**Feature gate**: included in `full`
+
+**Core types**:
+
+| Type | Role |
+|------|------|
+| `Guard` trait | Extension point: `name()`, `stage()`, `check(text) -> GuardCheckResult` |
+| `GuardrailPipeline` | Orchestrator: holds guards, runs stage filtering, collects results |
+| `GuardStage` | When the guard runs: `PreSend`, `PostReceive`, or `Both` |
+| `GuardAction` | What happened: `Pass`, `Warn(reason)`, `Block(reason)` |
+| `GuardCheckResult` | Guard name + action + severity score (0.0-1.0) + details |
+| `PipelineResult` | Aggregated: `passed` bool + all results + optional `blocked_by` |
+
+**Built-in guards**:
+
+| Guard | Stage | What it checks |
+|-------|-------|----------------|
+| `ContentLengthGuard` | Both | Maximum character count |
+| `RateLimitGuard` | PreSend | Sliding-window request rate |
+| `PatternGuard` | Both | Substring blocklist matching |
+| `ToxicityGuard` | Both | Toxicity via `ToxicityDetector` |
+| `PiiGuard` | Both | PII via `PiiDetector` |
+| `AttackGuard` | PreSend | Prompt injection via `AttackDetector` |
+
+**Creating a pipeline with guards**:
+
+```rust
+use ai_assistant::guardrail_pipeline::{
+    GuardrailPipeline, ContentLengthGuard, RateLimitGuard,
+    PatternGuard, PiiGuard, ToxicityGuard, AttackGuard,
+};
+
+let mut pipeline = GuardrailPipeline::new()
+    .with_threshold(0.8)     // block if any guard score >= 0.8
+    .with_logging(true);     // record violations for audit
+
+pipeline.add_guard(Box::new(ContentLengthGuard::new(4000)));
+pipeline.add_guard(Box::new(RateLimitGuard::new(10, 60)));  // 10 requests per 60 seconds
+pipeline.add_guard(Box::new(PatternGuard::new(vec![
+    "DROP TABLE".to_string(),
+    "rm -rf".to_string(),
+])));
+pipeline.add_guard(Box::new(PiiGuard::new()));
+pipeline.add_guard(Box::new(ToxicityGuard::new()));
+pipeline.add_guard(Box::new(AttackGuard::new()));
+```
+
+**Checking input before sending to LLM**:
+
+```rust
+let input_result = pipeline.check_input("Tell me about Rust programming");
+if input_result.passed {
+    // Safe to send to LLM
+    let response = provider.generate(&config, &messages, &system_prompt)?;
+
+    // Check LLM output before showing to user
+    let output_result = pipeline.check_output(&response);
+    if output_result.passed {
+        println!("{}", response);
+    } else {
+        println!("Response blocked by: {:?}", output_result.blocked_by);
+    }
+} else {
+    println!("Input blocked by: {:?}", input_result.blocked_by);
+}
+```
+
+**Implementing a custom guard**:
+
+```rust
+use ai_assistant::guardrail_pipeline::{Guard, GuardStage, GuardCheckResult, GuardAction};
+
+struct MyCustomGuard;
+
+impl Guard for MyCustomGuard {
+    fn name(&self) -> &str { "custom_guard" }
+    fn stage(&self) -> GuardStage { GuardStage::PostReceive }
+    fn check(&self, text: &str) -> GuardCheckResult {
+        if text.contains("CONFIDENTIAL") {
+            GuardCheckResult {
+                guard_name: self.name().to_string(),
+                action: GuardAction::Block("Confidential data detected".to_string()),
+                score: 1.0,
+                details: "Output contains confidential markers".to_string(),
+            }
+        } else {
+            GuardCheckResult {
+                guard_name: self.name().to_string(),
+                action: GuardAction::Pass,
+                score: 0.0,
+                details: "Clean".to_string(),
+            }
+        }
+    }
+}
+```
+
+**Audit trail**: When logging is enabled, `pipeline.violations()` returns all recorded violations for compliance and debugging.
+
+---
+
+## 85. Unified Tool Calling
+
+**What**: A two-tier tool calling system that works with any LLM provider. Tier 1 is native tool calling via the provider's API (Ollama, Gemini, OpenAI-compatible). Tier 2 is `PromptToolFallback`, which injects tool definitions into the system prompt and parses JSON tool calls from the LLM's text output.
+
+**Why**: Not all LLM providers support native function/tool calling. Local inference servers like KoboldCpp, or older model versions, only produce text. `PromptToolFallback` bridges this gap: any model that can output JSON can participate in tool-calling workflows. Meanwhile, providers that do support native tool calling (Ollama, Gemini, OpenAI) use the more reliable native path.
+
+**Feature gate**: included in `full`
+
+**Provider support matrix**:
+
+| Provider | Tool calling | Mechanism |
+|----------|-------------|-----------|
+| Ollama | native | `/api/chat` with `tools` array, response `message.tool_calls` |
+| Gemini | native | `functionDeclarations` in request, `functionCall` in response |
+| OpenAI-compatible | native | `tools` array in request, `tool_calls` in choices |
+| KoboldCpp | prompt fallback | `PromptToolFallback` injects tools in prompt, parses JSON from output |
+| Any text provider | prompt fallback | Same `PromptToolFallback` mechanism |
+
+**Native tool calling (Ollama example)**:
+
+```rust
+use ai_assistant::provider_plugins::{OllamaProvider, ProviderPlugin};
+use ai_assistant::config::AiConfig;
+use ai_assistant::tools::ToolDefinition;
+
+let provider = OllamaProvider::new("http://localhost:11434");
+let config = AiConfig::default();
+let messages = vec![];
+let tools = vec![
+    ToolDefinition::new("get_weather", "Get current weather for a city")
+        .with_parameter("city", "string", "City name", true),
+];
+
+let (response, tool_calls) = provider.generate_with_tools(
+    &config, &messages, "You are a helpful assistant.", &tools,
+)?;
+
+for call in &tool_calls {
+    println!("Tool: {}, Args: {:?}", call.name, call.arguments);
+}
+```
+
+**Prompt-based fallback (any provider)**:
+
+```rust
+use ai_assistant::provider_plugins::PromptToolFallback;
+use ai_assistant::tools::ToolDefinition;
+
+let tools = vec![
+    ToolDefinition::new("search", "Search the web"),
+    ToolDefinition::new("calculator", "Evaluate a math expression"),
+];
+
+// Step 1: Augment the system prompt with tool definitions
+let augmented = PromptToolFallback::build_tool_prompt(
+    "You are a helpful assistant.",
+    &tools,
+);
+
+// Step 2: Send augmented prompt to any text-completion provider
+let response = my_provider.generate(&config, &messages, &augmented)?;
+
+// Step 3: Parse tool calls from the LLM's text output
+let tool_calls = PromptToolFallback::parse_tool_calls_from_text(&response);
+// Parses: {"tool_call": {"name": "search", "arguments": {"query": "..."}}}
+// Works with inline JSON and ```json code blocks
+```
+
+**How `PromptToolFallback` works internally**:
+1. `build_tool_prompt()` appends a structured "Available tools:" section to the system prompt, listing each tool's name, description, and parameters, plus instructions for the LLM to emit `{"tool_call": {"name": "...", "arguments": {...}}}` when it wants to invoke a tool
+2. `parse_tool_calls_from_text()` scans the LLM's text output for JSON objects matching the `tool_call` schema (both inline and inside code blocks), deserializes them, and returns `Vec<ToolCall>` with sequential IDs (`fallback_call_0`, `fallback_call_1`, etc.)
+3. If no tool calls are found, an empty vector is returned -- the response is treated as normal text

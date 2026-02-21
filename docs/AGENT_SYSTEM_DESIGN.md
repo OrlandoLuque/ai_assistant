@@ -51,6 +51,9 @@
 38. [Infraestructura de Testing](#38-infraestructura-de-testing)
 39. [Phase 9 — REPL/CLI, Neural Reranking, A/B Testing](#39-phase-9--replcli-neural-reranking-ab-testing)
 40. [Phase 10 — Token Counting, Cost Tracking, Multi-Modal RAG](#40-phase-10--token-counting-cost-tracking-multi-modal-rag)
+41. [Phase 11 — UI Framework Hooks & Agent Graph Visualization](#41-phase-11--ui-framework-hooks--agent-graph-visualization)
+42. [v2 Phase 1 — Provider Ecosystem Expansion](#42-v2-phase-1--provider-ecosystem-expansion)
+43. [v2 Phases 2-3 — Async Parity + Advanced Evaluation](#43-v2-phases-2-3--async-parity--advanced-evaluation)
 
 ---
 
@@ -7183,3 +7186,306 @@ Phase 11 cierra los 2 ultimos items del roadmap (39/39 completados). Se anaden:
 **Total acumulado**: 2,431 tests (2393 lib + 38 integration), 0 failures, 0 warnings, 6 benchmarks, 19 examples.
 
 **ROADMAP COMPLETADO: 39/39 items implementados.**
+
+---
+
+## 42. v2 Phase 1 — Provider Ecosystem Expansion
+
+> Fecha: 2026-02-21
+
+### Resumen
+
+v2 Phase 1 expande el ecosistema de proveedores del crate con tres ejes:
+1. **EmbeddingProvider trait** — API unificada de embeddings separada de ProviderPlugin
+2. **GeminiProvider** — Soporte nativo de la API de Google Gemini
+3. **7 presets de proveedores cloud** — Variantes OpenAI-compatibles preconfiguradas
+
+### Modulos Nuevos / Modificados
+
+#### EmbeddingProvider trait (`embedding_providers.rs`)
+- Trait `EmbeddingProvider`: `embed()`, `embed_batch()`, `dimensions()`, `provider_name()`
+- 4 implementaciones: `LocalTfIdf` (sin red), `OllamaEmbedding`, `OpenAIEmbedding`, `HuggingFaceEmbedding`
+- Factory function `create_embedding_provider(name, model)` para construccion rapida
+- Separacion de responsabilidades: embeddings no dependen de `ProviderPlugin`
+
+#### GeminiProvider (`gemini_provider.rs`)
+- Implementa `ProviderPlugin` para la API nativa de Gemini (`generativelanguage.googleapis.com`)
+- Endpoints: `generateContent`, `streamGenerateContent` (SSE), `embedContent`
+- Function calling con traduccion de formato tool_use <-> Gemini
+- Listado de modelos via API
+
+#### 7 variantes AiProvider (`config.rs`)
+- Groq, Together, Fireworks, DeepSeek, Mistral, Perplexity, OpenRouter
+- Cada una con: base URL, env var, modelo default, context size, routing
+- Todas usan el path OpenAI-compatible excepto Gemini (nativo)
+
+#### Fix de routing Gemini (`providers.rs`)
+- Corregido: las requests a `AiProvider::Gemini` ahora usan `GeminiProvider` nativo
+- Antes pasaban por el path OpenAI-compatible, causando errores de formato
+
+### Tests
+| Modulo | Tests |
+|--------|-------|
+| embedding_providers | 15 |
+| gemini_provider | 12 |
+| **Total nuevos v2 Phase 1** | **27** |
+
+### Archivos
+| Archivo | Tipo |
+|---------|------|
+| `embedding_providers.rs` | Nuevo |
+| `gemini_provider.rs` | Nuevo |
+| `config.rs` | Modificado (7 variantes) |
+| `providers.rs` | Modificado (routing fix) |
+| `lib.rs` | Modificado (re-exports) |
+
+**Total acumulado**: 2,458 tests (2420 lib + 38 integration), 0 failures, 211 source files, 19 examples.
+
+---
+
+## 43. v2 Phases 2-3 — Async Parity + Advanced Evaluation
+
+> Fecha: 2026-02-21
+
+### Resumen
+
+v2 Phases 2-3 aportan dos capacidades fundamentales:
+1. **AsyncProviderPlugin** — Paridad async completa para el sistema de proveedores
+2. **LLM-as-Judge** — Evaluacion automatizada de calidad de respuestas LLM
+
+### AsyncProviderPlugin (`async_provider.rs`)
+
+#### Arquitectura del Trait
+
+El trait `AsyncProviderPlugin` es la version async de `ProviderPlugin`, usando `Pin<Box<dyn Future<Output = T> + Send>>` como tipo de retorno en lugar de valores sincronos. Esto evita la dependencia de `async-trait` manteniendo object-safety.
+
+**Metodos core**:
+- `is_available_async()` — verificacion de disponibilidad no-bloqueante
+- `list_models_async()` — listado de modelos async
+- `generate_async()` — generacion de respuestas async
+- `generate_streaming_async()` — streaming async
+
+**Metodos con default** (opcionales):
+- `generate_with_tools_async()` — retorna error "not supported" por defecto
+- `generate_embeddings_async()` — retorna error "not supported" por defecto
+
+#### Patron Bridge: Adaptadores Bidireccionales
+
+El patron central es un puente bidireccional que permite usar cualquier proveedor en cualquier contexto:
+
+```
+┌─────────────────┐    SyncToAsyncAdapter     ┌──────────────────────┐
+│ dyn Provider     │ ──────────────────────>   │ dyn AsyncProvider    │
+│ Plugin (sync)    │    (spawn_blocking)       │ Plugin (async)       │
+└─────────────────┘                            └──────────────────────┘
+        ^                                              │
+        │           AsyncToSyncAdapter                 │
+        └────────── (Runtime::block_on) ───────────────┘
+```
+
+- **SyncToAsyncAdapter**: Envuelve `dyn ProviderPlugin` como `dyn AsyncProviderPlugin` ejecutando las llamadas bloqueantes en `tokio::task::spawn_blocking`. Esto mueve la ejecucion al thread pool de bloqueo de Tokio, evitando bloquear el executor async.
+
+- **AsyncToSyncAdapter**: Envuelve `dyn AsyncProviderPlugin` como `dyn ProviderPlugin` creando un `tokio::runtime::Runtime` dedicado e invocando `runtime.block_on()`. Util cuando un proveedor solo-async necesita integrarse en pipelines sincronas.
+
+#### AsyncProviderRegistry
+
+Registro de proveedores async con las mismas capacidades que el registro sincrono:
+- `register(name, provider)` — registrar proveedor
+- `get(name)` — busqueda por nombre
+- `set_default(name)` / `default_provider()` — gestion de proveedor por defecto
+- `list_providers()` — enumerar proveedores registrados
+
+**Feature gate**: `async-runtime`
+
+### LLM-as-Judge (`evaluation.rs` — extension)
+
+#### Diseno Desacoplado
+
+El modulo `LlmJudge` construye prompts de evaluacion y parsea respuestas JSON del LLM, pero **nunca llama a un LLM directamente**. El flujo es:
+
+```
+LlmJudge::build_prompt() → String (prompt)
+       ↓
+[Caller sends prompt to any LLM]
+       ↓
+LlmJudge::parse_response() → JudgeResult
+```
+
+Este diseno desacoplado permite:
+- Funcionar con cualquier proveedor (sync o async)
+- Testing unitario sin LLM real
+- Composicion con otros modulos (A/B testing, batching)
+
+#### Capacidades de Evaluacion
+
+| Modo | Descripcion |
+|------|-------------|
+| Single criterion | Evaluar una respuesta contra un criterio (Relevance, Coherence, etc.) |
+| Multi-criterion | Evaluar contra multiples criterios simultaneamente |
+| Pairwise comparison | Comparar dos respuestas head-to-head |
+| RAG faithfulness | Verificar si la respuesta esta fundamentada en el contexto |
+| Batch aggregation | Calcular avg score, pass rate, distribucion de scores |
+
+#### Criterios de Evaluacion (EvalCriterion)
+
+6 criterios built-in + custom: Relevance, Coherence, Faithfulness, Toxicity, Helpfulness, Custom(name, description).
+
+### Modulos Nuevos / Modificados
+
+| Archivo | Tipo | Descripcion |
+|---------|------|-------------|
+| `async_provider.rs` | Nuevo | AsyncProviderPlugin, adaptadores, registry |
+| `evaluation.rs` | Modificado | LlmJudge, EvalCriterion, parsing |
+| `lib.rs` | Modificado | Re-exports async_provider |
+
+### Tests
+
+| Modulo | Tests |
+|--------|-------|
+| async_provider | 15 |
+| evaluation (llm_judge) | 12 |
+| **Total nuevos v2 Phases 2-3** | **27** |
+
+**Total acumulado**: 2,510 tests (2472 lib + 38 integration), 0 failures.
+
+---
+
+## Section 44: v2 Phase 3-4 Completion — Tool Calling + Guardrails + CI/CD
+
+### Overview
+
+Completion of v2 improvement plan Phases 3 and 4, adding unified tool calling across all providers, a guardrail validation pipeline, and CI/CD automation.
+
+### 44.1 Unified Tool Calling (3.3)
+
+**Module**: `provider_plugins.rs`
+
+Two-tier architecture for tool calling support:
+
+```
+                     ┌─────────────────────────────┐
+                     │     generate_with_tools()    │
+                     └──────────┬──────────────────┘
+                                │
+                    ┌───────────┴───────────┐
+                    │                       │
+            ┌───────▼───────┐       ┌───────▼───────┐
+            │  Native Path  │       │ Fallback Path │
+            │  (Tier 1)     │       │  (Tier 2)     │
+            └───────┬───────┘       └───────┬───────┘
+                    │                       │
+        ┌───────────┼───────────┐           │
+        │           │           │           │
+   ┌────▼──┐  ┌────▼──┐  ┌────▼──┐  ┌─────▼──────────┐
+   │Ollama │  │Gemini │  │OpenAI │  │PromptToolFallback│
+   │/api/  │  │native │  │compat │  │(KoboldCpp, any) │
+   │chat   │  │  API  │  │  API  │  │                  │
+   └───────┘  └───────┘  └───────┘  └──────────────────┘
+```
+
+**Tier 1 — Native**: Ollama `generate_with_tools()` sends tools via `/api/chat` with OpenAI-compatible tool schema format. Response parsing handles Ollama's structure (`message.tool_calls` directly, not nested under `choices`). Argument parsing supports both JSON string and object formats.
+
+**Tier 2 — PromptToolFallback**: For providers without native tool calling API support.
+- `build_tool_prompt()` — injects tool definitions into system prompt
+- `parse_tool_calls_from_text()` — extracts `{"tool_call": ...}` JSON from LLM text output
+- Supports inline JSON and code-fenced JSON blocks
+- Generates sequential IDs: `fallback_call_0`, `fallback_call_1`, ...
+
+**Capabilities reporting**: Both Ollama and KoboldCpp now report `tool_calling: true` in their `ProviderCapabilities`.
+
+### 44.2 Guardrail Pipeline (3.5)
+
+**Module**: `guardrail_pipeline.rs` (770 lineas)
+
+Arquitectura de pipeline unificada para validacion pre/post LLM:
+
+```
+         Input Text
+              │
+              ▼
+    ┌─────────────────────┐
+    │  GuardrailPipeline  │
+    │  check_input()      │
+    │                     │
+    │  ┌───────────────┐  │
+    │  │ContentLength  │──┼──► GuardCheckResult { score, action, details }
+    │  │Guard          │  │
+    │  ├───────────────┤  │
+    │  │RateLimitGuard │──┼──► GuardCheckResult
+    │  ├───────────────┤  │
+    │  │PatternGuard   │──┼──► GuardCheckResult
+    │  ├───────────────┤  │
+    │  │AttackGuard    │──┼──► GuardCheckResult
+    │  └───────────────┘  │
+    │                     │
+    │  if any score >=    │
+    │  block_threshold    │──► PipelineResult { passed: false, blocked_by }
+    │  → BLOCK            │
+    └─────────────────────┘
+              │
+              ▼ (if passed)
+         Send to LLM
+              │
+              ▼
+    ┌─────────────────────┐
+    │  GuardrailPipeline  │
+    │  check_output()     │
+    │                     │
+    │  ┌───────────────┐  │
+    │  │ToxicityGuard  │──┼──► GuardCheckResult
+    │  ├───────────────┤  │
+    │  │PiiGuard       │──┼──► GuardCheckResult
+    │  ├───────────────┤  │
+    │  │ContentLength  │──┼──► GuardCheckResult
+    │  │Guard          │  │
+    │  └───────────────┘  │
+    └─────────────────────┘
+              │
+              ▼
+        Show to User
+```
+
+**Guard trait**: `name()`, `stage() -> GuardStage`, `check(text) -> GuardCheckResult`. Requires `Send + Sync`.
+
+**Stage filtering**: `check_input()` runs guards with `PreSend` or `Both` stages. `check_output()` runs guards with `PostReceive` or `Both` stages.
+
+**Block threshold**: Configurable (default 0.8). If any guard returns `score >= threshold`, the pipeline result is `passed: false`.
+
+**Violation logging**: When enabled, every result that meets the threshold is appended to an internal audit trail, accessible via `violations()`.
+
+**6 built-in guards**:
+
+| Guard | Stage | Backing module |
+|-------|-------|---------------|
+| ContentLengthGuard | Both | Native (max chars) |
+| RateLimitGuard | PreSend | Native (sliding window) |
+| PatternGuard | Both | Native (substring blocklist) |
+| ToxicityGuard | Both | `advanced_guardrails::ToxicityDetector` |
+| PiiGuard | Both | `pii_detection::PiiDetector` |
+| AttackGuard | PreSend | `advanced_guardrails::AttackDetector` |
+
+### 44.3 CI/CD (4.4)
+
+**File**: `.github/workflows/ci.yml`
+
+GitHub Actions workflow con 4 jobs paralelos:
+
+| Job | Comando | Proposito |
+|-----|---------|-----------|
+| `check` | `cargo check --features full` + all features | Compilacion |
+| `test` | `cargo test --features "full,autonomous,..." --lib` | Tests |
+| `clippy` | `cargo clippy` con `-W clippy::all` | Linting |
+| `fmt` | `cargo fmt -- --check` | Formato |
+
+Todos usan `dtolnay/rust-toolchain@stable` + `Swatinem/rust-cache@v2`.
+Triggers: push y PR a `main` / `master`.
+
+### Tests
+
+| Modulo | Tests |
+|--------|-------|
+| provider_plugins (tool calling) | 7 |
+| guardrail_pipeline | 18 |
+| **Total nuevos v2 Phases 3-4** | **25** |
+
+**Total acumulado**: 2,510 tests (2472 lib + 38 integration), 0 failures, 0 clippy warnings.
