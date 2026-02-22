@@ -1068,6 +1068,362 @@ fn fetch_openai_model_context(base_url: &str, model_name: &str) -> Option<usize>
     None
 }
 
+// ---------------------------------------------------------------------------
+// ProviderRegistry — global registry mapping "provider/model" to AiConfig
+// ---------------------------------------------------------------------------
+
+use std::collections::HashMap;
+
+/// A registry that maps `"provider/model"` identifiers to pre-configured
+/// [`AiConfig`] instances, with support for short aliases
+/// (e.g. `"gpt-4o"` resolving to `"openai/gpt-4o"`).
+///
+/// # Example
+/// ```ignore
+/// let reg = ProviderRegistry::with_defaults();
+/// let cfg = reg.resolve("gpt-4o").expect("alias should resolve");
+/// assert_eq!(cfg.selected_model, "gpt-4o");
+/// ```
+#[derive(Debug, Clone)]
+pub struct ProviderRegistry {
+    /// Primary registry: "provider/model" -> AiConfig
+    entries: HashMap<String, AiConfig>,
+    /// Alias table: short name -> canonical "provider/model" key
+    aliases: HashMap<String, String>,
+}
+
+impl ProviderRegistry {
+    /// Create an empty registry with no entries and no aliases.
+    pub fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+            aliases: HashMap::new(),
+        }
+    }
+
+    /// Register a provider/model combination.
+    ///
+    /// `provider_model` should follow the `"provider/model"` convention
+    /// (e.g. `"openai/gpt-4o"`). If an entry with the same key already
+    /// exists it is silently replaced.
+    pub fn register(&mut self, provider_model: &str, config: AiConfig) {
+        self.entries.insert(provider_model.to_string(), config);
+    }
+
+    /// Resolve a `provider_model` string to its [`AiConfig`].
+    ///
+    /// The lookup first checks the primary registry; if not found it checks
+    /// the alias table and follows one level of indirection.
+    pub fn resolve(&self, provider_model: &str) -> Option<AiConfig> {
+        if let Some(cfg) = self.entries.get(provider_model) {
+            return Some(cfg.clone());
+        }
+        // Try alias -> canonical key
+        if let Some(canonical) = self.aliases.get(provider_model) {
+            return self.entries.get(canonical).cloned();
+        }
+        None
+    }
+
+    /// Return a sorted list of all registered canonical model identifiers.
+    pub fn list_models(&self) -> Vec<String> {
+        let mut keys: Vec<String> = self.entries.keys().cloned().collect();
+        keys.sort();
+        keys
+    }
+
+    /// Return a sorted list of all registered aliases.
+    pub fn list_aliases(&self) -> Vec<String> {
+        let mut keys: Vec<String> = self.aliases.keys().cloned().collect();
+        keys.sort();
+        keys
+    }
+
+    /// Register a short alias that maps to a canonical `"provider/model"` key.
+    ///
+    /// For example: `registry.add_alias("gpt-4o", "openai/gpt-4o")`.
+    pub fn add_alias(&mut self, alias: &str, target: &str) {
+        self.aliases.insert(alias.to_string(), target.to_string());
+    }
+
+    /// Remove a canonical entry (and any aliases pointing to it).
+    pub fn remove(&mut self, provider_model: &str) {
+        self.entries.remove(provider_model);
+        self.aliases.retain(|_alias, target| target != provider_model);
+    }
+
+    /// Return the number of canonical entries (excluding aliases).
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Return `true` if the registry contains no canonical entries.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Create a registry pre-populated with common provider/model
+    /// combinations and sensible default aliases.
+    pub fn with_defaults() -> Self {
+        let mut reg = Self::new();
+
+        // -- OpenAI models --------------------------------------------------
+        let openai_base = || {
+            let mut cfg = AiConfig::default();
+            cfg.provider = AiProvider::OpenAI;
+            cfg
+        };
+
+        let mut gpt4o = openai_base();
+        gpt4o.selected_model = "gpt-4o".to_string();
+        reg.register("openai/gpt-4o", gpt4o);
+
+        let mut gpt4o_mini = openai_base();
+        gpt4o_mini.selected_model = "gpt-4o-mini".to_string();
+        reg.register("openai/gpt-4o-mini", gpt4o_mini);
+
+        let mut gpt35 = openai_base();
+        gpt35.selected_model = "gpt-3.5-turbo".to_string();
+        reg.register("openai/gpt-3.5-turbo", gpt35);
+
+        // -- Anthropic models ------------------------------------------------
+        let anthropic_base = || {
+            let mut cfg = AiConfig::default();
+            cfg.provider = AiProvider::Anthropic;
+            cfg
+        };
+
+        let mut claude_sonnet = anthropic_base();
+        claude_sonnet.selected_model = "claude-sonnet".to_string();
+        reg.register("anthropic/claude-sonnet", claude_sonnet);
+
+        let mut claude_haiku = anthropic_base();
+        claude_haiku.selected_model = "claude-haiku".to_string();
+        reg.register("anthropic/claude-haiku", claude_haiku);
+
+        // -- Ollama models ---------------------------------------------------
+        let ollama_base = || AiConfig::default(); // default provider is already Ollama
+
+        let mut llama3 = ollama_base();
+        llama3.selected_model = "llama3".to_string();
+        reg.register("ollama/llama3", llama3);
+
+        let mut mistral = ollama_base();
+        mistral.selected_model = "mistral".to_string();
+        reg.register("ollama/mistral", mistral);
+
+        // -- LM Studio -------------------------------------------------------
+        let mut lmstudio = AiConfig::default();
+        lmstudio.provider = AiProvider::LMStudio;
+        lmstudio.selected_model = "default".to_string();
+        reg.register("lmstudio/default", lmstudio);
+
+        // -- Common aliases --------------------------------------------------
+        reg.add_alias("gpt-4o", "openai/gpt-4o");
+        reg.add_alias("gpt-4o-mini", "openai/gpt-4o-mini");
+        reg.add_alias("gpt-3.5-turbo", "openai/gpt-3.5-turbo");
+        reg.add_alias("claude", "anthropic/claude-sonnet");
+        reg.add_alias("claude-sonnet", "anthropic/claude-sonnet");
+        reg.add_alias("claude-haiku", "anthropic/claude-haiku");
+        reg.add_alias("llama3", "ollama/llama3");
+        reg.add_alias("mistral", "ollama/mistral");
+        reg.add_alias("lmstudio", "lmstudio/default");
+
+        reg
+    }
+}
+
+impl Default for ProviderRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ProviderRegistry tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod provider_registry_tests {
+    use super::*;
+
+    #[test]
+    fn test_new_registry_is_empty() {
+        let reg = ProviderRegistry::new();
+        assert!(reg.is_empty());
+        assert_eq!(reg.len(), 0);
+        assert!(reg.list_models().is_empty());
+    }
+
+    #[test]
+    fn test_register_and_resolve() {
+        let mut reg = ProviderRegistry::new();
+        let mut cfg = AiConfig::default();
+        cfg.provider = AiProvider::OpenAI;
+        cfg.selected_model = "gpt-4o".to_string();
+        reg.register("openai/gpt-4o", cfg.clone());
+
+        let resolved = reg.resolve("openai/gpt-4o");
+        assert!(resolved.is_some());
+        let resolved = resolved.expect("just checked");
+        assert_eq!(resolved.selected_model, "gpt-4o");
+        assert_eq!(resolved.provider, AiProvider::OpenAI);
+    }
+
+    #[test]
+    fn test_resolve_unknown_returns_none() {
+        let reg = ProviderRegistry::new();
+        assert!(reg.resolve("nonexistent/model").is_none());
+    }
+
+    #[test]
+    fn test_list_models_sorted() {
+        let mut reg = ProviderRegistry::new();
+        let cfg = AiConfig::default();
+        reg.register("ollama/mistral", cfg.clone());
+        reg.register("anthropic/claude-sonnet", cfg.clone());
+        reg.register("openai/gpt-4o", cfg);
+
+        let models = reg.list_models();
+        assert_eq!(models.len(), 3);
+        assert_eq!(models[0], "anthropic/claude-sonnet");
+        assert_eq!(models[1], "ollama/mistral");
+        assert_eq!(models[2], "openai/gpt-4o");
+    }
+
+    #[test]
+    fn test_alias_resolves_to_canonical() {
+        let mut reg = ProviderRegistry::new();
+        let mut cfg = AiConfig::default();
+        cfg.provider = AiProvider::OpenAI;
+        cfg.selected_model = "gpt-4o".to_string();
+        reg.register("openai/gpt-4o", cfg);
+        reg.add_alias("gpt-4o", "openai/gpt-4o");
+
+        let resolved = reg.resolve("gpt-4o");
+        assert!(resolved.is_some());
+        assert_eq!(resolved.expect("just checked").selected_model, "gpt-4o");
+    }
+
+    #[test]
+    fn test_alias_unknown_target_returns_none() {
+        let mut reg = ProviderRegistry::new();
+        reg.add_alias("ghost", "nonexistent/model");
+        assert!(reg.resolve("ghost").is_none());
+    }
+
+    #[test]
+    fn test_with_defaults_has_openai_models() {
+        let reg = ProviderRegistry::with_defaults();
+        assert!(reg.resolve("openai/gpt-4o").is_some());
+        assert!(reg.resolve("openai/gpt-4o-mini").is_some());
+        assert!(reg.resolve("openai/gpt-3.5-turbo").is_some());
+    }
+
+    #[test]
+    fn test_with_defaults_has_anthropic_models() {
+        let reg = ProviderRegistry::with_defaults();
+        assert!(reg.resolve("anthropic/claude-sonnet").is_some());
+        assert!(reg.resolve("anthropic/claude-haiku").is_some());
+    }
+
+    #[test]
+    fn test_with_defaults_has_ollama_models() {
+        let reg = ProviderRegistry::with_defaults();
+        assert!(reg.resolve("ollama/llama3").is_some());
+        assert!(reg.resolve("ollama/mistral").is_some());
+    }
+
+    #[test]
+    fn test_with_defaults_has_lmstudio() {
+        let reg = ProviderRegistry::with_defaults();
+        let cfg = reg.resolve("lmstudio/default");
+        assert!(cfg.is_some());
+        assert_eq!(cfg.expect("just checked").provider, AiProvider::LMStudio);
+    }
+
+    #[test]
+    fn test_with_defaults_aliases_work() {
+        let reg = ProviderRegistry::with_defaults();
+        // Short aliases should resolve identically to their canonical keys
+        let via_alias = reg.resolve("gpt-4o");
+        let via_canonical = reg.resolve("openai/gpt-4o");
+        assert!(via_alias.is_some());
+        assert!(via_canonical.is_some());
+        assert_eq!(
+            via_alias.expect("just checked").selected_model,
+            via_canonical.expect("just checked").selected_model,
+        );
+
+        // claude alias
+        let claude = reg.resolve("claude");
+        assert!(claude.is_some());
+        assert_eq!(claude.expect("just checked").selected_model, "claude-sonnet");
+    }
+
+    #[test]
+    fn test_register_overwrites_existing() {
+        let mut reg = ProviderRegistry::new();
+        let mut cfg1 = AiConfig::default();
+        cfg1.selected_model = "model-v1".to_string();
+        reg.register("test/model", cfg1);
+
+        let mut cfg2 = AiConfig::default();
+        cfg2.selected_model = "model-v2".to_string();
+        reg.register("test/model", cfg2);
+
+        let resolved = reg.resolve("test/model").expect("entry exists");
+        assert_eq!(resolved.selected_model, "model-v2");
+        assert_eq!(reg.len(), 1);
+    }
+
+    #[test]
+    fn test_remove_entry_and_aliases() {
+        let mut reg = ProviderRegistry::new();
+        let cfg = AiConfig::default();
+        reg.register("openai/gpt-4o", cfg);
+        reg.add_alias("gpt-4o", "openai/gpt-4o");
+
+        assert!(reg.resolve("gpt-4o").is_some());
+        reg.remove("openai/gpt-4o");
+        assert!(reg.resolve("openai/gpt-4o").is_none());
+        // Alias should also stop resolving because its target is gone
+        assert!(reg.resolve("gpt-4o").is_none());
+        // And the dangling alias itself should have been cleaned up
+        assert!(reg.list_aliases().is_empty());
+    }
+
+    #[test]
+    fn test_default_trait_gives_empty_registry() {
+        let reg = ProviderRegistry::default();
+        assert!(reg.is_empty());
+    }
+
+    #[test]
+    fn test_with_defaults_model_count() {
+        let reg = ProviderRegistry::with_defaults();
+        // 3 OpenAI + 2 Anthropic + 2 Ollama + 1 LMStudio = 8
+        assert_eq!(reg.len(), 8);
+    }
+
+    #[test]
+    fn test_with_defaults_correct_providers() {
+        let reg = ProviderRegistry::with_defaults();
+        assert_eq!(
+            reg.resolve("openai/gpt-4o").expect("exists").provider,
+            AiProvider::OpenAI,
+        );
+        assert_eq!(
+            reg.resolve("anthropic/claude-haiku").expect("exists").provider,
+            AiProvider::Anthropic,
+        );
+        assert_eq!(
+            reg.resolve("ollama/llama3").expect("exists").provider,
+            AiProvider::Ollama,
+        );
+    }
+}
+
 #[cfg(test)]
 mod context_size_tests {
     use super::*;

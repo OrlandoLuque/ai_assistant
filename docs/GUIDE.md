@@ -4742,3 +4742,473 @@ let provider = create_speech_provider("openai")?;  // or "google", "piper", "coq
 The `"local"` variant automatically composes the best available local providers: Piper or Coqui for TTS (whichever server is running), and whisper-rs for STT (if the `whisper-local` feature is enabled and `WHISPER_MODEL_PATH` is set).
 
 **Butler integration**: When the `butler` feature is enabled, `Butler::suggest_speech_config()` scans the local environment for available speech engines (Piper on port 5000, Coqui on port 5002, whisper.cpp server, GGML model files) and returns `(Option<stt_name>, Option<tts_name>)` suggestions. This powers auto-configuration in the autonomous agent setup.
+
+---
+
+## 89. Multi-Layer Knowledge Graph
+
+**What**: The multi-layer graph system (`multi_layer_graph.rs`) organizes knowledge into four priority-ranked layers that merge automatically when building context for the LLM. Each layer has a fixed priority that determines which information takes precedence when layers contain overlapping or contradictory data. Section 55 covers the basic API; this section explains the layer architecture, priority semantics, and practical design patterns.
+
+**Why**: Real-world assistants draw from multiple knowledge sources simultaneously -- curated databases, user preferences, web search results, and ephemeral conversation context. A flat graph treats all data equally, which leads to problems: a user's casual opinion could override verified medical literature, or stale web data could contradict authoritative sources. The priority-layer system solves this by giving each source a weight that reflects its trustworthiness.
+
+**The four layers**:
+
+| Layer | Priority | Source | Lifecycle |
+|-------|----------|--------|-----------|
+| **Knowledge** | 100 | `.kpkg` files, RAG-indexed documents, curated databases | Permanent (developer-managed) |
+| **User** | 80 | `BeliefExtractor` analysis of user messages | Persistent (saved to `user_graph.json`) |
+| **Internet** | 50 | Web search results cached with TTL | Expires after configured duration |
+| **Session** | 30 | Entities and relations from the current conversation | Cleared when session ends |
+
+- **Knowledge Layer** (priority: 100) -- Verified data from knowledge packs, indexed documents, and curated databases. Fed manually by the developer via `.kpkg` files or RAG indexing. This is the most authoritative layer and always takes precedence over other sources.
+
+- **User Layer** (priority: 80) -- User preferences, beliefs, and opinions. Fed automatically by `BeliefExtractor`, which analyzes user messages and extracts statements like "I prefer Python" into `UserBelief(Preference, "Python")`. Persists across sessions.
+
+- **Internet Layer** (priority: 50) -- Web search results cached with a configurable TTL (time-to-live). Fed automatically when the agent performs web searches. Data expires after the configured duration, ensuring stale information is eventually discarded.
+
+- **Session Layer** (priority: 30) -- Temporary entities and relations from the current conversation. Auto-cleared when the session ends. Useful for tracking ephemeral context like "the file we discussed" or "the error you mentioned".
+
+**Creating and populating the graph**:
+
+```rust
+use ai_assistant::{MultiLayerGraph, GraphLayer, BeliefExtractor};
+
+// Create graph with persistence
+let mut graph = MultiLayerGraph::with_persistence(
+    Some("user_graph.json".into()),
+    Some("internet_cache.json".into()),
+);
+
+// Process user message — auto-extracts beliefs via BeliefExtractor
+graph.process_user_message("session1", "I love Rust and prefer async code", &["Rust"]);
+
+// Add internet data with TTL (seconds)
+graph.add_internet_data("Rust", "systems_language", "Rust is a systems programming language", 3600);
+
+// Build context for LLM — merges all layers by priority
+let context = graph.build_context("session1", &["Rust"]);
+
+// Detect contradictions between layers
+let contradictions = graph.get_unresolved_contradictions();
+```
+
+**Use cases and priority tuning**:
+
+- **Medical assistant**: Knowledge layer has medical literature (priority 100), User layer has patient preferences (priority 80). Knowledge always takes precedence for safety -- if a user says "I don't need antibiotics" but the knowledge base says otherwise, the system flags the contradiction rather than silently deferring to the user.
+
+- **Personal assistant**: User layer could be configured with higher priority than Knowledge for subjective preferences. When the user says "I prefer dark mode", that should override any default recommendation from the knowledge base.
+
+- **Research tool**: Internet layer importance increases; data recency matters more than static knowledge. You might adjust priorities so that recent web results (with valid TTL) rank closer to the Knowledge layer.
+
+- **Regulatory compliance**: A custom "Regulatory" layer could hold current regulations, fed by an automated regulatory feed. By assigning it priority 100 alongside Knowledge, you ensure compliance data is never overridden by user preferences or cached web results.
+
+**Feature flag**: `rag`
+
+---
+
+## 90. Graph Visualization (DOT/Mermaid)
+
+**What**: The agent graph system (see Section 79) can export graphs in three standard visualization formats: DOT (Graphviz), Mermaid, and JSON. This section shows the output formats and how to use them in documentation workflows.
+
+**Why**: Debugging and documenting multi-agent workflows is difficult without visual tools. DOT and Mermaid are industry-standard graph description languages supported by a wide range of renderers, from desktop tools to inline rendering in documentation platforms.
+
+**DOT (Graphviz)** -- rendered with Graphviz command-line tools (`dot`, `neato`), VS Code extensions (Graphviz Preview), or online viewers (viz-js.com):
+
+```dot
+digraph {
+  Python -> pip [label="has_tool"];
+  Python -> Django [label="has_framework"];
+  User -> Python [label="prefers"];
+}
+```
+
+**Mermaid** -- renders directly in GitHub, GitLab, Notion, Obsidian, and most modern documentation platforms without any external tools:
+
+```mermaid
+graph LR
+  Python -->|has_tool| pip
+  Python -->|has_framework| Django
+  User -->|prefers| Python
+```
+
+**Generating exports from code**:
+
+```rust
+use ai_assistant::AgentGraph;
+
+let graph = AgentGraph::new();
+// ... add nodes and edges (see Section 79) ...
+
+let dot_output = graph.export_dot();       // Graphviz DOT string
+let mermaid_output = graph.export_mermaid(); // Mermaid flowchart string
+let json_output = graph.export_json();     // JSON for D3.js or custom renderers
+```
+
+**Rendering DOT from the command line**:
+
+```bash
+# Save DOT output to a file, then render to PNG or SVG
+cargo run --example agent_graph_demo > workflow.dot
+dot -Tpng workflow.dot -o workflow.png
+dot -Tsvg workflow.dot -o workflow.svg
+```
+
+**Embedding Mermaid in Markdown** -- paste the Mermaid output directly into a fenced code block in any GitHub/GitLab README, PR description, or issue:
+
+````markdown
+```mermaid
+graph LR
+  Researcher -->|results| Writer
+  Writer -->|draft| Reviewer
+  Reviewer -->|feedback| Writer
+```
+````
+
+**Feature flag**: none (always available)
+
+---
+
+## 91. RAPTOR -- Hierarchical Retrieval
+
+**What**: RAPTOR (Recursive Abstractive Processing for Tree-Organized Retrieval) organizes documents into a multi-level summary tree. Instead of searching only raw chunks, RAPTOR builds a hierarchy where each level summarizes groups of chunks from the level below, creating a tree that supports both fine-grained and broad-scope retrieval.
+
+**Why**: Standard flat-chunk retrieval struggles with questions that require synthesizing information across many chunks. A user asking "What are the main themes of this book?" cannot be answered by any single chunk. RAPTOR solves this by pre-computing summaries at multiple granularity levels, so broad questions match high-level summaries while specific questions still find answers in the original chunks.
+
+**Tree structure**:
+
+```
+Level 0:  [chunk1] [chunk2] [chunk3] [chunk4] [chunk5] [chunk6]
+              \       |       /           \       |       /
+Level 1:    [summary of 1-3]           [summary of 4-6]
+                    \                       /
+Level 2:         [global summary of all]
+```
+
+- **Level 0**: Original document chunks (maximum detail, maximum specificity)
+- **Level 1**: Summaries of chunk groups (medium detail, broader scope)
+- **Level 2+**: Summaries of summaries (global overview, thematic synthesis)
+
+When querying, RAPTOR matches at any level -- specific questions like "What is the price of the Aurora?" find answers at level 0, while broad questions like "What are the main ship categories?" match higher-level summaries. This provides both precision and breadth in a single retrieval system.
+
+**Configuration**:
+
+```rust
+use ai_assistant::RaptorConfig;
+
+let config = RaptorConfig {
+    max_levels: 3,         // Hierarchy depth (how many summary levels to build)
+    chunks_per_summary: 5, // Number of chunks grouped per summary node
+    summary_length: 200,   // Summary token budget per node
+};
+```
+
+**How it fits into the RAG pipeline**: RAPTOR is one of the advanced RAG strategies available when using `RagTier::Full` or by enabling it explicitly in `RagFeatures`. It works alongside other strategies like Self-RAG and CRAG (see Section 7 for the full RAG tier system). The summary generation requires LLM calls during indexing, so it trades indexing time for better retrieval quality at query time.
+
+**Feature flag**: `rag`
+
+---
+
+## 92. Event-Driven Workflows
+
+**What**: A workflow engine that lets you define directed acyclic graphs of processing nodes, where each node reacts to typed events. Workflows support checkpointing (persist state to disk and resume), time-travel debugging (replay from any checkpoint), and breakpoints (pause execution at a named node for inspection).
+
+**Why**: Complex AI pipelines -- RAG + reranking + validation + formatting -- are hard to debug and recover when they fail mid-way. Event-driven workflows give you reproducibility and observability for free.
+
+```rust
+use ai_assistant::workflows::{WorkflowGraph, WorkflowRunner, WorkflowTool, Event};
+
+// Define nodes
+let mut graph = WorkflowGraph::new("rag_pipeline");
+graph.add_node("embed", |evt: Event| async move {
+    let text = evt.payload::<String>()?;
+    Ok(Event::new("chunks", embed(text).await?))
+});
+graph.add_node("retrieve", |evt: Event| async move {
+    let chunks = evt.payload::<Vec<f32>>()?;
+    Ok(Event::new("docs", search(chunks).await?))
+});
+graph.add_edge("embed", "retrieve");
+
+// Execute with checkpointing
+let runner = WorkflowRunner::new(graph).with_checkpoint_dir("/tmp/wf");
+let result = runner.run(Event::new("embed", query)).await?;
+
+// Expose as a tool for agents
+let tool = WorkflowTool::from_runner(runner, "rag_search", "Search with RAG pipeline");
+```
+
+**Feature flag**: `workflows`
+
+---
+
+## 93. DSPy-Style Prompt Signatures
+
+**What**: Declarative prompt signatures inspired by DSPy. You declare the input and output fields of a prompt, and the system compiles them into the actual prompt text. Optimizers can then search for the best instructions, few-shot examples, or hyper-parameters automatically.
+
+**Why**: Hand-tuning prompts is tedious and brittle. Signatures separate *what* you want from *how* to ask for it, and optimizers search the space systematically.
+
+```rust
+use ai_assistant::prompt_signatures::{
+    Signature, CompiledPrompt, BootstrapFewShot, SelfReflector,
+};
+
+// Declare a signature
+let sig = Signature::new("question_answering")
+    .input("context", "The retrieved documents")
+    .input("question", "The user question")
+    .output("answer", "A concise factual answer")
+    .output("confidence", "0.0-1.0 confidence score");
+
+// Compile to a prompt
+let compiled = CompiledPrompt::from_signature(&sig);
+
+// Optimize with few-shot bootstrap
+let optimizer = BootstrapFewShot::new(training_set, &provider, 10);
+let optimized = optimizer.optimize(&compiled).await?;
+
+// Self-reflection: analyze failures and suggest improvements
+let reflector = SelfReflector::new(&provider);
+let suggestions = reflector.analyze(&optimized, &eval_results).await?;
+```
+
+**Feature flag**: `prompt-signatures`
+
+---
+
+## 94. A2A Protocol
+
+**What**: Implementation of Google's Agent-to-Agent (A2A) protocol for inter-agent communication. Each agent publishes an AgentCard describing its skills, accepts tasks via JSON-RPC 2.0, and reports results through a well-defined lifecycle.
+
+**Why**: Multi-agent systems need a standard way for agents to discover each other and delegate work. A2A provides that standard, enabling interoperability with any A2A-compliant agent (not just those built with this crate).
+
+```rust
+use ai_assistant::a2a::{AgentCard, A2ATask, AgentDirectory, Skill};
+
+// Publish an agent card
+let card = AgentCard::new("research-agent", "https://localhost:8080")
+    .with_skill(Skill::new("web_search", "Search the web for information"))
+    .with_skill(Skill::new("summarize", "Summarize long documents"));
+
+// Register in a directory and discover agents by skill
+let mut directory = AgentDirectory::new();
+directory.register(card);
+let agents = directory.find_by_skill("web_search");
+
+// Send a task (JSON-RPC 2.0 under the hood)
+let task = A2ATask::new("summarize", serde_json::json!({"text": long_doc}));
+let result = agents[0].send_task(task).await?;
+// Lifecycle: submitted -> working -> completed/failed
+assert!(result.status().is_completed());
+```
+
+**Feature flag**: `a2a`
+
+---
+
+## 95. Advanced Memory
+
+**What**: Three specialized memory stores beyond simple conversation history: episodic (time-stamped experiences), procedural (learned how-to procedures), and entity (named entities with typed relations). A consolidator periodically clusters episodic memories into procedural knowledge.
+
+**Why**: Long-running agents need structured recall. Episodic memory lets them remember *what happened*, procedural memory *how to do things*, and entity memory *what things are and how they relate*.
+
+```rust
+use ai_assistant::advanced_memory::{
+    EpisodicStore, ProceduralStore, EntityStore, MemoryConsolidator,
+};
+
+// Store an episode
+let mut episodic = EpisodicStore::new();
+episodic.record("user asked for CSV export; used pandas, succeeded");
+
+// Store a procedure learned from experience
+let mut procedural = ProceduralStore::new();
+procedural.add("csv_export", vec!["load data", "filter nulls", "write with pandas"]);
+
+// Track entities and relations
+let mut entities = EntityStore::new();
+entities.add_entity("pandas", "library");
+entities.add_relation("csv_export", "uses", "pandas");
+let related = entities.get_relations("csv_export"); // [("uses", "pandas")]
+
+// Consolidate: cluster recent episodes into procedures
+let consolidator = MemoryConsolidator::new(&provider);
+let new_procs = consolidator.consolidate(&episodic, 50).await?;
+for proc in new_procs {
+    procedural.add(&proc.name, proc.steps);
+}
+```
+
+**Feature flag**: `advanced-memory`
+
+---
+
+## 96. Online Evaluation
+
+**What**: A hook-based evaluation system that runs lightweight quality checks on every LLM call (or a configurable sample). Built-in hooks measure latency, estimated cost, relevance (TF-IDF cosine similarity between query and response), and toxicity (keyword-based). You can add custom hooks. An alerting layer fires callbacks when metrics breach thresholds.
+
+**Why**: Offline evals catch regressions between releases, but online evaluation catches quality degradation in production as models, data, or usage patterns drift.
+
+```rust
+use ai_assistant::eval::{
+    OnlineEvaluator, FeedbackHook, LatencyHook, CostHook,
+    RelevanceHook, ToxicityHook, SamplingConfig, AlertConfig,
+};
+
+let evaluator = OnlineEvaluator::builder()
+    .add_hook(LatencyHook::new())
+    .add_hook(CostHook::new())
+    .add_hook(RelevanceHook::new())        // TF-IDF cosine similarity
+    .add_hook(ToxicityHook::new())
+    .sampling(SamplingConfig::percentage(10)) // Evaluate 10% of calls
+    .alert(AlertConfig::new()
+        .when("latency_ms", ">", 5000.0)
+        .when("toxicity_score", ">", 0.7)
+        .notify(|alert| eprintln!("ALERT: {}", alert)))
+    .build();
+
+// Wrap around provider calls
+let response = evaluator.evaluate(&provider, &request).await?;
+let metrics = evaluator.recent_metrics(100); // Last 100 evaluations
+```
+
+**Feature flag**: `eval`
+
+---
+
+## 97. Context Composition
+
+**What**: A composable prompt builder that assembles multi-section prompts under a token budget. `TokenBudgetAllocator` distributes tokens proportionally across sections (system prompt, retrieved docs, conversation history, user query) and redistributes surplus from short sections to long ones. `ContextOverflowDetector` monitors usage against configurable thresholds and triggers actions (truncate, summarize, or error).
+
+**Why**: LLM context windows are finite and expensive. Manually managing what fits is error-prone. Context composition automates the allocation so every token is used effectively.
+
+```rust
+use ai_assistant::context::{
+    ContextComposer, TokenBudgetAllocator, ContextOverflowDetector,
+    OverflowAction, Section,
+};
+
+let allocator = TokenBudgetAllocator::new(8000) // total budget
+    .section("system", 0.15)     // 15% for system prompt
+    .section("documents", 0.50)  // 50% for RAG documents
+    .section("history", 0.25)    // 25% for conversation
+    .section("query", 0.10);     // 10% for user query
+
+let overflow = ContextOverflowDetector::new()
+    .threshold(0.95)                         // Trigger at 95% usage
+    .action(OverflowAction::TruncateOldest); // Drop oldest history messages
+
+let composer = ContextComposer::new(allocator).with_overflow(overflow);
+let prompt = composer
+    .add(Section::new("system", system_prompt))
+    .add(Section::new("documents", retrieved_docs))
+    .add(Section::new("history", conversation))
+    .add(Section::new("query", user_input))
+    .compose()?;
+```
+
+**Feature flag**: none (always available)
+
+---
+
+## 98. Provider Registry
+
+**What**: A centralized registry that resolves model identifiers like `"openai/gpt-4o"` or `"anthropic/claude-sonnet"` into fully configured `AiConfig` objects. `with_defaults()` pre-populates common models with their known context windows, endpoints, and capabilities. Aliases let you map friendly names (e.g., `"fast"` or `"smart"`) to specific models.
+
+**Why**: Hard-coding provider configuration in every call site is repetitive and fragile. A registry centralizes this, making model switching a one-line change.
+
+```rust
+use ai_assistant::provider_registry::ProviderRegistry;
+
+// Start with sensible defaults for known models
+let mut registry = ProviderRegistry::with_defaults();
+
+// Register custom aliases
+registry.alias("fast", "groq/llama-3.3-70b");
+registry.alias("smart", "anthropic/claude-sonnet-4");
+
+// Resolve to AiConfig -- fills in endpoint, context size, etc.
+let config = registry.resolve("openai/gpt-4o")?;
+let config_alias = registry.resolve("fast")?;
+
+// Override specific fields
+let custom = registry.resolve("openai/gpt-4o")?
+    .with_temperature(0.2)
+    .with_max_tokens(1000);
+```
+
+**Feature flag**: none (always available)
+
+---
+
+## 99. Multi-Layer Knowledge Graph Improvements
+
+**What**: Extensions to the multi-layer knowledge graph (Section 55/89) adding custom named layers, configurable priority ordering, unified cross-layer queries, hierarchical clustering, cross-layer inference, conflict resolution policies, and graph diff/merge operations.
+
+**Why**: Real-world knowledge graphs need more than fixed layers. Custom layers let you model domain-specific relationship types, and unified queries let you ask questions across the full graph without manually querying each layer.
+
+```rust
+use ai_assistant::multi_layer_graph::{
+    MultiLayerGraph, LayerConfig, UnifiedView, GraphCluster,
+    ConflictPolicy, GraphDiff,
+};
+
+let mut graph = MultiLayerGraph::new();
+
+// Add custom layers with priorities
+graph.add_layer(LayerConfig::new("ontology").priority(1));
+graph.add_layer(LayerConfig::new("operational").priority(2));
+graph.add_layer(LayerConfig::new("temporal").priority(3));
+
+// Query across all layers
+let view = UnifiedView::new(&graph);
+let results = view.query("Paris", 2)?; // 2-hop neighborhood across all layers
+
+// Hierarchical clustering
+let clusters = GraphCluster::detect(&graph, 0.5)?; // modularity threshold
+for cluster in &clusters {
+    println!("Cluster {}: {} nodes", cluster.id(), cluster.len());
+}
+
+// Diff and merge two graph versions
+let diff = GraphDiff::compute(&graph_v1, &graph_v2);
+let merged = diff.apply_with_policy(&graph_v1, ConflictPolicy::PreferHigherPriority)?;
+```
+
+**Feature flag**: `multi-agent`
+
+---
+
+## 100. P2P Network Hardening
+
+**What**: Reliability improvements for the distributed hash table and peer-to-peer networking layer. Adds read repair (fix stale replicas on read), hinted handoff (buffer writes for temporarily-down nodes), dead node ring removal, configurable conflict resolution policies, and quorum enforcement with three modes: Strict (all replicas must agree), Flexible (majority suffices), and Mixed (strict for writes, flexible for reads).
+
+**Why**: Distributed systems must handle node failures gracefully. Without these mechanisms, data silently goes stale, dead nodes waste ring space, and split-brain scenarios cause conflicts.
+
+```rust
+use ai_assistant::distributed_network::{
+    NetworkNode, QuorumPolicy, ConflictResolution, HintedHandoff,
+};
+
+let mut node = NetworkNode::new(config).await?;
+
+// Configure quorum enforcement
+node.set_quorum_policy(QuorumPolicy::Mixed {
+    read: 1,   // Fast reads (single replica)
+    write: 2,  // Safe writes (majority of 3)
+});
+
+// Enable read repair: fix stale replicas encountered during reads
+node.enable_read_repair(true);
+
+// Hinted handoff: buffer writes for down nodes, replay when they return
+node.enable_hinted_handoff(HintedHandoff {
+    max_hints_per_node: 1000,
+    hint_ttl: std::time::Duration::from_secs(3600),
+});
+
+// Conflict resolution policy
+node.set_conflict_resolution(ConflictResolution::LastWriterWins);
+// Other options: ConflictResolution::VectorClock, ConflictResolution::Custom(fn)
+```
+
+**Feature flag**: `distributed-network`

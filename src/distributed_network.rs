@@ -22,6 +22,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use serde::{Serialize, Deserialize};
+
 use tokio::runtime::Runtime;
 use tokio::sync::{mpsc, oneshot};
 
@@ -2112,6 +2114,371 @@ impl EventLoop {
 }
 
 // =============================================================================
+// V4 ADDITIONS: P2P Hardening (items 9.1-9.5)
+// =============================================================================
+
+/// 9.1: Read repair entry - detected inconsistency during read
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReadRepairEntry {
+    pub key: String,
+    pub expected_version: u64,
+    pub actual_version: u64,
+    pub node_id: Vec<u8>,
+    pub timestamp: u64,
+    pub repaired: bool,
+}
+
+/// 9.2: Hinted handoff queue item for failed writes
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HintedHandoff {
+    pub key: String,
+    pub value: Vec<u8>,
+    pub target_node: Vec<u8>,
+    pub created_at: u64,
+    pub attempts: usize,
+    pub ttl_seconds: u64,
+}
+
+/// Hinted handoff queue with TTL and max size
+pub struct HintedHandoffQueue {
+    queue: Vec<HintedHandoff>,
+    max_size: usize,
+    default_ttl: u64,
+}
+
+impl HintedHandoffQueue {
+    /// Create a new hinted handoff queue with a maximum size and default TTL in seconds.
+    pub fn new(max_size: usize, default_ttl: u64) -> Self {
+        Self {
+            queue: Vec::new(),
+            max_size,
+            default_ttl,
+        }
+    }
+
+    /// Enqueue a hinted handoff entry. Returns false if the queue is full.
+    pub fn enqueue(&mut self, mut handoff: HintedHandoff) -> bool {
+        if self.queue.len() >= self.max_size {
+            return false;
+        }
+        if handoff.ttl_seconds == 0 {
+            handoff.ttl_seconds = self.default_ttl;
+        }
+        if handoff.created_at == 0 {
+            handoff.created_at = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+        }
+        self.queue.push(handoff);
+        true
+    }
+
+    /// Drain all handoff entries destined for a specific node, returning them.
+    pub fn drain_for_node(&mut self, node_id: &[u8]) -> Vec<HintedHandoff> {
+        let mut drained = Vec::new();
+        let mut remaining = Vec::new();
+        for entry in self.queue.drain(..) {
+            if entry.target_node == node_id {
+                drained.push(entry);
+            } else {
+                remaining.push(entry);
+            }
+        }
+        self.queue = remaining;
+        drained
+    }
+
+    /// Remove expired entries based on TTL. Returns number of entries removed.
+    pub fn expire_old(&mut self) -> usize {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let before = self.queue.len();
+        self.queue.retain(|entry| {
+            now.saturating_sub(entry.created_at) < entry.ttl_seconds
+        });
+        before - self.queue.len()
+    }
+
+    /// Return the number of entries in the queue.
+    pub fn len(&self) -> usize {
+        self.queue.len()
+    }
+
+    /// Check if the queue is empty.
+    pub fn is_empty(&self) -> bool {
+        self.queue.is_empty()
+    }
+
+    /// Check if the queue is at maximum capacity.
+    pub fn is_full(&self) -> bool {
+        self.queue.len() >= self.max_size
+    }
+}
+
+/// 9.3: Dead node removal tracker
+#[derive(Debug, Clone)]
+pub struct DeadNodeTracker {
+    dead_nodes: HashMap<Vec<u8>, DeadNodeInfo>,
+    timeout_seconds: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct DeadNodeInfo {
+    pub node_id: Vec<u8>,
+    pub last_seen: u64,
+    pub marked_dead_at: u64,
+    pub data_replicated: bool,
+}
+
+impl DeadNodeTracker {
+    /// Create a new dead node tracker with a timeout in seconds.
+    pub fn new(timeout_seconds: u64) -> Self {
+        Self {
+            dead_nodes: HashMap::new(),
+            timeout_seconds,
+        }
+    }
+
+    /// Mark a node as dead.
+    pub fn mark_dead(&mut self, node_id: Vec<u8>) {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        self.dead_nodes.insert(node_id.clone(), DeadNodeInfo {
+            node_id,
+            last_seen: now,
+            marked_dead_at: now,
+            data_replicated: false,
+        });
+    }
+
+    /// Mark a node as alive, removing it from the dead nodes set.
+    pub fn mark_alive(&mut self, node_id: &[u8]) -> bool {
+        self.dead_nodes.remove(node_id).is_some()
+    }
+
+    /// Check if a node is currently marked as dead.
+    pub fn is_dead(&self, node_id: &[u8]) -> bool {
+        self.dead_nodes.contains_key(node_id)
+    }
+
+    /// Return all currently dead nodes.
+    pub fn get_dead_nodes(&self) -> Vec<&DeadNodeInfo> {
+        self.dead_nodes.values().collect()
+    }
+
+    /// Check whether enough time has passed since `last_seen` to consider the node timed out.
+    pub fn check_timeout(&self, node_id: &[u8], last_seen: u64) -> bool {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let elapsed = now.saturating_sub(last_seen);
+        if elapsed >= self.timeout_seconds {
+            // Also check if already tracked
+            self.dead_nodes.contains_key(node_id) || elapsed >= self.timeout_seconds
+        } else {
+            false
+        }
+    }
+
+    /// Mark that a dead node's data has been replicated elsewhere.
+    pub fn mark_data_replicated(&mut self, node_id: &[u8]) -> bool {
+        if let Some(info) = self.dead_nodes.get_mut(node_id) {
+            info.data_replicated = true;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+/// 9.4: Conflict resolution strategy
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConflictResolution {
+    LastWriteWins,
+    HighestVersion,
+    Merge,
+    Manual,
+}
+
+/// Version conflict entry
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VersionConflict {
+    pub key: String,
+    pub versions: Vec<VersionedValue>,
+    pub resolution: Option<ConflictResolution>,
+    pub resolved_value: Option<Vec<u8>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VersionedValue {
+    pub value: Vec<u8>,
+    pub version: u64,
+    pub node_id: Vec<u8>,
+    pub timestamp: u64,
+}
+
+impl VersionConflict {
+    /// Apply a conflict resolution strategy. Updates `resolution` and `resolved_value`.
+    pub fn resolve(&mut self, strategy: &ConflictResolution) {
+        if self.versions.is_empty() {
+            self.resolution = Some(strategy.clone());
+            self.resolved_value = None;
+            return;
+        }
+
+        let resolved = match strategy {
+            ConflictResolution::LastWriteWins => {
+                // Pick the value with the highest timestamp
+                self.versions
+                    .iter()
+                    .max_by_key(|v| v.timestamp)
+                    .map(|v| v.value.clone())
+            }
+            ConflictResolution::HighestVersion => {
+                // Pick the value with the highest version number
+                self.versions
+                    .iter()
+                    .max_by_key(|v| v.version)
+                    .map(|v| v.value.clone())
+            }
+            ConflictResolution::Merge => {
+                // Concatenate all values in version order (deterministic merge)
+                let mut sorted = self.versions.clone();
+                sorted.sort_by_key(|v| v.version);
+                let merged: Vec<u8> = sorted.iter().flat_map(|v| v.value.clone()).collect();
+                Some(merged)
+            }
+            ConflictResolution::Manual => {
+                // Manual resolution: do not auto-resolve
+                None
+            }
+        };
+
+        self.resolution = Some(strategy.clone());
+        self.resolved_value = resolved;
+    }
+}
+
+/// 9.5: Quorum enforcement modes
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum QuorumMode {
+    /// All reads/writes require quorum
+    Strict,
+    /// Best-effort, degrade gracefully
+    Flexible,
+    /// Different quorum levels for reads and writes
+    Mixed { reads: QuorumLevel, writes: QuorumLevel },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum QuorumLevel {
+    One,
+    Majority,
+    All,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuorumConfig {
+    pub mode: QuorumMode,
+    pub replication_factor: usize,
+    pub read_quorum: usize,
+    pub write_quorum: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct QuorumResult {
+    pub success: bool,
+    pub responses: usize,
+    pub required: usize,
+    pub mode: QuorumMode,
+}
+
+impl QuorumConfig {
+    /// Create a new quorum configuration.
+    pub fn new(mode: QuorumMode, replication_factor: usize) -> Self {
+        let (read_quorum, write_quorum) = Self::calculate_quorums(&mode, replication_factor);
+        Self {
+            mode,
+            replication_factor,
+            read_quorum,
+            write_quorum,
+        }
+    }
+
+    /// Create a quorum configuration from a mode and replication factor,
+    /// auto-calculating read and write quorum values.
+    pub fn from_mode(mode: QuorumMode, replication_factor: usize) -> Self {
+        Self::new(mode, replication_factor)
+    }
+
+    /// Calculate read and write quorum values from a mode and replication factor.
+    fn calculate_quorums(mode: &QuorumMode, rf: usize) -> (usize, usize) {
+        let majority = rf / 2 + 1;
+        match mode {
+            QuorumMode::Strict => (majority, majority),
+            QuorumMode::Flexible => (1, 1),
+            QuorumMode::Mixed { reads, writes } => {
+                let r = Self::level_to_count(reads, rf);
+                let w = Self::level_to_count(writes, rf);
+                (r, w)
+            }
+        }
+    }
+
+    /// Convert a QuorumLevel to a concrete count given a replication factor.
+    fn level_to_count(level: &QuorumLevel, rf: usize) -> usize {
+        match level {
+            QuorumLevel::One => 1,
+            QuorumLevel::Majority => rf / 2 + 1,
+            QuorumLevel::All => rf,
+        }
+    }
+
+    /// Check whether a quorum is met given the number of responses.
+    pub fn is_quorum_met(&self, responses: usize) -> QuorumResult {
+        let required = self.read_quorum.max(self.write_quorum);
+        QuorumResult {
+            success: responses >= required,
+            responses,
+            required,
+            mode: self.mode.clone(),
+        }
+    }
+
+    /// Check whether a read quorum is met.
+    pub fn is_read_quorum_met(&self, responses: usize) -> QuorumResult {
+        QuorumResult {
+            success: responses >= self.read_quorum,
+            responses,
+            required: self.read_quorum,
+            mode: self.mode.clone(),
+        }
+    }
+
+    /// Check whether a write quorum is met.
+    pub fn is_write_quorum_met(&self, responses: usize) -> QuorumResult {
+        QuorumResult {
+            success: responses >= self.write_quorum,
+            responses,
+            required: self.write_quorum,
+            mode: self.mode.clone(),
+        }
+    }
+}
+
+impl Default for QuorumConfig {
+    fn default() -> Self {
+        Self::new(QuorumMode::Strict, 3)
+    }
+}
+
+// =============================================================================
 // Tests
 // =============================================================================
 
@@ -3003,5 +3370,685 @@ mod tests {
         // The node should have been created with max_connections = 2
         // This is enforced in handle_incoming at runtime
         assert_eq!(node.peer_count(), 0);
+    }
+
+    // =========================================================================
+    // V4 P2P Hardening Tests (9.1-9.5)
+    // =========================================================================
+
+    // --- 9.1: Read Repair ---
+
+    #[test]
+    fn test_read_repair_entry_creation() {
+        let entry = ReadRepairEntry {
+            key: "user:123".to_string(),
+            expected_version: 5,
+            actual_version: 3,
+            node_id: vec![1, 2, 3],
+            timestamp: 1000,
+            repaired: false,
+        };
+        assert_eq!(entry.key, "user:123");
+        assert_eq!(entry.expected_version, 5);
+        assert_eq!(entry.actual_version, 3);
+        assert_eq!(entry.node_id, vec![1, 2, 3]);
+        assert!(!entry.repaired);
+    }
+
+    #[test]
+    fn test_read_repair_serialization() {
+        let entry = ReadRepairEntry {
+            key: "data:abc".to_string(),
+            expected_version: 10,
+            actual_version: 7,
+            node_id: vec![4, 5, 6],
+            timestamp: 2000,
+            repaired: true,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let deserialized: ReadRepairEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.key, "data:abc");
+        assert_eq!(deserialized.expected_version, 10);
+        assert_eq!(deserialized.actual_version, 7);
+        assert_eq!(deserialized.node_id, vec![4, 5, 6]);
+        assert!(deserialized.repaired);
+    }
+
+    #[test]
+    fn test_read_repair_entry_clone() {
+        let entry = ReadRepairEntry {
+            key: "k".to_string(),
+            expected_version: 1,
+            actual_version: 0,
+            node_id: vec![9],
+            timestamp: 500,
+            repaired: false,
+        };
+        let cloned = entry.clone();
+        assert_eq!(cloned.key, entry.key);
+        assert_eq!(cloned.timestamp, entry.timestamp);
+    }
+
+    // --- 9.2: Hinted Handoff ---
+
+    #[test]
+    fn test_hinted_handoff_queue_new() {
+        let queue = HintedHandoffQueue::new(100, 3600);
+        assert_eq!(queue.len(), 0);
+        assert!(!queue.is_full());
+        assert!(queue.is_empty());
+    }
+
+    #[test]
+    fn test_handoff_enqueue() {
+        let mut queue = HintedHandoffQueue::new(10, 3600);
+        let handoff = HintedHandoff {
+            key: "key1".to_string(),
+            value: vec![1, 2, 3],
+            target_node: vec![10, 20],
+            created_at: 0,
+            attempts: 0,
+            ttl_seconds: 0,
+        };
+        assert!(queue.enqueue(handoff));
+        assert_eq!(queue.len(), 1);
+    }
+
+    #[test]
+    fn test_handoff_enqueue_sets_defaults() {
+        let mut queue = HintedHandoffQueue::new(10, 7200);
+        let handoff = HintedHandoff {
+            key: "key2".to_string(),
+            value: vec![4, 5],
+            target_node: vec![30],
+            created_at: 0,
+            attempts: 0,
+            ttl_seconds: 0,
+        };
+        queue.enqueue(handoff);
+        // The queue should have set defaults for created_at and ttl_seconds
+        assert_eq!(queue.len(), 1);
+    }
+
+    #[test]
+    fn test_handoff_drain_for_node() {
+        let mut queue = HintedHandoffQueue::new(100, 3600);
+        let node_a = vec![1, 1];
+        let node_b = vec![2, 2];
+
+        for i in 0..5 {
+            queue.enqueue(HintedHandoff {
+                key: format!("a_{}", i),
+                value: vec![i as u8],
+                target_node: node_a.clone(),
+                created_at: 1000,
+                attempts: 0,
+                ttl_seconds: 3600,
+            });
+        }
+        for i in 0..3 {
+            queue.enqueue(HintedHandoff {
+                key: format!("b_{}", i),
+                value: vec![i as u8],
+                target_node: node_b.clone(),
+                created_at: 1000,
+                attempts: 0,
+                ttl_seconds: 3600,
+            });
+        }
+
+        assert_eq!(queue.len(), 8);
+        let drained = queue.drain_for_node(&node_a);
+        assert_eq!(drained.len(), 5);
+        assert_eq!(queue.len(), 3);
+
+        // All remaining should be for node_b
+        let drained_b = queue.drain_for_node(&node_b);
+        assert_eq!(drained_b.len(), 3);
+        assert_eq!(queue.len(), 0);
+    }
+
+    #[test]
+    fn test_handoff_drain_nonexistent_node() {
+        let mut queue = HintedHandoffQueue::new(100, 3600);
+        queue.enqueue(HintedHandoff {
+            key: "k".to_string(),
+            value: vec![1],
+            target_node: vec![1],
+            created_at: 1000,
+            attempts: 0,
+            ttl_seconds: 3600,
+        });
+        let drained = queue.drain_for_node(&[99, 99]);
+        assert!(drained.is_empty());
+        assert_eq!(queue.len(), 1);
+    }
+
+    #[test]
+    fn test_handoff_expire_old() {
+        let mut queue = HintedHandoffQueue::new(100, 3600);
+        // Add an entry that was created long ago (TTL 1 second, created 1000 seconds ago)
+        queue.enqueue(HintedHandoff {
+            key: "old".to_string(),
+            value: vec![1],
+            target_node: vec![1],
+            created_at: 1, // Very old
+            attempts: 0,
+            ttl_seconds: 1, // 1 second TTL
+        });
+        // Add a fresh entry
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        queue.enqueue(HintedHandoff {
+            key: "fresh".to_string(),
+            value: vec![2],
+            target_node: vec![2],
+            created_at: now,
+            attempts: 0,
+            ttl_seconds: 3600,
+        });
+
+        assert_eq!(queue.len(), 2);
+        let expired = queue.expire_old();
+        assert_eq!(expired, 1);
+        assert_eq!(queue.len(), 1);
+    }
+
+    #[test]
+    fn test_handoff_max_size() {
+        let mut queue = HintedHandoffQueue::new(2, 3600);
+        let h1 = HintedHandoff {
+            key: "k1".to_string(),
+            value: vec![1],
+            target_node: vec![1],
+            created_at: 1000,
+            attempts: 0,
+            ttl_seconds: 3600,
+        };
+        let h2 = HintedHandoff {
+            key: "k2".to_string(),
+            value: vec![2],
+            target_node: vec![2],
+            created_at: 1000,
+            attempts: 0,
+            ttl_seconds: 3600,
+        };
+        let h3 = HintedHandoff {
+            key: "k3".to_string(),
+            value: vec![3],
+            target_node: vec![3],
+            created_at: 1000,
+            attempts: 0,
+            ttl_seconds: 3600,
+        };
+
+        assert!(queue.enqueue(h1));
+        assert!(queue.enqueue(h2));
+        assert!(!queue.enqueue(h3)); // Queue full
+        assert_eq!(queue.len(), 2);
+    }
+
+    #[test]
+    fn test_handoff_is_full() {
+        let mut queue = HintedHandoffQueue::new(1, 3600);
+        assert!(!queue.is_full());
+        queue.enqueue(HintedHandoff {
+            key: "k".to_string(),
+            value: vec![1],
+            target_node: vec![1],
+            created_at: 1000,
+            attempts: 0,
+            ttl_seconds: 3600,
+        });
+        assert!(queue.is_full());
+    }
+
+    #[test]
+    fn test_handoff_serialization() {
+        let h = HintedHandoff {
+            key: "data:1".to_string(),
+            value: vec![10, 20, 30],
+            target_node: vec![5, 6],
+            created_at: 9999,
+            attempts: 3,
+            ttl_seconds: 7200,
+        };
+        let json = serde_json::to_string(&h).unwrap();
+        let deser: HintedHandoff = serde_json::from_str(&json).unwrap();
+        assert_eq!(deser.key, "data:1");
+        assert_eq!(deser.value, vec![10, 20, 30]);
+        assert_eq!(deser.attempts, 3);
+    }
+
+    // --- 9.3: Dead Node Tracker ---
+
+    #[test]
+    fn test_dead_node_tracker_mark_dead() {
+        let mut tracker = DeadNodeTracker::new(300);
+        let node = vec![1, 2, 3];
+        tracker.mark_dead(node.clone());
+        assert!(tracker.is_dead(&node));
+    }
+
+    #[test]
+    fn test_dead_node_mark_alive() {
+        let mut tracker = DeadNodeTracker::new(300);
+        let node = vec![1, 2, 3];
+        tracker.mark_dead(node.clone());
+        assert!(tracker.is_dead(&node));
+        let was_dead = tracker.mark_alive(&node);
+        assert!(was_dead);
+        assert!(!tracker.is_dead(&node));
+    }
+
+    #[test]
+    fn test_dead_node_mark_alive_unknown() {
+        let mut tracker = DeadNodeTracker::new(300);
+        let was_dead = tracker.mark_alive(&[99, 99]);
+        assert!(!was_dead);
+    }
+
+    #[test]
+    fn test_dead_node_check_timeout() {
+        let tracker = DeadNodeTracker::new(60);
+        let node = vec![1, 2, 3];
+        // last_seen 0 (epoch) should always be timed out
+        assert!(tracker.check_timeout(&node, 0));
+
+        // last_seen = now should not be timed out
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        assert!(!tracker.check_timeout(&node, now));
+    }
+
+    #[test]
+    fn test_dead_node_get_dead_nodes() {
+        let mut tracker = DeadNodeTracker::new(300);
+        assert!(tracker.get_dead_nodes().is_empty());
+
+        tracker.mark_dead(vec![1]);
+        tracker.mark_dead(vec![2]);
+        tracker.mark_dead(vec![3]);
+        assert_eq!(tracker.get_dead_nodes().len(), 3);
+
+        tracker.mark_alive(&[2]);
+        assert_eq!(tracker.get_dead_nodes().len(), 2);
+    }
+
+    #[test]
+    fn test_dead_node_data_replicated() {
+        let mut tracker = DeadNodeTracker::new(300);
+        let node = vec![1, 2, 3];
+        tracker.mark_dead(node.clone());
+
+        let info = tracker.get_dead_nodes();
+        assert!(!info[0].data_replicated);
+
+        assert!(tracker.mark_data_replicated(&node));
+        let info = tracker.get_dead_nodes();
+        assert!(info[0].data_replicated);
+    }
+
+    #[test]
+    fn test_dead_node_data_replicated_unknown() {
+        let mut tracker = DeadNodeTracker::new(300);
+        assert!(!tracker.mark_data_replicated(&[99]));
+    }
+
+    #[test]
+    fn test_dead_node_re_mark_dead() {
+        let mut tracker = DeadNodeTracker::new(300);
+        let node = vec![1, 2];
+        tracker.mark_dead(node.clone());
+        tracker.mark_data_replicated(&node);
+        // Re-mark dead should reset
+        tracker.mark_dead(node.clone());
+        let dead = tracker.get_dead_nodes();
+        assert_eq!(dead.len(), 1);
+        assert!(!dead[0].data_replicated);
+    }
+
+    // --- 9.4: Conflict Resolution ---
+
+    #[test]
+    fn test_conflict_resolution_lww() {
+        let mut conflict = VersionConflict {
+            key: "user:1".to_string(),
+            versions: vec![
+                VersionedValue {
+                    value: b"old".to_vec(),
+                    version: 1,
+                    node_id: vec![1],
+                    timestamp: 1000,
+                },
+                VersionedValue {
+                    value: b"new".to_vec(),
+                    version: 2,
+                    node_id: vec![2],
+                    timestamp: 2000,
+                },
+            ],
+            resolution: None,
+            resolved_value: None,
+        };
+        conflict.resolve(&ConflictResolution::LastWriteWins);
+        assert_eq!(conflict.resolution, Some(ConflictResolution::LastWriteWins));
+        assert_eq!(conflict.resolved_value, Some(b"new".to_vec()));
+    }
+
+    #[test]
+    fn test_conflict_resolution_highest_version() {
+        let mut conflict = VersionConflict {
+            key: "data:x".to_string(),
+            versions: vec![
+                VersionedValue {
+                    value: b"v10".to_vec(),
+                    version: 10,
+                    node_id: vec![1],
+                    timestamp: 500,
+                },
+                VersionedValue {
+                    value: b"v5".to_vec(),
+                    version: 5,
+                    node_id: vec![2],
+                    timestamp: 1000,
+                },
+            ],
+            resolution: None,
+            resolved_value: None,
+        };
+        conflict.resolve(&ConflictResolution::HighestVersion);
+        assert_eq!(conflict.resolution, Some(ConflictResolution::HighestVersion));
+        assert_eq!(conflict.resolved_value, Some(b"v10".to_vec()));
+    }
+
+    #[test]
+    fn test_conflict_resolution_merge() {
+        let mut conflict = VersionConflict {
+            key: "doc:1".to_string(),
+            versions: vec![
+                VersionedValue {
+                    value: b"AB".to_vec(),
+                    version: 2,
+                    node_id: vec![1],
+                    timestamp: 1000,
+                },
+                VersionedValue {
+                    value: b"CD".to_vec(),
+                    version: 1,
+                    node_id: vec![2],
+                    timestamp: 500,
+                },
+            ],
+            resolution: None,
+            resolved_value: None,
+        };
+        conflict.resolve(&ConflictResolution::Merge);
+        assert_eq!(conflict.resolution, Some(ConflictResolution::Merge));
+        // Merge sorts by version, so version 1 (CD) then version 2 (AB)
+        assert_eq!(conflict.resolved_value, Some(b"CDAB".to_vec()));
+    }
+
+    #[test]
+    fn test_conflict_resolution_manual() {
+        let mut conflict = VersionConflict {
+            key: "k".to_string(),
+            versions: vec![
+                VersionedValue {
+                    value: b"a".to_vec(),
+                    version: 1,
+                    node_id: vec![1],
+                    timestamp: 100,
+                },
+            ],
+            resolution: None,
+            resolved_value: None,
+        };
+        conflict.resolve(&ConflictResolution::Manual);
+        assert_eq!(conflict.resolution, Some(ConflictResolution::Manual));
+        assert_eq!(conflict.resolved_value, None);
+    }
+
+    #[test]
+    fn test_conflict_resolution_empty_versions() {
+        let mut conflict = VersionConflict {
+            key: "empty".to_string(),
+            versions: vec![],
+            resolution: None,
+            resolved_value: None,
+        };
+        conflict.resolve(&ConflictResolution::LastWriteWins);
+        assert_eq!(conflict.resolution, Some(ConflictResolution::LastWriteWins));
+        assert_eq!(conflict.resolved_value, None);
+    }
+
+    #[test]
+    fn test_version_conflict_serialization() {
+        let conflict = VersionConflict {
+            key: "ser:test".to_string(),
+            versions: vec![
+                VersionedValue {
+                    value: b"hello".to_vec(),
+                    version: 1,
+                    node_id: vec![1, 2],
+                    timestamp: 12345,
+                },
+            ],
+            resolution: Some(ConflictResolution::LastWriteWins),
+            resolved_value: Some(b"hello".to_vec()),
+        };
+        let json = serde_json::to_string(&conflict).unwrap();
+        let deser: VersionConflict = serde_json::from_str(&json).unwrap();
+        assert_eq!(deser.key, "ser:test");
+        assert_eq!(deser.versions.len(), 1);
+        assert_eq!(deser.resolution, Some(ConflictResolution::LastWriteWins));
+        assert_eq!(deser.resolved_value, Some(b"hello".to_vec()));
+    }
+
+    #[test]
+    fn test_conflict_resolution_eq() {
+        assert_eq!(ConflictResolution::LastWriteWins, ConflictResolution::LastWriteWins);
+        assert_eq!(ConflictResolution::Merge, ConflictResolution::Merge);
+        assert_ne!(ConflictResolution::LastWriteWins, ConflictResolution::HighestVersion);
+        assert_ne!(ConflictResolution::Manual, ConflictResolution::Merge);
+    }
+
+    #[test]
+    fn test_conflict_resolution_serialization() {
+        let strategy = ConflictResolution::HighestVersion;
+        let json = serde_json::to_string(&strategy).unwrap();
+        let deser: ConflictResolution = serde_json::from_str(&json).unwrap();
+        assert_eq!(deser, ConflictResolution::HighestVersion);
+    }
+
+    // --- 9.5: Quorum ---
+
+    #[test]
+    fn test_quorum_config_strict() {
+        let config = QuorumConfig::new(QuorumMode::Strict, 3);
+        assert_eq!(config.mode, QuorumMode::Strict);
+        assert_eq!(config.replication_factor, 3);
+        // Majority of 3 = 2
+        assert_eq!(config.read_quorum, 2);
+        assert_eq!(config.write_quorum, 2);
+    }
+
+    #[test]
+    fn test_quorum_config_flexible() {
+        let config = QuorumConfig::new(QuorumMode::Flexible, 5);
+        assert_eq!(config.mode, QuorumMode::Flexible);
+        assert_eq!(config.replication_factor, 5);
+        assert_eq!(config.read_quorum, 1);
+        assert_eq!(config.write_quorum, 1);
+    }
+
+    #[test]
+    fn test_quorum_config_mixed() {
+        let config = QuorumConfig::new(
+            QuorumMode::Mixed {
+                reads: QuorumLevel::One,
+                writes: QuorumLevel::Majority,
+            },
+            5,
+        );
+        assert_eq!(config.read_quorum, 1);
+        // Majority of 5 = 3
+        assert_eq!(config.write_quorum, 3);
+    }
+
+    #[test]
+    fn test_quorum_config_mixed_all() {
+        let config = QuorumConfig::new(
+            QuorumMode::Mixed {
+                reads: QuorumLevel::All,
+                writes: QuorumLevel::All,
+            },
+            3,
+        );
+        assert_eq!(config.read_quorum, 3);
+        assert_eq!(config.write_quorum, 3);
+    }
+
+    #[test]
+    fn test_quorum_is_met() {
+        let config = QuorumConfig::new(QuorumMode::Strict, 3);
+        // Requires majority (2)
+        let result = config.is_quorum_met(2);
+        assert!(result.success);
+        assert_eq!(result.responses, 2);
+        assert_eq!(result.required, 2);
+
+        let result3 = config.is_quorum_met(3);
+        assert!(result3.success);
+    }
+
+    #[test]
+    fn test_quorum_not_met() {
+        let config = QuorumConfig::new(QuorumMode::Strict, 3);
+        let result = config.is_quorum_met(1);
+        assert!(!result.success);
+        assert_eq!(result.responses, 1);
+        assert_eq!(result.required, 2);
+    }
+
+    #[test]
+    fn test_quorum_read_quorum_met() {
+        let config = QuorumConfig::new(
+            QuorumMode::Mixed {
+                reads: QuorumLevel::One,
+                writes: QuorumLevel::All,
+            },
+            3,
+        );
+        let result = config.is_read_quorum_met(1);
+        assert!(result.success);
+        assert_eq!(result.required, 1);
+    }
+
+    #[test]
+    fn test_quorum_write_quorum_met() {
+        let config = QuorumConfig::new(
+            QuorumMode::Mixed {
+                reads: QuorumLevel::One,
+                writes: QuorumLevel::All,
+            },
+            3,
+        );
+        let result = config.is_write_quorum_met(2);
+        assert!(!result.success);
+        assert_eq!(result.required, 3);
+
+        let result_ok = config.is_write_quorum_met(3);
+        assert!(result_ok.success);
+    }
+
+    #[test]
+    fn test_quorum_default() {
+        let config = QuorumConfig::default();
+        assert_eq!(config.mode, QuorumMode::Strict);
+        assert_eq!(config.replication_factor, 3);
+        assert_eq!(config.read_quorum, 2);
+        assert_eq!(config.write_quorum, 2);
+    }
+
+    #[test]
+    fn test_quorum_from_mode_strict() {
+        let config = QuorumConfig::from_mode(QuorumMode::Strict, 5);
+        // Majority of 5 = 3
+        assert_eq!(config.read_quorum, 3);
+        assert_eq!(config.write_quorum, 3);
+    }
+
+    #[test]
+    fn test_quorum_from_mode_flexible() {
+        let config = QuorumConfig::from_mode(QuorumMode::Flexible, 7);
+        assert_eq!(config.read_quorum, 1);
+        assert_eq!(config.write_quorum, 1);
+    }
+
+    #[test]
+    fn test_quorum_from_mode_mixed() {
+        let config = QuorumConfig::from_mode(
+            QuorumMode::Mixed {
+                reads: QuorumLevel::Majority,
+                writes: QuorumLevel::One,
+            },
+            4,
+        );
+        // Majority of 4 = 3
+        assert_eq!(config.read_quorum, 3);
+        assert_eq!(config.write_quorum, 1);
+    }
+
+    #[test]
+    fn test_quorum_mode_serialization() {
+        let mode = QuorumMode::Mixed {
+            reads: QuorumLevel::Majority,
+            writes: QuorumLevel::All,
+        };
+        let json = serde_json::to_string(&mode).unwrap();
+        let deser: QuorumMode = serde_json::from_str(&json).unwrap();
+        assert_eq!(deser, mode);
+    }
+
+    #[test]
+    fn test_quorum_config_serialization() {
+        let config = QuorumConfig::new(QuorumMode::Strict, 3);
+        let json = serde_json::to_string(&config).unwrap();
+        let deser: QuorumConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deser.mode, QuorumMode::Strict);
+        assert_eq!(deser.replication_factor, 3);
+        assert_eq!(deser.read_quorum, 2);
+        assert_eq!(deser.write_quorum, 2);
+    }
+
+    #[test]
+    fn test_quorum_level_eq() {
+        assert_eq!(QuorumLevel::One, QuorumLevel::One);
+        assert_eq!(QuorumLevel::Majority, QuorumLevel::Majority);
+        assert_eq!(QuorumLevel::All, QuorumLevel::All);
+        assert_ne!(QuorumLevel::One, QuorumLevel::All);
+    }
+
+    #[test]
+    fn test_quorum_replication_factor_one() {
+        let config = QuorumConfig::new(QuorumMode::Strict, 1);
+        // Majority of 1 = 1
+        assert_eq!(config.read_quorum, 1);
+        assert_eq!(config.write_quorum, 1);
+        let result = config.is_quorum_met(1);
+        assert!(result.success);
+    }
+
+    #[test]
+    fn test_quorum_zero_responses() {
+        let config = QuorumConfig::new(QuorumMode::Strict, 3);
+        let result = config.is_quorum_met(0);
+        assert!(!result.success);
+        assert_eq!(result.responses, 0);
     }
 }

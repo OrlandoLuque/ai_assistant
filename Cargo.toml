@@ -95,6 +95,7 @@ full = [
     "distributed",
     "binary-storage",
     "async-runtime",
+    "advanced-memory",
 ]
 
 # Binary storage: bincode + gzip for internal data (faster, smaller than JSON)
@@ -153,6 +154,21 @@ containers = ["dep:bollard", "dep:tokio", "dep:futures"]
 
 # Audio/Speech: STT (speech-to-text) and TTS (text-to-speech) via cloud APIs
 audio = []
+
+# Event-driven workflow engine with checkpointing, time-travel, breakpoints
+# Not in 'full' by default — requires tokio for async event loop. Opt-in: --features workflows
+workflows = ["dep:tokio"]
+
+# DSPy-style prompt optimization: signatures, bootstrap few-shot, metric search, self-reflect
+# Not in 'full' by default — involves LLM calls for optimization. Opt-in: --features prompt-signatures
+prompt-signatures = []
+
+# Agent-to-Agent protocol (Google A2A): agent cards, task lifecycle, JSON-RPC 2.0
+# Not in 'full' by default — requires tokio for async server. Opt-in: --features a2a
+a2a = ["dep:tokio"]
+
+# Advanced memory: episodic, procedural, entity memory with consolidation
+advanced-memory = []
 
 # Local Whisper STT: offline speech-to-text via whisper.cpp bindings
 # Not in 'full' by default — heavy native C++ dep. Opt-in: --features whisper-local

@@ -65,6 +65,20 @@ Read this for understanding, inspiration, and to demystify the magic.
 55. [Shared Folders: Host/Container File Exchange](#55-shared-folders-hostcontainer-file-exchange)
 56. [Speech Pipeline: Unified STT and TTS](#56-speech-pipeline-unified-stt-and-tts)
 57. [Whisper Local: Offline Speech Recognition](#57-whisper-local-offline-speech-recognition)
+58. [Multi-Layer Knowledge Graph Architecture](#58-multi-layer-knowledge-graph-architecture)
+59. [Cross-Layer Inference](#59-cross-layer-inference)
+60. [Intra-Layer Conflict Resolution](#60-intra-layer-conflict-resolution)
+61. [RAPTOR — Recursive Abstractive Processing](#61-raptor--recursive-abstractive-processing)
+62. [Event-Driven Workflows](#62-event-driven-workflows)
+63. [DSPy-Style Prompt Signatures](#63-dspy-style-prompt-signatures)
+64. [A2A Protocol (Agent-to-Agent)](#64-a2a-protocol-agent-to-agent)
+65. [Advanced Memory Types](#65-advanced-memory-types)
+66. [Online Evaluation](#66-online-evaluation)
+67. [Streaming Guardrails](#67-streaming-guardrails)
+68. [Context Composition](#68-context-composition)
+69. [Provider Registry](#69-provider-registry)
+70. [Graph Conflict Resolution](#70-graph-conflict-resolution)
+71. [Quorum Enforcement](#71-quorum-enforcement)
 
 ---
 
@@ -2251,3 +2265,300 @@ The `SpeechProvider` trait combines speech-to-text (`transcribe`) and text-to-sp
 ## 57. Whisper Local: Offline Speech Recognition
 
 `WhisperLocalProvider` wraps the `whisper-rs` crate, which provides Rust bindings to the C++ `whisper.cpp` library for running OpenAI Whisper models entirely offline. It loads a GGML-format model file (typically 75 MB for `base`, 500 MB for `medium`) into memory and performs inference on CPU. Input audio must be 16 kHz mono PCM float32 -- the `audio_to_f32_pcm` helper function handles WAV file parsing, extracting sample rate and bit depth from the WAV header and converting to the required format. Thread count is configurable via `with_threads()` to balance speed against CPU usage on the host. This provider is gated behind the `whisper-local` feature flag (separate from `audio`) because `whisper-rs` brings in native C++ compilation dependencies that significantly increase build time and require a working C++ toolchain.
+
+---
+
+## 58. Multi-Layer Knowledge Graph Architecture
+
+**The fundamental idea**: Not all knowledge is created equal. A medical database, a user's personal preferences, a cached web search result, and something mentioned five minutes ago in conversation all have different levels of trust and permanence. A multi-layer knowledge graph separates information by source and trust level, with each layer carrying a configurable priority that determines which data takes precedence when information conflicts.
+
+### The 4 Default Layers
+
+- **Knowledge (priority: 100)**: Curated, verified facts — medical databases, technical documentation, company knowledge bases. This is the most trusted layer because its contents have been explicitly vetted.
+- **User (priority: 80)**: Personal beliefs and preferences — extracted automatically from conversation via `BeliefExtractor`. When a user says "I prefer Rust over Python," this fact is stored here with high confidence.
+- **Internet (priority: 50)**: Web-sourced data — cached with a TTL (time-to-live) that causes automatic expiration. A search result from yesterday is useful; one from six months ago may be stale.
+- **Session (priority: 30)**: Conversation-local context — entities mentioned in the current chat. "We're discussing Go" is relevant right now but meaningless after the session ends. Cleared on session end.
+
+### Priority Resolution
+
+When querying "What language does the user work with?", multiple layers may contribute answers:
+
+- Knowledge says: "Python is a programming language"
+- User says: "I prefer Rust"
+- Session says: "We're discussing Go"
+
+The unified view presents all three facts with their priority scores so the LLM can weigh them appropriately. The User layer (priority 80) outranks Session (priority 30), so "I prefer Rust" carries more weight than "We're discussing Go" — but both are presented, because context matters.
+
+### Contradiction Detection
+
+When two layers disagree on the same entity attribute (e.g., Knowledge says "X is safe" but Internet says "X recalled for safety issues"), the system generates a `Contradiction` record. Contradictions are surfaced for resolution rather than silently ignored, which is critical for safety-sensitive applications where stale curated data could conflict with breaking news.
+
+### Custom Layers
+
+Beyond the 4 defaults, applications can define custom layers for domain-specific needs:
+
+- **"Regulatory" layer (priority: 95)**: Current regulations fed by compliance feeds — nearly as trusted as curated knowledge, and overrides user preferences when compliance is mandatory.
+- **"Team" layer (priority: 85)**: Shared team knowledge base — a middle ground between curated knowledge and individual user preferences.
+- **"Historical" layer (priority: 40)**: Archived data kept for reference — above session-level ephemeral data but below web-sourced information that may be more current.
+
+**Feature flag**: `rag`
+
+---
+
+## 59. Cross-Layer Inference
+
+**The fundamental idea**: Individual facts in isolation are less valuable than facts combined across contexts. Cross-layer inference creates new knowledge by combining facts from different layers, discovering implicit relationships that no single layer contains.
+
+### How It Works
+
+1. **Gather** facts about an entity from all layers
+2. **Look** for implicit relationships that span layers
+3. **Generate** inferred relations with confidence lower than the source layers (because inference is inherently less certain than direct observation)
+
+### Example
+
+Consider these facts spread across three layers:
+
+- Session layer: "User is working on Project X"
+- User layer: "User prefers Python"
+- Knowledge layer: "Python is good for data analysis"
+
+No single layer contains the conclusion, but combining them yields:
+
+- **Inference**: "Project X likely uses Python for data analysis" (confidence: 0.35)
+
+The low confidence (0.35) reflects that this is a guess — the user might prefer Python in general but use Rust for this particular project.
+
+### The Inferred Layer
+
+Inferred relations live in a virtual "Inferred" layer. They are not stored alongside verified facts but kept separate so they can be:
+
+- **Confirmed** by the user → promoted to the User layer with high confidence
+- **Denied** by the user → discarded immediately
+- **Left unresolved** → decay over time, eventually disappearing if never confirmed
+
+This confirmation/denial loop means the system gets smarter over time: confirmed inferences become permanent knowledge, while incorrect guesses are pruned.
+
+**Feature flag**: `rag`
+
+---
+
+## 60. Intra-Layer Conflict Resolution
+
+**The fundamental idea**: Contradictions don't only happen between layers — multiple facts within the **same** layer can conflict. A knowledge base might contain two documents that disagree, or the Internet layer might cache conflicting search results from different sources. Each layer needs a policy for deciding which fact wins.
+
+### Resolution Policies
+
+| Policy | Rule | Best for |
+|--------|------|----------|
+| Most Recent | Latest timestamp wins | Fast-changing data (Internet layer) |
+| Highest Confidence | Highest confidence score wins | Curated sources (Knowledge layer) |
+| Source Authority | Certain sources outrank others | Mixed-quality feeds (Wikipedia > random blog) |
+| User Explicit | Explicit statements beat inferred ones | User preferences |
+| Contradiction | Unresolvable → generate Contradiction record | Safety-critical applications |
+
+### Configuring Policies Per Layer
+
+Applications configure which policy applies to each layer. The Internet layer typically uses **Most Recent** because web data changes frequently — yesterday's answer is often better than last week's. The Knowledge layer uses **Highest Confidence** because curated facts are timestamped less meaningfully (a medical fact from 2020 isn't less true than one from 2024 just because it's older). The User layer uses **User Explicit** because "I prefer Rust" (stated directly) should beat "User seems to like Python" (inferred from behavior).
+
+### Policy Chaining
+
+Multiple policies can be chained: try **Highest Confidence** first; if two facts have equal confidence, fall back to **Most Recent**. This avoids arbitrary tie-breaking when the primary policy can't distinguish between candidates.
+
+### The Contradiction Escape Hatch
+
+When no policy can resolve a conflict — or when the application explicitly chooses the **Contradiction** policy — the system generates a `Contradiction` record instead of silently picking a winner. This is essential for safety-critical applications where an incorrect automatic resolution could cause harm.
+
+**Feature flag**: `rag`
+
+---
+
+## 61. RAPTOR — Recursive Abstractive Processing
+
+**The fundamental idea**: Not all questions need the same level of detail. "What is the function signature of `parse()`?" needs a specific code chunk. "What is this library about?" needs a high-level summary. RAPTOR (Recursive Abstractive Processing for Tree-Organized Retrieval) organizes document chunks into a multi-level tree of summaries so that retrieval can match at the right level of abstraction.
+
+### The Tree Structure
+
+```
+Level 0:  [chunk1] [chunk2] [chunk3]  [chunk4] [chunk5] [chunk6]
+              \       |       /            \       |       /
+Level 1:    [summary 1-3]              [summary 4-6]
+                    \                       /
+Level 2:         [global summary]
+```
+
+Level 0 contains the original document chunks — raw text, code snippets, specific details. Level 1 groups nearby chunks and summarizes them, capturing the gist of a section. Level 2 (and beyond, for large corpora) summarizes the summaries, producing increasingly abstract representations.
+
+### Why Multi-Level Retrieval Matters
+
+The key insight is that different questions need different levels of detail:
+
+- **"What is the function signature of parse()?"** → Level 0 match. The answer is in a specific chunk containing the exact code.
+- **"How does the parsing module work?"** → Level 1 match. A section summary captures the overall approach without drowning in individual function details.
+- **"What is this library about?"** → Level 2 match. The global summary describes the project's purpose and scope.
+
+RAPTOR retrieval searches **all levels simultaneously**, returning the best match regardless of level. This gives both precision (Level 0) and breadth (Level N) in a single query.
+
+### Integration with GraphCluster (v4 Planned)
+
+The same zoom-in/zoom-out principle applies to knowledge graph entities. A cluster of related entities ("Python", "pip", "virtualenv", "PyPI") can collapse into a summary node ("Python Ecosystem"). Users can zoom in to see individual entities or zoom out to see only clusters — combining RAPTOR's hierarchical abstraction with the relational structure of a knowledge graph.
+
+**Feature flag**: `rag`
+
+---
+
+## 62. Event-Driven Workflows
+
+**The fundamental idea**: Traditional multi-agent pipelines are static DAGs (Directed Acyclic Graphs) — you wire up steps in advance and data flows through them in a fixed order. Event-driven workflows flip this: instead of hardcoding "step A feeds into step B," each step emits events and other steps react to them. The workflow emerges from the events, not from a predetermined graph.
+
+**Why events matter**: In a static DAG, handling failure means adding retry logic to every edge. Handling conditional branching means adding decision nodes. Handling human-in-the-loop means blocking the entire pipeline. Events solve all three: a failed step emits a `StepFailed` event that a retry handler catches; conditional logic is just "only react to events matching this filter"; human approval is an event the system waits for without blocking anything else.
+
+**Checkpointing for fault tolerance**: Every event is persisted to a journal before processing. If the system crashes mid-workflow, it replays the journal from the last checkpoint to reconstruct the exact state. This is the same principle behind database write-ahead logs — durability before execution.
+
+**Time-travel debugging**: Because every event is journaled, you can replay a workflow from any point in its history. Step 47 produced a bad result? Rewind to step 46, change the input, and replay forward. This transforms debugging from "reproduce the entire scenario from scratch" to "scrub to the exact moment things went wrong."
+
+**Breakpoints**: Just like a code debugger, you can set breakpoints on specific event types. When that event fires, the workflow pauses and waits for human inspection or approval before continuing. This is invaluable for autonomous agent workflows where you want oversight at critical decision points without babysitting the entire execution.
+
+**Feature flag**: `multi-agent`
+
+---
+
+## 63. DSPy-Style Prompt Signatures
+
+**The fundamental idea**: Most prompt engineering is manual trial-and-error — you tweak wording, add examples, rearrange sections, test, and repeat. DSPy-style signatures replace this with a declarative approach: you define **what** the prompt should accomplish (inputs and outputs with types), and an optimization loop discovers **how** to phrase it for maximum quality.
+
+**Signatures define the contract**: A signature like `question: String, context: String -> answer: String, confidence: f64` declares that the prompt takes a question and context, and must produce an answer and a confidence score. The system generates the actual prompt text, few-shot examples, and formatting instructions automatically. If you swap models, the optimizer re-tunes for the new model without changing your code.
+
+**The optimization loop**: The system follows a generate-evaluate-improve cycle. It generates candidate prompts, evaluates their outputs against a scoring function (accuracy, format compliance, latency), and improves the prompt based on what worked. This is not random — it uses structured strategies: bootstrap few-shot (find good examples from the training set and include them), grid search (try systematic parameter combinations), random search (sample the space efficiently), and Bayesian optimization (use past results to guide future exploration).
+
+**Self-reflection**: The most powerful strategy is having the LLM critique its own outputs. After generating a response, the system asks: "What could be improved about this answer?" The critique feeds back into the prompt as guidance. Over multiple iterations, the prompt converges on phrasings that consistently produce high-quality results — often better than what a human prompt engineer would write, because the optimizer explores far more variations.
+
+**Why this matters**: Manual prompt engineering does not scale. When you have dozens of prompts across an application, each needing tuning for different models and use cases, automated optimization is the only practical approach. The signature abstraction also makes prompts testable and versionable — you track the signature contract, not fragile prompt text.
+
+**Feature flag**: `core`
+
+---
+
+## 64. A2A Protocol (Agent-to-Agent)
+
+**The fundamental idea**: Agents built by different teams, in different frameworks, even in different programming languages, need a standard way to discover each other and collaborate. Google's A2A (Agent-to-Agent) protocol defines this standard — it is to agent communication what HTTP is to web communication: a shared language that enables interoperability.
+
+**AgentCards as capability advertisements**: Every A2A-compliant agent publishes an AgentCard — a JSON document describing what it can do, what inputs it accepts, and what outputs it produces. Think of it as a business card for agents. Other agents read these cards to decide who to delegate tasks to. An orchestrator agent might discover that "Agent A handles document summarization" and "Agent B handles translation," then compose them into a pipeline without knowing their internal implementation.
+
+**Task lifecycle**: A2A defines a clear state machine for tasks: `submitted` (request received), `working` (agent is processing), `input_required` (agent needs more information from the caller), `completed` (done, here are the results), and `failed` (something went wrong, here is the error). The `input_required` state is particularly important — it enables multi-turn interactions where the agent asks clarifying questions before proceeding, without the caller needing to anticipate every possible question in advance.
+
+**JSON-RPC 2.0 as transport**: Rather than inventing a new wire format, A2A uses JSON-RPC 2.0 — a well-established, simple RPC protocol. This means any language with an HTTP client can participate. No gRPC code generation, no custom serialization. The barrier to entry is deliberately low.
+
+**Agent discovery**: Agents can be discovered statically (configured URLs), through a registry (a directory service listing available agents), or dynamically (agents announce themselves on the network). This flexibility means A2A works in tightly controlled enterprise environments (static config) and in open ecosystems (dynamic discovery) alike.
+
+**Feature flag**: `multi-agent`
+
+---
+
+## 65. Advanced Memory Types
+
+**The fundamental idea**: The basic memory system (Section 19) stores facts with decay. But human memory is far richer — we remember experiences (episodic), learned skills (procedural), and persistent facts about entities (entity memory). Advanced memory types mirror this structure, giving agents memory that is both deeper and more useful.
+
+**Episodic memory**: Records of specific experiences — "Last time the user asked about Kubernetes deployments, they were frustrated because the YAML examples were too long." Each episode captures the situation, action taken, outcome, and emotional valence (positive/negative). When a similar situation arises, the agent recalls relevant episodes and adjusts its behavior. This is how agents learn from past interactions without explicit programming.
+
+**Procedural memory**: Learned routines that the agent has discovered work well — "When the user asks for code review, first check for security issues, then style, then performance." These are not hardcoded instructions but patterns the agent has learned produce good outcomes. Procedural memories start as observations and are promoted to routines when they consistently succeed.
+
+**Entity memory**: Persistent facts about specific entities — people, projects, concepts — that accumulate over time. "Project X uses PostgreSQL, started in January, has 3 team members." Unlike episodic memory (which records experiences), entity memory builds a structured profile. Unlike fact memory (which decays), entity facts persist until explicitly updated or contradicted.
+
+**Memory consolidation**: The most interesting process is how episodic memories become procedural ones. Over time, the system clusters similar episodes: "Every time the user asks about databases, I gave a comparison table and they responded positively." From this cluster, it extracts a procedure: "For database questions, prefer comparison tables." This mirrors how humans consolidate experiences into skills — you do not remember every individual time you tied your shoes, but you remember how to tie them.
+
+**Feature flag**: `multi-agent`
+
+---
+
+## 66. Online Evaluation
+
+**The fundamental idea**: LLM-as-Judge (Section 52) evaluates responses offline, after the fact. Online evaluation monitors quality in real time, as responses are being generated and served. It is the difference between a post-mortem and a heartbeat monitor — both are valuable, but only one catches problems before users notice.
+
+**The FeedbackHook pattern**: Rather than coupling evaluation logic into the response pipeline, online evaluation uses hooks — callback functions that receive each response and its context, compute quality metrics, and report them. Hooks are composable: one hook checks response length, another checks factual consistency, a third monitors latency. Adding a new quality dimension means adding a hook, not modifying existing code.
+
+**Sampling**: Evaluating every single response is expensive — an LLM-as-Judge call for each production response would double your inference costs. Sampling solves this: evaluate N% of responses (typically 5-20%). The sample is random but stratified — you want coverage across different query types, users, and time windows, not just the most recent N responses.
+
+**Alert thresholds**: Raw quality scores are actionable only when they cross a threshold. Online evaluation defines alert levels: if average relevance drops below 3.5/5 over the last hour, fire a warning; if it drops below 2.5, fire a critical alert. Thresholds transform continuous metrics into discrete signals that humans and automated systems can act on — triggering rollbacks, failovers, or human review.
+
+**Execution fingerprinting**: For reproducibility, each evaluation records a fingerprint: the model version, prompt template hash, RAG configuration, and input hash. When quality drops, you can diff fingerprints to identify exactly what changed. This turns "quality degraded sometime last week" into "quality degraded when we switched from prompt template v7 to v8 on Tuesday at 14:30."
+
+**Feature flag**: `eval`
+
+---
+
+## 67. Streaming Guardrails
+
+**The fundamental idea**: Standard guardrails (Section 53) evaluate complete responses — the LLM finishes generating, and then the guardrail pipeline checks the output. But in streaming mode, tokens arrive one by one. Waiting for the full response defeats the purpose of streaming. Streaming guardrails evaluate content token-by-token as it is generated, catching violations mid-stream rather than after the fact.
+
+**The challenge**: Evaluating partial text is fundamentally harder than evaluating complete text. The phrase "how to kill" might be the start of "how to kill a process in Linux" (benign) or something harmful. Streaming guardrails must balance false positives (blocking benign content prematurely) against false negatives (letting harmful content through because you waited too long to judge).
+
+**Buffered evaluation windows**: Rather than evaluating each individual token (too noisy) or the entire response (too late), streaming guardrails use sliding windows. They buffer N tokens (typically 10-30) and evaluate the window as a unit. This provides enough context for meaningful content analysis while maintaining the low-latency properties of streaming.
+
+**Actions**: When a streaming guardrail triggers, it takes one of four actions. **Pass**: content is clean, forward it to the client. **Flag**: content is suspicious but not clearly harmful — forward it but log it for human review. **Pause**: content might be harmful — stop streaming and wait for more context or human approval before continuing. **Block**: content is clearly harmful — terminate the stream, discard the buffered content, and return an error or safe fallback response.
+
+**Why this matters for user experience**: Without streaming guardrails, you have two bad options: disable streaming (slow, poor UX) or stream without safety checks (fast, unsafe). Streaming guardrails give you both: the responsiveness of token-by-token delivery with safety enforcement that catches violations within milliseconds, not seconds.
+
+**Feature flag**: `security`
+
+---
+
+## 68. Context Composition
+
+**The fundamental idea**: Every LLM call has a finite context window, and multiple sources compete for space in it: the system prompt, conversation history, RAG-retrieved documents, knowledge graph context, tool results, and the user's current message. Context composition is the discipline of allocating token budgets across these sections so that the most relevant information fits and nothing critical is silently truncated.
+
+**Token budget management**: Each section is assigned a budget — for example, system prompt gets 500 tokens, conversation history gets 2000, RAG context gets 1500, and user message gets the remainder. Budgets can be absolute (fixed token counts) or proportional (percentages of the total window). The composition engine enforces these budgets, truncating or summarizing sections that exceed their allocation.
+
+**Overflow detection**: When the total content exceeds the context window, the composition engine must decide what to cut. Configurable thresholds trigger different strategies: at 80% capacity, start summarizing older conversation turns; at 95%, drop low-relevance RAG chunks; at 100%, truncate the least important section. Without explicit overflow handling, the LLM API silently truncates from the end — which typically means losing the user's actual question.
+
+**Hybrid compaction strategies**: Different sections need different compaction approaches. Conversation history is best compacted by summarization (preserving the gist of older turns). RAG context is best compacted by relevance filtering (keeping only the highest-scoring chunks). System prompts should never be compacted — they contain critical instructions. The composition engine applies the right strategy to each section rather than using a one-size-fits-all approach.
+
+**Why this matters**: As applications layer more context sources (RAG, graph, memory, tools), naive concatenation quickly exceeds the context window. Context composition makes the tradeoffs explicit and configurable rather than leaving them to silent truncation.
+
+**Feature flag**: `core`
+
+---
+
+## 69. Provider Registry
+
+**The fundamental idea**: An application that supports multiple LLM providers (Ollama, OpenAI, Anthropic, Gemini, etc.) needs a way to resolve model names to provider configurations without scattering provider-specific logic across the codebase. The provider registry is a global lookup table: give it a canonical model name like `"openai/gpt-4o"`, and it returns a fully configured `AiConfig` ready to make API calls.
+
+**Canonical names**: Every model has a canonical name in the format `provider/model` — `"anthropic/claude-sonnet"`, `"ollama/llama3"`, `"gemini/pro"`. This naming convention makes it unambiguous which provider hosts the model. Code that needs an LLM asks the registry for a name, and the registry handles all the details: API endpoint, authentication, default parameters, and provider-specific quirks.
+
+**Aliases for shorthand**: Typing `"openai/gpt-4o-2024-08-06"` every time is tedious. The registry supports aliases: `"gpt4"` can map to `"openai/gpt-4o"`, `"fast"` can map to `"ollama/llama3"`, `"best"` can map to whatever the current highest-quality model is. Aliases are configured once and resolved transparently. When you upgrade models, you update the alias mapping in one place rather than hunting through the codebase.
+
+**Why a registry instead of direct configuration**: Without a registry, every component that calls an LLM constructs its own `AiConfig`. This means provider credentials are duplicated, model upgrades require changes in multiple files, and there is no single place to see "what models does this application use?" The registry centralizes model resolution, making configuration changes atomic and auditable.
+
+**Feature flag**: `core`
+
+---
+
+## 70. Graph Conflict Resolution
+
+**The fundamental idea**: A knowledge graph can contain contradictory facts — "Company X has 500 employees" from one source and "Company X has 520 employees" from another. When multiple sources assert different values for the same relation within the same layer, the system needs a policy for deciding which fact to trust. This is distinct from intra-layer conflict resolution (Section 60), which handles general conflicts; graph conflict resolution specifically addresses the structured triple format of knowledge graphs where entity-relation-value conflicts are detectable programmatically.
+
+**Resolution policies**: Four policies handle different scenarios. **LastWriteWins**: the most recently added fact takes precedence — simple, fast, suitable for data that changes frequently. **HighestConfidence**: the fact with the highest confidence score wins — appropriate when sources vary in reliability. **Merge**: both facts are retained and presented together, letting the consumer decide — useful when "conflict" is actually complementary information (e.g., two valid phone numbers). **Manual**: the conflict is flagged for human resolution and no automatic decision is made — necessary for high-stakes domains where incorrect automatic resolution could cause harm.
+
+**Cross-layer inference interactions**: Graph conflicts become more complex when cross-layer inference (Section 59) is involved. An inferred fact might conflict with a directly stated fact. The resolution policy must account for the provenance of each fact — directly observed facts generally outrank inferred ones, but a high-confidence inference from multiple sources might outrank a low-confidence direct observation. The resolution engine tracks provenance chains so that these decisions are transparent and auditable.
+
+**Why explicit policies matter**: Without explicit conflict resolution, the system silently returns whichever fact it encounters first — which depends on storage order, not correctness. Explicit policies make the resolution deterministic and configurable per use case.
+
+**Feature flag**: `rag`
+
+---
+
+## 71. Quorum Enforcement
+
+**The fundamental idea**: In a distributed system where data is replicated across N nodes, how many nodes must acknowledge a read or write before it is considered successful? Quorum enforcement answers this question with configurable consistency guarantees. The classic rule is R + W > N (read quorum plus write quorum exceeds the total number of replicas), which guarantees that any read will see the most recent write — because the read set and write set must overlap.
+
+**Strict quorum (R + W > N)**: Every write waits for W nodes to confirm, and every read queries R nodes and takes the most recent value. If N=3, W=2, R=2, then any read is guaranteed to hit at least one node that has the latest write. This provides strong consistency at the cost of availability — if too many nodes are down, neither reads nor writes can proceed.
+
+**Flexible quorum (best-effort)**: Not all applications need strong consistency. A recommendation engine can tolerate slightly stale data. Flexible quorum writes to as many nodes as are available and reads from as many as respond within a timeout. It favors availability over consistency — the system keeps working even when nodes are unreachable, at the risk of occasionally returning stale results.
+
+**Mixed quorum (per-operation)**: Different operations within the same system may need different guarantees. User authentication requires strict consistency (you must never read stale credentials), while activity feeds tolerate eventual consistency. Mixed quorum lets each operation specify its own R and W values, giving strong consistency where it matters and high availability everywhere else.
+
+**Read repair**: When a read quorum detects that some nodes have stale data (the values disagree), it proactively pushes the latest value to the stale nodes. This is an opportunistic consistency mechanism — reads gradually heal inconsistencies without requiring a separate background synchronization process.
+
+**Hinted handoff**: When a write cannot reach its target node (the node is temporarily down), the write is stored as a "hint" on another node. When the target node recovers, the hint is forwarded to it. This prevents data loss during transient failures without blocking the write or lowering the quorum — the write still counts toward quorum on the substitute node, and durability is maintained through the handoff mechanism.
+
+**Feature flag**: `distributed`

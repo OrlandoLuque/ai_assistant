@@ -162,6 +162,7 @@ pub use models::{ModelCapabilityInfo, ModelInfo, ModelRegistry};
 pub use providers::{
     build_system_prompt, build_system_prompt_with_notes, fetch_model_context_size,
     generate_response, generate_response_streaming, generate_response_streaming_cancellable,
+    ProviderRegistry as LlmProviderRegistry,
 };
 pub use session::{
     ChatSession, ChatSessionStore, JournalEntry, JournalEntryType, JournalSession, ResponseStyle,
@@ -566,9 +567,11 @@ pub use multi_agent::{MultiAgentSession, SessionSummary as MultiAgentSessionSumm
 
 pub mod multi_layer_graph;
 pub use multi_layer_graph::{
-    BeliefExtractor, BeliefType, ConfidenceLevel, Contradiction, ContradictionLog,
-    ContradictionResolution, ContradictionSource, GraphLayer, InternetGraph, InternetGraphEntry,
-    LayeredEntity, MultiLayerGraph, MultiLayerGraphStats, MultiLayerQueryResult, SessionGraph,
+    BeliefExtractor, BeliefType, ConfidenceLevel, ConflictPolicy, Contradiction, ContradictionLog,
+    ContradictionResolution, ContradictionSource, GraphCluster, GraphDiff, GraphLayer,
+    InferredRelation, InternetGraph, InternetGraphEntry, LayerConfig, LayeredEntity,
+    MergeStrategy as GraphMergeStrategy, MultiLayerGraph, MultiLayerGraphStats,
+    MultiLayerQueryResult, SessionGraph, SyncPolicy, UnifiedEntity, UnifiedRelation, UnifiedView,
     UserBelief, UserGraph,
 };
 
@@ -1527,7 +1530,9 @@ pub use conversation_templates::{
 };
 
 pub use context_window::{
-    ContextMessage, ContextWindow, ContextWindowConfig, EvictionStrategy as ContextEvictionStrategy,
+    AutoTokenConfig, ContextMessage, ContextOverflowMonitor, ContextWindow, ContextWindowConfig,
+    EvictionStrategy as ContextEvictionStrategy,
+    OverflowLevel as WindowOverflowLevel, OverflowThresholds as WindowOverflowThresholds,
 };
 
 pub use conversation_compaction::{
@@ -1594,7 +1599,7 @@ pub use translation_analysis::{
 
 pub use entity_enrichment::{
     DuplicateMatch, DuplicateReason, EnrichableEntity, EnrichedEntity, EnrichmentConfig,
-    EnrichmentData, EnrichmentSource, EntityEnricher, MergeStrategy,
+    EnrichmentData, EnrichmentSource, EntityEnricher, MergeStrategy as EntityMergeStrategy,
 };
 
 pub use decision_tree::{
@@ -1756,3 +1761,89 @@ pub use speech::{
 
 #[cfg(feature = "whisper-local")]
 pub use speech::WhisperLocalProvider;
+
+// =============================================================================
+// A2A PROTOCOL (Google Agent-to-Agent)
+// =============================================================================
+
+#[cfg(feature = "a2a")]
+pub mod a2a_protocol;
+
+#[cfg(feature = "a2a")]
+pub use a2a_protocol::{
+    A2AArtifact, A2AClient, A2AMessage, A2APart, A2AServer, A2ATask, A2ATaskStatus,
+    AgentCard, AgentDirectory, AgentSkill, DataPart, FilePart, JsonRpcError, JsonRpcRequest,
+    JsonRpcResponse, MessageRole, PushNotification, PushNotificationConfig, TaskHandler,
+    TaskStatusUpdate, TextPart,
+};
+
+// =============================================================================
+// EVENT-DRIVEN WORKFLOW ENGINE
+// =============================================================================
+
+#[cfg(feature = "workflows")]
+pub mod event_workflow;
+
+#[cfg(feature = "workflows")]
+pub use event_workflow::{
+    Checkpointer, ErrorSnapshot, InMemoryCheckpointer, NodeHandler, SimpleEvent, WorkflowBreakpoint,
+    WorkflowCheckpoint, WorkflowDefinition, WorkflowEdgeDef, WorkflowEvent, WorkflowGraph,
+    WorkflowNode, WorkflowNodeDef, WorkflowResult, WorkflowRunner, WorkflowState, WorkflowTool,
+    WorkflowToolDefinition, WorkflowToolParam,
+};
+
+// =============================================================================
+// DSPY-STYLE PROMPT SIGNATURES
+// =============================================================================
+
+#[cfg(feature = "prompt-signatures")]
+pub mod prompt_signature;
+
+#[cfg(feature = "prompt-signatures")]
+pub use prompt_signature::{
+    BayesianOptimizer, BootstrapFewShot, CompiledPrompt, ContainsAnswer, EvalMetric,
+    EvaluationBudget, ExactMatch, F1Score, FieldType, GridSearchOptimizer, ImprovementRule,
+    OptimizationResult, PromptExample, RandomSearchOptimizer, SelfReflector, Signature,
+    SignatureField, TrainingExample,
+};
+
+// =============================================================================
+// ADVANCED MEMORY (episodic, procedural, entity, consolidation)
+// =============================================================================
+
+#[cfg(feature = "advanced-memory")]
+pub mod advanced_memory;
+
+#[cfg(feature = "advanced-memory")]
+pub use advanced_memory::{
+    AdvancedMemoryManager, ConsolidationResult, EntityRecord, EntityRelation, EntityStore, Episode,
+    EpisodicStore, MemoryConsolidator, Procedure, ProceduralStore,
+    cosine_similarity as memory_cosine_similarity, new_episode,
+};
+
+// =============================================================================
+// ONLINE EVALUATION (feedback hooks, sampling, alerting)
+// =============================================================================
+
+#[cfg(feature = "eval")]
+pub mod online_eval;
+
+#[cfg(feature = "eval")]
+pub use online_eval::{
+    AlertConfig, AlertEvent, CostHook, EvalContext, EvalSamplingConfig, ExecutionFingerprint,
+    FeedbackHook, FeedbackScore, LatencyHook, OnlineEvaluator, RelevanceHook, ToxicityHook,
+};
+
+// =============================================================================
+// CONTEXT COMPOSER (token budgeting, overflow detection, compaction)
+// =============================================================================
+
+pub mod context_composer;
+
+pub use context_composer::{
+    BudgetAllocation, ComposedContext, ComposedSection, ContextComposer, ContextComposerConfig,
+    ContextOverflowDetector, ContextSection, OverflowAction,
+    OverflowLevel as ComposerOverflowLevel, OverflowThresholds as ComposerOverflowThresholds,
+    SectionBudget, SectionPriority, TokenBudgetAllocator,
+    estimate_tokens as composer_estimate_tokens, generate_mini_summary,
+};
