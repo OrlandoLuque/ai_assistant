@@ -19,8 +19,6 @@
     - feature_matrix.html                                 (v10: v2 Phases 3-4 — Ollama tool calling, PromptToolFallback, GuardrailPipeline (6 guards), CI/CD, 2510 tests, 215 source files)
     - feature_matrix_2026-02-21_2300_pre-v3-speech-containers.html (v10 snapshot before v3 containers/speech/audio additions)
     - feature_matrix.html                                 (v11: v3 — ContainerExecutor, ContainerSandbox, SharedFolder, DocumentPipeline, Speech STT/TTS (6 providers), Butler speech detection, CI/CD maturity, 2766 tests, 221 source files)
-    - feature_matrix_2026-02-22_2100_pre-v4.html          (v11 snapshot before v4 additions)
-    - feature_matrix.html                                 (v12: v4 — EventWorkflow, PromptSignature, A2A Protocol, AdvancedMemory, OnlineEval, ContextComposer, MultiLayerGraph, GuardrailPipeline streaming, DistributedNetwork P2P, MCP sessions, ContextWindow overflow, Providers registry, Assistant kpkg bridge, 3401 tests)
 -->
 <html lang="es">
 <head>
@@ -724,7 +722,7 @@
 <body>
 
 <h1>AI Assistant &mdash; Matriz Casos de Uso vs Tecnolog&iacute;as</h1>
-<p class="subtitle">v12 (2026-02-22) &mdash; 3401 tests | 6 benchmarks | 20 examples | 221 source files | 0 warnings &mdash; Haz clic en cualquier celda para editarla.</p>
+<p class="subtitle">v11 (2026-02-21) &mdash; 2766 tests | 6 benchmarks | 20 examples | 221 source files | 0 warnings &mdash; Haz clic en cualquier celda para editarla.</p>
 
 <div class="legend">
   <div class="legend-item"><div class="legend-dot" style="background:var(--core)"></div>Core (siempre activo)</div>
@@ -921,10 +919,6 @@
     <tr><td><code>audio</code></td><td>No</td><td>&mdash;</td></tr>
     <tr><td><code>whisper-local</code></td><td>No</td><td>whisper-rs (requiere <code>audio</code>)</td></tr>
     <tr><td><code>wasm</code></td><td>No</td><td>web-sys, js-sys, getrandom (solo wasm32)</td></tr>
-    <tr><td><code>workflows</code></td><td>S&iacute;</td><td>&mdash;</td></tr>
-    <tr><td><code>prompt-signatures</code></td><td>S&iacute;</td><td>&mdash;</td></tr>
-    <tr><td><code>a2a</code></td><td>S&iacute;</td><td>&mdash;</td></tr>
-    <tr><td><code>advanced-memory</code></td><td>S&iacute;</td><td>&mdash;</td></tr>
   </table>
 
   <h2>Historial de versiones</h2>
@@ -940,8 +934,7 @@
     <li><code>feature_matrix_2026-02-21_1100_pre-v2phase3-4-completion.html</code> &mdash; v9 snapshot antes de v2 Phases 3-4 completion</li>
     <li><code>feature_matrix_2026-02-21_1100_pre-v2phase3-4-completion.html</code> &mdash; v10: v2 Phases 3-4 — Ollama tool calling nativo, PromptToolFallback, GuardrailPipeline (6 guards), CI/CD (GitHub Actions), 2510 tests, 215 source files, 0 warnings</li>
     <li><code>feature_matrix_2026-02-21_2300_pre-v3-speech-containers.html</code> &mdash; v10 snapshot antes de v3 containers/speech/audio</li>
-    <li><code>feature_matrix_2026-02-22_2100_pre-v4.html</code> &mdash; v11 snapshot antes de v4</li>
-    <li><code>feature_matrix.html</code> &mdash; v12 (actual): v4 — EventWorkflow (~65 tests), PromptSignature (~50 tests), A2A Protocol (~45 tests), AdvancedMemory (~55 tests), OnlineEval (~30 tests), ContextComposer (~35 tests), MultiLayerGraph ext (~70 tests), GuardrailPipeline streaming (~18 tests), DistributedNetwork P2P (~35 tests), MCP sessions (~18 tests), ContextWindow overflow (~12 tests), Providers registry (~16 tests), Assistant kpkg bridge (~15 tests). 3401 tests, 221 source files, 0 warnings</li>
+    <li><code>feature_matrix.html</code> &mdash; v11 (actual): v3 — ContainerExecutor, ContainerSandbox, SharedFolder, DocumentPipeline, Speech STT/TTS (6 providers), Butler speech detection, CI/CD maturity (matrix testing, coverage, release automation, benchmarks), 2766 tests, 221 source files, 0 warnings</li>
   </ul>
   <p><strong>Pol&iacute;tica de backups:</strong> antes de cambios significativos, crear copia con formato <code>feature_matrix_YYYY-MM-DD_HHMM_descripcion.html</code>.</p>
 
@@ -1593,63 +1586,6 @@ const GROUPS = [
         cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
         typical: ['basic_chat','rag_chat','multi_user','agent_tools','autonomous','multi_agent','http_server','distributed','p2p'],
         notes: 'Siempre disponible. GitHub Actions CI: check, test, clippy, fmt. v3: feature matrix testing (19 flag combos), cargo-llvm-cov + Codecov, release automation (tag-triggered, softprops/action-gh-release@v2), Criterion benchmark CI (200% regression alert). .github/workflows/ci.yml. v2 Phase 4 + v3 Phase 4.' },
-    ]
-  },
-  {
-    name: 'v4 Features',
-    rows: [
-      { tech: 'EventWorkflow (event-driven pipelines)', flag: 'workflows',
-        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
-        typical: ['autonomous','multi_agent','agent_tools','http_server'],
-        notes: 'Feature flag workflows. Event-driven workflow engine con pipeline orchestration, event routing, conditional branching y retry logic. ~65 tests. v4.' },
-      { tech: 'PromptSignature (typed prompt contracts)', flag: 'prompt-signatures',
-        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
-        typical: ['basic_chat','rag_chat','agent_tools','autonomous','multi_agent'],
-        notes: 'Feature flag prompt-signatures. Typed prompt contracts con input/output schemas, validation, type-safe prompt composition y signature verification. ~50 tests. v4.' },
-      { tech: 'A2A Protocol (Agent-to-Agent)', flag: 'a2a',
-        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
-        typical: ['multi_agent','autonomous','distributed','http_server'],
-        notes: 'Feature flag a2a. Google A2A (Agent-to-Agent) protocol implementation: agent cards, task lifecycle, message exchange, capability discovery. ~45 tests. v4.' },
-      { tech: 'AdvancedMemory (episodic + semantic)', flag: 'advanced-memory',
-        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
-        typical: ['basic_chat','rag_chat','autonomous','multi_agent'],
-        notes: 'Feature flag advanced-memory. Episodic + semantic memory layers, memory consolidation, temporal decay, importance scoring, cross-session recall. ~55 tests. v4.' },
-      { tech: 'OnlineEval (live quality monitoring)', flag: 'eval',
-        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
-        typical: ['autonomous','multi_agent','http_server'],
-        notes: 'Feature flag eval. Online evaluation: live quality monitoring, drift detection, performance regression alerts, real-time scoring dashboards. ~30 tests. v4.' },
-      { tech: 'ContextComposer (dynamic context assembly)', flag: null,
-        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
-        typical: ['basic_chat','rag_chat','agent_tools','autonomous','multi_agent'],
-        notes: 'Siempre compilado. Dynamic context assembly: priority-based source selection, token budget allocation, context layering, relevance-weighted composition. ~35 tests. v4.' },
-      { tech: 'MultiLayerGraph (v4 extension)', flag: 'multi-agent',
-        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
-        typical: ['multi_agent','autonomous','distributed'],
-        notes: 'Feature flag multi-agent. Multi-layer agent graph: hierarchical orchestration, sub-graph composition, cross-layer communication, dynamic graph restructuring. ~70 tests. v4.' },
-      { tech: 'GuardrailPipeline (streaming mode)', flag: 'security',
-        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
-        typical: ['basic_chat','rag_chat','autonomous','multi_agent','http_server'],
-        notes: 'Feature flag security. Streaming guardrail pipeline: real-time content filtering during token generation, partial response validation, early termination on violation. ~18 tests. v4.' },
-      { tech: 'DistributedNetwork (P2P discovery)', flag: 'distributed-network',
-        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
-        typical: ['distributed','p2p'],
-        notes: 'Feature flag distributed-network. Enhanced P2P discovery: gossip protocol, peer reputation propagation, automatic topology optimization, NAT hole punching improvements. ~35 tests. v4.' },
-      { tech: 'MCP Protocol (session management)', flag: 'tools',
-        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
-        typical: ['agent_tools','autonomous','multi_agent','http_server'],
-        notes: 'Feature flag tools. MCP session management: persistent tool sessions, session state tracking, reconnection handling, multi-session multiplexing. ~18 tests. v4.' },
-      { tech: 'ContextWindow (overflow handling)', flag: null,
-        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
-        typical: ['basic_chat','rag_chat','agent_tools','autonomous','multi_agent'],
-        notes: 'Siempre compilado. Context window overflow handling: graceful degradation, priority-based eviction, summarization fallback, token budget enforcement. ~12 tests. v4.' },
-      { tech: 'Providers (dynamic registry)', flag: null,
-        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
-        typical: ['basic_chat','rag_chat','agent_tools','autonomous','multi_agent','http_server'],
-        notes: 'Siempre compilado. Dynamic provider registry: runtime provider registration, capability-based selection, health-aware routing, auto-failover. ~16 tests. v4.' },
-      { tech: 'Assistant (KPKG bridge)', flag: 'rag+multi-agent',
-        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
-        typical: ['rag_chat','kpkg','multi_agent'],
-        notes: 'Feature flags rag + multi-agent. KPKG bridge: knowledge package integration with multi-agent orchestration, cross-agent knowledge sharing, package-aware routing. ~15 tests. v4.' },
     ]
   },
 ];

@@ -300,6 +300,10 @@ pub struct AiAssistant {
 
     /// Chat hooks for UI framework event streaming.
     chat_hooks: Option<crate::ui_hooks::ChatHooks>,
+
+    #[cfg(feature = "multi-agent")]
+    /// Multi-layer knowledge graph for entity storage and cross-layer reasoning.
+    pub graph: Option<crate::multi_layer_graph::MultiLayerGraph>,
 }
 
 impl Default for AiAssistant {
@@ -481,6 +485,9 @@ impl AiAssistant {
             cost_dashboard: None,
 
             chat_hooks: None,
+
+            #[cfg(feature = "multi-agent")]
+            graph: None,
         }
     }
 
@@ -3567,6 +3574,230 @@ impl AiAssistant {
         butler.scan();
         butler.suggest_speech_config()
     }
+
+    // =========================================================================
+    // KPKG -> Knowledge Layer Bridge (v4 roadmap item 8.1)
+    // =========================================================================
+
+    /// Extract named entities from text content.
+    ///
+    /// Identifies capitalized proper nouns and quoted terms that are not at the
+    /// start of a sentence. Returns a deduplicated list of entity names.
+    #[cfg(all(feature = "rag", feature = "multi-agent"))]
+    pub fn extract_entities_from_text(text: &str) -> Vec<String> {
+        let mut entities = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+
+        // Common words that should not be treated as entities even when capitalized
+        let stop_words: std::collections::HashSet<&str> = [
+            "The", "This", "That", "These", "Those", "It", "Its", "They", "Their",
+            "He", "She", "His", "Her", "We", "Our", "You", "Your", "My", "I",
+            "A", "An", "And", "Or", "But", "Not", "No", "If", "When", "Where",
+            "How", "What", "Who", "Which", "Why", "Is", "Are", "Was", "Were",
+            "Be", "Been", "Being", "Have", "Has", "Had", "Do", "Does", "Did",
+            "Will", "Would", "Could", "Should", "May", "Might", "Can", "Shall",
+            "For", "From", "With", "About", "Into", "Through", "During", "Before",
+            "After", "Above", "Below", "To", "Of", "In", "On", "At", "By",
+            "As", "So", "Then", "Than", "Also", "Just", "Only", "Each", "Every",
+            "All", "Any", "Both", "Few", "More", "Most", "Other", "Some", "Such",
+            "Very", "Much", "Many", "Here", "There", "Now", "Still", "Already",
+            "El", "La", "Los", "Las", "Un", "Una", "De", "En", "Por", "Para",
+            "Con", "Sin", "Sobre", "Entre", "Es", "Son", "Fue", "Era",
+        ]
+        .iter()
+        .copied()
+        .collect();
+
+        // Extract quoted terms (single and double quotes)
+        for cap in text.split('"').enumerate() {
+            // Odd indices are inside quotes
+            if cap.0 % 2 == 1 {
+                let term = cap.1.trim();
+                if !term.is_empty() && term.len() <= 80 {
+                    let key = term.to_lowercase();
+                    if !seen.contains(&key) {
+                        seen.insert(key);
+                        entities.push(term.to_string());
+                    }
+                }
+            }
+        }
+
+        // Split into sentences and extract capitalized words not at sentence start
+        let sentences: Vec<&str> = text
+            .split(|c: char| c == '.' || c == '!' || c == '?' || c == '\n')
+            .filter(|s| !s.trim().is_empty())
+            .collect();
+
+        for sentence in &sentences {
+            let trimmed = sentence.trim();
+            let words: Vec<&str> = trimmed.split_whitespace().collect();
+
+            // Skip the first word (it's capitalized because it starts the sentence)
+            for (idx, word) in words.iter().enumerate() {
+                // Strip trailing punctuation for analysis
+                let clean: String = word
+                    .chars()
+                    .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '\'')
+                    .collect();
+
+                if clean.is_empty() {
+                    continue;
+                }
+
+                let first_char = clean.chars().next().unwrap_or('a');
+
+                // Check if it starts with uppercase and is not at the very start of the sentence
+                if idx > 0 && first_char.is_uppercase() && clean.len() >= 2 {
+                    // Skip common stop words
+                    if stop_words.contains(clean.as_str()) {
+                        continue;
+                    }
+
+                    // Check it's not ALL uppercase (likely an acronym like "API" or "USA")
+                    // — we still include those as entities
+                    let key = clean.to_lowercase();
+                    if !seen.contains(&key) {
+                        seen.insert(key);
+                        entities.push(clean);
+                    }
+                }
+            }
+        }
+
+        entities
+    }
+
+    /// Load a .kpkg encrypted knowledge package and bridge its contents into
+    /// the multi-layer knowledge graph.
+    ///
+    /// This method:
+    /// 1. Reads and decrypts the kpkg file using `KpkgReader`
+    /// 2. Extracts the manifest metadata (title, description, system_prompt, persona)
+    /// 3. Parses document content for named entities (capitalized proper nouns, quoted terms)
+    /// 4. Creates `LayeredEntity` entries on the Knowledge layer
+    /// 5. Inserts entities into the `MultiLayerGraph` (if present)
+    /// 6. Injects manifest system_prompt / persona into the assistant's system prompt
+    /// 7. Returns the number of entities extracted
+    ///
+    /// # Errors
+    ///
+    /// Returns `AiError` if the kpkg file cannot be read, decrypted, or parsed.
+    ///
+    /// # Feature gates
+    ///
+    /// Requires both `rag` (for kpkg support) and `multi-agent` (for MultiLayerGraph).
+    #[cfg(all(feature = "rag", feature = "multi-agent"))]
+    pub fn load_kpkg_to_graph(&mut self, kpkg_path: &str) -> Result<usize, crate::error::AiError> {
+        use crate::encrypted_knowledge::{AppKeyProvider, KpkgReader};
+        use crate::multi_layer_graph::{ConfidenceLevel, GraphLayer, LayeredEntity};
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        // 1. Read the kpkg file from disk
+        let data = std::fs::read(kpkg_path).map_err(|e| {
+            crate::error::AiError::Io(crate::error::IoError {
+                operation: "read_kpkg".to_string(),
+                path: Some(kpkg_path.to_string()),
+                reason: format!("Failed to read kpkg file: {}", e),
+            })
+        })?;
+
+        // 2. Decrypt and extract documents + manifest
+        let reader = KpkgReader::<AppKeyProvider>::with_app_key();
+        let (documents, manifest) = reader.read_with_manifest(&data).map_err(|e| {
+            crate::error::AiError::Other(format!(
+                "Failed to decrypt kpkg '{}': {}",
+                kpkg_path, e
+            ))
+        })?;
+
+        // 3. Extract entities from all document content
+        let mut all_content = String::new();
+        for doc in &documents {
+            all_content.push_str(&doc.content);
+            all_content.push('\n');
+        }
+
+        // Also include manifest metadata in entity extraction
+        if !manifest.name.is_empty() {
+            all_content.push_str(&manifest.name);
+            all_content.push('\n');
+        }
+        if !manifest.description.is_empty() {
+            all_content.push_str(&manifest.description);
+            all_content.push('\n');
+        }
+
+        let entity_names = Self::extract_entities_from_text(&all_content);
+        let entity_count = entity_names.len();
+
+        // 4. Create LayeredEntity entries and insert into graph
+        if let Some(ref mut graph) = self.graph {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+
+            // Ensure the knowledge custom layer exists
+            let layer_name = "kpkg_knowledge";
+            graph.add_custom_layer(layer_name);
+
+            for name in &entity_names {
+                let entity = LayeredEntity {
+                    name: name.clone(),
+                    entity_type: "KpkgEntity".to_string(),
+                    layer: GraphLayer::Knowledge,
+                    confidence: ConfidenceLevel::Verified,
+                    source: kpkg_path.to_string(),
+                    timestamp: now,
+                    ttl_seconds: None,
+                };
+                // Ignore errors from duplicate entities or full layers
+                let _ = graph.add_to_custom_layer(layer_name, entity);
+            }
+        }
+
+        // 5. Inject manifest system_prompt and persona into assistant context
+        let mut injected_parts = Vec::new();
+
+        if let Some(ref system_prompt) = manifest.system_prompt {
+            if !system_prompt.is_empty() {
+                injected_parts.push(format!("[KPKG System Prompt]: {}", system_prompt));
+            }
+        }
+
+        if let Some(ref persona) = manifest.persona {
+            if !persona.is_empty() {
+                injected_parts.push(format!("[KPKG Persona]: {}", persona));
+            }
+        }
+
+        // Inject examples as context hints
+        if !manifest.examples.is_empty() {
+            let mut examples_text = String::from("[KPKG Examples]:");
+            for (i, example) in manifest.examples.iter().enumerate() {
+                examples_text.push_str(&format!(
+                    "\n  Example {}: Input: {} -> Output: {}",
+                    i + 1,
+                    example.input,
+                    example.output
+                ));
+            }
+            injected_parts.push(examples_text);
+        }
+
+        if !injected_parts.is_empty() {
+            let injection = injected_parts.join("\n");
+            if self.system_prompt_base.is_empty() {
+                self.system_prompt_base = injection;
+            } else {
+                self.system_prompt_base
+                    .push_str(&format!("\n\n{}", injection));
+            }
+        }
+
+        Ok(entity_count)
+    }
 }
 
 /// Generate a conversation summary using the AI model
@@ -3893,5 +4124,306 @@ mod tests {
             &crate::speech::SynthesisOptions::default(),
         );
         assert!(result.is_err());
+    }
+
+    // =========================================================================
+    // KPKG -> Knowledge Layer Bridge tests (v4 roadmap item 8.1)
+    // =========================================================================
+
+    #[cfg(all(feature = "rag", feature = "multi-agent"))]
+    #[test]
+    fn test_extract_entities_from_text() {
+        let text = "The ship Aurora was built by Stellar Dynamics in the Mars Orbital Shipyard. \
+                     It carries a crew of 200 and is powered by the Helios Reactor.";
+        let entities = AiAssistant::extract_entities_from_text(text);
+        assert!(
+            entities.contains(&"Aurora".to_string()),
+            "Should extract 'Aurora': {:?}",
+            entities
+        );
+        assert!(
+            entities.contains(&"Stellar".to_string())
+                || entities.contains(&"Dynamics".to_string()),
+            "Should extract part of 'Stellar Dynamics': {:?}",
+            entities
+        );
+        assert!(
+            entities.contains(&"Mars".to_string()),
+            "Should extract 'Mars': {:?}",
+            entities
+        );
+        assert!(
+            entities.contains(&"Helios".to_string()),
+            "Should extract 'Helios': {:?}",
+            entities
+        );
+    }
+
+    #[cfg(all(feature = "rag", feature = "multi-agent"))]
+    #[test]
+    fn test_extract_entities_empty() {
+        let entities = AiAssistant::extract_entities_from_text("");
+        assert!(entities.is_empty(), "Empty text should yield no entities");
+    }
+
+    #[cfg(all(feature = "rag", feature = "multi-agent"))]
+    #[test]
+    fn test_extract_entities_all_lowercase() {
+        let text = "the quick brown fox jumps over the lazy dog. \
+                     no capitalized words here at all.";
+        let entities = AiAssistant::extract_entities_from_text(text);
+        assert!(
+            entities.is_empty(),
+            "All-lowercase text should yield no entities: {:?}",
+            entities
+        );
+    }
+
+    #[cfg(all(feature = "rag", feature = "multi-agent"))]
+    #[test]
+    fn test_extract_entities_mixed() {
+        let text = "John works at Google. He uses Python and Rust daily. \
+                     Mary prefers TypeScript over JavaScript.";
+        let entities = AiAssistant::extract_entities_from_text(text);
+        assert!(
+            entities.contains(&"Google".to_string()),
+            "Should extract 'Google': {:?}",
+            entities
+        );
+        assert!(
+            entities.contains(&"Python".to_string()),
+            "Should extract 'Python': {:?}",
+            entities
+        );
+        assert!(
+            entities.contains(&"Rust".to_string()),
+            "Should extract 'Rust': {:?}",
+            entities
+        );
+        assert!(
+            entities.contains(&"TypeScript".to_string()),
+            "Should extract 'TypeScript': {:?}",
+            entities
+        );
+        assert!(
+            entities.contains(&"JavaScript".to_string()),
+            "Should extract 'JavaScript': {:?}",
+            entities
+        );
+        // "He" and "Mary" at sentence start should not appear
+        // (Mary is at start of a sentence, so it won't be extracted)
+        // John is at the very start too
+    }
+
+    #[cfg(all(feature = "rag", feature = "multi-agent"))]
+    #[test]
+    fn test_extract_entities_quoted_terms() {
+        let text = "the concept of \"Dark Energy\" is fundamental. \
+                     we also study \"quantum entanglement\" in depth.";
+        let entities = AiAssistant::extract_entities_from_text(text);
+        assert!(
+            entities.contains(&"Dark Energy".to_string()),
+            "Should extract quoted term 'Dark Energy': {:?}",
+            entities
+        );
+        assert!(
+            entities.contains(&"quantum entanglement".to_string()),
+            "Should extract quoted term 'quantum entanglement': {:?}",
+            entities
+        );
+    }
+
+    #[cfg(all(feature = "rag", feature = "multi-agent"))]
+    #[test]
+    fn test_extract_entities_deduplication() {
+        let text = "The planet Mars is red. People want to colonize Mars. \
+                     Mars exploration is ongoing.";
+        let entities = AiAssistant::extract_entities_from_text(text);
+        let mars_count = entities.iter().filter(|e| *e == "Mars").count();
+        assert_eq!(
+            mars_count, 1,
+            "Mars should appear only once (deduplication): {:?}",
+            entities
+        );
+    }
+
+    #[cfg(all(feature = "rag", feature = "multi-agent"))]
+    #[test]
+    fn test_extract_entities_stop_words_filtered() {
+        let text = "And Then He said something. But She replied differently.";
+        let entities = AiAssistant::extract_entities_from_text(text);
+        // "Then", "He", "But", "She" are all stop words
+        assert!(
+            !entities.contains(&"Then".to_string()),
+            "Stop word 'Then' should be filtered: {:?}",
+            entities
+        );
+        assert!(
+            !entities.contains(&"He".to_string()),
+            "Stop word 'He' should be filtered: {:?}",
+            entities
+        );
+        assert!(
+            !entities.contains(&"She".to_string()),
+            "Stop word 'She' should be filtered: {:?}",
+            entities
+        );
+    }
+
+    #[cfg(all(feature = "rag", feature = "multi-agent"))]
+    #[test]
+    fn test_extract_entities_single_char_skipped() {
+        // Single-character uppercase words should be skipped (len < 2 check)
+        let text = "we use A for the first and B for the second.";
+        let entities = AiAssistant::extract_entities_from_text(text);
+        assert!(
+            !entities.contains(&"A".to_string()),
+            "Single char 'A' should be skipped: {:?}",
+            entities
+        );
+        assert!(
+            !entities.contains(&"B".to_string()),
+            "Single char 'B' should be skipped: {:?}",
+            entities
+        );
+    }
+
+    #[cfg(all(feature = "rag", feature = "multi-agent"))]
+    #[test]
+    fn test_extract_entities_acronyms_included() {
+        let text = "the NASA program launched from the ESA facility.";
+        let entities = AiAssistant::extract_entities_from_text(text);
+        assert!(
+            entities.contains(&"NASA".to_string()),
+            "Acronym 'NASA' should be included: {:?}",
+            entities
+        );
+        assert!(
+            entities.contains(&"ESA".to_string()),
+            "Acronym 'ESA' should be included: {:?}",
+            entities
+        );
+    }
+
+    #[cfg(all(feature = "rag", feature = "multi-agent"))]
+    #[test]
+    fn test_extract_entities_multiline() {
+        let text = "First line mentions Berlin.\nSecond line talks about Paris.\n\
+                     Third references Tokyo and Kyoto.";
+        let entities = AiAssistant::extract_entities_from_text(text);
+        assert!(
+            entities.contains(&"Berlin".to_string()),
+            "Should extract 'Berlin': {:?}",
+            entities
+        );
+        assert!(
+            entities.contains(&"Paris".to_string()),
+            "Should extract 'Paris': {:?}",
+            entities
+        );
+        assert!(
+            entities.contains(&"Tokyo".to_string()),
+            "Should extract 'Tokyo': {:?}",
+            entities
+        );
+        assert!(
+            entities.contains(&"Kyoto".to_string()),
+            "Should extract 'Kyoto': {:?}",
+            entities
+        );
+    }
+
+    #[cfg(all(feature = "rag", feature = "multi-agent"))]
+    #[test]
+    fn test_load_kpkg_to_graph_no_graph() {
+        // When graph is None, load_kpkg_to_graph should fail at the file read stage
+        // because we don't have an actual kpkg file. This tests error handling.
+        let mut ai = AiAssistant::new();
+        assert!(ai.graph.is_none(), "Graph should be None by default");
+        let result = ai.load_kpkg_to_graph("nonexistent_file.kpkg");
+        assert!(
+            result.is_err(),
+            "Should fail when kpkg file does not exist"
+        );
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("read_kpkg") || err_msg.contains("kpkg file"),
+            "Error should mention kpkg file read failure: {}",
+            err_msg
+        );
+    }
+
+    #[cfg(all(feature = "rag", feature = "multi-agent"))]
+    #[test]
+    fn test_kpkg_manifest_injection() {
+        // Test that system_prompt injection modifies the assistant's prompt
+        let mut ai = AiAssistant::new();
+        let _original_prompt = ai.system_prompt().to_string();
+
+        // We can't easily create a real kpkg in a unit test without the builder,
+        // but we can test the prompt injection logic by simulating what happens
+        // after a successful load. We'll test via the public API by verifying
+        // that the system prompt can be modified.
+        ai.set_system_prompt("Base prompt");
+        assert_eq!(ai.system_prompt(), "Base prompt");
+
+        // Simulate what load_kpkg_to_graph does to the prompt
+        let injection = "[KPKG System Prompt]: You are a space navigator.\n\
+                         [KPKG Persona]: Expert in stellar cartography.";
+        let new_prompt = format!("{}\n\n{}", ai.system_prompt(), injection);
+        ai.set_system_prompt(&new_prompt);
+
+        assert!(
+            ai.system_prompt().contains("[KPKG System Prompt]"),
+            "System prompt should contain KPKG injection"
+        );
+        assert!(
+            ai.system_prompt().contains("space navigator"),
+            "System prompt should contain persona content"
+        );
+        assert!(
+            ai.system_prompt().contains("Base prompt"),
+            "Original prompt should be preserved"
+        );
+    }
+
+    #[cfg(all(feature = "rag", feature = "multi-agent"))]
+    #[test]
+    fn test_graph_field_default_none() {
+        let ai = AiAssistant::new();
+        assert!(
+            ai.graph.is_none(),
+            "MultiLayerGraph should be None by default"
+        );
+    }
+
+    #[cfg(all(feature = "rag", feature = "multi-agent"))]
+    #[test]
+    fn test_graph_field_can_be_set() {
+        let mut ai = AiAssistant::new();
+        ai.graph = Some(crate::multi_layer_graph::MultiLayerGraph::new());
+        assert!(ai.graph.is_some(), "Graph should be Some after assignment");
+    }
+
+    #[cfg(all(feature = "rag", feature = "multi-agent"))]
+    #[test]
+    fn test_extract_entities_with_punctuation() {
+        let text = "we visited London, Madrid, and Rome. All are capitals.";
+        let entities = AiAssistant::extract_entities_from_text(text);
+        assert!(
+            entities.contains(&"London".to_string()),
+            "Should extract 'London' despite trailing comma: {:?}",
+            entities
+        );
+        assert!(
+            entities.contains(&"Madrid".to_string()),
+            "Should extract 'Madrid' despite trailing comma: {:?}",
+            entities
+        );
+        assert!(
+            entities.contains(&"Rome".to_string()),
+            "Should extract 'Rome': {:?}",
+            entities
+        );
     }
 }

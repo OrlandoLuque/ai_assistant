@@ -1197,6 +1197,415 @@ impl McpOAuthTokenManager {
     }
 }
 
+// =============================================================================
+// MCP SESSION RESOURCES (v4 - item 8.2)
+// =============================================================================
+
+/// Session resource info for MCP session:// URIs
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionResourceInfo {
+    pub session_id: String,
+    pub name: Option<String>,
+    pub created_at: u64,
+    pub updated_at: u64,
+    pub message_count: usize,
+    pub closed_cleanly: bool,
+}
+
+/// Summary of a session
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSummary {
+    pub session_id: String,
+    pub summary: String,
+    pub message_count: usize,
+    pub key_topics: Vec<String>,
+    pub decisions: Vec<String>,
+    pub open_questions: Vec<String>,
+}
+
+/// Session highlights
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionHighlights {
+    pub session_id: String,
+    pub highlights: Vec<String>,
+    pub conclusions: Vec<String>,
+    pub action_items: Vec<String>,
+}
+
+/// Session context (entities/relations extracted)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionContext {
+    pub session_id: String,
+    pub entities: Vec<String>,
+    pub relations: Vec<(String, String, String)>, // (source, relation, target)
+    pub key_facts: Vec<String>,
+}
+
+/// Session beliefs
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionBeliefs {
+    pub session_id: String,
+    pub beliefs: Vec<SessionBelief>,
+}
+
+/// A single belief statement extracted from session messages
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionBelief {
+    pub statement: String,
+    pub belief_type: String,
+    pub confidence: f32,
+}
+
+/// Session repair result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionRepairResult {
+    pub session_id: String,
+    pub success: bool,
+    pub messages_recovered: usize,
+    pub messages_lost: usize,
+    pub repair_notes: Vec<String>,
+}
+
+/// Manager for session MCP resources
+pub struct SessionMcpManager {
+    sessions: HashMap<String, SessionResourceInfo>,
+}
+
+impl SessionMcpManager {
+    /// Create a new empty session manager.
+    pub fn new() -> Self {
+        Self {
+            sessions: HashMap::new(),
+        }
+    }
+
+    /// Register a session resource.
+    pub fn register_session(&mut self, info: SessionResourceInfo) {
+        self.sessions.insert(info.session_id.clone(), info);
+    }
+
+    /// Unregister a session by ID. Returns the removed info if it existed.
+    pub fn unregister(&mut self, session_id: &str) -> Option<SessionResourceInfo> {
+        self.sessions.remove(session_id)
+    }
+
+    /// Get a session by ID.
+    pub fn get_session(&self, session_id: &str) -> Option<&SessionResourceInfo> {
+        self.sessions.get(session_id)
+    }
+
+    /// List all registered sessions.
+    pub fn list_sessions(&self) -> Vec<&SessionResourceInfo> {
+        self.sessions.values().collect()
+    }
+
+    /// Serialize all sessions to a JSON value.
+    pub fn sessions_to_json(&self) -> serde_json::Value {
+        let entries: Vec<serde_json::Value> = self
+            .sessions
+            .values()
+            .map(|info| {
+                serde_json::to_value(info).unwrap_or_else(|_| serde_json::Value::Null)
+            })
+            .collect();
+        serde_json::Value::Array(entries)
+    }
+
+    /// Generate a summary for a session from its messages.
+    ///
+    /// Each message is a tuple of (role, content).
+    pub fn generate_summary(
+        session_id: &str,
+        messages: &[(String, String)],
+    ) -> SessionSummary {
+        if messages.is_empty() {
+            return SessionSummary {
+                session_id: session_id.to_string(),
+                summary: String::new(),
+                message_count: 0,
+                key_topics: Vec::new(),
+                decisions: Vec::new(),
+                open_questions: Vec::new(),
+            };
+        }
+
+        // Build word frequency map for topic extraction (words >= 4 chars, lowercased)
+        let stop_words: &[&str] = &[
+            "this", "that", "with", "from", "have", "been", "were", "they",
+            "their", "about", "would", "could", "should", "there", "which",
+            "will", "what", "when", "where", "some", "into", "also", "then",
+            "than", "them", "these", "those", "each", "other", "more",
+        ];
+        let mut word_freq: HashMap<String, usize> = HashMap::new();
+        for (_role, content) in messages {
+            for word in content.split_whitespace() {
+                let cleaned: String = word
+                    .chars()
+                    .filter(|c| c.is_alphanumeric())
+                    .collect::<String>()
+                    .to_lowercase();
+                if cleaned.len() >= 4 && !stop_words.contains(&cleaned.as_str()) {
+                    *word_freq.entry(cleaned).or_insert(0) += 1;
+                }
+            }
+        }
+
+        // Top topics by frequency
+        let mut freq_vec: Vec<(String, usize)> = word_freq.into_iter().collect();
+        freq_vec.sort_by(|a, b| b.1.cmp(&a.1));
+        let key_topics: Vec<String> = freq_vec
+            .into_iter()
+            .take(5)
+            .map(|(word, _)| word)
+            .collect();
+
+        // Decisions: messages containing decision-related keywords
+        let decision_keywords = ["decided", "agreed", "chosen", "decision", "we will"];
+        let mut decisions = Vec::new();
+        for (_role, content) in messages {
+            let lower = content.to_lowercase();
+            if decision_keywords.iter().any(|kw| lower.contains(kw)) {
+                decisions.push(content.clone());
+            }
+        }
+
+        // Open questions: messages containing "?"
+        let mut open_questions = Vec::new();
+        for (_role, content) in messages {
+            if content.contains('?') {
+                open_questions.push(content.clone());
+            }
+        }
+
+        // Build summary text
+        let summary = if key_topics.is_empty() {
+            format!("Session with {} messages.", messages.len())
+        } else {
+            format!(
+                "Session with {} messages. Key topics: {}.",
+                messages.len(),
+                key_topics.join(", ")
+            )
+        };
+
+        SessionSummary {
+            session_id: session_id.to_string(),
+            summary,
+            message_count: messages.len(),
+            key_topics,
+            decisions,
+            open_questions,
+        }
+    }
+
+    /// Extract highlights from session messages.
+    pub fn extract_highlights(
+        session_id: &str,
+        messages: &[(String, String)],
+    ) -> SessionHighlights {
+        let mut highlights = Vec::new();
+        let mut conclusions = Vec::new();
+        let mut action_items = Vec::new();
+
+        let highlight_keywords = ["important", "key", "critical", "significant", "essential"];
+        let conclusion_keywords = ["in conclusion", "therefore", "finally", "to summarize", "in summary"];
+        let action_keywords = ["todo", "need to", "should", "action item", "must", "next step"];
+
+        for (_role, content) in messages {
+            let lower = content.to_lowercase();
+
+            if highlight_keywords.iter().any(|kw| lower.contains(kw)) {
+                highlights.push(content.clone());
+            }
+            if conclusion_keywords.iter().any(|kw| lower.contains(kw)) {
+                conclusions.push(content.clone());
+            }
+            if action_keywords.iter().any(|kw| lower.contains(kw)) {
+                action_items.push(content.clone());
+            }
+        }
+
+        SessionHighlights {
+            session_id: session_id.to_string(),
+            highlights,
+            conclusions,
+            action_items,
+        }
+    }
+
+    /// Extract context (entities, relations, key facts) from session messages.
+    pub fn extract_context(
+        session_id: &str,
+        messages: &[(String, String)],
+    ) -> SessionContext {
+        let mut entities = Vec::new();
+        let mut relations = Vec::new();
+        let mut key_facts = Vec::new();
+
+        for (_role, content) in messages {
+            // Entity extraction: capitalized words (simple heuristic)
+            let words: Vec<&str> = content.split_whitespace().collect();
+            for (i, word) in words.iter().enumerate() {
+                let cleaned: String = word.chars().filter(|c| c.is_alphanumeric()).collect();
+                if cleaned.len() >= 2 {
+                    if let Some(first_char) = cleaned.chars().next() {
+                        // Skip if it's the first word in the message (sentence-initial capitalization)
+                        if first_char.is_uppercase() && i > 0 && !entities.contains(&cleaned) {
+                            entities.push(cleaned);
+                        }
+                    }
+                }
+            }
+
+            // Simple subject-verb-object relation extraction
+            // Look for patterns like "X is Y", "X uses Y", "X requires Y"
+            let relation_verbs = ["is", "uses", "requires", "contains", "provides", "supports"];
+            for verb in &relation_verbs {
+                let pattern = format!(" {} ", verb);
+                if let Some(pos) = content.find(&pattern) {
+                    let before = content[..pos].split_whitespace().next_back();
+                    let after_start = pos + pattern.len();
+                    let after = content.get(after_start..).and_then(|s| s.split_whitespace().next());
+                    if let (Some(subj), Some(obj)) = (before, after) {
+                        let subj_clean: String = subj.chars().filter(|c| c.is_alphanumeric()).collect();
+                        let obj_clean: String = obj.chars().filter(|c| c.is_alphanumeric()).collect();
+                        if !subj_clean.is_empty() && !obj_clean.is_empty() {
+                            relations.push((
+                                subj_clean,
+                                verb.to_string(),
+                                obj_clean,
+                            ));
+                        }
+                    }
+                }
+            }
+
+            // Key facts: declarative statements (sentences that don't end with ?)
+            let lower = content.to_lowercase();
+            if !content.contains('?')
+                && content.len() > 20
+                && (lower.contains(" is ") || lower.contains(" are ") || lower.contains(" was "))
+            {
+                key_facts.push(content.clone());
+            }
+        }
+
+        SessionContext {
+            session_id: session_id.to_string(),
+            entities,
+            relations,
+            key_facts,
+        }
+    }
+
+    /// Extract beliefs from session messages.
+    pub fn extract_beliefs(
+        session_id: &str,
+        messages: &[(String, String)],
+    ) -> SessionBeliefs {
+        let belief_patterns: &[(&str, &str, f32)] = &[
+            ("i think", "opinion", 0.6),
+            ("i believe", "conviction", 0.8),
+            ("we should", "recommendation", 0.7),
+            ("it seems", "observation", 0.5),
+            ("i'm sure", "conviction", 0.9),
+            ("probably", "speculation", 0.4),
+            ("definitely", "conviction", 0.9),
+            ("maybe", "speculation", 0.3),
+        ];
+
+        let mut beliefs = Vec::new();
+
+        for (_role, content) in messages {
+            let lower = content.to_lowercase();
+            for &(pattern, belief_type, confidence) in belief_patterns {
+                if lower.contains(pattern) {
+                    beliefs.push(SessionBelief {
+                        statement: content.clone(),
+                        belief_type: belief_type.to_string(),
+                        confidence,
+                    });
+                    break; // One belief per message
+                }
+            }
+        }
+
+        SessionBeliefs {
+            session_id: session_id.to_string(),
+            beliefs,
+        }
+    }
+
+    /// Attempt to repair a session from raw data.
+    ///
+    /// Tries JSON array parsing first, then falls back to line-by-line recovery.
+    pub fn repair_session(session_id: &str, raw_data: &str) -> SessionRepairResult {
+        // Attempt 1: parse as complete JSON array
+        if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(raw_data) {
+            return SessionRepairResult {
+                session_id: session_id.to_string(),
+                success: true,
+                messages_recovered: arr.len(),
+                messages_lost: 0,
+                repair_notes: vec!["Parsed successfully as JSON array.".to_string()],
+            };
+        }
+
+        // Attempt 2: line-by-line recovery of partial JSON objects
+        let mut recovered = 0usize;
+        let mut lost = 0usize;
+        let mut notes = Vec::new();
+
+        for (line_idx, line) in raw_data.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            // Try to parse each line as a JSON object
+            if serde_json::from_str::<serde_json::Value>(trimmed).is_ok() {
+                recovered += 1;
+            } else {
+                // Try to fix common JSON issues: trailing comma, missing closing brace
+                let mut candidate = trimmed.to_string();
+                // Remove trailing comma
+                if candidate.ends_with(',') {
+                    candidate.pop();
+                }
+                // Try adding missing closing brace
+                if candidate.starts_with('{') && !candidate.ends_with('}') {
+                    candidate.push('}');
+                }
+                if serde_json::from_str::<serde_json::Value>(&candidate).is_ok() {
+                    recovered += 1;
+                    notes.push(format!("Line {}: repaired (trailing comma or missing brace).", line_idx + 1));
+                } else {
+                    lost += 1;
+                    notes.push(format!("Line {}: unrecoverable.", line_idx + 1));
+                }
+            }
+        }
+
+        let success = recovered > 0;
+        if !success {
+            notes.push("No messages could be recovered.".to_string());
+        }
+
+        SessionRepairResult {
+            session_id: session_id.to_string(),
+            success,
+            messages_recovered: recovered,
+            messages_lost: lost,
+            repair_notes: notes,
+        }
+    }
+}
+
+impl Default for SessionMcpManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1655,5 +2064,279 @@ mod tests {
         assert_eq!(back.expires_in, Some(7200));
         assert_eq!(back.refresh_token.as_deref(), Some("def"));
         assert_eq!(back.scope.as_deref(), Some("tools:read resources:read"));
+    }
+
+    // =========================================================================
+    // Session MCP resource tests (v4 - item 8.2)
+    // =========================================================================
+
+    fn make_test_session_info(id: &str) -> SessionResourceInfo {
+        SessionResourceInfo {
+            session_id: id.to_string(),
+            name: Some(format!("Session {}", id)),
+            created_at: 1000,
+            updated_at: 2000,
+            message_count: 5,
+            closed_cleanly: true,
+        }
+    }
+
+    #[test]
+    fn test_session_manager_new() {
+        let mgr = SessionMcpManager::new();
+        assert!(mgr.list_sessions().is_empty());
+    }
+
+    #[test]
+    fn test_register_session() {
+        let mut mgr = SessionMcpManager::new();
+        let info = make_test_session_info("s1");
+        mgr.register_session(info);
+        assert_eq!(mgr.list_sessions().len(), 1);
+    }
+
+    #[test]
+    fn test_unregister_session() {
+        let mut mgr = SessionMcpManager::new();
+        mgr.register_session(make_test_session_info("s1"));
+        mgr.register_session(make_test_session_info("s2"));
+        assert_eq!(mgr.list_sessions().len(), 2);
+
+        let removed = mgr.unregister("s1");
+        assert!(removed.is_some());
+        assert_eq!(removed.as_ref().map(|r| r.session_id.as_str()), Some("s1"));
+        assert_eq!(mgr.list_sessions().len(), 1);
+
+        // Removing non-existent returns None
+        assert!(mgr.unregister("s999").is_none());
+    }
+
+    #[test]
+    fn test_get_session() {
+        let mut mgr = SessionMcpManager::new();
+        mgr.register_session(make_test_session_info("s1"));
+
+        let s = mgr.get_session("s1");
+        assert!(s.is_some());
+        assert_eq!(s.map(|s| s.message_count), Some(5));
+
+        assert!(mgr.get_session("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_list_sessions() {
+        let mut mgr = SessionMcpManager::new();
+        mgr.register_session(make_test_session_info("a"));
+        mgr.register_session(make_test_session_info("b"));
+        mgr.register_session(make_test_session_info("c"));
+
+        let list = mgr.list_sessions();
+        assert_eq!(list.len(), 3);
+
+        let ids: Vec<&str> = list.iter().map(|s| s.session_id.as_str()).collect();
+        assert!(ids.contains(&"a"));
+        assert!(ids.contains(&"b"));
+        assert!(ids.contains(&"c"));
+    }
+
+    #[test]
+    fn test_sessions_to_json() {
+        let mut mgr = SessionMcpManager::new();
+        mgr.register_session(make_test_session_info("j1"));
+
+        let json = mgr.sessions_to_json();
+        assert!(json.is_array());
+        let arr = json.as_array().expect("should be array");
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["session_id"], "j1");
+        assert_eq!(arr[0]["message_count"], 5);
+    }
+
+    #[test]
+    fn test_generate_summary_empty() {
+        let summary = SessionMcpManager::generate_summary("s-empty", &[]);
+        assert_eq!(summary.session_id, "s-empty");
+        assert_eq!(summary.message_count, 0);
+        assert!(summary.key_topics.is_empty());
+        assert!(summary.decisions.is_empty());
+        assert!(summary.open_questions.is_empty());
+        assert!(summary.summary.is_empty());
+    }
+
+    #[test]
+    fn test_generate_summary_with_content() {
+        let messages = vec![
+            ("user".to_string(), "The architecture uses microservices for deployment".to_string()),
+            ("assistant".to_string(), "Microservices architecture provides scalability benefits".to_string()),
+            ("user".to_string(), "We need more microservices testing coverage".to_string()),
+        ];
+        let summary = SessionMcpManager::generate_summary("s-content", &messages);
+        assert_eq!(summary.message_count, 3);
+        assert!(!summary.key_topics.is_empty());
+        // "microservices" should be the top topic (appears 3 times)
+        assert!(summary.key_topics.contains(&"microservices".to_string()));
+        assert!(summary.summary.contains("3 messages"));
+    }
+
+    #[test]
+    fn test_generate_summary_decisions_and_questions() {
+        let messages = vec![
+            ("user".to_string(), "We decided to use Rust for the backend".to_string()),
+            ("assistant".to_string(), "Agreed, Rust is a good choice".to_string()),
+            ("user".to_string(), "What about the frontend framework?".to_string()),
+            ("user".to_string(), "Have we chosen a database yet?".to_string()),
+        ];
+        let summary = SessionMcpManager::generate_summary("s-dq", &messages);
+        assert_eq!(summary.decisions.len(), 3); // "decided", "agreed", "chosen"
+        assert_eq!(summary.open_questions.len(), 2); // two questions with "?"
+    }
+
+    #[test]
+    fn test_extract_highlights_conclusions() {
+        let messages = vec![
+            ("user".to_string(), "This is an important finding about performance".to_string()),
+            ("assistant".to_string(), "A critical issue was identified in the pipeline".to_string()),
+            ("assistant".to_string(), "In conclusion, we should refactor the module".to_string()),
+            ("user".to_string(), "Therefore, the next step is clear".to_string()),
+        ];
+        let hl = SessionMcpManager::extract_highlights("s-hl", &messages);
+        assert_eq!(hl.highlights.len(), 2); // "important" and "critical"
+        assert_eq!(hl.conclusions.len(), 2); // "in conclusion" and "therefore"
+    }
+
+    #[test]
+    fn test_extract_highlights_action_items() {
+        let messages = vec![
+            ("user".to_string(), "We need to update the dependencies".to_string()),
+            ("assistant".to_string(), "TODO: add error handling for edge cases".to_string()),
+            ("user".to_string(), "The weather is nice today".to_string()),
+            ("assistant".to_string(), "Action item: review the PR before merging".to_string()),
+        ];
+        let hl = SessionMcpManager::extract_highlights("s-ai", &messages);
+        assert_eq!(hl.action_items.len(), 3); // "need to", "todo", "action item"
+        assert!(hl.highlights.is_empty());
+    }
+
+    #[test]
+    fn test_extract_context_entities() {
+        let messages = vec![
+            ("user".to_string(), "The system uses Rust and PostgreSQL for storage".to_string()),
+            ("assistant".to_string(), "Indeed, Rust provides great performance with PostgreSQL".to_string()),
+        ];
+        let ctx = SessionMcpManager::extract_context("s-ctx", &messages);
+        // Entities should include capitalized words (not sentence-initial)
+        assert!(ctx.entities.contains(&"Rust".to_string()));
+        assert!(ctx.entities.contains(&"PostgreSQL".to_string()));
+    }
+
+    #[test]
+    fn test_extract_beliefs() {
+        let messages = vec![
+            ("user".to_string(), "I think Rust is the best language for this project".to_string()),
+            ("assistant".to_string(), "I believe the architecture is sound and well-designed".to_string()),
+            ("user".to_string(), "We should add more comprehensive tests to the suite".to_string()),
+            ("user".to_string(), "The sky is blue".to_string()), // no belief pattern
+        ];
+        let beliefs = SessionMcpManager::extract_beliefs("s-bel", &messages);
+        assert_eq!(beliefs.beliefs.len(), 3);
+        assert_eq!(beliefs.beliefs[0].belief_type, "opinion"); // "i think"
+        assert!((beliefs.beliefs[0].confidence - 0.6).abs() < f32::EPSILON);
+        assert_eq!(beliefs.beliefs[1].belief_type, "conviction"); // "i believe"
+        assert_eq!(beliefs.beliefs[2].belief_type, "recommendation"); // "we should"
+    }
+
+    #[test]
+    fn test_repair_session_valid_json() {
+        let raw = r#"[{"role":"user","content":"hello"},{"role":"assistant","content":"hi"}]"#;
+        let result = SessionMcpManager::repair_session("s-ok", raw);
+        assert!(result.success);
+        assert_eq!(result.messages_recovered, 2);
+        assert_eq!(result.messages_lost, 0);
+        assert_eq!(result.repair_notes.len(), 1);
+        assert!(result.repair_notes[0].contains("JSON array"));
+    }
+
+    #[test]
+    fn test_repair_session_partial() {
+        let raw = r#"{"role":"user","content":"hello"}
+{"role":"assistant","content":"hi"}
+{"role":"user","content":"broken"
+this is garbage"#;
+        let result = SessionMcpManager::repair_session("s-partial", raw);
+        assert!(result.success);
+        assert_eq!(result.messages_recovered, 3); // 2 valid + 1 repaired (missing brace)
+        assert_eq!(result.messages_lost, 1); // "this is garbage"
+    }
+
+    #[test]
+    fn test_repair_session_corrupted() {
+        let raw = "not json at all\njust plain text\nnothing useful";
+        let result = SessionMcpManager::repair_session("s-bad", raw);
+        assert!(!result.success);
+        assert_eq!(result.messages_recovered, 0);
+        assert_eq!(result.messages_lost, 3);
+        assert!(result.repair_notes.iter().any(|n| n.contains("No messages could be recovered")));
+    }
+
+    #[test]
+    fn test_session_beliefs_serde() {
+        let beliefs = SessionBeliefs {
+            session_id: "s-serde".to_string(),
+            beliefs: vec![
+                SessionBelief {
+                    statement: "I think this works".to_string(),
+                    belief_type: "opinion".to_string(),
+                    confidence: 0.6,
+                },
+            ],
+        };
+        let json = serde_json::to_string(&beliefs).unwrap();
+        let back: SessionBeliefs = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.session_id, "s-serde");
+        assert_eq!(back.beliefs.len(), 1);
+        assert_eq!(back.beliefs[0].statement, "I think this works");
+        assert!((back.beliefs[0].confidence - 0.6).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_session_context_serde() {
+        let ctx = SessionContext {
+            session_id: "s-ctx-ser".to_string(),
+            entities: vec!["Rust".to_string(), "PostgreSQL".to_string()],
+            relations: vec![
+                ("Rust".to_string(), "is".to_string(), "fast".to_string()),
+            ],
+            key_facts: vec!["Rust is a systems programming language with good safety".to_string()],
+        };
+        let json = serde_json::to_string(&ctx).unwrap();
+        let back: SessionContext = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.session_id, "s-ctx-ser");
+        assert_eq!(back.entities.len(), 2);
+        assert_eq!(back.relations.len(), 1);
+        assert_eq!(back.relations[0].0, "Rust");
+        assert_eq!(back.relations[0].1, "is");
+        assert_eq!(back.relations[0].2, "fast");
+    }
+
+    #[test]
+    fn test_session_repair_result_fields() {
+        let result = SessionRepairResult {
+            session_id: "s-fields".to_string(),
+            success: true,
+            messages_recovered: 10,
+            messages_lost: 2,
+            repair_notes: vec!["note1".to_string(), "note2".to_string()],
+        };
+        assert_eq!(result.session_id, "s-fields");
+        assert!(result.success);
+        assert_eq!(result.messages_recovered, 10);
+        assert_eq!(result.messages_lost, 2);
+        assert_eq!(result.repair_notes.len(), 2);
+
+        // Also test serde round-trip
+        let json = serde_json::to_string(&result).unwrap();
+        let back: SessionRepairResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.messages_recovered, 10);
+        assert_eq!(back.messages_lost, 2);
     }
 }

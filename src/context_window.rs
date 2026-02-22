@@ -505,6 +505,241 @@ impl Default for ContextWindowBuilder {
     }
 }
 
+// =============================================================================
+// CONTEXT OVERFLOW PREVENTION (v4 - item 8.3)
+// =============================================================================
+
+/// Overflow thresholds that define when warning, critical, and emergency levels
+/// are triggered based on the fraction of the context window currently in use.
+#[derive(Debug, Clone)]
+pub struct OverflowThresholds {
+    /// Fraction at which a warning is issued (default 0.70)
+    pub warning: f64,
+    /// Fraction at which usage is considered critical (default 0.85)
+    pub critical: f64,
+    /// Fraction at which an emergency eviction should occur (default 0.95)
+    pub emergency: f64,
+}
+
+impl Default for OverflowThresholds {
+    fn default() -> Self {
+        Self {
+            warning: 0.70,
+            critical: 0.85,
+            emergency: 0.95,
+        }
+    }
+}
+
+/// Severity level of context window overflow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum OverflowLevel {
+    /// Usage is within normal bounds
+    Normal,
+    /// Usage has crossed the warning threshold
+    Warning,
+    /// Usage has crossed the critical threshold
+    Critical,
+    /// Usage has crossed the emergency threshold
+    Emergency,
+}
+
+impl OverflowLevel {
+    /// Human-readable name for this overflow level.
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            OverflowLevel::Normal => "Normal",
+            OverflowLevel::Warning => "Warning",
+            OverflowLevel::Critical => "Critical",
+            OverflowLevel::Emergency => "Emergency",
+        }
+    }
+}
+
+/// Auto-configure max_tokens from model capabilities.
+///
+/// When the model's context window size is known, this calculates the effective
+/// maximum token budget by subtracting a response reserve. When unknown, a
+/// fallback value is used.
+#[derive(Debug, Clone)]
+pub struct AutoTokenConfig {
+    /// Known context window size of the model, if available
+    pub model_context_window: Option<usize>,
+    /// Tokens reserved for the model's response
+    pub response_reserve: usize,
+    /// Fallback max tokens when the model context window is unknown
+    pub fallback_max_tokens: usize,
+}
+
+impl Default for AutoTokenConfig {
+    fn default() -> Self {
+        Self {
+            model_context_window: None,
+            response_reserve: 1024,
+            fallback_max_tokens: 4096,
+        }
+    }
+}
+
+impl AutoTokenConfig {
+    /// Create a config from a known model context window size.
+    pub fn from_model(window: usize) -> Self {
+        Self {
+            model_context_window: Some(window),
+            ..Default::default()
+        }
+    }
+
+    /// Compute the effective maximum tokens available for context.
+    ///
+    /// If the model window is known, subtracts the response reserve (clamping to
+    /// zero rather than underflowing). Otherwise returns the fallback value.
+    pub fn effective_max_tokens(&self) -> usize {
+        match self.model_context_window {
+            Some(window) => window.saturating_sub(self.response_reserve),
+            None => self.fallback_max_tokens,
+        }
+    }
+}
+
+/// Monitors context window usage and detects overflow conditions.
+///
+/// The monitor tracks the current token usage against a configured maximum and
+/// fires an optional callback whenever the overflow level increases (i.e.
+/// transitions to a more severe level).
+pub struct ContextOverflowMonitor {
+    thresholds: OverflowThresholds,
+    max_tokens: usize,
+    current_usage: usize,
+    on_overflow: Option<Box<dyn Fn(OverflowLevel, usize, usize) + Send + Sync>>,
+    last_level: OverflowLevel,
+    overflow_count: usize,
+}
+
+impl ContextOverflowMonitor {
+    /// Create a new monitor with default thresholds and the given max token budget.
+    pub fn new(max_tokens: usize) -> Self {
+        Self {
+            thresholds: OverflowThresholds::default(),
+            max_tokens,
+            current_usage: 0,
+            on_overflow: None,
+            last_level: OverflowLevel::Normal,
+            overflow_count: 0,
+        }
+    }
+
+    /// Create a monitor from an `AutoTokenConfig`, using its effective max tokens.
+    pub fn from_auto_config(config: &AutoTokenConfig) -> Self {
+        Self::new(config.effective_max_tokens())
+    }
+
+    /// Override the default thresholds.
+    pub fn with_thresholds(mut self, thresholds: OverflowThresholds) -> Self {
+        self.thresholds = thresholds;
+        self
+    }
+
+    /// Register a callback that fires when the overflow level increases.
+    ///
+    /// The callback receives `(new_level, current_usage, max_tokens)`.
+    pub fn on_overflow<F>(mut self, callback: F) -> Self
+    where
+        F: Fn(OverflowLevel, usize, usize) + Send + Sync + 'static,
+    {
+        self.on_overflow = Some(Box::new(callback));
+        self
+    }
+
+    /// Update the current usage and return the new overflow level.
+    ///
+    /// If the level has increased compared to the last update, the overflow
+    /// callback (if any) is fired and the overflow counter is incremented.
+    pub fn update(&mut self, current_tokens: usize) -> OverflowLevel {
+        self.current_usage = current_tokens;
+        let new_level = self.compute_level();
+
+        if new_level > self.last_level {
+            self.overflow_count += 1;
+            if let Some(ref cb) = self.on_overflow {
+                cb(new_level, self.current_usage, self.max_tokens);
+            }
+        }
+
+        self.last_level = new_level;
+        new_level
+    }
+
+    /// Return the current overflow level without updating usage.
+    pub fn check_level(&self) -> OverflowLevel {
+        self.last_level
+    }
+
+    /// Fraction of the context window currently in use (0.0 to 1.0+).
+    pub fn usage_fraction(&self) -> f64 {
+        if self.max_tokens == 0 {
+            return 0.0;
+        }
+        self.current_usage as f64 / self.max_tokens as f64
+    }
+
+    /// Tokens remaining before reaching the maximum.
+    pub fn remaining_tokens(&self) -> usize {
+        self.max_tokens.saturating_sub(self.current_usage)
+    }
+
+    /// The configured maximum token budget.
+    pub fn max_tokens(&self) -> usize {
+        self.max_tokens
+    }
+
+    /// The current token usage last provided via `update`.
+    pub fn current_usage(&self) -> usize {
+        self.current_usage
+    }
+
+    /// Number of times the overflow level has increased since creation or last reset.
+    pub fn overflow_count(&self) -> usize {
+        self.overflow_count
+    }
+
+    /// The overflow level as of the most recent `update` call.
+    pub fn last_level(&self) -> OverflowLevel {
+        self.last_level
+    }
+
+    /// A recommended action string based on the current overflow level.
+    pub fn recommended_action(&self) -> &'static str {
+        match self.last_level {
+            OverflowLevel::Normal => "No action needed",
+            OverflowLevel::Warning => "Consider summarizing older messages",
+            OverflowLevel::Critical => "Evict low-priority messages immediately",
+            OverflowLevel::Emergency => "Aggressive eviction required to prevent data loss",
+        }
+    }
+
+    /// Reset the monitor state (usage, level, and overflow count).
+    pub fn reset(&mut self) {
+        self.current_usage = 0;
+        self.last_level = OverflowLevel::Normal;
+        self.overflow_count = 0;
+    }
+
+    /// Compute the overflow level from current usage and thresholds.
+    fn compute_level(&self) -> OverflowLevel {
+        let fraction = self.usage_fraction();
+        if fraction >= self.thresholds.emergency {
+            OverflowLevel::Emergency
+        } else if fraction >= self.thresholds.critical {
+            OverflowLevel::Critical
+        } else if fraction >= self.thresholds.warning {
+            OverflowLevel::Warning
+        } else {
+            OverflowLevel::Normal
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -677,5 +912,232 @@ mod tests {
             "Summary should contain high-frequency words from originals, got: {}",
             summary.content
         );
+    }
+
+    // =========================================================================
+    // Context Overflow Prevention tests (v4 - item 8.3)
+    // =========================================================================
+
+    #[test]
+    fn test_overflow_thresholds_defaults() {
+        let t = OverflowThresholds::default();
+        assert!((t.warning - 0.70).abs() < f64::EPSILON);
+        assert!((t.critical - 0.85).abs() < f64::EPSILON);
+        assert!((t.emergency - 0.95).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_overflow_level_ordering() {
+        assert!(OverflowLevel::Normal < OverflowLevel::Warning);
+        assert!(OverflowLevel::Warning < OverflowLevel::Critical);
+        assert!(OverflowLevel::Critical < OverflowLevel::Emergency);
+    }
+
+    #[test]
+    fn test_overflow_level_display_name() {
+        assert_eq!(OverflowLevel::Normal.display_name(), "Normal");
+        assert_eq!(OverflowLevel::Warning.display_name(), "Warning");
+        assert_eq!(OverflowLevel::Critical.display_name(), "Critical");
+        assert_eq!(OverflowLevel::Emergency.display_name(), "Emergency");
+    }
+
+    #[test]
+    fn test_auto_token_config_with_model() {
+        let cfg = AutoTokenConfig {
+            model_context_window: Some(8192),
+            response_reserve: 1024,
+            fallback_max_tokens: 4096,
+        };
+        assert_eq!(cfg.effective_max_tokens(), 8192 - 1024);
+    }
+
+    #[test]
+    fn test_auto_token_config_without_model() {
+        let cfg = AutoTokenConfig::default();
+        assert_eq!(cfg.model_context_window, None);
+        assert_eq!(cfg.effective_max_tokens(), 4096);
+    }
+
+    #[test]
+    fn test_auto_token_from_model() {
+        let cfg = AutoTokenConfig::from_model(32_000);
+        assert_eq!(cfg.model_context_window, Some(32_000));
+        // default response_reserve is 1024
+        assert_eq!(cfg.effective_max_tokens(), 32_000 - 1024);
+    }
+
+    #[test]
+    fn test_monitor_new_normal() {
+        let monitor = ContextOverflowMonitor::new(1000);
+        assert_eq!(monitor.check_level(), OverflowLevel::Normal);
+        assert_eq!(monitor.current_usage(), 0);
+        assert_eq!(monitor.max_tokens(), 1000);
+        assert_eq!(monitor.remaining_tokens(), 1000);
+    }
+
+    #[test]
+    fn test_monitor_update_warning() {
+        let mut monitor = ContextOverflowMonitor::new(1000);
+        let level = monitor.update(750); // 0.75 >= 0.70 warning
+        assert_eq!(level, OverflowLevel::Warning);
+        assert_eq!(monitor.check_level(), OverflowLevel::Warning);
+    }
+
+    #[test]
+    fn test_monitor_update_critical() {
+        let mut monitor = ContextOverflowMonitor::new(1000);
+        let level = monitor.update(870); // 0.87 >= 0.85 critical
+        assert_eq!(level, OverflowLevel::Critical);
+    }
+
+    #[test]
+    fn test_monitor_update_emergency() {
+        let mut monitor = ContextOverflowMonitor::new(1000);
+        let level = monitor.update(960); // 0.96 >= 0.95 emergency
+        assert_eq!(level, OverflowLevel::Emergency);
+    }
+
+    #[test]
+    fn test_monitor_callback_fires() {
+        use std::sync::{Arc, Mutex};
+        let fired = Arc::new(Mutex::new(Vec::new()));
+        let fired_clone = Arc::clone(&fired);
+
+        let mut monitor = ContextOverflowMonitor::new(1000).on_overflow(move |level, usage, max| {
+            if let Ok(mut v) = fired_clone.lock() {
+                v.push((level, usage, max));
+            }
+        });
+
+        // Normal -> no callback
+        monitor.update(500);
+        // Normal -> Warning -> callback fires
+        monitor.update(750);
+        // Warning -> Warning -> no callback (same level)
+        monitor.update(760);
+        // Warning -> Critical -> callback fires
+        monitor.update(870);
+
+        let events = fired.lock().expect("lock should not be poisoned");
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].0, OverflowLevel::Warning);
+        assert_eq!(events[0].1, 750);
+        assert_eq!(events[0].2, 1000);
+        assert_eq!(events[1].0, OverflowLevel::Critical);
+    }
+
+    #[test]
+    fn test_monitor_remaining_tokens() {
+        let mut monitor = ContextOverflowMonitor::new(1000);
+        monitor.update(300);
+        assert_eq!(monitor.remaining_tokens(), 700);
+        monitor.update(1200); // over budget
+        assert_eq!(monitor.remaining_tokens(), 0);
+    }
+
+    #[test]
+    fn test_monitor_usage_fraction() {
+        let mut monitor = ContextOverflowMonitor::new(1000);
+        monitor.update(500);
+        assert!((monitor.usage_fraction() - 0.5).abs() < f64::EPSILON);
+
+        // Zero max_tokens edge case
+        let zero_monitor = ContextOverflowMonitor::new(0);
+        assert!((zero_monitor.usage_fraction() - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_monitor_recommended_action() {
+        let mut monitor = ContextOverflowMonitor::new(1000);
+
+        monitor.update(100);
+        assert_eq!(monitor.recommended_action(), "No action needed");
+
+        monitor.update(750);
+        assert_eq!(
+            monitor.recommended_action(),
+            "Consider summarizing older messages"
+        );
+
+        monitor.update(870);
+        assert_eq!(
+            monitor.recommended_action(),
+            "Evict low-priority messages immediately"
+        );
+
+        monitor.update(960);
+        assert_eq!(
+            monitor.recommended_action(),
+            "Aggressive eviction required to prevent data loss"
+        );
+    }
+
+    #[test]
+    fn test_monitor_reset() {
+        let mut monitor = ContextOverflowMonitor::new(1000);
+        monitor.update(960);
+        assert_eq!(monitor.check_level(), OverflowLevel::Emergency);
+        assert!(monitor.overflow_count() > 0);
+
+        monitor.reset();
+        assert_eq!(monitor.check_level(), OverflowLevel::Normal);
+        assert_eq!(monitor.current_usage(), 0);
+        assert_eq!(monitor.overflow_count(), 0);
+    }
+
+    #[test]
+    fn test_monitor_overflow_count() {
+        let mut monitor = ContextOverflowMonitor::new(1000);
+
+        // Normal -> Warning (count 1)
+        monitor.update(750);
+        assert_eq!(monitor.overflow_count(), 1);
+
+        // Warning -> Warning (no increase, still 1)
+        monitor.update(760);
+        assert_eq!(monitor.overflow_count(), 1);
+
+        // Warning -> Critical (count 2)
+        monitor.update(870);
+        assert_eq!(monitor.overflow_count(), 2);
+
+        // Critical -> Emergency (count 3)
+        monitor.update(960);
+        assert_eq!(monitor.overflow_count(), 3);
+
+        // Emergency -> Warning (decrease, no increment, still 3)
+        monitor.update(750);
+        assert_eq!(monitor.overflow_count(), 3);
+    }
+
+    #[test]
+    fn test_monitor_custom_thresholds() {
+        let thresholds = OverflowThresholds {
+            warning: 0.50,
+            critical: 0.75,
+            emergency: 0.90,
+        };
+        let mut monitor = ContextOverflowMonitor::new(1000).with_thresholds(thresholds);
+
+        // 55% should be warning with the custom 0.50 threshold
+        let level = monitor.update(550);
+        assert_eq!(level, OverflowLevel::Warning);
+
+        // 80% should be critical with the custom 0.75 threshold
+        let level = monitor.update(800);
+        assert_eq!(level, OverflowLevel::Critical);
+
+        // 92% should be emergency with the custom 0.90 threshold
+        let level = monitor.update(920);
+        assert_eq!(level, OverflowLevel::Emergency);
+    }
+
+    #[test]
+    fn test_monitor_from_auto_config() {
+        let cfg = AutoTokenConfig::from_model(16_000);
+        let monitor = ContextOverflowMonitor::from_auto_config(&cfg);
+        // 16000 - 1024 (default reserve) = 14976
+        assert_eq!(monitor.max_tokens(), 14_976);
+        assert_eq!(monitor.check_level(), OverflowLevel::Normal);
     }
 }

@@ -27,6 +27,12 @@ pub enum AiError {
     Io(IoError),
     /// Serialization errors
     Serialization(SerializationError),
+    /// Workflow engine errors
+    Workflow(WorkflowError),
+    /// Advanced memory system errors
+    AdvancedMemory(AdvancedMemoryError),
+    /// Agent-to-Agent protocol errors
+    A2A(A2AError),
     /// Generic error with message
     Other(String),
 }
@@ -42,6 +48,9 @@ impl std::error::Error for AiError {
             AiError::ResourceLimit(e) => Some(e),
             AiError::Io(e) => Some(e),
             AiError::Serialization(e) => Some(e),
+            AiError::Workflow(e) => Some(e),
+            AiError::AdvancedMemory(e) => Some(e),
+            AiError::A2A(e) => Some(e),
             AiError::Other(_) => None,
         }
     }
@@ -58,6 +67,9 @@ impl fmt::Display for AiError {
             AiError::ResourceLimit(e) => write!(f, "Resource limit error: {}", e),
             AiError::Io(e) => write!(f, "I/O error: {}", e),
             AiError::Serialization(e) => write!(f, "Serialization error: {}", e),
+            AiError::Workflow(e) => write!(f, "Workflow error: {}", e),
+            AiError::AdvancedMemory(e) => write!(f, "Memory error: {}", e),
+            AiError::A2A(e) => write!(f, "A2A error: {}", e),
             AiError::Other(msg) => write!(f, "{}", msg),
         }
     }
@@ -80,6 +92,9 @@ impl AiError {
             AiError::ResourceLimit(e) => e.suggestion(),
             AiError::Io(e) => e.suggestion(),
             AiError::Serialization(_) => Some("Check that the data format is correct"),
+            AiError::Workflow(e) => e.suggestion(),
+            AiError::AdvancedMemory(e) => e.suggestion(),
+            AiError::A2A(e) => e.suggestion(),
             AiError::Other(_) => None,
         }
     }
@@ -90,6 +105,8 @@ impl AiError {
             AiError::Network(e) => e.is_recoverable(),
             AiError::Provider(e) => e.is_recoverable(),
             AiError::ResourceLimit(e) => e.is_recoverable(),
+            AiError::Workflow(e) => e.is_recoverable(),
+            AiError::A2A(e) => e.is_recoverable(),
             _ => false,
         }
     }
@@ -105,6 +122,9 @@ impl AiError {
             AiError::ResourceLimit(_) => "RESOURCE_LIMIT",
             AiError::Io(_) => "IO",
             AiError::Serialization(_) => "SERIALIZATION",
+            AiError::Workflow(_) => "WORKFLOW",
+            AiError::AdvancedMemory(_) => "MEMORY",
+            AiError::A2A(_) => "A2A",
             AiError::Other(_) => "OTHER",
         }
     }
@@ -853,6 +873,278 @@ impl From<serde_json::Error> for AiError {
     }
 }
 
+// === Workflow Errors ===
+
+/// Errors related to the event-driven workflow engine
+#[derive(Debug)]
+pub enum WorkflowError {
+    /// Node not found in workflow graph
+    NodeNotFound { node_id: String },
+    /// Cycle detected in workflow graph
+    CycleDetected { path: Vec<String> },
+    /// Event type mismatch during dispatch
+    EventTypeMismatch { expected: String, got: String },
+    /// Checkpoint save/load failure
+    CheckpointFailed { workflow_id: String, reason: String },
+    /// Node or workflow execution timed out
+    TimeoutExceeded { node_id: String, timeout_ms: u64 },
+    /// Breakpoint was hit during execution
+    BreakpointHit { node_id: String },
+    /// Workflow serialization/deserialization failed
+    SerializationFailed { reason: String },
+    /// Workflow is in an invalid state for the requested operation
+    InvalidState { workflow_id: String, current_state: String, attempted_action: String },
+}
+
+impl std::error::Error for WorkflowError {}
+
+impl fmt::Display for WorkflowError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            WorkflowError::NodeNotFound { node_id } => {
+                write!(f, "Workflow node '{}' not found", node_id)
+            }
+            WorkflowError::CycleDetected { path } => {
+                write!(f, "Cycle detected in workflow: {}", path.join(" -> "))
+            }
+            WorkflowError::EventTypeMismatch { expected, got } => {
+                write!(f, "Event type mismatch: expected '{}', got '{}'", expected, got)
+            }
+            WorkflowError::CheckpointFailed { workflow_id, reason } => {
+                write!(f, "Checkpoint failed for workflow '{}': {}", workflow_id, reason)
+            }
+            WorkflowError::TimeoutExceeded { node_id, timeout_ms } => {
+                write!(f, "Node '{}' timed out after {}ms", node_id, timeout_ms)
+            }
+            WorkflowError::BreakpointHit { node_id } => {
+                write!(f, "Breakpoint hit at node '{}'", node_id)
+            }
+            WorkflowError::SerializationFailed { reason } => {
+                write!(f, "Workflow serialization failed: {}", reason)
+            }
+            WorkflowError::InvalidState { workflow_id, current_state, attempted_action } => {
+                write!(f, "Workflow '{}' in state '{}', cannot perform '{}'",
+                    workflow_id, current_state, attempted_action)
+            }
+        }
+    }
+}
+
+impl WorkflowError {
+    pub fn suggestion(&self) -> Option<&'static str> {
+        match self {
+            WorkflowError::NodeNotFound { .. } => {
+                Some("Check that the node was added to the workflow graph")
+            }
+            WorkflowError::CycleDetected { .. } => {
+                Some("Remove circular dependencies between workflow nodes")
+            }
+            WorkflowError::EventTypeMismatch { .. } => {
+                Some("Check that connected nodes use compatible event types")
+            }
+            WorkflowError::CheckpointFailed { .. } => {
+                Some("Check storage permissions and available disk space")
+            }
+            WorkflowError::TimeoutExceeded { .. } => {
+                Some("Increase node timeout or optimize the node handler")
+            }
+            WorkflowError::BreakpointHit { .. } => {
+                Some("Call resume() to continue execution past the breakpoint")
+            }
+            WorkflowError::SerializationFailed { .. } => {
+                Some("Check that all workflow node handlers are serializable")
+            }
+            WorkflowError::InvalidState { .. } => {
+                Some("Check the workflow lifecycle state before performing operations")
+            }
+        }
+    }
+
+    pub fn is_recoverable(&self) -> bool {
+        matches!(
+            self,
+            WorkflowError::TimeoutExceeded { .. }
+                | WorkflowError::CheckpointFailed { .. }
+                | WorkflowError::BreakpointHit { .. }
+        )
+    }
+}
+
+impl From<WorkflowError> for AiError {
+    fn from(e: WorkflowError) -> Self {
+        AiError::Workflow(e)
+    }
+}
+
+// === Advanced Memory Errors ===
+
+/// Errors related to the advanced memory system (episodic, procedural, entity)
+#[derive(Debug)]
+pub enum AdvancedMemoryError {
+    /// Failed to store a memory entry
+    StoreFailed { memory_type: String, reason: String },
+    /// Failed to recall/query memories
+    RecallFailed { query: String, reason: String },
+    /// Memory consolidation process failed
+    ConsolidationFailed { reason: String },
+    /// Entity not found in entity memory
+    EntityNotFound { name: String },
+    /// Duplicate entity detected during insert
+    DuplicateEntity { name: String, existing_id: String },
+    /// Memory capacity limit reached
+    CapacityExceeded { memory_type: String, limit: usize, current: usize },
+}
+
+impl std::error::Error for AdvancedMemoryError {}
+
+impl fmt::Display for AdvancedMemoryError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AdvancedMemoryError::StoreFailed { memory_type, reason } => {
+                write!(f, "Failed to store {} memory: {}", memory_type, reason)
+            }
+            AdvancedMemoryError::RecallFailed { query, reason } => {
+                write!(f, "Failed to recall memories for '{}': {}", query, reason)
+            }
+            AdvancedMemoryError::ConsolidationFailed { reason } => {
+                write!(f, "Memory consolidation failed: {}", reason)
+            }
+            AdvancedMemoryError::EntityNotFound { name } => {
+                write!(f, "Entity '{}' not found in memory", name)
+            }
+            AdvancedMemoryError::DuplicateEntity { name, existing_id } => {
+                write!(f, "Duplicate entity '{}' (existing id: {})", name, existing_id)
+            }
+            AdvancedMemoryError::CapacityExceeded { memory_type, limit, current } => {
+                write!(f, "{} memory capacity exceeded: {} of {} limit", memory_type, current, limit)
+            }
+        }
+    }
+}
+
+impl AdvancedMemoryError {
+    pub fn suggestion(&self) -> Option<&'static str> {
+        match self {
+            AdvancedMemoryError::StoreFailed { .. } => {
+                Some("Check storage backend availability and permissions")
+            }
+            AdvancedMemoryError::RecallFailed { .. } => {
+                Some("Simplify the query or check that memories have been stored")
+            }
+            AdvancedMemoryError::ConsolidationFailed { .. } => {
+                Some("Check that there are enough episodes to consolidate")
+            }
+            AdvancedMemoryError::EntityNotFound { .. } => {
+                Some("Store the entity first or check the entity name spelling")
+            }
+            AdvancedMemoryError::DuplicateEntity { .. } => {
+                Some("Use merge_entity() to combine duplicates instead of insert")
+            }
+            AdvancedMemoryError::CapacityExceeded { .. } => {
+                Some("Run consolidation or increase capacity limits")
+            }
+        }
+    }
+}
+
+impl From<AdvancedMemoryError> for AiError {
+    fn from(e: AdvancedMemoryError) -> Self {
+        AiError::AdvancedMemory(e)
+    }
+}
+
+// === A2A Protocol Errors ===
+
+/// Errors related to the Agent-to-Agent protocol
+#[derive(Debug)]
+pub enum A2AError {
+    /// Task not found
+    TaskNotFound { task_id: String },
+    /// Invalid state transition for a task
+    InvalidState { task_id: String, current: String, attempted: String },
+    /// Agent not found in directory
+    AgentNotFound { agent_id: String },
+    /// Protocol-level error (malformed request, unsupported method, etc.)
+    ProtocolError { method: String, reason: String },
+    /// Agent discovery failed
+    DiscoveryFailed { url: String, reason: String },
+    /// Authentication failed for A2A communication
+    AuthenticationFailed { agent_id: String, reason: String },
+    /// Task was cancelled
+    TaskCancelled { task_id: String },
+}
+
+impl std::error::Error for A2AError {}
+
+impl fmt::Display for A2AError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            A2AError::TaskNotFound { task_id } => {
+                write!(f, "A2A task '{}' not found", task_id)
+            }
+            A2AError::InvalidState { task_id, current, attempted } => {
+                write!(f, "A2A task '{}' in state '{}', cannot transition to '{}'",
+                    task_id, current, attempted)
+            }
+            A2AError::AgentNotFound { agent_id } => {
+                write!(f, "A2A agent '{}' not found in directory", agent_id)
+            }
+            A2AError::ProtocolError { method, reason } => {
+                write!(f, "A2A protocol error in '{}': {}", method, reason)
+            }
+            A2AError::DiscoveryFailed { url, reason } => {
+                write!(f, "A2A agent discovery failed at '{}': {}", url, reason)
+            }
+            A2AError::AuthenticationFailed { agent_id, reason } => {
+                write!(f, "A2A authentication failed for agent '{}': {}", agent_id, reason)
+            }
+            A2AError::TaskCancelled { task_id } => {
+                write!(f, "A2A task '{}' was cancelled", task_id)
+            }
+        }
+    }
+}
+
+impl A2AError {
+    pub fn suggestion(&self) -> Option<&'static str> {
+        match self {
+            A2AError::TaskNotFound { .. } => {
+                Some("Check the task ID or create a new task with tasks/send")
+            }
+            A2AError::InvalidState { .. } => {
+                Some("Check current task status before attempting state transitions")
+            }
+            A2AError::AgentNotFound { .. } => {
+                Some("Discover agents first via .well-known/agent.json endpoint")
+            }
+            A2AError::ProtocolError { .. } => {
+                Some("Check JSON-RPC request format and supported methods")
+            }
+            A2AError::DiscoveryFailed { .. } => {
+                Some("Verify the agent URL is reachable and serves an agent card")
+            }
+            A2AError::AuthenticationFailed { .. } => {
+                Some("Check authentication credentials or API key")
+            }
+            A2AError::TaskCancelled { .. } => None,
+        }
+    }
+
+    pub fn is_recoverable(&self) -> bool {
+        matches!(
+            self,
+            A2AError::DiscoveryFailed { .. }
+                | A2AError::ProtocolError { .. }
+        )
+    }
+}
+
+impl From<A2AError> for AiError {
+    fn from(e: A2AError) -> Self {
+        AiError::A2A(e)
+    }
+}
+
 // === Conversions from anyhow ===
 
 impl From<anyhow::Error> for AiError {
@@ -968,6 +1260,9 @@ mod tests {
             AiError::ResourceLimit(ResourceLimitError::ConcurrentRequestLimit { limit: 5 }),
             AiError::Io(IoError::new("read", "permission denied")),
             AiError::Serialization(SerializationError::json_serialize("bad data")),
+            AiError::Workflow(WorkflowError::BreakpointHit { node_id: "n".into() }),
+            AiError::AdvancedMemory(AdvancedMemoryError::ConsolidationFailed { reason: "r".into() }),
+            AiError::A2A(A2AError::TaskCancelled { task_id: "t".into() }),
             AiError::Other("something went wrong".into()),
         ];
 
@@ -1111,6 +1406,108 @@ mod tests {
     }
 
     #[test]
+    fn test_workflow_error_display_and_suggestion() {
+        let errors: Vec<WorkflowError> = vec![
+            WorkflowError::NodeNotFound { node_id: "step_1".into() },
+            WorkflowError::CycleDetected { path: vec!["a".into(), "b".into(), "a".into()] },
+            WorkflowError::EventTypeMismatch { expected: "QueryEvent".into(), got: "ResultEvent".into() },
+            WorkflowError::CheckpointFailed { workflow_id: "wf-1".into(), reason: "disk full".into() },
+            WorkflowError::TimeoutExceeded { node_id: "slow_node".into(), timeout_ms: 5000 },
+            WorkflowError::BreakpointHit { node_id: "debug_node".into() },
+            WorkflowError::SerializationFailed { reason: "invalid handler".into() },
+            WorkflowError::InvalidState {
+                workflow_id: "wf-1".into(),
+                current_state: "completed".into(),
+                attempted_action: "resume".into(),
+            },
+        ];
+
+        for err in &errors {
+            let display = err.to_string();
+            assert!(!display.is_empty(), "Display for {:?} should be non-empty", err);
+            assert!(err.suggestion().is_some(), "WorkflowError {:?} should have a suggestion", err);
+        }
+    }
+
+    #[test]
+    fn test_workflow_error_recoverable() {
+        assert!(WorkflowError::TimeoutExceeded { node_id: "n".into(), timeout_ms: 100 }.is_recoverable());
+        assert!(WorkflowError::CheckpointFailed { workflow_id: "w".into(), reason: "r".into() }.is_recoverable());
+        assert!(WorkflowError::BreakpointHit { node_id: "n".into() }.is_recoverable());
+        assert!(!WorkflowError::NodeNotFound { node_id: "n".into() }.is_recoverable());
+        assert!(!WorkflowError::CycleDetected { path: vec![] }.is_recoverable());
+    }
+
+    #[test]
+    fn test_advanced_memory_error_display_and_suggestion() {
+        let errors: Vec<AdvancedMemoryError> = vec![
+            AdvancedMemoryError::StoreFailed { memory_type: "episodic".into(), reason: "db locked".into() },
+            AdvancedMemoryError::RecallFailed { query: "what happened".into(), reason: "no index".into() },
+            AdvancedMemoryError::ConsolidationFailed { reason: "too few episodes".into() },
+            AdvancedMemoryError::EntityNotFound { name: "Project X".into() },
+            AdvancedMemoryError::DuplicateEntity { name: "Python".into(), existing_id: "e-42".into() },
+            AdvancedMemoryError::CapacityExceeded { memory_type: "episodic".into(), limit: 1000, current: 1001 },
+        ];
+
+        for err in &errors {
+            let display = err.to_string();
+            assert!(!display.is_empty(), "Display for {:?} should be non-empty", err);
+            assert!(err.suggestion().is_some(), "AdvancedMemoryError {:?} should have a suggestion", err);
+        }
+    }
+
+    #[test]
+    fn test_a2a_error_display_and_suggestion() {
+        let errors: Vec<A2AError> = vec![
+            A2AError::TaskNotFound { task_id: "task-123".into() },
+            A2AError::InvalidState { task_id: "task-1".into(), current: "working".into(), attempted: "submitted".into() },
+            A2AError::AgentNotFound { agent_id: "agent-42".into() },
+            A2AError::ProtocolError { method: "tasks/send".into(), reason: "missing params".into() },
+            A2AError::DiscoveryFailed { url: "https://example.com".into(), reason: "timeout".into() },
+            A2AError::AuthenticationFailed { agent_id: "agent-1".into(), reason: "bad key".into() },
+            A2AError::TaskCancelled { task_id: "task-99".into() },
+        ];
+
+        for err in &errors {
+            let display = err.to_string();
+            assert!(!display.is_empty(), "Display for {:?} should be non-empty", err);
+            // TaskCancelled has no suggestion — that's ok
+            if !matches!(err, A2AError::TaskCancelled { .. }) {
+                assert!(err.suggestion().is_some(), "A2AError {:?} should have a suggestion", err);
+            }
+        }
+    }
+
+    #[test]
+    fn test_a2a_error_recoverable() {
+        assert!(A2AError::DiscoveryFailed { url: "u".into(), reason: "r".into() }.is_recoverable());
+        assert!(A2AError::ProtocolError { method: "m".into(), reason: "r".into() }.is_recoverable());
+        assert!(!A2AError::TaskNotFound { task_id: "t".into() }.is_recoverable());
+        assert!(!A2AError::TaskCancelled { task_id: "t".into() }.is_recoverable());
+    }
+
+    #[test]
+    fn test_new_error_from_conversions() {
+        // WorkflowError -> AiError::Workflow
+        let wf_err = WorkflowError::NodeNotFound { node_id: "test".into() };
+        let ai_err: AiError = wf_err.into();
+        assert_eq!(ai_err.code(), "WORKFLOW");
+        assert!(ai_err.to_string().contains("test"));
+
+        // AdvancedMemoryError -> AiError::AdvancedMemory
+        let mem_err = AdvancedMemoryError::EntityNotFound { name: "entity".into() };
+        let ai_err: AiError = mem_err.into();
+        assert_eq!(ai_err.code(), "MEMORY");
+        assert!(ai_err.to_string().contains("entity"));
+
+        // A2AError -> AiError::A2A
+        let a2a_err = A2AError::TaskNotFound { task_id: "task-1".into() };
+        let ai_err: AiError = a2a_err.into();
+        assert_eq!(ai_err.code(), "A2A");
+        assert!(ai_err.to_string().contains("task-1"));
+    }
+
+    #[test]
     fn test_error_code_all_variants() {
         let cases: Vec<(AiError, &str)> = vec![
             (
@@ -1135,6 +1532,18 @@ mod tests {
             (
                 AiError::Serialization(SerializationError::json_serialize("x")),
                 "SERIALIZATION",
+            ),
+            (
+                AiError::Workflow(WorkflowError::NodeNotFound { node_id: "x".into() }),
+                "WORKFLOW",
+            ),
+            (
+                AiError::AdvancedMemory(AdvancedMemoryError::EntityNotFound { name: "x".into() }),
+                "MEMORY",
+            ),
+            (
+                AiError::A2A(A2AError::TaskNotFound { task_id: "x".into() }),
+                "A2A",
             ),
             (AiError::Other("misc".into()), "OTHER"),
         ];

@@ -2,7 +2,7 @@
 
 ## Sobre el Proyecto
 - **Librería Rust** para integración con LLMs locales y cloud
-- **203.427 líneas de código**, 214 archivos fuente (.rs), 2.010+ tests
+- **203.427+ líneas de código**, 220+ archivos fuente (.rs), 2.730+ tests
 - **Autor único**: Orlando José Luque Moraira (Lander) — orlando.luque@gmail.com
 - **Estado**: NO publicado en ningún sitio (ni crates.io, ni GitHub público, ni distribuido a terceros)
 - **Feature flags**: 20+ (core, multi-agent, security, analytics, rag, distributed, autonomous, etc.)
@@ -19,14 +19,12 @@
 
 ## Decisiones Estratégicas Tomadas (Febrero 2026)
 
-### Licencia
-- **Decisión**: Cambiar de MIT/Apache-2.0 a **PolyForm Shield 1.0.0** (recomendada) o PolyForm Noncommercial 1.0.0 (alternativa más restrictiva) antes de publicar
-- **Razón**: Al no haber publicado nada, tiene libertad total para elegir licencia. No hay código "regalado" bajo MIT.
-- **PolyForm Shield** (recomendada): Permite uso comercial general, pero prohíbe crear productos competidores. Más adopción, menos gestión para un dev solo.
-- **PolyForm Noncommercial** (alternativa): Prohíbe TODO uso comercial sin licencia. Más control pero menos adopción y más negociaciones.
-- **Sin fecha de caducidad** (descartada BSL porque se convierte en open source tras 4 años)
-- **SPDX**: Ambas son identificadores SPDX reconocidos (PolyForm-Shield-1.0.0, PolyForm-Noncommercial-1.0.0)
-- **Opción adicional**: Considerar publicar un módulo básico pequeño (solo providers) bajo MIT en crates.io como gancho de marketing
+### Licencia — DECIDIDA
+- **Licencia elegida**: **PolyForm Noncommercial 1.0.0** (decidida 2026-02-22)
+- **Efecto**: Prohíbe TODO uso comercial sin licencia negociada. Solo permite uso personal, académico, investigación.
+- **Archivos**: `LICENSE` (PolyForm Noncommercial), `Cargo.toml` usa `license-file = "LICENSE"`
+- **Licencias anteriores** (MIT/Apache-2.0) eliminadas — nunca fueron distribuidas públicamente
+- **Opción futura**: Considerar publicar un módulo básico pequeño (solo providers) bajo MIT en crates.io como gancho de marketing
 
 ### Monetización
 - **Modelo elegido**: PolyForm Noncommercial + negociación caso a caso con empresas
@@ -55,7 +53,7 @@
 3. Respetar la estructura modular existente basada en feature flags de Cargo
 4. Zero `.unwrap()` en producción — usar proper error handling siempre
 5. Zero warnings del compilador — compilación limpia en todas las combinaciones de features
-6. Tests para todo — el proyecto tiene 2.010+ tests y debe mantenerse así
+6. Tests para todo — el proyecto tiene 2.730+ tests y debe mantenerse así
 
 ## Documentos Generados
 - `Informe_Viabilidad_ai_assistant.docx` — Informe completo de viabilidad v2 (monetización, PI, licenciamiento)
@@ -64,9 +62,9 @@
 
 ## Tareas Pendientes
 - [x] Actualizar el informe .docx con la estrategia PolyForm (v2 completada 21/02/2026)
-- [ ] Decidir entre PolyForm Shield (recomendada) o PolyForm Noncommercial
-- [ ] Sustituir LICENSE-MIT y LICENSE-APACHE por la licencia PolyForm elegida
-- [ ] Actualizar campo `license` en Cargo.toml
+- [x] Decidir licencia → PolyForm Noncommercial 1.0.0 (decidida 22/02/2026)
+- [x] Sustituir LICENSE-MIT y LICENSE-APACHE por LICENSE PolyForm (hecho 22/02/2026)
+- [x] Actualizar campo `license` en Cargo.toml (hecho 22/02/2026)
 - [ ] Registrar PI en España, WIPO PROOF y Safe Creative
 - [ ] Implementar CLA en el repositorio
 - [ ] Decidir si publicar módulo básico bajo MIT como gancho
