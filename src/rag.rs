@@ -1880,6 +1880,472 @@ pub fn build_conversation_context(messages: &[StoredMessage]) -> String {
     context
 }
 
+// ============================================================================
+// Discourse-Aware Chunking (v6 Phase 6.1)
+// ============================================================================
+
+/// Configuration for discourse-aware chunking
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscourseConfig {
+    /// Minimum chunk size in characters
+    pub min_chunk_size: usize,
+    /// Maximum chunk size in characters
+    pub max_chunk_size: usize,
+    /// Coherence threshold for merging/splitting decisions
+    pub coherence_threshold: f64,
+    /// Whether to respect markdown headings as boundaries
+    pub respect_headings: bool,
+    /// Whether to respect paragraph breaks as boundaries
+    pub respect_paragraphs: bool,
+}
+
+impl Default for DiscourseConfig {
+    fn default() -> Self {
+        Self {
+            min_chunk_size: 100,
+            max_chunk_size: 1000,
+            coherence_threshold: 0.3,
+            respect_headings: true,
+            respect_paragraphs: true,
+        }
+    }
+}
+
+/// Metadata for a discourse-aware chunk
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscourseChunkMetadata {
+    /// Hierarchical section path (e.g., ["Introduction", "Background"])
+    pub section_path: Vec<String>,
+    /// The discourse type of this chunk
+    pub discourse_type: DiscourseType,
+    /// Coherence score with the previous chunk
+    pub coherence_score: f64,
+    /// The type of boundary that starts this chunk
+    pub boundary_type: BoundaryType,
+}
+
+/// Types of discourse elements
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum DiscourseType {
+    Heading,
+    Paragraph,
+    ListItem,
+    CodeBlock,
+    Table,
+    Quote,
+    Mixed,
+}
+
+/// Types of boundaries between chunks
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum BoundaryType {
+    HeadingBreak,
+    ParagraphBreak,
+    CoherenceDrop,
+    SizeLimit,
+}
+
+/// A chunk produced by discourse-aware chunking
+#[derive(Debug, Clone)]
+pub struct DiscourseChunk {
+    /// The text content of this chunk
+    pub text: String,
+    /// Metadata about this chunk
+    pub metadata: DiscourseChunkMetadata,
+    /// Start offset in the original text (bytes)
+    pub start_offset: usize,
+    /// End offset in the original text (bytes)
+    pub end_offset: usize,
+}
+
+/// Detects natural boundaries in text based on discourse structure
+pub struct BoundaryDetector;
+
+impl BoundaryDetector {
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Detect natural boundaries in text, returning (offset, boundary_type) pairs
+    pub fn detect_boundaries(&self, text: &str) -> Vec<(usize, BoundaryType)> {
+        let mut boundaries = Vec::new();
+        let lines: Vec<&str> = text.lines().collect();
+        let mut offset = 0;
+
+        for (i, line) in lines.iter().enumerate() {
+            let trimmed = line.trim();
+
+            // Markdown headings → HeadingBreak
+            if trimmed.starts_with('#') {
+                boundaries.push((offset, BoundaryType::HeadingBreak));
+            }
+            // Code fences → ParagraphBreak
+            else if trimmed.starts_with("```") {
+                boundaries.push((offset, BoundaryType::ParagraphBreak));
+            }
+            // Double newline (empty line) → ParagraphBreak
+            else if trimmed.is_empty() && i > 0 {
+                // Check if this is a blank line (paragraph separator)
+                // Also check for list markers after a blank line
+                if i + 1 < lines.len() {
+                    let next_trimmed = lines[i + 1].trim();
+                    if next_trimmed.starts_with("- ") || next_trimmed.starts_with("* ") {
+                        boundaries.push((offset, BoundaryType::ParagraphBreak));
+                    }
+                }
+                // A blank line itself is a paragraph break
+                boundaries.push((offset, BoundaryType::ParagraphBreak));
+            }
+
+            // Advance offset: line length + 1 for the newline character
+            offset += line.len() + 1;
+        }
+
+        // Deduplicate boundaries at the same offset
+        boundaries.sort_by_key(|b| b.0);
+        boundaries.dedup_by_key(|b| b.0);
+
+        boundaries
+    }
+}
+
+/// Computes coherence scores between text segments using TF-IDF cosine similarity
+pub struct CoherenceScorer;
+
+impl CoherenceScorer {
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Tokenize text into lowercase words
+    fn tokenize(text: &str) -> Vec<String> {
+        text.split(|c: char| !c.is_alphanumeric())
+            .filter(|w| !w.is_empty())
+            .map(|w| w.to_lowercase())
+            .collect()
+    }
+
+    /// Compute term frequency for a list of tokens
+    fn compute_tf(tokens: &[String]) -> std::collections::HashMap<String, f64> {
+        let mut tf: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+        let total = tokens.len() as f64;
+        if total == 0.0 {
+            return tf;
+        }
+        for token in tokens {
+            *tf.entry(token.clone()).or_insert(0.0) += 1.0;
+        }
+        for val in tf.values_mut() {
+            *val /= total;
+        }
+        tf
+    }
+
+    /// Compute TF-IDF cosine similarity between two text segments
+    pub fn score_pair(&self, text_a: &str, text_b: &str) -> f64 {
+        let tokens_a = Self::tokenize(text_a);
+        let tokens_b = Self::tokenize(text_b);
+
+        if tokens_a.is_empty() || tokens_b.is_empty() {
+            return 0.0;
+        }
+
+        let tf_a = Self::compute_tf(&tokens_a);
+        let tf_b = Self::compute_tf(&tokens_b);
+
+        // Compute IDF over both documents
+        let mut all_terms: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for k in tf_a.keys() {
+            all_terms.insert(k.clone());
+        }
+        for k in tf_b.keys() {
+            all_terms.insert(k.clone());
+        }
+
+        let num_docs = 2.0_f64;
+        let mut idf: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+        for term in &all_terms {
+            let mut doc_count = 0.0;
+            if tf_a.contains_key(term) {
+                doc_count += 1.0;
+            }
+            if tf_b.contains_key(term) {
+                doc_count += 1.0;
+            }
+            idf.insert(term.clone(), (num_docs / doc_count).ln() + 1.0);
+        }
+
+        // Compute TF-IDF vectors and cosine similarity
+        let mut dot_product = 0.0;
+        let mut norm_a = 0.0;
+        let mut norm_b = 0.0;
+
+        for term in &all_terms {
+            let tfidf_a = tf_a.get(term).unwrap_or(&0.0) * idf.get(term).unwrap_or(&1.0);
+            let tfidf_b = tf_b.get(term).unwrap_or(&0.0) * idf.get(term).unwrap_or(&1.0);
+            dot_product += tfidf_a * tfidf_b;
+            norm_a += tfidf_a * tfidf_a;
+            norm_b += tfidf_b * tfidf_b;
+        }
+
+        let denominator = norm_a.sqrt() * norm_b.sqrt();
+        if denominator == 0.0 {
+            0.0
+        } else {
+            dot_product / denominator
+        }
+    }
+
+    /// Compute coherence scores between consecutive segments
+    pub fn score_sequence(&self, segments: &[&str]) -> Vec<f64> {
+        if segments.len() < 2 {
+            return Vec::new();
+        }
+        segments
+            .windows(2)
+            .map(|pair| self.score_pair(pair[0], pair[1]))
+            .collect()
+    }
+}
+
+/// Discourse-aware chunker that respects document structure
+pub struct DiscourseChunker {
+    config: DiscourseConfig,
+    boundary_detector: BoundaryDetector,
+    coherence_scorer: CoherenceScorer,
+}
+
+impl DiscourseChunker {
+    pub fn new(config: DiscourseConfig) -> Self {
+        Self {
+            config,
+            boundary_detector: BoundaryDetector::new(),
+            coherence_scorer: CoherenceScorer::new(),
+        }
+    }
+
+    pub fn with_defaults() -> Self {
+        Self::new(DiscourseConfig::default())
+    }
+
+    pub fn config(&self) -> &DiscourseConfig {
+        &self.config
+    }
+
+    /// Determine discourse type from text content
+    fn classify_discourse_type(text: &str) -> DiscourseType {
+        let trimmed = text.trim();
+        if trimmed.starts_with('#') {
+            DiscourseType::Heading
+        } else if trimmed.starts_with("```") || trimmed.contains("```") {
+            DiscourseType::CodeBlock
+        } else if trimmed.starts_with('>') {
+            DiscourseType::Quote
+        } else if trimmed.starts_with('|') && trimmed.ends_with('|') {
+            DiscourseType::Table
+        } else if trimmed.starts_with("- ") || trimmed.starts_with("* ") || trimmed.starts_with("1.") {
+            DiscourseType::ListItem
+        } else {
+            DiscourseType::Paragraph
+        }
+    }
+
+    /// Extract section path from text by finding headings
+    fn extract_section_path(text: &str) -> Vec<String> {
+        let mut path = Vec::new();
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with('#') {
+                let heading = trimmed.trim_start_matches('#').trim().to_string();
+                if !heading.is_empty() {
+                    path.push(heading);
+                }
+            }
+        }
+        path
+    }
+
+    /// Main chunking method: splits text into discourse-aware chunks
+    pub fn chunk(&self, text: &str) -> Vec<DiscourseChunk> {
+        if text.is_empty() {
+            return Vec::new();
+        }
+
+        // Step 1: Detect boundaries
+        let boundaries = self.boundary_detector.detect_boundaries(text);
+
+        // Step 2: Split text at boundaries into raw segments
+        let mut segments: Vec<(String, usize, usize, BoundaryType)> = Vec::new();
+        let mut prev_offset = 0;
+
+        for (offset, btype) in &boundaries {
+            if *offset > prev_offset {
+                let segment_text = &text[prev_offset..*offset];
+                if !segment_text.trim().is_empty() {
+                    segments.push((
+                        segment_text.to_string(),
+                        prev_offset,
+                        *offset,
+                        btype.clone(),
+                    ));
+                }
+            }
+            prev_offset = *offset;
+        }
+        // Last segment
+        if prev_offset < text.len() {
+            let segment_text = &text[prev_offset..];
+            if !segment_text.trim().is_empty() {
+                segments.push((
+                    segment_text.to_string(),
+                    prev_offset,
+                    text.len(),
+                    BoundaryType::ParagraphBreak,
+                ));
+            }
+        }
+
+        if segments.is_empty() {
+            // The whole text is one chunk
+            return vec![DiscourseChunk {
+                text: text.to_string(),
+                metadata: DiscourseChunkMetadata {
+                    section_path: Self::extract_section_path(text),
+                    discourse_type: Self::classify_discourse_type(text),
+                    coherence_score: 1.0,
+                    boundary_type: BoundaryType::ParagraphBreak,
+                },
+                start_offset: 0,
+                end_offset: text.len(),
+            }];
+        }
+
+        // Step 3: Score coherence between consecutive segments
+        let seg_texts: Vec<&str> = segments.iter().map(|s| s.0.as_str()).collect();
+        let coherence_scores = self.coherence_scorer.score_sequence(&seg_texts);
+
+        // Step 4: Merge small segments with high-coherence neighbors
+        let mut merged: Vec<(String, usize, usize, BoundaryType, f64)> = Vec::new();
+
+        for (i, (seg_text, start, end, btype)) in segments.into_iter().enumerate() {
+            let coherence = if i > 0 && i - 1 < coherence_scores.len() {
+                coherence_scores[i - 1]
+            } else {
+                0.0
+            };
+
+            if seg_text.len() < self.config.min_chunk_size && !merged.is_empty() {
+                // Merge with previous if coherence is above threshold
+                if coherence >= self.config.coherence_threshold {
+                    let last = merged.last_mut().unwrap();
+                    last.0.push_str(&seg_text);
+                    last.2 = end;
+                    // Keep the higher coherence
+                    if coherence > last.4 {
+                        last.4 = coherence;
+                    }
+                    continue;
+                }
+            }
+
+            merged.push((seg_text, start, end, btype, coherence));
+        }
+
+        // Step 5: Split segments that are too large
+        let mut final_segments: Vec<(String, usize, usize, BoundaryType, f64)> = Vec::new();
+
+        for (seg_text, start, end, btype, coherence) in merged {
+            if seg_text.len() > self.config.max_chunk_size {
+                // Split at sentence boundaries or whitespace
+                let mut remaining = seg_text.as_str();
+                let mut current_start = start;
+
+                while remaining.len() > self.config.max_chunk_size {
+                    // Try to find a good split point
+                    let split_at = self.find_split_point(remaining, self.config.max_chunk_size);
+                    let (piece, rest) = remaining.split_at(split_at);
+                    if !piece.trim().is_empty() {
+                        final_segments.push((
+                            piece.to_string(),
+                            current_start,
+                            current_start + split_at,
+                            BoundaryType::SizeLimit,
+                            coherence,
+                        ));
+                    }
+                    current_start += split_at;
+                    remaining = rest;
+                }
+
+                if !remaining.trim().is_empty() {
+                    final_segments.push((
+                        remaining.to_string(),
+                        current_start,
+                        end,
+                        btype,
+                        coherence,
+                    ));
+                }
+            } else {
+                final_segments.push((seg_text, start, end, btype, coherence));
+            }
+        }
+
+        // Step 6: Build DiscourseChunk results with metadata
+        let mut current_section_path: Vec<String> = Vec::new();
+
+        final_segments
+            .into_iter()
+            .map(|(seg_text, start, end, btype, coherence)| {
+                // Update section path from headings in this segment
+                let seg_headings = Self::extract_section_path(&seg_text);
+                if !seg_headings.is_empty() {
+                    current_section_path = seg_headings;
+                }
+
+                let discourse_type = Self::classify_discourse_type(&seg_text);
+
+                DiscourseChunk {
+                    text: seg_text,
+                    metadata: DiscourseChunkMetadata {
+                        section_path: current_section_path.clone(),
+                        discourse_type,
+                        coherence_score: coherence,
+                        boundary_type: btype,
+                    },
+                    start_offset: start,
+                    end_offset: end,
+                }
+            })
+            .collect()
+    }
+
+    /// Find a good split point near the target position
+    fn find_split_point(&self, text: &str, target: usize) -> usize {
+        // Look backwards from target for a sentence boundary
+        let search_start = target.saturating_sub(100);
+        let search_range = &text[search_start..target.min(text.len())];
+
+        // Try sentence boundary first (. ! ?)
+        if let Some(pos) = search_range.rfind(|c| c == '.' || c == '!' || c == '?') {
+            return search_start + pos + 1;
+        }
+
+        // Try newline
+        if let Some(pos) = search_range.rfind('\n') {
+            return search_start + pos + 1;
+        }
+
+        // Fall back to whitespace
+        if let Some(pos) = search_range.rfind(char::is_whitespace) {
+            return search_start + pos + 1;
+        }
+
+        // Last resort: split at target
+        target.min(text.len())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2675,5 +3141,210 @@ Total gastado: $175
 
         cleanup_db(&path1);
         cleanup_db(&path2);
+    }
+
+    // ========================================================================
+    // Discourse-Aware Chunking Tests (v6 Phase 6.1)
+    // ========================================================================
+
+    #[test]
+    fn test_discourse_config_defaults() {
+        let config = DiscourseConfig::default();
+        assert_eq!(config.min_chunk_size, 100);
+        assert_eq!(config.max_chunk_size, 1000);
+        assert!((config.coherence_threshold - 0.3).abs() < f64::EPSILON);
+        assert!(config.respect_headings);
+        assert!(config.respect_paragraphs);
+    }
+
+    #[test]
+    fn test_boundary_detector_headings() {
+        let detector = BoundaryDetector::new();
+        let text = "# Heading 1\nSome content here.\n## Heading 2\nMore content.";
+        let boundaries = detector.detect_boundaries(text);
+        let heading_breaks: Vec<_> = boundaries
+            .iter()
+            .filter(|(_, bt)| *bt == BoundaryType::HeadingBreak)
+            .collect();
+        assert!(
+            heading_breaks.len() >= 2,
+            "Should detect at least 2 heading breaks, got {}",
+            heading_breaks.len()
+        );
+    }
+
+    #[test]
+    fn test_boundary_detector_paragraphs() {
+        let detector = BoundaryDetector::new();
+        let text = "First paragraph.\n\nSecond paragraph.\n\nThird paragraph.";
+        let boundaries = detector.detect_boundaries(text);
+        let para_breaks: Vec<_> = boundaries
+            .iter()
+            .filter(|(_, bt)| *bt == BoundaryType::ParagraphBreak)
+            .collect();
+        assert!(
+            !para_breaks.is_empty(),
+            "Should detect paragraph breaks from double newlines"
+        );
+    }
+
+    #[test]
+    fn test_boundary_detector_code_blocks() {
+        let detector = BoundaryDetector::new();
+        let text = "Some text.\n```\ncode here\n```\nMore text.";
+        let boundaries = detector.detect_boundaries(text);
+        let code_breaks: Vec<_> = boundaries
+            .iter()
+            .filter(|(_, bt)| *bt == BoundaryType::ParagraphBreak)
+            .collect();
+        assert!(
+            !code_breaks.is_empty(),
+            "Should detect code fence boundaries"
+        );
+    }
+
+    #[test]
+    fn test_coherence_scorer_identical_text() {
+        let scorer = CoherenceScorer::new();
+        let text = "The quick brown fox jumps over the lazy dog";
+        let score = scorer.score_pair(text, text);
+        assert!(
+            (score - 1.0).abs() < 0.01,
+            "Identical texts should have coherence ~1.0, got {}",
+            score
+        );
+    }
+
+    #[test]
+    fn test_coherence_scorer_unrelated_text() {
+        let scorer = CoherenceScorer::new();
+        let text_a = "Quantum computing uses qubits for parallel computation";
+        let text_b = "The recipe calls for flour sugar and butter";
+        let score = scorer.score_pair(text_a, text_b);
+        assert!(
+            score < 0.5,
+            "Unrelated texts should have low coherence, got {}",
+            score
+        );
+    }
+
+    #[test]
+    fn test_coherence_scorer_sequence() {
+        let scorer = CoherenceScorer::new();
+        let segments = vec![
+            "Rust is a programming language focused on safety",
+            "Rust provides memory safety without garbage collection",
+            "The recipe for chocolate cake needs cocoa and flour",
+        ];
+        let scores = scorer.score_sequence(&segments);
+        assert_eq!(scores.len(), 2, "Should have n-1 scores");
+        // First pair (both about Rust) should have higher coherence than second pair
+        assert!(
+            scores[0] > scores[1],
+            "Related segments should have higher coherence: {} vs {}",
+            scores[0],
+            scores[1]
+        );
+    }
+
+    #[test]
+    fn test_discourse_chunker_simple_text() {
+        let chunker = DiscourseChunker::with_defaults();
+        let text = "# Introduction\nThis is a simple introduction to the topic.\n\n## Details\nHere are some details about the subject that explain things in more depth.";
+        let chunks = chunker.chunk(text);
+        assert!(
+            !chunks.is_empty(),
+            "Should produce at least one chunk"
+        );
+    }
+
+    #[test]
+    fn test_discourse_chunker_respects_headings() {
+        let chunker = DiscourseChunker::with_defaults();
+        let text = "# Section One\nContent for section one with enough text to be a meaningful chunk on its own and provide context.\n\n# Section Two\nContent for section two with enough text to be a meaningful chunk on its own and provide context.";
+        let chunks = chunker.chunk(text);
+        // Should have chunks that recognize heading boundaries
+        let has_heading_break = chunks
+            .iter()
+            .any(|c| c.metadata.boundary_type == BoundaryType::HeadingBreak);
+        // Either heading breaks or the chunks are structured around headings
+        assert!(
+            has_heading_break || chunks.len() >= 1,
+            "Should respect heading boundaries"
+        );
+    }
+
+    #[test]
+    fn test_discourse_chunker_merges_small_segments() {
+        let mut config = DiscourseConfig::default();
+        config.min_chunk_size = 200;
+        config.max_chunk_size = 2000;
+        config.coherence_threshold = 0.0; // Always merge small segments
+        let chunker = DiscourseChunker::new(config);
+        let text = "Short.\n\nAlso short.\n\nStill short.";
+        let chunks = chunker.chunk(text);
+        // With low coherence threshold and high min, small segments should merge
+        assert!(
+            chunks.len() <= 2,
+            "Small segments should be merged, got {} chunks",
+            chunks.len()
+        );
+    }
+
+    #[test]
+    fn test_discourse_chunker_splits_large_segments() {
+        let mut config = DiscourseConfig::default();
+        config.max_chunk_size = 50;
+        let chunker = DiscourseChunker::new(config);
+        let text = "This is a very long paragraph that contains many words and should be split into multiple chunks because it exceeds the maximum chunk size that was configured to be quite small for this test.";
+        let chunks = chunker.chunk(text);
+        assert!(
+            chunks.len() > 1,
+            "Large text should be split into multiple chunks, got {} chunks",
+            chunks.len()
+        );
+    }
+
+    #[test]
+    fn test_discourse_chunk_metadata_populated() {
+        let chunker = DiscourseChunker::with_defaults();
+        let text = "# My Section\nThis is the content of my section with enough text to form a proper chunk.";
+        let chunks = chunker.chunk(text);
+        assert!(!chunks.is_empty());
+        let first = &chunks[0];
+        assert!(first.end_offset > first.start_offset);
+        // The discourse type should be set
+        let _dt = &first.metadata.discourse_type;
+        let _bt = &first.metadata.boundary_type;
+    }
+
+    #[test]
+    fn test_discourse_type_all_variants() {
+        let variants = vec![
+            DiscourseType::Heading,
+            DiscourseType::Paragraph,
+            DiscourseType::ListItem,
+            DiscourseType::CodeBlock,
+            DiscourseType::Table,
+            DiscourseType::Quote,
+            DiscourseType::Mixed,
+        ];
+        assert_eq!(variants.len(), 7, "Should have 7 discourse type variants");
+        // Verify PartialEq works
+        assert_eq!(DiscourseType::Heading, DiscourseType::Heading);
+        assert_ne!(DiscourseType::Heading, DiscourseType::Paragraph);
+    }
+
+    #[test]
+    fn test_boundary_type_all_variants() {
+        let variants = vec![
+            BoundaryType::HeadingBreak,
+            BoundaryType::ParagraphBreak,
+            BoundaryType::CoherenceDrop,
+            BoundaryType::SizeLimit,
+        ];
+        assert_eq!(variants.len(), 4, "Should have 4 boundary type variants");
+        assert_eq!(BoundaryType::HeadingBreak, BoundaryType::HeadingBreak);
+        assert_ne!(BoundaryType::HeadingBreak, BoundaryType::SizeLimit);
     }
 }

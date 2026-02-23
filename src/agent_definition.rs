@@ -532,6 +532,171 @@ impl std::fmt::Display for ValidationWarning {
     }
 }
 
+// ── Deployment Profiles (v6 Phase 10.2) ─────────────────────────────────────
+
+/// Deployment profile for an agent, describing the sandbox backend,
+/// resource limits, networking policy, health checks, and metadata.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeploymentProfile {
+    /// Profile name (e.g. "development", "staging", "production").
+    pub name: String,
+    /// Sandbox backend to use (e.g. "docker", "podman", "wasm", "process").
+    pub sandbox_backend: String,
+    /// Resource limits for the deployed agent.
+    pub resources: AgentResourceLimits,
+    /// Networking constraints.
+    pub networking: DeploymentNetworking,
+    /// Optional health check configuration.
+    pub health_check: Option<AgentHealthCheck>,
+    /// Environment variables injected into the sandbox.
+    pub environment: HashMap<String, String>,
+    /// Arbitrary labels/tags for the deployment.
+    pub labels: HashMap<String, String>,
+}
+
+/// Resource limits for a deployed agent.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentResourceLimits {
+    /// Maximum memory in megabytes.
+    pub max_memory_mb: u64,
+    /// Maximum CPU usage as a percentage (0.0 ..= 100.0).
+    pub max_cpu_percent: f64,
+    /// Maximum disk usage in megabytes.
+    pub max_disk_mb: u64,
+    /// Maximum runtime in seconds.
+    pub max_runtime_secs: u64,
+}
+
+impl Default for AgentResourceLimits {
+    fn default() -> Self {
+        Self {
+            max_memory_mb: 512,
+            max_cpu_percent: 100.0,
+            max_disk_mb: 1024,
+            max_runtime_secs: 3600,
+        }
+    }
+}
+
+/// Networking constraints for a deployment.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeploymentNetworking {
+    /// List of allowed destination hosts (empty = no restrictions).
+    pub allowed_hosts: Vec<String>,
+    /// DNS resolution policy.
+    pub dns_policy: DnsPolicy,
+    /// Optional HTTP proxy URL.
+    pub proxy: Option<String>,
+}
+
+/// DNS resolution policy for deployed agents.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum DnsPolicy {
+    /// Use the host's DNS settings.
+    Default,
+    /// Resolve via cluster DNS first, then fall back to host DNS.
+    ClusterFirst,
+    /// No DNS resolution (fully isolated).
+    None,
+}
+
+/// Health check configuration for a deployed agent.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentHealthCheck {
+    /// HTTP endpoint to probe (e.g. "/health").
+    pub endpoint: String,
+    /// Interval between probes in seconds.
+    pub interval_secs: u64,
+    /// Per-probe timeout in seconds.
+    pub timeout_secs: u64,
+    /// Number of consecutive failures before marking unhealthy.
+    pub unhealthy_threshold: u32,
+}
+
+impl Default for AgentHealthCheck {
+    fn default() -> Self {
+        Self {
+            endpoint: "/health".to_string(),
+            interval_secs: 30,
+            timeout_secs: 5,
+            unhealthy_threshold: 3,
+        }
+    }
+}
+
+/// Loads, serializes, and validates [`DeploymentProfile`]s.
+pub struct ProfileLoader;
+
+impl ProfileLoader {
+    /// Deserialize a [`DeploymentProfile`] from a JSON string.
+    pub fn from_json(json: &str) -> Result<DeploymentProfile, AiError> {
+        serde_json::from_str(json).map_err(|e| {
+            AiError::Serialization(SerializationError {
+                format: "JSON".to_string(),
+                operation: "deserialize".to_string(),
+                reason: e.to_string(),
+            })
+        })
+    }
+
+    /// Serialize a [`DeploymentProfile`] to a JSON string.
+    pub fn to_json(profile: &DeploymentProfile) -> Result<String, AiError> {
+        serde_json::to_string_pretty(profile).map_err(|e| {
+            AiError::Serialization(SerializationError {
+                format: "JSON".to_string(),
+                operation: "serialize".to_string(),
+                reason: e.to_string(),
+            })
+        })
+    }
+
+    /// Validate a [`DeploymentProfile`] and return a list of human-readable
+    /// error messages. An empty list means the profile is valid.
+    pub fn validate(profile: &DeploymentProfile) -> Vec<String> {
+        let mut errors = Vec::new();
+
+        if profile.resources.max_memory_mb == 0 {
+            errors.push("max_memory_mb must be > 0".to_string());
+        }
+        if profile.resources.max_cpu_percent <= 0.0
+            || profile.resources.max_cpu_percent > 100.0
+        {
+            errors.push(
+                "max_cpu_percent must be > 0 and <= 100".to_string(),
+            );
+        }
+        if profile.resources.max_runtime_secs == 0 {
+            errors.push("max_runtime_secs must be > 0".to_string());
+        }
+        if let Some(ref hc) = profile.health_check {
+            if hc.interval_secs <= hc.timeout_secs {
+                errors.push(
+                    "health_check interval_secs must be greater than timeout_secs".to_string(),
+                );
+            }
+        }
+
+        errors
+    }
+
+    /// Create a [`DeploymentProfile`] populated with sensible defaults.
+    pub fn with_defaults() -> DeploymentProfile {
+        DeploymentProfile {
+            name: "default".to_string(),
+            sandbox_backend: "docker".to_string(),
+            resources: AgentResourceLimits::default(),
+            networking: DeploymentNetworking {
+                allowed_hosts: Vec::new(),
+                dns_policy: DnsPolicy::Default,
+                proxy: None,
+            },
+            health_check: Some(AgentHealthCheck::default()),
+            environment: HashMap::new(),
+            labels: HashMap::new(),
+        }
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -909,5 +1074,135 @@ tags = "research, analysis"
         assert!(warnings
             .iter()
             .any(|w| w.field == "agent.max_tokens" && w.severity == WarningSeverity::Error));
+    }
+
+    // ── v6 Phase 10.2: Deployment Profiles tests ─────────────────────────
+
+    #[test]
+    fn test_deployment_profile_construction() {
+        let profile = DeploymentProfile {
+            name: "staging".to_string(),
+            sandbox_backend: "docker".to_string(),
+            resources: AgentResourceLimits::default(),
+            networking: DeploymentNetworking {
+                allowed_hosts: vec!["api.example.com".to_string()],
+                dns_policy: DnsPolicy::Default,
+                proxy: None,
+            },
+            health_check: None,
+            environment: HashMap::new(),
+            labels: HashMap::new(),
+        };
+        assert_eq!(profile.name, "staging");
+        assert_eq!(profile.sandbox_backend, "docker");
+        assert!(profile.health_check.is_none());
+        assert_eq!(profile.networking.allowed_hosts.len(), 1);
+    }
+
+    #[test]
+    fn test_agent_resource_limits_defaults() {
+        let limits = AgentResourceLimits::default();
+        assert_eq!(limits.max_memory_mb, 512);
+        assert!((limits.max_cpu_percent - 100.0).abs() < f64::EPSILON);
+        assert_eq!(limits.max_disk_mb, 1024);
+        assert_eq!(limits.max_runtime_secs, 3600);
+    }
+
+    #[test]
+    fn test_deployment_networking_construction() {
+        let net = DeploymentNetworking {
+            allowed_hosts: vec!["a.com".to_string(), "b.com".to_string()],
+            dns_policy: DnsPolicy::ClusterFirst,
+            proxy: Some("http://proxy:8080".to_string()),
+        };
+        assert_eq!(net.allowed_hosts.len(), 2);
+        assert_eq!(net.dns_policy, DnsPolicy::ClusterFirst);
+        assert_eq!(net.proxy.as_deref(), Some("http://proxy:8080"));
+    }
+
+    #[test]
+    fn test_dns_policy_all_variants() {
+        assert_eq!(DnsPolicy::Default, DnsPolicy::Default);
+        assert_eq!(DnsPolicy::ClusterFirst, DnsPolicy::ClusterFirst);
+        assert_eq!(DnsPolicy::None, DnsPolicy::None);
+        assert_ne!(DnsPolicy::Default, DnsPolicy::ClusterFirst);
+        assert_ne!(DnsPolicy::ClusterFirst, DnsPolicy::None);
+    }
+
+    #[test]
+    fn test_agent_health_check_defaults() {
+        let hc = AgentHealthCheck::default();
+        assert_eq!(hc.endpoint, "/health");
+        assert_eq!(hc.interval_secs, 30);
+        assert_eq!(hc.timeout_secs, 5);
+        assert_eq!(hc.unhealthy_threshold, 3);
+    }
+
+    #[test]
+    fn test_profile_loader_from_json_valid() {
+        let json = r#"{
+            "name": "test",
+            "sandbox_backend": "docker",
+            "resources": { "max_memory_mb": 256, "max_cpu_percent": 50.0, "max_disk_mb": 512, "max_runtime_secs": 1800 },
+            "networking": { "allowed_hosts": [], "dns_policy": "Default", "proxy": null },
+            "health_check": null,
+            "environment": {},
+            "labels": {}
+        }"#;
+        let profile = ProfileLoader::from_json(json).expect("parse profile JSON");
+        assert_eq!(profile.name, "test");
+        assert_eq!(profile.resources.max_memory_mb, 256);
+    }
+
+    #[test]
+    fn test_profile_loader_to_json_roundtrip() {
+        let original = ProfileLoader::with_defaults();
+        let json = ProfileLoader::to_json(&original).expect("serialize");
+        let restored = ProfileLoader::from_json(&json).expect("deserialize roundtrip");
+        assert_eq!(restored.name, original.name);
+        assert_eq!(restored.sandbox_backend, original.sandbox_backend);
+        assert_eq!(
+            restored.resources.max_memory_mb,
+            original.resources.max_memory_mb
+        );
+    }
+
+    #[test]
+    fn test_profile_loader_validate_valid() {
+        let profile = ProfileLoader::with_defaults();
+        let errors = ProfileLoader::validate(&profile);
+        assert!(errors.is_empty(), "expected no errors, got: {:?}", errors);
+    }
+
+    #[test]
+    fn test_profile_loader_validate_invalid() {
+        let mut profile = ProfileLoader::with_defaults();
+        profile.resources.max_memory_mb = 0;
+        profile.resources.max_cpu_percent = 0.0;
+        profile.resources.max_runtime_secs = 0;
+        profile.health_check = Some(AgentHealthCheck {
+            endpoint: "/health".to_string(),
+            interval_secs: 5,
+            timeout_secs: 10, // interval <= timeout → error
+            unhealthy_threshold: 3,
+        });
+        let errors = ProfileLoader::validate(&profile);
+        assert!(errors.iter().any(|e| e.contains("max_memory_mb")));
+        assert!(errors.iter().any(|e| e.contains("max_cpu_percent")));
+        assert!(errors.iter().any(|e| e.contains("max_runtime_secs")));
+        assert!(errors.iter().any(|e| e.contains("interval_secs")));
+    }
+
+    #[test]
+    fn test_profile_loader_with_defaults_valid() {
+        let profile = ProfileLoader::with_defaults();
+        assert_eq!(profile.name, "default");
+        assert_eq!(profile.sandbox_backend, "docker");
+        assert!(profile.health_check.is_some());
+        assert!(profile.environment.is_empty());
+        assert!(profile.labels.is_empty());
+        // The default profile must pass validation
+        let errors = ProfileLoader::validate(&profile);
+        assert!(errors.is_empty());
     }
 }

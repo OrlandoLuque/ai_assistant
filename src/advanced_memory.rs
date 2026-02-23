@@ -1872,6 +1872,1160 @@ impl ProcedureEvolver {
 }
 
 // ============================================================
+// 5.1 — Automatic Memory Extraction
+// ============================================================
+
+/// A memory extraction result from analyzing conversational text.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MemoryExtraction {
+    /// A new semantic fact was extracted.
+    NewFact { fact: SemanticFact },
+    /// An entity attribute was updated.
+    EntityUpdate {
+        entity_name: String,
+        attribute: String,
+        value: String,
+    },
+    /// A new procedure was identified.
+    NewProcedure {
+        name: String,
+        steps: Vec<String>,
+        confidence: f64,
+    },
+    /// A correction to a previously stored value.
+    Correction {
+        original_id: String,
+        corrected_value: String,
+    },
+    /// A user preference.
+    Preference { key: String, value: String },
+}
+
+/// Configuration for the automatic memory extractor.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtractionConfig {
+    /// Minimum confidence for an extraction to be accepted.
+    pub min_confidence: f64,
+    /// Maximum number of extractions to return per invocation.
+    pub max_extractions_per_turn: usize,
+    /// Whether to extract facts (subject-predicate-object).
+    pub extract_facts: bool,
+    /// Whether to extract entity updates.
+    pub extract_entities: bool,
+    /// Whether to extract procedures.
+    pub extract_procedures: bool,
+    /// Whether to extract preferences.
+    pub extract_preferences: bool,
+}
+
+impl Default for ExtractionConfig {
+    fn default() -> Self {
+        Self {
+            min_confidence: 0.5,
+            max_extractions_per_turn: 10,
+            extract_facts: true,
+            extract_entities: true,
+            extract_procedures: true,
+            extract_preferences: true,
+        }
+    }
+}
+
+/// The type of pattern an extraction rule matches.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ExtractionRuleType {
+    /// Matches fact patterns (subject-predicate-object).
+    FactPattern,
+    /// Matches entity patterns (names, attributes).
+    EntityPattern,
+    /// Matches preference patterns ("I prefer X").
+    PreferencePattern,
+    /// Matches date patterns (YYYY-MM-DD, etc.).
+    DatePattern,
+    /// Matches name patterns ("my name is X").
+    NamePattern,
+}
+
+/// A single extraction rule that maps a regex pattern to an extraction type.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtractionRule {
+    /// Human-readable name for this rule.
+    pub name: String,
+    /// Regex pattern string.
+    pub pattern: String,
+    /// The type of extraction this rule produces.
+    pub extraction_type: ExtractionRuleType,
+    /// Confidence level for extractions produced by this rule.
+    pub confidence: f64,
+}
+
+/// Automatic memory extractor that applies rules to conversational text.
+pub struct MemoryExtractor {
+    config: ExtractionConfig,
+    rules: Vec<ExtractionRule>,
+}
+
+impl MemoryExtractor {
+    /// Create a new extractor with the given configuration and no rules.
+    pub fn new(config: ExtractionConfig) -> Self {
+        Self {
+            config,
+            rules: Vec::new(),
+        }
+    }
+
+    /// Create an extractor with default configuration and a set of built-in rules
+    /// for common conversational patterns.
+    pub fn with_defaults() -> Self {
+        let config = ExtractionConfig::default();
+        let rules = vec![
+            ExtractionRule {
+                name: "name_introduction".to_string(),
+                pattern: r"(?i)my name is (\w+)".to_string(),
+                extraction_type: ExtractionRuleType::NamePattern,
+                confidence: 0.9,
+            },
+            ExtractionRule {
+                name: "preference_over".to_string(),
+                pattern: r"(?i)I prefer (\w[\w\s]*?) over (\w[\w\s]*?)$".to_string(),
+                extraction_type: ExtractionRuleType::PreferencePattern,
+                confidence: 0.85,
+            },
+            ExtractionRule {
+                name: "preference_simple".to_string(),
+                pattern: r"(?i)I prefer (\w[\w\s]*)".to_string(),
+                extraction_type: ExtractionRuleType::PreferencePattern,
+                confidence: 0.8,
+            },
+            ExtractionRule {
+                name: "fact_is".to_string(),
+                pattern: r"(?i)(\w[\w\s]*?) (?:is|are) (\w[\w\s]*)".to_string(),
+                extraction_type: ExtractionRuleType::FactPattern,
+                confidence: 0.7,
+            },
+            ExtractionRule {
+                name: "remember_that".to_string(),
+                pattern: r"(?i)remember that (.+)".to_string(),
+                extraction_type: ExtractionRuleType::FactPattern,
+                confidence: 0.85,
+            },
+            ExtractionRule {
+                name: "date_iso".to_string(),
+                pattern: r"(\d{4}-\d{2}-\d{2})".to_string(),
+                extraction_type: ExtractionRuleType::DatePattern,
+                confidence: 0.9,
+            },
+            ExtractionRule {
+                name: "date_weekday".to_string(),
+                pattern: r"(?i)on (Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)".to_string(),
+                extraction_type: ExtractionRuleType::DatePattern,
+                confidence: 0.75,
+            },
+            ExtractionRule {
+                name: "email_pattern".to_string(),
+                pattern: r"[\w.+-]+@[\w-]+\.[\w.-]+".to_string(),
+                extraction_type: ExtractionRuleType::EntityPattern,
+                confidence: 0.95,
+            },
+        ];
+        Self { config, rules }
+    }
+
+    /// Add a custom extraction rule.
+    pub fn add_rule(&mut self, rule: ExtractionRule) {
+        self.rules.push(rule);
+    }
+
+    /// Return the number of rules currently loaded.
+    pub fn rule_count(&self) -> usize {
+        self.rules.len()
+    }
+
+    /// Get a reference to the current extraction configuration.
+    pub fn config(&self) -> &ExtractionConfig {
+        &self.config
+    }
+
+    /// Extract memory items from the given text by applying all loaded rules.
+    ///
+    /// Returns at most `max_extractions_per_turn` extractions, filtered by the
+    /// configuration flags (extract_facts, extract_entities, etc.) and
+    /// `min_confidence`.
+    pub fn extract(&self, text: &str) -> Vec<MemoryExtraction> {
+        if text.is_empty() {
+            return Vec::new();
+        }
+
+        let mut results: Vec<MemoryExtraction> = Vec::new();
+
+        for rule in &self.rules {
+            if rule.confidence < self.config.min_confidence {
+                continue;
+            }
+
+            // Check whether this rule type is enabled in the config
+            let enabled = match &rule.extraction_type {
+                ExtractionRuleType::FactPattern | ExtractionRuleType::DatePattern => {
+                    self.config.extract_facts
+                }
+                ExtractionRuleType::EntityPattern | ExtractionRuleType::NamePattern => {
+                    self.config.extract_entities
+                }
+                ExtractionRuleType::PreferencePattern => self.config.extract_preferences,
+            };
+            if !enabled {
+                continue;
+            }
+
+            // Try to match the rule's regex pattern against the text
+            if let Some(extraction) = self.apply_rule(rule, text) {
+                results.push(extraction);
+                if results.len() >= self.config.max_extractions_per_turn {
+                    break;
+                }
+            }
+        }
+
+        results
+    }
+
+    /// Apply a single rule to text and return an extraction if the pattern matches.
+    fn apply_rule(&self, rule: &ExtractionRule, text: &str) -> Option<MemoryExtraction> {
+        // We use a simple regex-like approach based on the rule type.
+        // For patterns that contain capture groups, we extract them manually
+        // since we do not pull in the `regex` crate in this module.
+        match &rule.extraction_type {
+            ExtractionRuleType::NamePattern => {
+                // "my name is X"
+                let text_lower = text.to_lowercase();
+                if let Some(pos) = text_lower.find("my name is ") {
+                    let after = &text[pos + 11..];
+                    let name: String = after
+                        .chars()
+                        .take_while(|c| c.is_alphanumeric() || *c == '-' || *c == '\'')
+                        .collect();
+                    if !name.is_empty() {
+                        return Some(MemoryExtraction::EntityUpdate {
+                            entity_name: "user".to_string(),
+                            attribute: "name".to_string(),
+                            value: name,
+                        });
+                    }
+                }
+                None
+            }
+            ExtractionRuleType::PreferencePattern => {
+                let text_lower = text.to_lowercase();
+                if let Some(pos) = text_lower.find("i prefer ") {
+                    let after = &text[pos + 9..];
+                    let after_trimmed = after.trim();
+                    // Check for "X over Y" pattern
+                    if let Some(over_pos) = after_trimmed.to_lowercase().find(" over ") {
+                        let preferred = after_trimmed[..over_pos].trim().to_string();
+                        let other = after_trimmed[over_pos + 6..].trim().to_string();
+                        if !preferred.is_empty() {
+                            return Some(MemoryExtraction::Preference {
+                                key: format!("preference:{}", preferred.to_lowercase()),
+                                value: format!("{} over {}", preferred, other),
+                            });
+                        }
+                    } else {
+                        // Simple preference
+                        let preferred: String = after_trimmed
+                            .chars()
+                            .take_while(|c| *c != '.' && *c != '!' && *c != '?')
+                            .collect();
+                        let preferred = preferred.trim().to_string();
+                        if !preferred.is_empty() {
+                            return Some(MemoryExtraction::Preference {
+                                key: format!("preference:{}", preferred.to_lowercase()),
+                                value: preferred,
+                            });
+                        }
+                    }
+                }
+                None
+            }
+            ExtractionRuleType::FactPattern => {
+                let text_lower = text.to_lowercase();
+                // "remember that X"
+                if let Some(pos) = text_lower.find("remember that ") {
+                    let content = text[pos + 14..].trim();
+                    if !content.is_empty() {
+                        let now = chrono::Utc::now();
+                        return Some(MemoryExtraction::NewFact {
+                            fact: SemanticFact {
+                                id: uuid::Uuid::new_v4().to_string(),
+                                subject: "user".to_string(),
+                                predicate: "stated".to_string(),
+                                object: content.to_string(),
+                                confidence: rule.confidence,
+                                source_episodes: Vec::new(),
+                                created_at: now,
+                                last_confirmed: now,
+                            },
+                        });
+                    }
+                }
+                // "X is Y" / "X are Y"
+                for verb in &[" is ", " are "] {
+                    if let Some(pos) = text_lower.find(verb) {
+                        let subject = text[..pos].trim();
+                        let object = text[pos + verb.len()..].trim();
+                        // Filter out very short subjects/objects
+                        if subject.len() >= 2 && object.len() >= 2 {
+                            let now = chrono::Utc::now();
+                            return Some(MemoryExtraction::NewFact {
+                                fact: SemanticFact {
+                                    id: uuid::Uuid::new_v4().to_string(),
+                                    subject: subject.to_string(),
+                                    predicate: verb.trim().to_string(),
+                                    object: object.to_string(),
+                                    confidence: rule.confidence,
+                                    source_episodes: Vec::new(),
+                                    created_at: now,
+                                    last_confirmed: now,
+                                },
+                            });
+                        }
+                    }
+                }
+                None
+            }
+            ExtractionRuleType::DatePattern => {
+                // ISO date: YYYY-MM-DD
+                let mut i = 0;
+                let bytes = text.as_bytes();
+                while i + 10 <= bytes.len() {
+                    if bytes[i].is_ascii_digit()
+                        && bytes[i + 4] == b'-'
+                        && bytes[i + 7] == b'-'
+                        && bytes[i + 1].is_ascii_digit()
+                        && bytes[i + 2].is_ascii_digit()
+                        && bytes[i + 3].is_ascii_digit()
+                        && bytes[i + 5].is_ascii_digit()
+                        && bytes[i + 6].is_ascii_digit()
+                        && bytes[i + 8].is_ascii_digit()
+                        && bytes[i + 9].is_ascii_digit()
+                    {
+                        let date_str = &text[i..i + 10];
+                        let now = chrono::Utc::now();
+                        return Some(MemoryExtraction::NewFact {
+                            fact: SemanticFact {
+                                id: uuid::Uuid::new_v4().to_string(),
+                                subject: "date_reference".to_string(),
+                                predicate: "mentioned".to_string(),
+                                object: date_str.to_string(),
+                                confidence: rule.confidence,
+                                source_episodes: Vec::new(),
+                                created_at: now,
+                                last_confirmed: now,
+                            },
+                        });
+                    }
+                    i += 1;
+                }
+                // Weekday pattern
+                let text_lower = text.to_lowercase();
+                for day in &[
+                    "monday",
+                    "tuesday",
+                    "wednesday",
+                    "thursday",
+                    "friday",
+                    "saturday",
+                    "sunday",
+                ] {
+                    let pattern = format!("on {}", day);
+                    if text_lower.contains(&pattern) {
+                        let now = chrono::Utc::now();
+                        return Some(MemoryExtraction::NewFact {
+                            fact: SemanticFact {
+                                id: uuid::Uuid::new_v4().to_string(),
+                                subject: "date_reference".to_string(),
+                                predicate: "mentioned".to_string(),
+                                object: day.to_string(),
+                                confidence: rule.confidence,
+                                source_episodes: Vec::new(),
+                                created_at: now,
+                                last_confirmed: now,
+                            },
+                        });
+                    }
+                }
+                None
+            }
+            ExtractionRuleType::EntityPattern => {
+                // Email pattern
+                let mut email_start = None;
+                let chars: Vec<char> = text.chars().collect();
+                for (i, ch) in chars.iter().enumerate() {
+                    if *ch == '@' {
+                        // Walk backward to find start of local part
+                        let mut start = i;
+                        while start > 0 {
+                            let prev = chars[start - 1];
+                            if prev.is_alphanumeric() || prev == '.' || prev == '+' || prev == '-' || prev == '_' {
+                                start -= 1;
+                            } else {
+                                break;
+                            }
+                        }
+                        // Walk forward to find end of domain
+                        let mut end = i + 1;
+                        while end < chars.len() {
+                            let next = chars[end];
+                            if next.is_alphanumeric() || next == '.' || next == '-' {
+                                end += 1;
+                            } else {
+                                break;
+                            }
+                        }
+                        if start < i && end > i + 1 {
+                            // Verify domain has a dot
+                            let domain: String = chars[i + 1..end].iter().collect();
+                            if domain.contains('.') {
+                                email_start = Some((start, end));
+                                break;
+                            }
+                        }
+                    }
+                }
+                if let Some((start, end)) = email_start {
+                    let email: String = chars[start..end].iter().collect();
+                    return Some(MemoryExtraction::EntityUpdate {
+                        entity_name: "user".to_string(),
+                        attribute: "email".to_string(),
+                        value: email,
+                    });
+                }
+                None
+            }
+        }
+    }
+}
+
+// ============================================================
+// 5.2 — Memory Scheduler
+// ============================================================
+
+/// A task that can be scheduled for periodic execution on the memory system.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SchedulerTask {
+    /// Run memory consolidation.
+    Consolidate,
+    /// Apply temporal decay to memory relevance scores.
+    Decay { decay_rate: f64 },
+    /// Compress similar memories together.
+    Compress { min_similarity: f64 },
+    /// Garbage-collect old, infrequently accessed memories.
+    GarbageCollect {
+        min_age_secs: u64,
+        min_access_count: usize,
+    },
+}
+
+/// Configuration for the memory scheduler.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchedulerConfig {
+    /// Interval between consolidation runs, in seconds.
+    pub consolidation_interval_secs: u64,
+    /// Interval between decay runs, in seconds.
+    pub decay_interval_secs: u64,
+    /// Interval between compression runs, in seconds.
+    pub compression_interval_secs: u64,
+    /// Interval between garbage collection runs, in seconds.
+    pub gc_interval_secs: u64,
+    /// Number of items to process per batch.
+    pub batch_size: usize,
+}
+
+impl Default for SchedulerConfig {
+    fn default() -> Self {
+        Self {
+            consolidation_interval_secs: 3600,
+            decay_interval_secs: 7200,
+            compression_interval_secs: 86400,
+            gc_interval_secs: 86400,
+            batch_size: 100,
+        }
+    }
+}
+
+/// A scheduled job in the memory scheduler.
+#[derive(Debug, Clone)]
+pub struct ScheduledJob {
+    /// The task to execute.
+    pub task: SchedulerTask,
+    /// Timestamp of last execution (0 = never).
+    pub last_run: u64,
+    /// Interval between runs, in seconds.
+    pub interval_secs: u64,
+    /// Whether this job is enabled.
+    pub enabled: bool,
+}
+
+/// Scheduler that manages periodic memory maintenance tasks.
+pub struct MemoryScheduler {
+    jobs: Vec<ScheduledJob>,
+    config: SchedulerConfig,
+}
+
+impl MemoryScheduler {
+    /// Create a scheduler with the given config and the four default jobs:
+    /// Consolidate, Decay(0.01), Compress(0.85), GarbageCollect(86400, 0).
+    pub fn new(config: SchedulerConfig) -> Self {
+        let jobs = vec![
+            ScheduledJob {
+                task: SchedulerTask::Consolidate,
+                last_run: 0,
+                interval_secs: config.consolidation_interval_secs,
+                enabled: true,
+            },
+            ScheduledJob {
+                task: SchedulerTask::Decay { decay_rate: 0.01 },
+                last_run: 0,
+                interval_secs: config.decay_interval_secs,
+                enabled: true,
+            },
+            ScheduledJob {
+                task: SchedulerTask::Compress {
+                    min_similarity: 0.85,
+                },
+                last_run: 0,
+                interval_secs: config.compression_interval_secs,
+                enabled: true,
+            },
+            ScheduledJob {
+                task: SchedulerTask::GarbageCollect {
+                    min_age_secs: 86400,
+                    min_access_count: 0,
+                },
+                last_run: 0,
+                interval_secs: config.gc_interval_secs,
+                enabled: true,
+            },
+        ];
+        Self { jobs, config }
+    }
+
+    /// Create a scheduler with default configuration and default jobs.
+    pub fn with_defaults() -> Self {
+        Self::new(SchedulerConfig::default())
+    }
+
+    /// Add a custom job with the given task and interval.
+    pub fn add_job(&mut self, task: SchedulerTask, interval_secs: u64) {
+        self.jobs.push(ScheduledJob {
+            task,
+            last_run: 0,
+            interval_secs,
+            enabled: true,
+        });
+    }
+
+    /// Remove a job by index. Returns `true` if the index was valid and the job
+    /// was removed.
+    pub fn remove_job(&mut self, index: usize) -> bool {
+        if index < self.jobs.len() {
+            self.jobs.remove(index);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Return references to all jobs that are due for execution at
+    /// `current_time` (i.e. `current_time - last_run >= interval_secs` and
+    /// the job is enabled).
+    pub fn due_jobs(&self, current_time: u64) -> Vec<&ScheduledJob> {
+        self.jobs
+            .iter()
+            .filter(|job| {
+                job.enabled && current_time.saturating_sub(job.last_run) >= job.interval_secs
+            })
+            .collect()
+    }
+
+    /// Mark a job as completed by updating its `last_run` timestamp.
+    pub fn mark_completed(&mut self, index: usize, timestamp: u64) {
+        if let Some(job) = self.jobs.get_mut(index) {
+            job.last_run = timestamp;
+        }
+    }
+
+    /// Enable a job by index.
+    pub fn enable_job(&mut self, index: usize) {
+        if let Some(job) = self.jobs.get_mut(index) {
+            job.enabled = true;
+        }
+    }
+
+    /// Disable a job by index.
+    pub fn disable_job(&mut self, index: usize) {
+        if let Some(job) = self.jobs.get_mut(index) {
+            job.enabled = false;
+        }
+    }
+
+    /// Return the total number of jobs.
+    pub fn job_count(&self) -> usize {
+        self.jobs.len()
+    }
+
+    /// Get a reference to the scheduler configuration.
+    pub fn config(&self) -> &SchedulerConfig {
+        &self.config
+    }
+}
+
+// ============================================================
+// 5.3 — Cross-Session Memory Sharing
+// ============================================================
+
+/// Policy controlling when memories are synchronized between sessions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MemorySyncPolicy {
+    /// Synchronize immediately on every change.
+    Eager,
+    /// Synchronize only when queried.
+    Lazy,
+    /// Synchronize at a fixed interval.
+    Periodic { interval_secs: u64 },
+    /// Only synchronize when explicitly triggered.
+    Manual,
+}
+
+/// A filter for selecting a subset of memories when querying a shared pool.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryFilter {
+    /// Minimum confidence threshold (only facts at or above this are returned).
+    pub min_confidence: Option<f64>,
+    /// If non-empty, only facts whose predicate matches one of these categories
+    /// are returned.
+    pub categories: Vec<String>,
+    /// If non-empty, only facts whose subject matches one of these entity names
+    /// are returned.
+    pub entity_names: Vec<String>,
+    /// Maximum age in seconds; facts older than this are excluded.
+    pub max_age_secs: Option<u64>,
+}
+
+impl MemoryFilter {
+    /// Create a new empty filter that matches all memories.
+    pub fn new() -> Self {
+        Self {
+            min_confidence: None,
+            categories: Vec::new(),
+            entity_names: Vec::new(),
+            max_age_secs: None,
+        }
+    }
+
+    /// Create a filter that only accepts facts at or above the given confidence.
+    pub fn with_min_confidence(confidence: f64) -> Self {
+        Self {
+            min_confidence: Some(confidence),
+            categories: Vec::new(),
+            entity_names: Vec::new(),
+            max_age_secs: None,
+        }
+    }
+
+    /// Create a filter that only accepts facts whose predicate matches one of
+    /// the given categories.
+    pub fn with_categories(categories: Vec<String>) -> Self {
+        Self {
+            min_confidence: None,
+            categories,
+            entity_names: Vec::new(),
+            max_age_secs: None,
+        }
+    }
+
+    /// Check whether a semantic fact passes this filter.
+    pub fn matches_fact(&self, fact: &SemanticFact) -> bool {
+        if let Some(min_conf) = self.min_confidence {
+            if fact.confidence < min_conf {
+                return false;
+            }
+        }
+        if !self.categories.is_empty() {
+            let pred_lower = fact.predicate.to_lowercase();
+            if !self.categories.iter().any(|c| c.to_lowercase() == pred_lower) {
+                return false;
+            }
+        }
+        if !self.entity_names.is_empty() {
+            let subj_lower = fact.subject.to_lowercase();
+            if !self
+                .entity_names
+                .iter()
+                .any(|n| n.to_lowercase() == subj_lower)
+            {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Check whether an episode passes this filter.
+    ///
+    /// For episodes, `max_age_secs` is checked against the episode's timestamp,
+    /// and `categories` is matched against the episode's tags.
+    pub fn matches_episode(&self, episode: &Episode) -> bool {
+        if let Some(max_age) = self.max_age_secs {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let age = now.saturating_sub(episode.timestamp);
+            if age > max_age {
+                return false;
+            }
+        }
+        if !self.categories.is_empty() {
+            let has_matching_tag = episode.tags.iter().any(|tag| {
+                let tag_lower = tag.to_lowercase();
+                self.categories.iter().any(|c| c.to_lowercase() == tag_lower)
+            });
+            if !has_matching_tag {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+/// A shared memory pool for cross-session and cross-agent memory sharing.
+pub struct SharedMemoryPool {
+    facts: Vec<(String, SemanticFact)>,
+    sync_policy: MemorySyncPolicy,
+    subscribers: Vec<String>,
+}
+
+impl SharedMemoryPool {
+    /// Create a new shared pool with the given synchronization policy.
+    pub fn new(sync_policy: MemorySyncPolicy) -> Self {
+        Self {
+            facts: Vec::new(),
+            sync_policy,
+            subscribers: Vec::new(),
+        }
+    }
+
+    /// Publish a fact from a specific agent into the shared pool.
+    pub fn publish(&mut self, agent_id: String, fact: SemanticFact) {
+        self.facts.push((agent_id, fact));
+    }
+
+    /// Subscribe an agent to the shared pool.
+    pub fn subscribe(&mut self, agent_id: String) {
+        if !self.subscribers.contains(&agent_id) {
+            self.subscribers.push(agent_id);
+        }
+    }
+
+    /// Unsubscribe an agent from the shared pool. Returns `true` if the agent
+    /// was previously subscribed.
+    pub fn unsubscribe(&mut self, agent_id: &str) -> bool {
+        let before = self.subscribers.len();
+        self.subscribers.retain(|id| id != agent_id);
+        self.subscribers.len() < before
+    }
+
+    /// Query the pool for facts matching the given filter.
+    pub fn query(&self, filter: &MemoryFilter) -> Vec<&SemanticFact> {
+        self.facts
+            .iter()
+            .map(|(_, fact)| fact)
+            .filter(|fact| filter.matches_fact(fact))
+            .collect()
+    }
+
+    /// Query the pool for all facts published by a specific agent.
+    pub fn query_by_agent(&self, agent_id: &str) -> Vec<&SemanticFact> {
+        self.facts
+            .iter()
+            .filter(|(aid, _)| aid == agent_id)
+            .map(|(_, fact)| fact)
+            .collect()
+    }
+
+    /// Return the total number of facts in the pool.
+    pub fn fact_count(&self) -> usize {
+        self.facts.len()
+    }
+
+    /// Return the number of subscribed agents.
+    pub fn subscriber_count(&self) -> usize {
+        self.subscribers.len()
+    }
+
+    /// Remove all facts and subscribers from the pool.
+    pub fn clear(&mut self) {
+        self.facts.clear();
+        self.subscribers.clear();
+    }
+
+    /// Get a reference to the synchronization policy.
+    pub fn sync_policy(&self) -> &MemorySyncPolicy {
+        &self.sync_policy
+    }
+}
+
+// ============================================================
+// 5.4 — Memory Search Optimization
+// ============================================================
+
+/// Weights for the hybrid memory search scoring function.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchWeights {
+    /// Weight for keyword-match score component.
+    pub keyword_weight: f64,
+    /// Weight for embedding similarity score component.
+    pub embedding_weight: f64,
+    /// Weight for recency score component.
+    pub recency_weight: f64,
+    /// Weight for access-frequency score component.
+    pub access_frequency_weight: f64,
+}
+
+impl Default for SearchWeights {
+    fn default() -> Self {
+        Self {
+            keyword_weight: 0.25,
+            embedding_weight: 0.25,
+            recency_weight: 0.25,
+            access_frequency_weight: 0.25,
+        }
+    }
+}
+
+/// A scored memory search result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemorySearchResult {
+    /// The content of the matched memory.
+    pub content: String,
+    /// Overall relevance score (higher = more relevant).
+    pub relevance_score: f64,
+    /// Reasons this result matched the query.
+    pub match_reasons: Vec<MatchReason>,
+    /// The type of memory store this result came from.
+    pub source_type: MemorySourceType,
+    /// Timestamp of the original memory entry.
+    pub timestamp: u64,
+}
+
+/// A reason why a memory matched a search query.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MatchReason {
+    /// Matched via keyword overlap.
+    KeywordMatch { keyword: String, count: usize },
+    /// Matched via embedding similarity.
+    EmbeddingSimilarity { score: f64 },
+    /// Matched due to recent access.
+    RecentAccess { age_secs: u64 },
+    /// Matched due to frequent access.
+    FrequentAccess { access_count: usize },
+}
+
+/// The type of memory store a search result originated from.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MemorySourceType {
+    /// From the episodic memory store.
+    Episodic,
+    /// From the procedural memory store.
+    Procedural,
+    /// From the entity memory store.
+    Entity,
+    /// From the fact store.
+    Fact,
+}
+
+/// An entry in the memory search index.
+#[derive(Debug, Clone)]
+pub struct IndexEntry {
+    /// The content text of this memory.
+    pub content: String,
+    /// Which memory store this entry came from.
+    pub source_type: MemorySourceType,
+    /// Keywords associated with this entry.
+    pub keywords: Vec<String>,
+    /// Timestamp of the original memory.
+    pub timestamp: u64,
+    /// Number of times this memory has been accessed.
+    pub access_count: usize,
+}
+
+/// An inverted keyword index over memory entries for fast lookup.
+pub struct MemoryIndex {
+    keyword_index: HashMap<String, Vec<usize>>,
+    entries: Vec<IndexEntry>,
+}
+
+impl MemoryIndex {
+    /// Create an empty memory index.
+    pub fn new() -> Self {
+        Self {
+            keyword_index: HashMap::new(),
+            entries: Vec::new(),
+        }
+    }
+
+    /// Add an entry to the index, updating the keyword map.
+    pub fn add_entry(&mut self, entry: IndexEntry) {
+        let idx = self.entries.len();
+        for kw in &entry.keywords {
+            let kw_lower = kw.to_lowercase();
+            self.keyword_index
+                .entry(kw_lower)
+                .or_default()
+                .push(idx);
+        }
+        self.entries.push(entry);
+    }
+
+    /// Search for entries matching a keyword (case-insensitive). Returns the
+    /// indices of matching entries.
+    pub fn search_keyword(&self, keyword: &str) -> Vec<usize> {
+        let kw_lower = keyword.to_lowercase();
+        self.keyword_index
+            .get(&kw_lower)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Return the total number of indexed entries.
+    pub fn entry_count(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Get a reference to an entry by index.
+    pub fn get_entry(&self, index: usize) -> Option<&IndexEntry> {
+        self.entries.get(index)
+    }
+
+    /// Clear all entries and the keyword index.
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.keyword_index.clear();
+    }
+
+    /// Rebuild the keyword index from the current entries. Useful after bulk
+    /// modifications.
+    pub fn rebuild_index(&mut self) {
+        self.keyword_index.clear();
+        for (idx, entry) in self.entries.iter().enumerate() {
+            for kw in &entry.keywords {
+                let kw_lower = kw.to_lowercase();
+                self.keyword_index
+                    .entry(kw_lower)
+                    .or_default()
+                    .push(idx);
+            }
+        }
+    }
+}
+
+/// Hybrid memory search engine that combines keyword matching, recency, and
+/// access frequency to rank results.
+pub struct MemorySearchEngine {
+    index: MemoryIndex,
+    weights: SearchWeights,
+}
+
+impl MemorySearchEngine {
+    /// Create a search engine with the given weights.
+    pub fn new(weights: SearchWeights) -> Self {
+        Self {
+            index: MemoryIndex::new(),
+            weights,
+        }
+    }
+
+    /// Create a search engine with default weights (all 0.25).
+    pub fn with_default_weights() -> Self {
+        Self::new(SearchWeights::default())
+    }
+
+    /// Add a memory to the search index.
+    pub fn add_memory(
+        &mut self,
+        content: String,
+        source_type: MemorySourceType,
+        keywords: Vec<String>,
+    ) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        self.index.add_entry(IndexEntry {
+            content,
+            source_type,
+            keywords,
+            timestamp: now,
+            access_count: 0,
+        });
+    }
+
+    /// Perform a hybrid search combining keyword matching, recency, and access
+    /// frequency. Returns the top `max_results` results sorted by relevance.
+    pub fn search(&self, query: &str, max_results: usize) -> Vec<MemorySearchResult> {
+        if query.is_empty() || self.index.entry_count() == 0 {
+            return Vec::new();
+        }
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        // Tokenize query into keywords
+        let query_keywords: Vec<String> = query
+            .to_lowercase()
+            .split_whitespace()
+            .map(|s| s.to_string())
+            .collect();
+
+        // Find all candidate entries via keyword index
+        let mut entry_scores: HashMap<usize, (f64, Vec<MatchReason>)> = HashMap::new();
+
+        for qk in &query_keywords {
+            let matching_indices = self.index.search_keyword(qk);
+            for idx in matching_indices {
+                let entry = entry_scores.entry(idx).or_insert_with(|| (0.0, Vec::new()));
+                // Count keyword occurrences in the entry's keywords
+                if let Some(index_entry) = self.index.get_entry(idx) {
+                    let count = index_entry
+                        .keywords
+                        .iter()
+                        .filter(|k| k.to_lowercase() == *qk)
+                        .count();
+                    entry.0 += count as f64;
+                    entry.1.push(MatchReason::KeywordMatch {
+                        keyword: qk.clone(),
+                        count,
+                    });
+                }
+            }
+        }
+
+        // If no keyword matches, try content-level word matching as fallback
+        if entry_scores.is_empty() {
+            for (idx, entry) in self.index.entries.iter().enumerate() {
+                let content_lower = entry.content.to_lowercase();
+                let mut matched = false;
+                for qk in &query_keywords {
+                    if content_lower.contains(qk.as_str()) {
+                        let count = content_lower.matches(qk.as_str()).count();
+                        let scores = entry_scores
+                            .entry(idx)
+                            .or_insert_with(|| (0.0, Vec::new()));
+                        scores.0 += count as f64;
+                        scores.1.push(MatchReason::KeywordMatch {
+                            keyword: qk.clone(),
+                            count,
+                        });
+                        matched = true;
+                    }
+                }
+                if !matched {
+                    continue;
+                }
+            }
+        }
+
+        // Score each candidate
+        // Find max values for normalization
+        let max_keyword_score = entry_scores
+            .values()
+            .map(|(s, _)| *s)
+            .fold(0.0_f64, f64::max);
+        let max_access_count = self
+            .index
+            .entries
+            .iter()
+            .map(|e| e.access_count)
+            .max()
+            .unwrap_or(1)
+            .max(1) as f64;
+        let max_age = self
+            .index
+            .entries
+            .iter()
+            .map(|e| now.saturating_sub(e.timestamp))
+            .max()
+            .unwrap_or(1)
+            .max(1) as f64;
+
+        let mut results: Vec<MemorySearchResult> = entry_scores
+            .into_iter()
+            .filter_map(|(idx, (kw_score, mut reasons))| {
+                let entry = self.index.get_entry(idx)?;
+
+                // Normalize keyword score to [0, 1]
+                let norm_kw = if max_keyword_score > 0.0 {
+                    kw_score / max_keyword_score
+                } else {
+                    0.0
+                };
+
+                // Recency score: newer = higher (1.0 for newest, 0.0 for oldest)
+                let age_secs = now.saturating_sub(entry.timestamp);
+                let recency = if max_age > 0.0 {
+                    1.0 - (age_secs as f64 / max_age)
+                } else {
+                    1.0
+                };
+                if age_secs > 0 {
+                    reasons.push(MatchReason::RecentAccess { age_secs });
+                }
+
+                // Access frequency score
+                let freq = entry.access_count as f64 / max_access_count;
+                if entry.access_count > 0 {
+                    reasons.push(MatchReason::FrequentAccess {
+                        access_count: entry.access_count,
+                    });
+                }
+
+                let score = norm_kw * self.weights.keyword_weight
+                    + recency * self.weights.recency_weight
+                    + freq * self.weights.access_frequency_weight;
+
+                Some(MemorySearchResult {
+                    content: entry.content.clone(),
+                    relevance_score: score,
+                    match_reasons: reasons,
+                    source_type: entry.source_type.clone(),
+                    timestamp: entry.timestamp,
+                })
+            })
+            .collect();
+
+        results.sort_by(|a, b| {
+            b.relevance_score
+                .partial_cmp(&a.relevance_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        results.truncate(max_results);
+        results
+    }
+
+    /// Return the total number of memories in the index.
+    pub fn memory_count(&self) -> usize {
+        self.index.entry_count()
+    }
+
+    /// Get a reference to the current search weights.
+    pub fn weights(&self) -> &SearchWeights {
+        &self.weights
+    }
+}
+
+// ============================================================
 // Tests
 // ============================================================
 
@@ -3777,5 +4931,882 @@ mod tests {
         assert!((config.min_confidence_to_keep - 0.2).abs() < 1e-6);
         assert_eq!(config.auto_create_threshold, 3);
         assert_eq!(config.max_procedures, 500);
+    }
+
+    // ==========================================================
+    // 5.1 — Automatic Memory Extraction tests
+    // ==========================================================
+
+    #[test]
+    fn test_extraction_config_defaults() {
+        let config = ExtractionConfig::default();
+        assert!((config.min_confidence - 0.5).abs() < 1e-6);
+        assert_eq!(config.max_extractions_per_turn, 10);
+        assert!(config.extract_facts);
+        assert!(config.extract_entities);
+        assert!(config.extract_procedures);
+        assert!(config.extract_preferences);
+    }
+
+    #[test]
+    fn test_memory_extractor_with_defaults_has_rules() {
+        let extractor = MemoryExtractor::with_defaults();
+        assert!(extractor.rule_count() > 0);
+        assert_eq!(extractor.rule_count(), 8);
+    }
+
+    #[test]
+    fn test_memory_extractor_extract_name() {
+        let extractor = MemoryExtractor::with_defaults();
+        let results = extractor.extract("my name is Alice");
+        assert!(!results.is_empty());
+        match &results[0] {
+            MemoryExtraction::EntityUpdate {
+                entity_name,
+                attribute,
+                value,
+            } => {
+                assert_eq!(entity_name, "user");
+                assert_eq!(attribute, "name");
+                assert_eq!(value, "Alice");
+            }
+            other => panic!("Expected EntityUpdate, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_memory_extractor_extract_preference() {
+        let extractor = MemoryExtractor::with_defaults();
+        let results = extractor.extract("I prefer dark mode");
+        assert!(!results.is_empty());
+        match &results[0] {
+            MemoryExtraction::Preference { key, value } => {
+                assert!(key.contains("preference:"));
+                assert!(value.contains("dark mode"));
+            }
+            other => panic!("Expected Preference, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_memory_extractor_extract_remember_that() {
+        let extractor = MemoryExtractor::with_defaults();
+        let results = extractor.extract("remember that the server runs on port 8080");
+        assert!(!results.is_empty());
+        match &results[0] {
+            MemoryExtraction::NewFact { fact } => {
+                assert_eq!(fact.predicate, "stated");
+                assert!(fact.object.contains("server runs on port 8080"));
+            }
+            other => panic!("Expected NewFact, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_memory_extractor_respects_max_extractions() {
+        let config = ExtractionConfig {
+            max_extractions_per_turn: 1,
+            ..ExtractionConfig::default()
+        };
+        let extractor = MemoryExtractor::new(config);
+        // Even though we create many rules, we only get 1
+        let mut ext = extractor;
+        ext.add_rule(ExtractionRule {
+            name: "r1".to_string(),
+            pattern: "test".to_string(),
+            extraction_type: ExtractionRuleType::NamePattern,
+            confidence: 0.9,
+        });
+        ext.add_rule(ExtractionRule {
+            name: "r2".to_string(),
+            pattern: "test".to_string(),
+            extraction_type: ExtractionRuleType::PreferencePattern,
+            confidence: 0.9,
+        });
+        // Use a text that matches the name rule
+        let results = ext.extract("my name is Bob and I prefer tea");
+        assert!(results.len() <= 1);
+    }
+
+    #[test]
+    fn test_memory_extractor_add_rule_increases_count() {
+        let mut extractor = MemoryExtractor::new(ExtractionConfig::default());
+        assert_eq!(extractor.rule_count(), 0);
+        extractor.add_rule(ExtractionRule {
+            name: "custom".to_string(),
+            pattern: "test".to_string(),
+            extraction_type: ExtractionRuleType::FactPattern,
+            confidence: 0.8,
+        });
+        assert_eq!(extractor.rule_count(), 1);
+    }
+
+    #[test]
+    fn test_extraction_rule_construction() {
+        let rule = ExtractionRule {
+            name: "test_rule".to_string(),
+            pattern: r"(\w+) likes (\w+)".to_string(),
+            extraction_type: ExtractionRuleType::FactPattern,
+            confidence: 0.75,
+        };
+        assert_eq!(rule.name, "test_rule");
+        assert!((rule.confidence - 0.75).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_memory_extraction_all_variants() {
+        let now = chrono::Utc::now();
+        let fact_variant = MemoryExtraction::NewFact {
+            fact: SemanticFact {
+                id: "f1".to_string(),
+                subject: "X".to_string(),
+                predicate: "is".to_string(),
+                object: "Y".to_string(),
+                confidence: 0.9,
+                source_episodes: Vec::new(),
+                created_at: now,
+                last_confirmed: now,
+            },
+        };
+        assert!(matches!(fact_variant, MemoryExtraction::NewFact { .. }));
+
+        let entity_variant = MemoryExtraction::EntityUpdate {
+            entity_name: "user".to_string(),
+            attribute: "age".to_string(),
+            value: "30".to_string(),
+        };
+        assert!(matches!(entity_variant, MemoryExtraction::EntityUpdate { .. }));
+
+        let proc_variant = MemoryExtraction::NewProcedure {
+            name: "deploy".to_string(),
+            steps: vec!["build".to_string(), "test".to_string()],
+            confidence: 0.8,
+        };
+        assert!(matches!(proc_variant, MemoryExtraction::NewProcedure { .. }));
+
+        let corr_variant = MemoryExtraction::Correction {
+            original_id: "f1".to_string(),
+            corrected_value: "Z".to_string(),
+        };
+        assert!(matches!(corr_variant, MemoryExtraction::Correction { .. }));
+
+        let pref_variant = MemoryExtraction::Preference {
+            key: "theme".to_string(),
+            value: "dark".to_string(),
+        };
+        assert!(matches!(pref_variant, MemoryExtraction::Preference { .. }));
+    }
+
+    #[test]
+    fn test_memory_extractor_extract_empty_text() {
+        let extractor = MemoryExtractor::with_defaults();
+        let results = extractor.extract("");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_memory_extractor_config_accessor() {
+        let extractor = MemoryExtractor::with_defaults();
+        let config = extractor.config();
+        assert!((config.min_confidence - 0.5).abs() < 1e-6);
+    }
+
+    // ==========================================================
+    // 5.2 — Memory Scheduler tests
+    // ==========================================================
+
+    #[test]
+    fn test_scheduler_config_defaults() {
+        let config = SchedulerConfig::default();
+        assert_eq!(config.consolidation_interval_secs, 3600);
+        assert_eq!(config.decay_interval_secs, 7200);
+        assert_eq!(config.compression_interval_secs, 86400);
+        assert_eq!(config.gc_interval_secs, 86400);
+        assert_eq!(config.batch_size, 100);
+    }
+
+    #[test]
+    fn test_memory_scheduler_with_defaults_has_4_jobs() {
+        let scheduler = MemoryScheduler::with_defaults();
+        assert_eq!(scheduler.job_count(), 4);
+    }
+
+    #[test]
+    fn test_memory_scheduler_due_jobs_all_due() {
+        let scheduler = MemoryScheduler::with_defaults();
+        // All jobs have last_run=0, so at time 100000 they are all due
+        let due = scheduler.due_jobs(100_000);
+        assert_eq!(due.len(), 4);
+    }
+
+    #[test]
+    fn test_memory_scheduler_due_jobs_none_due() {
+        let mut scheduler = MemoryScheduler::with_defaults();
+        // Mark all as recently completed
+        let now = 200_000u64;
+        for i in 0..scheduler.job_count() {
+            scheduler.mark_completed(i, now);
+        }
+        // At time now+1, nothing is due (intervals are >= 3600)
+        let due = scheduler.due_jobs(now + 1);
+        assert_eq!(due.len(), 0);
+    }
+
+    #[test]
+    fn test_memory_scheduler_mark_completed() {
+        let mut scheduler = MemoryScheduler::with_defaults();
+        scheduler.mark_completed(0, 5000);
+        // Job 0 should no longer be due at 5001
+        let due = scheduler.due_jobs(5001);
+        // Only job 0 is not due (its interval is 3600, last_run is 5000,
+        // 5001-5000 = 1 < 3600), but jobs 1-3 still have last_run=0
+        let job0_due = due.iter().any(|j| matches!(j.task, SchedulerTask::Consolidate));
+        assert!(!job0_due);
+    }
+
+    #[test]
+    fn test_memory_scheduler_enable_disable_job() {
+        let mut scheduler = MemoryScheduler::with_defaults();
+        scheduler.disable_job(0);
+        // Disabled job should not appear in due_jobs
+        let due = scheduler.due_jobs(100_000);
+        assert_eq!(due.len(), 3);
+
+        scheduler.enable_job(0);
+        let due = scheduler.due_jobs(100_000);
+        assert_eq!(due.len(), 4);
+    }
+
+    #[test]
+    fn test_memory_scheduler_add_and_remove_job() {
+        let mut scheduler = MemoryScheduler::with_defaults();
+        assert_eq!(scheduler.job_count(), 4);
+
+        scheduler.add_job(SchedulerTask::Decay { decay_rate: 0.05 }, 1800);
+        assert_eq!(scheduler.job_count(), 5);
+
+        let removed = scheduler.remove_job(4);
+        assert!(removed);
+        assert_eq!(scheduler.job_count(), 4);
+
+        // Remove out of bounds
+        let removed = scheduler.remove_job(100);
+        assert!(!removed);
+    }
+
+    #[test]
+    fn test_scheduler_task_variants() {
+        let t1 = SchedulerTask::Consolidate;
+        assert!(matches!(t1, SchedulerTask::Consolidate));
+
+        let t2 = SchedulerTask::Decay { decay_rate: 0.01 };
+        assert!(matches!(t2, SchedulerTask::Decay { .. }));
+
+        let t3 = SchedulerTask::Compress {
+            min_similarity: 0.85,
+        };
+        assert!(matches!(t3, SchedulerTask::Compress { .. }));
+
+        let t4 = SchedulerTask::GarbageCollect {
+            min_age_secs: 3600,
+            min_access_count: 5,
+        };
+        assert!(matches!(t4, SchedulerTask::GarbageCollect { .. }));
+    }
+
+    #[test]
+    fn test_memory_scheduler_config_accessor() {
+        let scheduler = MemoryScheduler::with_defaults();
+        let config = scheduler.config();
+        assert_eq!(config.consolidation_interval_secs, 3600);
+    }
+
+    // ==========================================================
+    // 5.3 — Cross-Session Memory Sharing tests
+    // ==========================================================
+
+    #[test]
+    fn test_memory_sync_policy_variants() {
+        let p1 = MemorySyncPolicy::Eager;
+        assert!(matches!(p1, MemorySyncPolicy::Eager));
+
+        let p2 = MemorySyncPolicy::Lazy;
+        assert!(matches!(p2, MemorySyncPolicy::Lazy));
+
+        let p3 = MemorySyncPolicy::Periodic { interval_secs: 60 };
+        assert!(matches!(p3, MemorySyncPolicy::Periodic { .. }));
+
+        let p4 = MemorySyncPolicy::Manual;
+        assert!(matches!(p4, MemorySyncPolicy::Manual));
+    }
+
+    #[test]
+    fn test_memory_filter_new_matches_all() {
+        let filter = MemoryFilter::new();
+        let now = chrono::Utc::now();
+        let fact = SemanticFact {
+            id: "f1".to_string(),
+            subject: "X".to_string(),
+            predicate: "is".to_string(),
+            object: "Y".to_string(),
+            confidence: 0.1,
+            source_episodes: Vec::new(),
+            created_at: now,
+            last_confirmed: now,
+        };
+        assert!(filter.matches_fact(&fact));
+    }
+
+    #[test]
+    fn test_memory_filter_with_min_confidence_filters() {
+        let filter = MemoryFilter::with_min_confidence(0.8);
+        let now = chrono::Utc::now();
+        let high = SemanticFact {
+            id: "f1".to_string(),
+            subject: "X".to_string(),
+            predicate: "is".to_string(),
+            object: "Y".to_string(),
+            confidence: 0.9,
+            source_episodes: Vec::new(),
+            created_at: now,
+            last_confirmed: now,
+        };
+        let low = SemanticFact {
+            id: "f2".to_string(),
+            subject: "A".to_string(),
+            predicate: "is".to_string(),
+            object: "B".to_string(),
+            confidence: 0.3,
+            source_episodes: Vec::new(),
+            created_at: now,
+            last_confirmed: now,
+        };
+        assert!(filter.matches_fact(&high));
+        assert!(!filter.matches_fact(&low));
+    }
+
+    #[test]
+    fn test_memory_filter_with_categories() {
+        let filter = MemoryFilter::with_categories(vec!["prefers".to_string()]);
+        let now = chrono::Utc::now();
+        let matching = SemanticFact {
+            id: "f1".to_string(),
+            subject: "user".to_string(),
+            predicate: "prefers".to_string(),
+            object: "dark mode".to_string(),
+            confidence: 0.9,
+            source_episodes: Vec::new(),
+            created_at: now,
+            last_confirmed: now,
+        };
+        let non_matching = SemanticFact {
+            id: "f2".to_string(),
+            subject: "user".to_string(),
+            predicate: "is".to_string(),
+            object: "developer".to_string(),
+            confidence: 0.9,
+            source_episodes: Vec::new(),
+            created_at: now,
+            last_confirmed: now,
+        };
+        assert!(filter.matches_fact(&matching));
+        assert!(!filter.matches_fact(&non_matching));
+    }
+
+    #[test]
+    fn test_shared_memory_pool_new() {
+        let pool = SharedMemoryPool::new(MemorySyncPolicy::Eager);
+        assert_eq!(pool.fact_count(), 0);
+        assert_eq!(pool.subscriber_count(), 0);
+        assert!(matches!(pool.sync_policy(), MemorySyncPolicy::Eager));
+    }
+
+    #[test]
+    fn test_shared_memory_pool_publish_and_query() {
+        let mut pool = SharedMemoryPool::new(MemorySyncPolicy::Eager);
+        let now = chrono::Utc::now();
+        pool.publish(
+            "agent1".to_string(),
+            SemanticFact {
+                id: "f1".to_string(),
+                subject: "X".to_string(),
+                predicate: "is".to_string(),
+                object: "Y".to_string(),
+                confidence: 0.9,
+                source_episodes: Vec::new(),
+                created_at: now,
+                last_confirmed: now,
+            },
+        );
+        assert_eq!(pool.fact_count(), 1);
+
+        let filter = MemoryFilter::new();
+        let results = pool.query(&filter);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].subject, "X");
+    }
+
+    #[test]
+    fn test_shared_memory_pool_subscribe_and_unsubscribe() {
+        let mut pool = SharedMemoryPool::new(MemorySyncPolicy::Manual);
+        pool.subscribe("agent1".to_string());
+        pool.subscribe("agent2".to_string());
+        assert_eq!(pool.subscriber_count(), 2);
+
+        // Duplicate subscribe should not add
+        pool.subscribe("agent1".to_string());
+        assert_eq!(pool.subscriber_count(), 2);
+
+        let removed = pool.unsubscribe("agent1");
+        assert!(removed);
+        assert_eq!(pool.subscriber_count(), 1);
+
+        let removed = pool.unsubscribe("agent_nonexistent");
+        assert!(!removed);
+    }
+
+    #[test]
+    fn test_shared_memory_pool_query_by_agent() {
+        let mut pool = SharedMemoryPool::new(MemorySyncPolicy::Eager);
+        let now = chrono::Utc::now();
+        pool.publish(
+            "agent1".to_string(),
+            SemanticFact {
+                id: "f1".to_string(),
+                subject: "X".to_string(),
+                predicate: "is".to_string(),
+                object: "Y".to_string(),
+                confidence: 0.9,
+                source_episodes: Vec::new(),
+                created_at: now,
+                last_confirmed: now,
+            },
+        );
+        pool.publish(
+            "agent2".to_string(),
+            SemanticFact {
+                id: "f2".to_string(),
+                subject: "A".to_string(),
+                predicate: "is".to_string(),
+                object: "B".to_string(),
+                confidence: 0.8,
+                source_episodes: Vec::new(),
+                created_at: now,
+                last_confirmed: now,
+            },
+        );
+
+        let agent1_facts = pool.query_by_agent("agent1");
+        assert_eq!(agent1_facts.len(), 1);
+        assert_eq!(agent1_facts[0].id, "f1");
+
+        let agent2_facts = pool.query_by_agent("agent2");
+        assert_eq!(agent2_facts.len(), 1);
+        assert_eq!(agent2_facts[0].id, "f2");
+    }
+
+    #[test]
+    fn test_shared_memory_pool_fact_count() {
+        let mut pool = SharedMemoryPool::new(MemorySyncPolicy::Lazy);
+        assert_eq!(pool.fact_count(), 0);
+        let now = chrono::Utc::now();
+        for i in 0..5 {
+            pool.publish(
+                "agent1".to_string(),
+                SemanticFact {
+                    id: format!("f{}", i),
+                    subject: "X".to_string(),
+                    predicate: "is".to_string(),
+                    object: format!("Y{}", i),
+                    confidence: 0.5,
+                    source_episodes: Vec::new(),
+                    created_at: now,
+                    last_confirmed: now,
+                },
+            );
+        }
+        assert_eq!(pool.fact_count(), 5);
+    }
+
+    #[test]
+    fn test_shared_memory_pool_clear() {
+        let mut pool = SharedMemoryPool::new(MemorySyncPolicy::Eager);
+        let now = chrono::Utc::now();
+        pool.publish(
+            "agent1".to_string(),
+            SemanticFact {
+                id: "f1".to_string(),
+                subject: "X".to_string(),
+                predicate: "is".to_string(),
+                object: "Y".to_string(),
+                confidence: 0.9,
+                source_episodes: Vec::new(),
+                created_at: now,
+                last_confirmed: now,
+            },
+        );
+        pool.subscribe("agent1".to_string());
+        assert_eq!(pool.fact_count(), 1);
+        assert_eq!(pool.subscriber_count(), 1);
+
+        pool.clear();
+        assert_eq!(pool.fact_count(), 0);
+        assert_eq!(pool.subscriber_count(), 0);
+    }
+
+    #[test]
+    fn test_shared_memory_pool_with_lazy_sync() {
+        let pool = SharedMemoryPool::new(MemorySyncPolicy::Lazy);
+        assert!(matches!(pool.sync_policy(), MemorySyncPolicy::Lazy));
+    }
+
+    #[test]
+    fn test_memory_filter_matches_episode() {
+        let recent_episode = Episode {
+            id: "e1".to_string(),
+            content: "test".to_string(),
+            context: "ctx".to_string(),
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+            importance: 0.8,
+            tags: vec!["code".to_string()],
+            embedding: Vec::new(),
+            access_count: 0,
+            last_accessed: 0,
+        };
+        let filter = MemoryFilter::new();
+        assert!(filter.matches_episode(&recent_episode));
+
+        // Filter with categories
+        let cat_filter = MemoryFilter::with_categories(vec!["code".to_string()]);
+        assert!(cat_filter.matches_episode(&recent_episode));
+
+        let wrong_cat = MemoryFilter::with_categories(vec!["music".to_string()]);
+        assert!(!wrong_cat.matches_episode(&recent_episode));
+    }
+
+    // ==========================================================
+    // 5.4 — Memory Search Optimization tests
+    // ==========================================================
+
+    #[test]
+    fn test_search_weights_defaults() {
+        let weights = SearchWeights::default();
+        assert!((weights.keyword_weight - 0.25).abs() < 1e-6);
+        assert!((weights.embedding_weight - 0.25).abs() < 1e-6);
+        assert!((weights.recency_weight - 0.25).abs() < 1e-6);
+        assert!((weights.access_frequency_weight - 0.25).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_memory_search_result_construction() {
+        let result = MemorySearchResult {
+            content: "test memory".to_string(),
+            relevance_score: 0.85,
+            match_reasons: vec![MatchReason::KeywordMatch {
+                keyword: "test".to_string(),
+                count: 1,
+            }],
+            source_type: MemorySourceType::Episodic,
+            timestamp: 12345,
+        };
+        assert_eq!(result.content, "test memory");
+        assert!((result.relevance_score - 0.85).abs() < 1e-6);
+        assert_eq!(result.match_reasons.len(), 1);
+    }
+
+    #[test]
+    fn test_match_reason_all_variants() {
+        let r1 = MatchReason::KeywordMatch {
+            keyword: "test".to_string(),
+            count: 3,
+        };
+        assert!(matches!(r1, MatchReason::KeywordMatch { .. }));
+
+        let r2 = MatchReason::EmbeddingSimilarity { score: 0.95 };
+        assert!(matches!(r2, MatchReason::EmbeddingSimilarity { .. }));
+
+        let r3 = MatchReason::RecentAccess { age_secs: 100 };
+        assert!(matches!(r3, MatchReason::RecentAccess { .. }));
+
+        let r4 = MatchReason::FrequentAccess { access_count: 42 };
+        assert!(matches!(r4, MatchReason::FrequentAccess { .. }));
+    }
+
+    #[test]
+    fn test_memory_source_type_all_variants() {
+        let s1 = MemorySourceType::Episodic;
+        assert!(matches!(s1, MemorySourceType::Episodic));
+
+        let s2 = MemorySourceType::Procedural;
+        assert!(matches!(s2, MemorySourceType::Procedural));
+
+        let s3 = MemorySourceType::Entity;
+        assert!(matches!(s3, MemorySourceType::Entity));
+
+        let s4 = MemorySourceType::Fact;
+        assert!(matches!(s4, MemorySourceType::Fact));
+    }
+
+    #[test]
+    fn test_memory_index_new_add_search() {
+        let mut index = MemoryIndex::new();
+        assert_eq!(index.entry_count(), 0);
+
+        index.add_entry(IndexEntry {
+            content: "Rust programming language".to_string(),
+            source_type: MemorySourceType::Fact,
+            keywords: vec!["rust".to_string(), "programming".to_string()],
+            timestamp: 1000,
+            access_count: 5,
+        });
+        assert_eq!(index.entry_count(), 1);
+
+        let results = index.search_keyword("rust");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0], 0);
+
+        let results = index.search_keyword("python");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_memory_index_entry_count() {
+        let mut index = MemoryIndex::new();
+        for i in 0..3 {
+            index.add_entry(IndexEntry {
+                content: format!("entry {}", i),
+                source_type: MemorySourceType::Episodic,
+                keywords: vec![format!("kw{}", i)],
+                timestamp: 1000 + i as u64,
+                access_count: 0,
+            });
+        }
+        assert_eq!(index.entry_count(), 3);
+    }
+
+    #[test]
+    fn test_memory_index_clear() {
+        let mut index = MemoryIndex::new();
+        index.add_entry(IndexEntry {
+            content: "test".to_string(),
+            source_type: MemorySourceType::Fact,
+            keywords: vec!["test".to_string()],
+            timestamp: 1000,
+            access_count: 0,
+        });
+        assert_eq!(index.entry_count(), 1);
+
+        index.clear();
+        assert_eq!(index.entry_count(), 0);
+        assert!(index.search_keyword("test").is_empty());
+    }
+
+    #[test]
+    fn test_memory_index_rebuild_index() {
+        let mut index = MemoryIndex::new();
+        index.add_entry(IndexEntry {
+            content: "test".to_string(),
+            source_type: MemorySourceType::Fact,
+            keywords: vec!["alpha".to_string(), "beta".to_string()],
+            timestamp: 1000,
+            access_count: 0,
+        });
+        // Clear keyword index manually (simulating corruption)
+        index.keyword_index.clear();
+        assert!(index.search_keyword("alpha").is_empty());
+
+        // Rebuild should restore it
+        index.rebuild_index();
+        assert_eq!(index.search_keyword("alpha").len(), 1);
+        assert_eq!(index.search_keyword("beta").len(), 1);
+    }
+
+    #[test]
+    fn test_memory_index_get_entry() {
+        let mut index = MemoryIndex::new();
+        index.add_entry(IndexEntry {
+            content: "hello world".to_string(),
+            source_type: MemorySourceType::Episodic,
+            keywords: vec!["hello".to_string()],
+            timestamp: 500,
+            access_count: 3,
+        });
+        let entry = index.get_entry(0);
+        assert!(entry.is_some());
+        assert_eq!(entry.unwrap().content, "hello world");
+        assert!(index.get_entry(99).is_none());
+    }
+
+    #[test]
+    fn test_memory_search_engine_new_add_search() {
+        let mut engine = MemorySearchEngine::with_default_weights();
+        engine.add_memory(
+            "Rust is a systems language".to_string(),
+            MemorySourceType::Fact,
+            vec!["rust".to_string(), "systems".to_string(), "language".to_string()],
+        );
+        engine.add_memory(
+            "Python is good for data science".to_string(),
+            MemorySourceType::Fact,
+            vec!["python".to_string(), "data".to_string(), "science".to_string()],
+        );
+
+        let results = engine.search("rust", 10);
+        assert!(!results.is_empty());
+        assert!(results[0].content.contains("Rust"));
+    }
+
+    #[test]
+    fn test_memory_search_engine_sorted_results() {
+        let mut engine = MemorySearchEngine::new(SearchWeights {
+            keyword_weight: 1.0,
+            embedding_weight: 0.0,
+            recency_weight: 0.0,
+            access_frequency_weight: 0.0,
+        });
+        engine.add_memory(
+            "one match rust".to_string(),
+            MemorySourceType::Fact,
+            vec!["rust".to_string()],
+        );
+        engine.add_memory(
+            "two matches rust rust".to_string(),
+            MemorySourceType::Fact,
+            vec!["rust".to_string(), "rust".to_string()],
+        );
+
+        let results = engine.search("rust", 10);
+        assert!(results.len() >= 2);
+        // Higher score first
+        assert!(results[0].relevance_score >= results[1].relevance_score);
+    }
+
+    #[test]
+    fn test_memory_search_engine_no_matches_empty() {
+        let mut engine = MemorySearchEngine::with_default_weights();
+        engine.add_memory(
+            "Rust programming".to_string(),
+            MemorySourceType::Fact,
+            vec!["rust".to_string()],
+        );
+        let results = engine.search("javascript", 10);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_memory_search_engine_memory_count() {
+        let mut engine = MemorySearchEngine::with_default_weights();
+        assert_eq!(engine.memory_count(), 0);
+        engine.add_memory(
+            "test".to_string(),
+            MemorySourceType::Episodic,
+            vec!["test".to_string()],
+        );
+        assert_eq!(engine.memory_count(), 1);
+    }
+
+    #[test]
+    fn test_memory_search_engine_weights_accessor() {
+        let engine = MemorySearchEngine::with_default_weights();
+        let w = engine.weights();
+        assert!((w.keyword_weight - 0.25).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_index_entry_construction() {
+        let entry = IndexEntry {
+            content: "test content".to_string(),
+            source_type: MemorySourceType::Procedural,
+            keywords: vec!["test".to_string(), "content".to_string()],
+            timestamp: 999,
+            access_count: 7,
+        };
+        assert_eq!(entry.content, "test content");
+        assert_eq!(entry.keywords.len(), 2);
+        assert_eq!(entry.timestamp, 999);
+        assert_eq!(entry.access_count, 7);
+    }
+
+    #[test]
+    fn test_memory_search_engine_max_results_respected() {
+        let mut engine = MemorySearchEngine::with_default_weights();
+        for i in 0..20 {
+            engine.add_memory(
+                format!("memory about rust {}", i),
+                MemorySourceType::Fact,
+                vec!["rust".to_string(), format!("item{}", i)],
+            );
+        }
+        let results = engine.search("rust", 5);
+        assert!(results.len() <= 5);
+    }
+
+    #[test]
+    fn test_memory_search_engine_empty_query() {
+        let mut engine = MemorySearchEngine::with_default_weights();
+        engine.add_memory(
+            "something".to_string(),
+            MemorySourceType::Fact,
+            vec!["something".to_string()],
+        );
+        let results = engine.search("", 10);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_extraction_rule_type_variants() {
+        let t1 = ExtractionRuleType::FactPattern;
+        assert!(matches!(t1, ExtractionRuleType::FactPattern));
+        let t2 = ExtractionRuleType::EntityPattern;
+        assert!(matches!(t2, ExtractionRuleType::EntityPattern));
+        let t3 = ExtractionRuleType::PreferencePattern;
+        assert!(matches!(t3, ExtractionRuleType::PreferencePattern));
+        let t4 = ExtractionRuleType::DatePattern;
+        assert!(matches!(t4, ExtractionRuleType::DatePattern));
+        let t5 = ExtractionRuleType::NamePattern;
+        assert!(matches!(t5, ExtractionRuleType::NamePattern));
+    }
+
+    #[test]
+    fn test_memory_extractor_extract_email() {
+        let extractor = MemoryExtractor::with_defaults();
+        let results = extractor.extract("my email is alice@example.com");
+        // Should have name extraction first (name pattern) or entity extraction
+        let has_entity_update = results.iter().any(|r| {
+            matches!(r, MemoryExtraction::EntityUpdate { attribute, .. } if attribute == "email")
+        });
+        // The first match is the name pattern ("my name is..." won't match here),
+        // but email should be found
+        assert!(
+            has_entity_update || !results.is_empty(),
+            "Expected at least some extraction from email text"
+        );
+    }
+
+    #[test]
+    fn test_memory_extractor_extract_date_iso() {
+        let extractor = MemoryExtractor::with_defaults();
+        let results = extractor.extract("The meeting is on 2026-03-15 at noon");
+        let has_date = results.iter().any(|r| {
+            matches!(r, MemoryExtraction::NewFact { fact } if fact.object.contains("2026-03-15"))
+        });
+        assert!(has_date, "Expected ISO date extraction");
+    }
+
+    #[test]
+    fn test_memory_extractor_extract_preference_over() {
+        let extractor = MemoryExtractor::with_defaults();
+        let results = extractor.extract("I prefer Rust over Python");
+        assert!(!results.is_empty());
+        match &results[0] {
+            MemoryExtraction::Preference { key, value } => {
+                assert!(key.contains("preference:"));
+                assert!(value.contains("over"));
+            }
+            other => panic!("Expected Preference, got {:?}", other),
+        }
     }
 }

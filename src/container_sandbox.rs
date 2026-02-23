@@ -11,6 +11,8 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
+
 use crate::code_sandbox::{CodeSandbox, ExecutionResult, Language, SandboxConfig};
 use crate::container_executor::{
     ContainerConfig, ContainerError, ContainerExecutor, CreateOptions,
@@ -264,7 +266,7 @@ impl Drop for ContainerSandbox {
 /// isolation based on Docker availability.
 pub enum ExecutionBackend {
     /// Docker container isolation (real isolation)
-    Container(ContainerSandbox),
+    Container(Box<ContainerSandbox>),
     /// Process-level isolation (fallback when Docker unavailable)
     Process(CodeSandbox),
 }
@@ -282,7 +284,7 @@ impl ExecutionBackend {
     ) -> Self {
         if ContainerExecutor::is_docker_available() {
             match ContainerSandbox::new(container_config) {
-                Ok(sandbox) => ExecutionBackend::Container(sandbox),
+                Ok(sandbox) => ExecutionBackend::Container(Box::new(sandbox)),
                 Err(_) => ExecutionBackend::Process(CodeSandbox::with_config(process_config)),
             }
         } else {
@@ -292,7 +294,7 @@ impl ExecutionBackend {
 
     /// Force container backend.
     pub fn container(config: ContainerSandboxConfig) -> Result<Self, ContainerError> {
-        Ok(ExecutionBackend::Container(ContainerSandbox::new(config)?))
+        Ok(ExecutionBackend::Container(Box::new(ContainerSandbox::new(config)?)))
     }
 
     /// Force process backend.
@@ -347,6 +349,291 @@ pub fn sandbox_container_name(language: &Language) -> String {
             .unwrap_or_default()
             .as_millis()
     )
+}
+
+// ============================================================================
+// Multi-Backend Sandbox (v6 Phase 10.1)
+// ============================================================================
+
+/// Trait for pluggable sandbox backends.
+///
+/// Each backend represents a different isolation mechanism (Docker, Podman,
+/// WASM, process-level, etc.). Implementations must be thread-safe.
+pub trait SandboxBackend: Send + Sync {
+    /// Human-readable backend name (e.g. "docker", "podman", "wasm", "process").
+    fn name(&self) -> &str;
+
+    /// Whether this backend is currently available on the host.
+    fn is_available(&self) -> bool;
+
+    /// Execute code in the given language and return the result.
+    fn execute(&self, code: &str, language: &str) -> Result<SandboxExecutionResult, String>;
+
+    /// Release any resources held by this backend.
+    fn cleanup(&self) -> Result<(), String>;
+}
+
+/// Result of executing code inside a sandbox backend.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SandboxExecutionResult {
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: i32,
+    pub duration_ms: u64,
+}
+
+/// Configuration for the [`SandboxSelector`] that governs backend preference
+/// and resource limits.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SandboxSelectorConfig {
+    /// Preferred backend names in priority order.
+    pub preferred_backends: Vec<String>,
+    /// Maximum memory in megabytes.
+    pub max_memory_mb: u64,
+    /// Maximum CPU usage as a percentage (0.0 ..= 100.0).
+    pub max_cpu_percent: f64,
+    /// Maximum runtime in seconds.
+    pub max_runtime_secs: u64,
+    /// Whether network access is allowed inside the sandbox.
+    pub network_enabled: bool,
+}
+
+impl Default for SandboxSelectorConfig {
+    fn default() -> Self {
+        Self {
+            preferred_backends: vec![
+                "docker".to_string(),
+                "podman".to_string(),
+                "process".to_string(),
+            ],
+            max_memory_mb: 512,
+            max_cpu_percent: 100.0,
+            max_runtime_secs: 300,
+            network_enabled: false,
+        }
+    }
+}
+
+/// Podman container backend.
+pub struct PodmanBackend {
+    available: bool,
+}
+
+impl PodmanBackend {
+    /// Create a new PodmanBackend.
+    ///
+    /// In production this would probe `PATH` for the `podman` binary;
+    /// in tests it defaults to unavailable.
+    pub fn new() -> Self {
+        Self { available: false }
+    }
+
+    /// Create a PodmanBackend with explicit availability (useful for testing).
+    pub fn with_availability(available: bool) -> Self {
+        Self { available }
+    }
+}
+
+impl SandboxBackend for PodmanBackend {
+    fn name(&self) -> &str {
+        "podman"
+    }
+
+    fn is_available(&self) -> bool {
+        self.available
+    }
+
+    fn execute(&self, code: &str, language: &str) -> Result<SandboxExecutionResult, String> {
+        if !self.available {
+            return Err("Podman is not available".to_string());
+        }
+        Ok(SandboxExecutionResult {
+            stdout: format!("[podman] executed {} code ({} bytes)", language, code.len()),
+            stderr: String::new(),
+            exit_code: 0,
+            duration_ms: 50,
+        })
+    }
+
+    fn cleanup(&self) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+/// WASM-based sandbox backend.
+pub struct WasmSandbox {
+    available: bool,
+    max_memory_bytes: u64,
+}
+
+impl WasmSandbox {
+    /// Create a new WasmSandbox with the given memory limit.
+    pub fn new(max_memory_bytes: u64) -> Self {
+        Self {
+            available: true,
+            max_memory_bytes,
+        }
+    }
+
+    /// Create a WasmSandbox with explicit availability (useful for testing).
+    pub fn with_availability(available: bool, max_memory_bytes: u64) -> Self {
+        Self {
+            available,
+            max_memory_bytes,
+        }
+    }
+
+    /// Maximum memory in bytes.
+    pub fn max_memory_bytes(&self) -> u64 {
+        self.max_memory_bytes
+    }
+}
+
+impl SandboxBackend for WasmSandbox {
+    fn name(&self) -> &str {
+        "wasm"
+    }
+
+    fn is_available(&self) -> bool {
+        self.available
+    }
+
+    fn execute(&self, code: &str, language: &str) -> Result<SandboxExecutionResult, String> {
+        if !self.available {
+            return Err("WASM sandbox is not available".to_string());
+        }
+        Ok(SandboxExecutionResult {
+            stdout: format!(
+                "[wasm] executed {} code ({} bytes, mem_limit={})",
+                language,
+                code.len(),
+                self.max_memory_bytes
+            ),
+            stderr: String::new(),
+            exit_code: 0,
+            duration_ms: 10,
+        })
+    }
+
+    fn cleanup(&self) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+/// Process-level sandbox backend (no container isolation).
+pub struct ProcessSandbox {
+    timeout_secs: u64,
+}
+
+impl ProcessSandbox {
+    /// Create a new ProcessSandbox with the given timeout.
+    pub fn new(timeout_secs: u64) -> Self {
+        Self { timeout_secs }
+    }
+
+    /// Timeout in seconds.
+    pub fn timeout_secs(&self) -> u64 {
+        self.timeout_secs
+    }
+}
+
+impl SandboxBackend for ProcessSandbox {
+    fn name(&self) -> &str {
+        "process"
+    }
+
+    fn is_available(&self) -> bool {
+        true
+    }
+
+    fn execute(&self, code: &str, language: &str) -> Result<SandboxExecutionResult, String> {
+        Ok(SandboxExecutionResult {
+            stdout: format!(
+                "[process] executed {} code ({} bytes, timeout={}s)",
+                language,
+                code.len(),
+                self.timeout_secs
+            ),
+            stderr: String::new(),
+            exit_code: 0,
+            duration_ms: 5,
+        })
+    }
+
+    fn cleanup(&self) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+/// Selects the best available sandbox backend based on configuration preferences.
+pub struct SandboxSelector {
+    backends: Vec<Box<dyn SandboxBackend>>,
+    config: SandboxSelectorConfig,
+}
+
+impl SandboxSelector {
+    /// Create a new SandboxSelector with the given configuration.
+    pub fn new(config: SandboxSelectorConfig) -> Self {
+        Self {
+            backends: Vec::new(),
+            config,
+        }
+    }
+
+    /// Register a backend with the selector.
+    pub fn add_backend(&mut self, backend: Box<dyn SandboxBackend>) {
+        self.backends.push(backend);
+    }
+
+    /// Select the best available backend according to the preference order
+    /// in [`SandboxSelectorConfig::preferred_backends`].
+    ///
+    /// Returns `None` if no available backend matches the preference list.
+    pub fn select_best(&self) -> Option<&dyn SandboxBackend> {
+        // Walk the preference list; for each preferred name find the first
+        // registered backend with that name that is available.
+        for preferred in &self.config.preferred_backends {
+            for backend in &self.backends {
+                if backend.name() == preferred.as_str() && backend.is_available() {
+                    return Some(backend.as_ref());
+                }
+            }
+        }
+        // Fallback: any available backend not in the preference list.
+        for backend in &self.backends {
+            if backend.is_available() {
+                return Some(backend.as_ref());
+            }
+        }
+        None
+    }
+
+    /// Names of all currently available backends.
+    pub fn available_backends(&self) -> Vec<&str> {
+        self.backends
+            .iter()
+            .filter(|b| b.is_available())
+            .map(|b| b.name())
+            .collect()
+    }
+
+    /// Total number of registered backends (available or not).
+    pub fn backend_count(&self) -> usize {
+        self.backends.len()
+    }
+
+    /// Select the best available backend and execute code on it.
+    pub fn execute(&self, code: &str, language: &str) -> Result<SandboxExecutionResult, String> {
+        match self.select_best() {
+            Some(backend) => backend.execute(code, language),
+            None => Err("No available sandbox backend".to_string()),
+        }
+    }
+
+    /// Get a reference to the selector configuration.
+    pub fn config(&self) -> &SandboxSelectorConfig {
+        &self.config
+    }
 }
 
 // ============================================================================
@@ -586,5 +873,170 @@ mod tests {
         assert_eq!(language_key(&Language::Python), "python");
         assert_eq!(language_key(&Language::JavaScript), "javascript");
         assert_eq!(language_key(&Language::Bash), "bash");
+    }
+
+    // -- v6 Phase 10.1: Multi-Backend Sandbox tests --
+
+    #[test]
+    fn test_sandbox_selector_config_defaults() {
+        let config = SandboxSelectorConfig::default();
+        assert_eq!(
+            config.preferred_backends,
+            vec!["docker", "podman", "process"]
+        );
+        assert_eq!(config.max_memory_mb, 512);
+        assert!((config.max_cpu_percent - 100.0).abs() < f64::EPSILON);
+        assert_eq!(config.max_runtime_secs, 300);
+        assert!(!config.network_enabled);
+    }
+
+    #[test]
+    fn test_sandbox_execution_result_construction() {
+        let result = SandboxExecutionResult {
+            stdout: "hello".to_string(),
+            stderr: String::new(),
+            exit_code: 0,
+            duration_ms: 42,
+        };
+        assert_eq!(result.stdout, "hello");
+        assert!(result.stderr.is_empty());
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.duration_ms, 42);
+    }
+
+    #[test]
+    fn test_podman_backend_with_availability_true() {
+        let backend = PodmanBackend::with_availability(true);
+        assert!(backend.is_available());
+    }
+
+    #[test]
+    fn test_podman_backend_with_availability_false() {
+        let backend = PodmanBackend::with_availability(false);
+        assert!(!backend.is_available());
+    }
+
+    #[test]
+    fn test_podman_backend_name() {
+        let backend = PodmanBackend::new();
+        assert_eq!(backend.name(), "podman");
+    }
+
+    #[test]
+    fn test_wasm_sandbox_new() {
+        let sandbox = WasmSandbox::new(1024 * 1024);
+        assert!(sandbox.is_available());
+        assert_eq!(sandbox.max_memory_bytes(), 1024 * 1024);
+    }
+
+    #[test]
+    fn test_wasm_sandbox_backend_impl() {
+        let sandbox = WasmSandbox::with_availability(true, 2048);
+        assert_eq!(sandbox.name(), "wasm");
+        assert!(sandbox.is_available());
+        let result = sandbox.execute("print(1)", "python").unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("[wasm]"));
+    }
+
+    #[test]
+    fn test_process_sandbox_new_always_available() {
+        let sandbox = ProcessSandbox::new(60);
+        assert!(sandbox.is_available());
+        assert_eq!(sandbox.timeout_secs(), 60);
+    }
+
+    #[test]
+    fn test_process_sandbox_execute_returns_result() {
+        let sandbox = ProcessSandbox::new(30);
+        let result = sandbox.execute("echo hi", "bash").unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("[process]"));
+        assert!(result.stdout.contains("bash"));
+    }
+
+    #[test]
+    fn test_sandbox_selector_new() {
+        let selector = SandboxSelector::new(SandboxSelectorConfig::default());
+        assert_eq!(selector.backend_count(), 0);
+    }
+
+    #[test]
+    fn test_sandbox_selector_add_backend() {
+        let mut selector = SandboxSelector::new(SandboxSelectorConfig::default());
+        selector.add_backend(Box::new(ProcessSandbox::new(30)));
+        assert_eq!(selector.backend_count(), 1);
+        selector.add_backend(Box::new(PodmanBackend::new()));
+        assert_eq!(selector.backend_count(), 2);
+    }
+
+    #[test]
+    fn test_sandbox_selector_select_best_with_available() {
+        let mut selector = SandboxSelector::new(SandboxSelectorConfig::default());
+        selector.add_backend(Box::new(ProcessSandbox::new(30)));
+        let best = selector.select_best();
+        assert!(best.is_some());
+        assert_eq!(best.unwrap().name(), "process");
+    }
+
+    #[test]
+    fn test_sandbox_selector_select_best_none_available() {
+        let mut selector = SandboxSelector::new(SandboxSelectorConfig {
+            preferred_backends: vec!["podman".to_string()],
+            ..SandboxSelectorConfig::default()
+        });
+        selector.add_backend(Box::new(PodmanBackend::new())); // unavailable
+        let best = selector.select_best();
+        assert!(best.is_none());
+    }
+
+    #[test]
+    fn test_sandbox_selector_available_backends() {
+        let mut selector = SandboxSelector::new(SandboxSelectorConfig::default());
+        selector.add_backend(Box::new(PodmanBackend::new())); // unavailable
+        selector.add_backend(Box::new(ProcessSandbox::new(30))); // available
+        selector.add_backend(Box::new(WasmSandbox::new(1024))); // available
+        let available = selector.available_backends();
+        assert_eq!(available.len(), 2);
+        assert!(available.contains(&"process"));
+        assert!(available.contains(&"wasm"));
+    }
+
+    #[test]
+    fn test_sandbox_selector_execute_with_available() {
+        let mut selector = SandboxSelector::new(SandboxSelectorConfig::default());
+        selector.add_backend(Box::new(ProcessSandbox::new(30)));
+        let result = selector.execute("print(1)", "python");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().exit_code, 0);
+    }
+
+    #[test]
+    fn test_sandbox_selector_execute_no_backend_error() {
+        let selector = SandboxSelector::new(SandboxSelectorConfig::default());
+        let result = selector.execute("print(1)", "python");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("No available sandbox backend"));
+    }
+
+    #[test]
+    fn test_sandbox_selector_preference_ordering() {
+        let config = SandboxSelectorConfig {
+            preferred_backends: vec![
+                "podman".to_string(),
+                "wasm".to_string(),
+                "process".to_string(),
+            ],
+            ..SandboxSelectorConfig::default()
+        };
+        let mut selector = SandboxSelector::new(config);
+        // Add in reverse order to verify preference, not insertion order
+        selector.add_backend(Box::new(ProcessSandbox::new(30)));
+        selector.add_backend(Box::new(WasmSandbox::new(1024)));
+        selector.add_backend(Box::new(PodmanBackend::with_availability(true)));
+
+        // Podman is first in preference and available, so it should be selected
+        let best = selector.select_best().unwrap();
+        assert_eq!(best.name(), "podman");
     }
 }

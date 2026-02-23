@@ -1213,6 +1213,295 @@ mod inner {
     }
 
     // ========================================================================
+    // 9.3 — Video Frame Analysis
+    // ========================================================================
+
+    /// Strategy for extracting frames from a video for analysis.
+    #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+    pub enum FrameExtractionStrategy {
+        /// Extract a frame every `interval_ms` milliseconds.
+        FixedInterval { interval_ms: u64 },
+        /// Detect scene changes above a similarity threshold.
+        /// In practice this is simulated as uniform spacing.
+        SceneChange { threshold: f64 },
+        /// Extract only keyframes (I-frames) at quarter-points of the video.
+        KeyframeOnly,
+        /// Extract a fixed number of evenly-spaced frames.
+        Uniform { count: usize },
+    }
+
+    /// Output format for a video analysis result.
+    #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+    pub enum AnalysisOutputFormat {
+        /// A single-paragraph summary of the entire video.
+        Summary,
+        /// Per-frame detailed descriptions with detected objects.
+        Detailed,
+        /// A chronological timeline of segments.
+        Timeline,
+        /// Only the most important moments (high-confidence frames).
+        KeyMoments,
+    }
+
+    /// Configuration for video frame analysis.
+    #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+    pub struct VideoAnalysisConfig {
+        /// How frames are selected for analysis.
+        pub extraction_strategy: FrameExtractionStrategy,
+        /// Maximum number of frames to analyse regardless of strategy.
+        pub max_frames: usize,
+        /// Prompt sent to the vision model for each frame.
+        pub analysis_prompt: String,
+        /// Whether to include timestamps in frame descriptions.
+        pub include_timestamps: bool,
+        /// Desired output format.
+        pub output_format: AnalysisOutputFormat,
+    }
+
+    impl Default for VideoAnalysisConfig {
+        fn default() -> Self {
+            Self {
+                extraction_strategy: FrameExtractionStrategy::Uniform { count: 10 },
+                max_frames: 20,
+                analysis_prompt: "Describe this frame".to_string(),
+                include_timestamps: true,
+                output_format: AnalysisOutputFormat::Summary,
+            }
+        }
+    }
+
+    /// Description of a single analysed frame.
+    #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+    pub struct FrameDescription {
+        /// Zero-based index of this frame in the extraction sequence.
+        pub frame_index: usize,
+        /// Timestamp in milliseconds where this frame was extracted.
+        pub timestamp_ms: u64,
+        /// Textual description of the frame content.
+        pub description: String,
+        /// Objects detected in the frame.
+        pub objects_detected: Vec<String>,
+        /// Confidence score in the range [0.0, 1.0].
+        pub confidence: f64,
+    }
+
+    /// A notable moment identified during video analysis.
+    #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+    pub struct KeyMoment {
+        /// Timestamp in milliseconds.
+        pub timestamp_ms: u64,
+        /// Description of what makes this moment notable.
+        pub description: String,
+        /// Importance score in the range [0.0, 1.0].
+        pub importance: f64,
+    }
+
+    /// A contiguous segment of the video timeline.
+    #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+    pub struct TimelineEntry {
+        /// Start of the segment in milliseconds.
+        pub start_ms: u64,
+        /// End of the segment in milliseconds.
+        pub end_ms: u64,
+        /// Description of what happens in this segment.
+        pub description: String,
+    }
+
+    /// Complete result of analysing a video's frames.
+    #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+    pub struct VideoAnalysisResult {
+        /// Total duration of the source video in milliseconds.
+        pub video_duration_ms: u64,
+        /// Number of frames that were actually analysed.
+        pub frames_analyzed: usize,
+        /// Per-frame descriptions.
+        pub frame_descriptions: Vec<FrameDescription>,
+        /// Overall summary synthesised from all frame descriptions.
+        pub summary: String,
+        /// Key moments (frames whose confidence exceeds 0.7).
+        pub key_moments: Vec<KeyMoment>,
+        /// Chronological timeline of video segments.
+        pub timeline: Vec<TimelineEntry>,
+    }
+
+    /// Analyses video frames according to a [`VideoAnalysisConfig`].
+    pub struct VideoAnalyzer {
+        config: VideoAnalysisConfig,
+    }
+
+    impl VideoAnalyzer {
+        /// Create a new analyser with the given configuration.
+        pub fn new(config: VideoAnalysisConfig) -> Self {
+            Self { config }
+        }
+
+        /// Create a new analyser with default configuration.
+        pub fn with_defaults() -> Self {
+            Self::new(VideoAnalysisConfig::default())
+        }
+
+        /// Access the current configuration.
+        pub fn config(&self) -> &VideoAnalysisConfig {
+            &self.config
+        }
+
+        /// Compute the timestamps (in milliseconds) at which frames should be
+        /// extracted, based on the configured extraction strategy and
+        /// `max_frames` cap.
+        pub fn compute_frame_timestamps(&self, video_duration_ms: u64) -> Vec<u64> {
+            if video_duration_ms == 0 {
+                return vec![0];
+            }
+
+            let raw_timestamps = match &self.config.extraction_strategy {
+                FrameExtractionStrategy::FixedInterval { interval_ms } => {
+                    let interval = if *interval_ms == 0 { 1 } else { *interval_ms };
+                    let mut ts = Vec::new();
+                    let mut t = 0u64;
+                    while t <= video_duration_ms {
+                        ts.push(t);
+                        t = t.saturating_add(interval);
+                    }
+                    ts
+                }
+                FrameExtractionStrategy::SceneChange { .. } => {
+                    // Scene-change detection is simulated as uniform spacing
+                    // because actual pixel-level analysis requires a video
+                    // decoder.  The threshold is acknowledged but uniform
+                    // distribution provides a reasonable approximation.
+                    let count = self.config.max_frames.max(1);
+                    Self::uniform_timestamps(video_duration_ms, count)
+                }
+                FrameExtractionStrategy::KeyframeOnly => {
+                    // Keyframes at 0, 1/4, 1/2, 3/4 and end of video.
+                    let mut ts = vec![
+                        0,
+                        video_duration_ms / 4,
+                        video_duration_ms / 2,
+                        (video_duration_ms * 3) / 4,
+                        video_duration_ms,
+                    ];
+                    ts.dedup();
+                    ts
+                }
+                FrameExtractionStrategy::Uniform { count } => {
+                    let count = (*count).max(1);
+                    Self::uniform_timestamps(video_duration_ms, count)
+                }
+            };
+
+            // Enforce the max_frames cap.
+            let max = self.config.max_frames.max(1);
+            if raw_timestamps.len() > max {
+                raw_timestamps.into_iter().take(max).collect()
+            } else {
+                raw_timestamps
+            }
+        }
+
+        /// Build a full [`VideoAnalysisResult`] from a set of per-frame
+        /// descriptions and the video duration.
+        ///
+        /// - **summary**: concatenation of all frame descriptions.
+        /// - **key_moments**: frames whose `confidence > 0.7`.
+        /// - **timeline**: consecutive frames are grouped when their
+        ///   descriptions match; otherwise each frame gets its own segment
+        ///   extending to the next frame's timestamp (or to the video end).
+        pub fn analyze_frames(
+            &self,
+            frame_descriptions: Vec<FrameDescription>,
+            video_duration_ms: u64,
+        ) -> VideoAnalysisResult {
+            // --- summary ---
+            let summary = if frame_descriptions.is_empty() {
+                "No frames analysed.".to_string()
+            } else {
+                let parts: Vec<&str> = frame_descriptions
+                    .iter()
+                    .map(|fd| fd.description.as_str())
+                    .collect();
+                parts.join(". ")
+            };
+
+            // --- key moments (confidence > 0.7) ---
+            let key_moments: Vec<KeyMoment> = frame_descriptions
+                .iter()
+                .filter(|fd| fd.confidence > 0.7)
+                .map(|fd| KeyMoment {
+                    timestamp_ms: fd.timestamp_ms,
+                    description: fd.description.clone(),
+                    importance: fd.confidence,
+                })
+                .collect();
+
+            // --- timeline (group consecutive frames with same description) ---
+            let timeline = Self::build_timeline(&frame_descriptions, video_duration_ms);
+
+            let frames_analyzed = frame_descriptions.len();
+
+            VideoAnalysisResult {
+                video_duration_ms,
+                frames_analyzed,
+                frame_descriptions,
+                summary,
+                key_moments,
+                timeline,
+            }
+        }
+
+        // -- private helpers --------------------------------------------------
+
+        /// Generate `count` evenly-spaced timestamps spanning [0, duration].
+        fn uniform_timestamps(video_duration_ms: u64, count: usize) -> Vec<u64> {
+            if count <= 1 {
+                return vec![0];
+            }
+            let step = video_duration_ms as f64 / (count - 1) as f64;
+            (0..count)
+                .map(|i| (step * i as f64).round() as u64)
+                .collect()
+        }
+
+        /// Group consecutive frames with the same description into timeline
+        /// segments.  Each segment starts at the frame's timestamp and ends
+        /// at the next frame's timestamp (or video end for the last one).
+        fn build_timeline(
+            frames: &[FrameDescription],
+            video_duration_ms: u64,
+        ) -> Vec<TimelineEntry> {
+            if frames.is_empty() {
+                return Vec::new();
+            }
+
+            let mut entries: Vec<TimelineEntry> = Vec::new();
+
+            for (i, fd) in frames.iter().enumerate() {
+                let end_ms = if i + 1 < frames.len() {
+                    frames[i + 1].timestamp_ms
+                } else {
+                    video_duration_ms
+                };
+
+                // Merge with previous entry if descriptions match.
+                if let Some(last) = entries.last_mut() {
+                    if last.description == fd.description {
+                        last.end_ms = end_ms;
+                        continue;
+                    }
+                }
+
+                entries.push(TimelineEntry {
+                    start_ms: fd.timestamp_ms,
+                    end_ms,
+                    description: fd.description.clone(),
+                });
+            }
+
+            entries
+        }
+    }
+
+    // ========================================================================
     // Tests
     // ========================================================================
 
@@ -2044,6 +2333,230 @@ mod inner {
             let router = VideoProviderRouter::new();
             let debug = format!("{:?}", router);
             assert!(debug.contains("VideoProviderRouter"));
+        }
+
+        // ====================================================================
+        // 9.3 Video Frame Analysis Tests
+        // ====================================================================
+
+        #[test]
+        fn test_video_analysis_config_defaults() {
+            let config = VideoAnalysisConfig::default();
+            assert_eq!(config.max_frames, 20);
+            assert_eq!(config.analysis_prompt, "Describe this frame");
+            assert!(config.include_timestamps);
+            assert_eq!(config.output_format, AnalysisOutputFormat::Summary);
+            match &config.extraction_strategy {
+                FrameExtractionStrategy::Uniform { count } => assert_eq!(*count, 10),
+                other => panic!("expected Uniform(10), got {:?}", other),
+            }
+        }
+
+        #[test]
+        fn test_frame_extraction_strategy_all_variants() {
+            // Verify all variants can be constructed and debug-printed.
+            let fixed = FrameExtractionStrategy::FixedInterval { interval_ms: 500 };
+            let scene = FrameExtractionStrategy::SceneChange { threshold: 0.3 };
+            let keyframe = FrameExtractionStrategy::KeyframeOnly;
+            let uniform = FrameExtractionStrategy::Uniform { count: 5 };
+
+            let dbg_fixed = format!("{:?}", fixed);
+            assert!(dbg_fixed.contains("FixedInterval"));
+            assert!(dbg_fixed.contains("500"));
+
+            let dbg_scene = format!("{:?}", scene);
+            assert!(dbg_scene.contains("SceneChange"));
+            assert!(dbg_scene.contains("0.3"));
+
+            let dbg_kf = format!("{:?}", keyframe);
+            assert!(dbg_kf.contains("KeyframeOnly"));
+
+            let dbg_uni = format!("{:?}", uniform);
+            assert!(dbg_uni.contains("Uniform"));
+            assert!(dbg_uni.contains("5"));
+        }
+
+        #[test]
+        fn test_analysis_output_format_all_variants() {
+            assert_eq!(AnalysisOutputFormat::Summary, AnalysisOutputFormat::Summary);
+            assert_eq!(
+                AnalysisOutputFormat::Detailed,
+                AnalysisOutputFormat::Detailed
+            );
+            assert_eq!(
+                AnalysisOutputFormat::Timeline,
+                AnalysisOutputFormat::Timeline
+            );
+            assert_eq!(
+                AnalysisOutputFormat::KeyMoments,
+                AnalysisOutputFormat::KeyMoments
+            );
+            // All four are distinct from each other.
+            assert_ne!(AnalysisOutputFormat::Summary, AnalysisOutputFormat::Detailed);
+            assert_ne!(
+                AnalysisOutputFormat::Timeline,
+                AnalysisOutputFormat::KeyMoments
+            );
+        }
+
+        #[test]
+        fn test_video_analyzer_compute_timestamps_uniform() {
+            let config = VideoAnalysisConfig {
+                extraction_strategy: FrameExtractionStrategy::Uniform { count: 5 },
+                max_frames: 20,
+                ..Default::default()
+            };
+            let analyzer = VideoAnalyzer::new(config);
+            let ts = analyzer.compute_frame_timestamps(10000);
+            assert_eq!(ts.len(), 5);
+            assert_eq!(ts[0], 0);
+            assert_eq!(*ts.last().unwrap(), 10000);
+            // Should be evenly spaced: 0, 2500, 5000, 7500, 10000
+            assert_eq!(ts[1], 2500);
+            assert_eq!(ts[2], 5000);
+            assert_eq!(ts[3], 7500);
+        }
+
+        #[test]
+        fn test_video_analyzer_compute_timestamps_fixed_interval() {
+            let config = VideoAnalysisConfig {
+                extraction_strategy: FrameExtractionStrategy::FixedInterval {
+                    interval_ms: 3000,
+                },
+                max_frames: 20,
+                ..Default::default()
+            };
+            let analyzer = VideoAnalyzer::new(config);
+            let ts = analyzer.compute_frame_timestamps(10000);
+            // 0, 3000, 6000, 9000 (next would be 12000 > 10000)
+            assert_eq!(ts, vec![0, 3000, 6000, 9000]);
+        }
+
+        #[test]
+        fn test_video_analyzer_compute_timestamps_keyframe_only() {
+            let config = VideoAnalysisConfig {
+                extraction_strategy: FrameExtractionStrategy::KeyframeOnly,
+                max_frames: 20,
+                ..Default::default()
+            };
+            let analyzer = VideoAnalyzer::new(config);
+            let ts = analyzer.compute_frame_timestamps(20000);
+            // 0, 5000, 10000, 15000, 20000
+            assert_eq!(ts, vec![0, 5000, 10000, 15000, 20000]);
+        }
+
+        #[test]
+        fn test_video_analyzer_analyze_frames() {
+            let analyzer = VideoAnalyzer::with_defaults();
+            let frames = vec![
+                FrameDescription {
+                    frame_index: 0,
+                    timestamp_ms: 0,
+                    description: "A park at dawn".to_string(),
+                    objects_detected: vec!["tree".to_string(), "bench".to_string()],
+                    confidence: 0.9,
+                },
+                FrameDescription {
+                    frame_index: 1,
+                    timestamp_ms: 5000,
+                    description: "A dog running".to_string(),
+                    objects_detected: vec!["dog".to_string()],
+                    confidence: 0.85,
+                },
+                FrameDescription {
+                    frame_index: 2,
+                    timestamp_ms: 10000,
+                    description: "Sunset over lake".to_string(),
+                    objects_detected: vec!["lake".to_string(), "sun".to_string()],
+                    confidence: 0.5,
+                },
+            ];
+
+            let result = analyzer.analyze_frames(frames, 15000);
+
+            assert_eq!(result.video_duration_ms, 15000);
+            assert_eq!(result.frames_analyzed, 3);
+            assert_eq!(result.frame_descriptions.len(), 3);
+
+            // Summary should contain all descriptions
+            assert!(result.summary.contains("A park at dawn"));
+            assert!(result.summary.contains("A dog running"));
+            assert!(result.summary.contains("Sunset over lake"));
+
+            // Key moments: only frames with confidence > 0.7
+            assert_eq!(result.key_moments.len(), 2);
+            assert_eq!(result.key_moments[0].timestamp_ms, 0);
+            assert_eq!(result.key_moments[1].timestamp_ms, 5000);
+
+            // Timeline: 3 distinct descriptions -> 3 segments
+            assert_eq!(result.timeline.len(), 3);
+            assert_eq!(result.timeline[0].start_ms, 0);
+            assert_eq!(result.timeline[0].end_ms, 5000);
+            assert_eq!(result.timeline[1].start_ms, 5000);
+            assert_eq!(result.timeline[1].end_ms, 10000);
+            assert_eq!(result.timeline[2].start_ms, 10000);
+            assert_eq!(result.timeline[2].end_ms, 15000);
+        }
+
+        #[test]
+        fn test_frame_description_construction() {
+            let fd = FrameDescription {
+                frame_index: 3,
+                timestamp_ms: 7500,
+                description: "A car on a highway".to_string(),
+                objects_detected: vec![
+                    "car".to_string(),
+                    "road".to_string(),
+                    "sign".to_string(),
+                ],
+                confidence: 0.92,
+            };
+            assert_eq!(fd.frame_index, 3);
+            assert_eq!(fd.timestamp_ms, 7500);
+            assert_eq!(fd.description, "A car on a highway");
+            assert_eq!(fd.objects_detected.len(), 3);
+            assert!(fd.objects_detected.contains(&"car".to_string()));
+            assert!((fd.confidence - 0.92).abs() < f64::EPSILON);
+        }
+
+        #[test]
+        fn test_key_moment_construction() {
+            let km = KeyMoment {
+                timestamp_ms: 12000,
+                description: "Explosion in the background".to_string(),
+                importance: 0.95,
+            };
+            assert_eq!(km.timestamp_ms, 12000);
+            assert_eq!(km.description, "Explosion in the background");
+            assert!((km.importance - 0.95).abs() < f64::EPSILON);
+        }
+
+        #[test]
+        fn test_video_analysis_result_summary_generated() {
+            let analyzer = VideoAnalyzer::with_defaults();
+
+            // Empty frames => specific message
+            let result_empty = analyzer.analyze_frames(vec![], 5000);
+            assert_eq!(result_empty.summary, "No frames analysed.");
+            assert_eq!(result_empty.frames_analyzed, 0);
+            assert!(result_empty.key_moments.is_empty());
+            assert!(result_empty.timeline.is_empty());
+
+            // Single frame
+            let frames = vec![FrameDescription {
+                frame_index: 0,
+                timestamp_ms: 0,
+                description: "Title card".to_string(),
+                objects_detected: vec!["text".to_string()],
+                confidence: 0.8,
+            }];
+            let result_single = analyzer.analyze_frames(frames, 1000);
+            assert_eq!(result_single.summary, "Title card");
+            assert_eq!(result_single.frames_analyzed, 1);
+            assert_eq!(result_single.key_moments.len(), 1);
+            assert_eq!(result_single.timeline.len(), 1);
+            assert_eq!(result_single.timeline[0].start_ms, 0);
+            assert_eq!(result_single.timeline[0].end_ms, 1000);
         }
     }
 }

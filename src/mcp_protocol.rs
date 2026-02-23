@@ -329,6 +329,22 @@ pub struct McpPromptMessage {
     pub content: McpContent,
 }
 
+/// MCP Audio content data.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AudioContent {
+    /// Base64-encoded audio data.
+    pub data: String,
+    /// MIME type (e.g. `audio/wav`, `audio/ogg`, `audio/mp3`).
+    #[serde(rename = "mimeType")]
+    pub mime_type: String,
+    /// Optional text transcript of the audio.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transcript: Option<String>,
+    /// Optional duration in milliseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+}
+
 /// MCP Content types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -343,6 +359,8 @@ pub enum McpContent {
     },
     #[serde(rename = "resource")]
     Resource { resource: McpResourceContent },
+    #[serde(rename = "audio")]
+    Audio { audio: AudioContent },
 }
 
 /// MCP Server capabilities
@@ -2310,6 +2328,467 @@ impl Default for ToolAnnotationRegistry {
     }
 }
 
+// ---------------------------------------------------------------------------
+// 1.1 MCP Elicitation Protocol
+// ---------------------------------------------------------------------------
+
+/// Action the user/host takes when responding to an elicitation request.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ElicitAction {
+    Accept,
+    Deny,
+    Dismiss,
+}
+
+/// Describes the type of an elicitation field.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type")]
+pub enum ElicitFieldType {
+    #[serde(rename = "text")]
+    Text,
+    #[serde(rename = "number")]
+    Number,
+    #[serde(rename = "boolean")]
+    Boolean,
+    #[serde(rename = "select")]
+    Select { options: Vec<String> },
+    #[serde(rename = "file_upload")]
+    FileUpload { accepted_types: Vec<String> },
+}
+
+/// Schema for a single field in an elicitation request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ElicitFieldSchema {
+    pub field_name: String,
+    pub field_type: ElicitFieldType,
+    pub description: String,
+    pub required: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_value: Option<serde_json::Value>,
+}
+
+/// An elicitation request sent from a server to the host to gather user input.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ElicitRequest {
+    pub request_id: String,
+    pub message: String,
+    pub fields: Vec<ElicitFieldSchema>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
+}
+
+/// The host's response to an elicitation request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ElicitResponse {
+    pub request_id: String,
+    pub action: ElicitAction,
+    pub values: HashMap<String, serde_json::Value>,
+}
+
+/// Trait for components that handle elicitation requests on behalf of the host.
+pub trait ElicitationHandler: Send + Sync {
+    /// Handle an incoming elicitation request and return a response.
+    fn handle_elicitation(&self, request: &ElicitRequest) -> ElicitResponse;
+    /// A human-readable name for this handler.
+    fn name(&self) -> &str;
+}
+
+/// An `ElicitationHandler` that automatically accepts every elicitation,
+/// filling in configured default values.
+pub struct AutoAcceptHandler {
+    default_values: HashMap<String, serde_json::Value>,
+}
+
+impl AutoAcceptHandler {
+    /// Create a handler with no default values (responds `Accept` with empty map).
+    pub fn new() -> Self {
+        Self {
+            default_values: HashMap::new(),
+        }
+    }
+
+    /// Create a handler that supplies the given default values on accept.
+    pub fn with_defaults(defaults: HashMap<String, serde_json::Value>) -> Self {
+        Self {
+            default_values: defaults,
+        }
+    }
+}
+
+impl Default for AutoAcceptHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ElicitationHandler for AutoAcceptHandler {
+    fn handle_elicitation(&self, request: &ElicitRequest) -> ElicitResponse {
+        // Build the values map: for each field in the request, use the
+        // handler's configured default if present, otherwise use the field's
+        // own default_value if present.
+        let mut values = HashMap::new();
+        for field in &request.fields {
+            if let Some(val) = self.default_values.get(&field.field_name) {
+                values.insert(field.field_name.clone(), val.clone());
+            } else if let Some(ref dv) = field.default_value {
+                values.insert(field.field_name.clone(), dv.clone());
+            }
+        }
+        ElicitResponse {
+            request_id: request.request_id.clone(),
+            action: ElicitAction::Accept,
+            values,
+        }
+    }
+
+    fn name(&self) -> &str {
+        "auto_accept"
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 1.3 MCP JSON-RPC Batching
+// ---------------------------------------------------------------------------
+
+/// A standalone JSON-RPC 2.0 request used within batch operations.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JsonRpcRequest {
+    pub jsonrpc: String,
+    pub id: serde_json::Value,
+    pub method: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub params: Option<serde_json::Value>,
+}
+
+impl JsonRpcRequest {
+    pub fn new(id: serde_json::Value, method: &str) -> Self {
+        Self {
+            jsonrpc: "2.0".to_string(),
+            id,
+            method: method.to_string(),
+            params: None,
+        }
+    }
+
+    pub fn with_params(mut self, params: serde_json::Value) -> Self {
+        self.params = Some(params);
+        self
+    }
+}
+
+/// A standalone JSON-RPC 2.0 response used within batch operations.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JsonRpcResponse {
+    pub jsonrpc: String,
+    pub id: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<McpError>,
+}
+
+impl JsonRpcResponse {
+    pub fn success(id: serde_json::Value, result: serde_json::Value) -> Self {
+        Self {
+            jsonrpc: "2.0".to_string(),
+            id,
+            result: Some(result),
+            error: None,
+        }
+    }
+
+    pub fn error(id: serde_json::Value, error: McpError) -> Self {
+        Self {
+            jsonrpc: "2.0".to_string(),
+            id,
+            result: None,
+            error: Some(error),
+        }
+    }
+}
+
+/// Configuration for a batch of JSON-RPC requests.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchConfig {
+    pub max_batch_size: usize,
+    pub parallel_execution: bool,
+    pub timeout_per_request_ms: u64,
+}
+
+impl Default for BatchConfig {
+    fn default() -> Self {
+        Self {
+            max_batch_size: 50,
+            parallel_execution: true,
+            timeout_per_request_ms: 30_000,
+        }
+    }
+}
+
+/// A batch of JSON-RPC requests with associated configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchRequest {
+    pub requests: Vec<JsonRpcRequest>,
+    pub config: BatchConfig,
+}
+
+/// The aggregated result of executing a batch of JSON-RPC requests.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchResponse {
+    pub responses: Vec<JsonRpcResponse>,
+    pub total_duration_ms: u64,
+    pub errors: usize,
+}
+
+/// Executor that validates, creates, and correlates JSON-RPC batches.
+pub struct BatchExecutor {
+    config: BatchConfig,
+}
+
+impl BatchExecutor {
+    /// Create a `BatchExecutor` with the given configuration.
+    pub fn new(config: BatchConfig) -> Self {
+        Self { config }
+    }
+
+    /// Create a `BatchExecutor` using `BatchConfig::default()`.
+    pub fn with_defaults() -> Self {
+        Self {
+            config: BatchConfig::default(),
+        }
+    }
+
+    /// Validate that a batch meets the configured constraints.
+    ///
+    /// Returns `Err` if the batch is empty or exceeds `max_batch_size`.
+    pub fn validate_batch(&self, batch: &BatchRequest) -> Result<(), String> {
+        if batch.requests.is_empty() {
+            return Err("Batch must contain at least one request".to_string());
+        }
+        if batch.requests.len() > self.config.max_batch_size {
+            return Err(format!(
+                "Batch size {} exceeds maximum of {}",
+                batch.requests.len(),
+                self.config.max_batch_size
+            ));
+        }
+        Ok(())
+    }
+
+    /// Package a list of requests into a `BatchRequest` using the executor's config.
+    pub fn create_batch(&self, requests: Vec<JsonRpcRequest>) -> BatchRequest {
+        BatchRequest {
+            requests,
+            config: self.config.clone(),
+        }
+    }
+
+    /// Correlate a list of responses to the original batch, computing summary stats.
+    ///
+    /// Responses are matched to requests by their JSON-RPC `id` field. Any response
+    /// whose `error` field is `Some` is counted as an error.
+    pub fn correlate_responses(
+        &self,
+        batch: &BatchRequest,
+        responses: Vec<JsonRpcResponse>,
+    ) -> BatchResponse {
+        // Build a set of request IDs for correlation
+        let request_ids: std::collections::HashSet<String> = batch
+            .requests
+            .iter()
+            .map(|r| r.id.to_string())
+            .collect();
+
+        // Filter to only responses whose id matches a request in the batch
+        let correlated: Vec<JsonRpcResponse> = responses
+            .into_iter()
+            .filter(|r| request_ids.contains(&r.id.to_string()))
+            .collect();
+
+        let errors = correlated.iter().filter(|r| r.error.is_some()).count();
+
+        BatchResponse {
+            responses: correlated,
+            total_duration_ms: 0, // Caller should set real timing
+            errors,
+        }
+    }
+
+    /// Access the executor's configuration.
+    pub fn config(&self) -> &BatchConfig {
+        &self.config
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 1.4 MCP Completions & Suggestions
+// ---------------------------------------------------------------------------
+
+/// The kind of reference a completion request targets.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type")]
+pub enum CompletionRefType {
+    #[serde(rename = "resource_uri")]
+    ResourceUri(String),
+    #[serde(rename = "prompt_name")]
+    PromptName(String),
+}
+
+/// A request for argument completions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompletionRequest {
+    pub ref_type: CompletionRefType,
+    pub argument_name: String,
+    pub partial_value: String,
+}
+
+/// A single completion suggestion.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompletionSuggestion {
+    pub value: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+/// The result of a completion request, containing matching suggestions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompletionResult {
+    pub suggestions: Vec<CompletionSuggestion>,
+    pub has_more: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total: Option<usize>,
+}
+
+/// Trait for components that provide argument completions.
+pub trait CompletionProvider: Send + Sync {
+    /// Return completions matching the request.
+    fn complete(&self, request: &CompletionRequest) -> CompletionResult;
+    /// Whether this provider can handle the given reference type.
+    fn supports_ref_type(&self, ref_type: &CompletionRefType) -> bool;
+}
+
+/// A `CompletionProvider` backed by a static set of values per argument name.
+pub struct StaticCompletionProvider {
+    values: HashMap<String, Vec<String>>,
+}
+
+impl StaticCompletionProvider {
+    pub fn new() -> Self {
+        Self {
+            values: HashMap::new(),
+        }
+    }
+
+    /// Register a list of possible values for an argument.
+    pub fn add_values(&mut self, argument_name: String, values: Vec<String>) {
+        self.values.insert(argument_name, values);
+    }
+
+    /// Remove all values for an argument.
+    pub fn remove_values(&mut self, argument_name: &str) {
+        self.values.remove(argument_name);
+    }
+}
+
+impl Default for StaticCompletionProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CompletionProvider for StaticCompletionProvider {
+    fn complete(&self, request: &CompletionRequest) -> CompletionResult {
+        let matching = match self.values.get(&request.argument_name) {
+            Some(vals) => {
+                let prefix = request.partial_value.to_lowercase();
+                vals.iter()
+                    .filter(|v| v.to_lowercase().starts_with(&prefix))
+                    .map(|v| CompletionSuggestion {
+                        value: v.clone(),
+                        label: None,
+                        description: None,
+                    })
+                    .collect::<Vec<_>>()
+            }
+            None => Vec::new(),
+        };
+        let total = matching.len();
+        CompletionResult {
+            suggestions: matching,
+            has_more: false,
+            total: Some(total),
+        }
+    }
+
+    fn supports_ref_type(&self, _ref_type: &CompletionRefType) -> bool {
+        true // static provider is reference-type agnostic
+    }
+}
+
+/// Registry that aggregates multiple `CompletionProvider` implementations.
+pub struct CompletionRegistry {
+    providers: Vec<Box<dyn CompletionProvider>>,
+}
+
+impl CompletionRegistry {
+    pub fn new() -> Self {
+        Self {
+            providers: Vec::new(),
+        }
+    }
+
+    /// Register a new completion provider.
+    pub fn register(&mut self, provider: Box<dyn CompletionProvider>) {
+        self.providers.push(provider);
+    }
+
+    /// Query all registered providers and merge their results.
+    pub fn complete(&self, request: &CompletionRequest) -> CompletionResult {
+        let mut all_suggestions: Vec<CompletionSuggestion> = Vec::new();
+        let mut any_has_more = false;
+        let mut total_count: usize = 0;
+
+        for provider in &self.providers {
+            if provider.supports_ref_type(&request.ref_type) {
+                let result = provider.complete(request);
+                all_suggestions.extend(result.suggestions);
+                if result.has_more {
+                    any_has_more = true;
+                }
+                if let Some(t) = result.total {
+                    total_count += t;
+                }
+            }
+        }
+
+        let final_total = if total_count > 0 || !self.providers.is_empty() {
+            Some(all_suggestions.len())
+        } else {
+            None
+        };
+
+        CompletionResult {
+            suggestions: all_suggestions,
+            has_more: any_has_more,
+            total: final_total,
+        }
+    }
+
+    /// Return how many providers are registered.
+    pub fn provider_count(&self) -> usize {
+        self.providers.len()
+    }
+}
+
+impl Default for CompletionRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3787,5 +4266,523 @@ this is garbage"#;
         assert_eq!(back.client_id.as_deref(), Some("test-client-v2"));
         assert_eq!(back.scopes.len(), 2);
         assert_eq!(back.redirect_uri, "http://localhost:9090/callback");
+    }
+
+    // -----------------------------------------------------------------------
+    // v6 Phase 1 — Elicitation tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_elicit_request_construction() {
+        let req = ElicitRequest {
+            request_id: "req-1".to_string(),
+            message: "Please confirm deployment".to_string(),
+            fields: vec![ElicitFieldSchema {
+                field_name: "confirm".to_string(),
+                field_type: ElicitFieldType::Boolean,
+                description: "Do you approve?".to_string(),
+                required: true,
+                default_value: Some(serde_json::Value::Bool(false)),
+            }],
+            timeout_ms: Some(30_000),
+        };
+        assert_eq!(req.request_id, "req-1");
+        assert_eq!(req.fields.len(), 1);
+        assert_eq!(req.timeout_ms, Some(30_000));
+    }
+
+    #[test]
+    fn test_elicit_field_type_all_variants() {
+        let text = ElicitFieldType::Text;
+        let number = ElicitFieldType::Number;
+        let boolean = ElicitFieldType::Boolean;
+        let select = ElicitFieldType::Select {
+            options: vec!["a".into(), "b".into()],
+        };
+        let file = ElicitFieldType::FileUpload {
+            accepted_types: vec!["image/png".into()],
+        };
+
+        // Ensure serialization round-trips
+        for ft in [text, number, boolean, select, file] {
+            let json = serde_json::to_string(&ft).unwrap();
+            let _back: ElicitFieldType = serde_json::from_str(&json).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_elicit_action_all_variants() {
+        assert_eq!(ElicitAction::Accept, ElicitAction::Accept);
+        assert_eq!(ElicitAction::Deny, ElicitAction::Deny);
+        assert_eq!(ElicitAction::Dismiss, ElicitAction::Dismiss);
+        assert_ne!(ElicitAction::Accept, ElicitAction::Deny);
+    }
+
+    #[test]
+    fn test_elicit_response_accept_action() {
+        let mut vals = HashMap::new();
+        vals.insert("name".to_string(), serde_json::json!("Alice"));
+        let resp = ElicitResponse {
+            request_id: "r-42".to_string(),
+            action: ElicitAction::Accept,
+            values: vals,
+        };
+        assert_eq!(resp.action, ElicitAction::Accept);
+        assert_eq!(resp.values.get("name").unwrap(), &serde_json::json!("Alice"));
+    }
+
+    #[test]
+    fn test_auto_accept_handler_returns_accept_with_defaults() {
+        let handler = AutoAcceptHandler::new();
+        let req = ElicitRequest {
+            request_id: "r-1".to_string(),
+            message: "confirm?".to_string(),
+            fields: vec![ElicitFieldSchema {
+                field_name: "ok".to_string(),
+                field_type: ElicitFieldType::Boolean,
+                description: "ok?".to_string(),
+                required: true,
+                default_value: Some(serde_json::json!(true)),
+            }],
+            timeout_ms: None,
+        };
+        let resp = handler.handle_elicitation(&req);
+        assert_eq!(resp.action, ElicitAction::Accept);
+        assert_eq!(resp.request_id, "r-1");
+        // Should pick up the field's own default_value
+        assert_eq!(resp.values.get("ok"), Some(&serde_json::json!(true)));
+    }
+
+    #[test]
+    fn test_auto_accept_handler_with_custom_defaults() {
+        let mut defaults = HashMap::new();
+        defaults.insert("region".to_string(), serde_json::json!("eu-west-1"));
+        let handler = AutoAcceptHandler::with_defaults(defaults);
+
+        let req = ElicitRequest {
+            request_id: "r-2".to_string(),
+            message: "select region".to_string(),
+            fields: vec![
+                ElicitFieldSchema {
+                    field_name: "region".to_string(),
+                    field_type: ElicitFieldType::Text,
+                    description: "AWS region".to_string(),
+                    required: true,
+                    default_value: Some(serde_json::json!("us-east-1")),
+                },
+                ElicitFieldSchema {
+                    field_name: "size".to_string(),
+                    field_type: ElicitFieldType::Number,
+                    description: "Instance size".to_string(),
+                    required: false,
+                    default_value: None,
+                },
+            ],
+            timeout_ms: Some(5_000),
+        };
+        let resp = handler.handle_elicitation(&req);
+        assert_eq!(resp.action, ElicitAction::Accept);
+        // Handler default overrides field default
+        assert_eq!(
+            resp.values.get("region"),
+            Some(&serde_json::json!("eu-west-1"))
+        );
+        // "size" has no handler default and no field default -> absent
+        assert!(resp.values.get("size").is_none());
+    }
+
+    #[test]
+    fn test_elicit_field_schema_required_optional() {
+        let required_field = ElicitFieldSchema {
+            field_name: "username".to_string(),
+            field_type: ElicitFieldType::Text,
+            description: "Your username".to_string(),
+            required: true,
+            default_value: None,
+        };
+        assert!(required_field.required);
+        assert!(required_field.default_value.is_none());
+
+        let optional_field = ElicitFieldSchema {
+            field_name: "nickname".to_string(),
+            field_type: ElicitFieldType::Text,
+            description: "Optional nickname".to_string(),
+            required: false,
+            default_value: Some(serde_json::json!("anon")),
+        };
+        assert!(!optional_field.required);
+        assert_eq!(optional_field.default_value, Some(serde_json::json!("anon")));
+    }
+
+    // -----------------------------------------------------------------------
+    // v6 Phase 1 — Audio Content tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_audio_content_construction_and_serialization() {
+        let audio = AudioContent {
+            data: "dGVzdA==".to_string(),
+            mime_type: "audio/wav".to_string(),
+            transcript: Some("hello world".to_string()),
+            duration_ms: Some(1500),
+        };
+        let json = serde_json::to_string(&audio).unwrap();
+        assert!(json.contains("dGVzdA=="));
+        assert!(json.contains("audio/wav"));
+        let back: AudioContent = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.data, "dGVzdA==");
+        assert_eq!(back.transcript.as_deref(), Some("hello world"));
+    }
+
+    #[test]
+    fn test_mcp_content_audio_variant_creation() {
+        let content = McpContent::Audio {
+            audio: AudioContent {
+                data: "AAAA".to_string(),
+                mime_type: "audio/ogg".to_string(),
+                transcript: None,
+                duration_ms: None,
+            },
+        };
+        if let McpContent::Audio { ref audio } = content {
+            assert_eq!(audio.mime_type, "audio/ogg");
+        } else {
+            panic!("Expected Audio variant");
+        }
+    }
+
+    #[test]
+    fn test_audio_content_with_transcript() {
+        let audio = AudioContent {
+            data: "YXVkaW8=".to_string(),
+            mime_type: "audio/mp3".to_string(),
+            transcript: Some("Testing one two three".to_string()),
+            duration_ms: Some(3200),
+        };
+        assert!(audio.transcript.is_some());
+        assert_eq!(audio.transcript.unwrap(), "Testing one two three");
+        assert_eq!(audio.duration_ms, Some(3200));
+    }
+
+    #[test]
+    fn test_audio_content_without_transcript() {
+        let audio = AudioContent {
+            data: "YXVkaW8=".to_string(),
+            mime_type: "audio/wav".to_string(),
+            transcript: None,
+            duration_ms: None,
+        };
+        assert!(audio.transcript.is_none());
+        assert!(audio.duration_ms.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // v6 Phase 1 — JSON-RPC Batching tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_batch_config_default_values() {
+        let cfg = BatchConfig::default();
+        assert_eq!(cfg.max_batch_size, 50);
+        assert!(cfg.parallel_execution);
+        assert_eq!(cfg.timeout_per_request_ms, 30_000);
+    }
+
+    #[test]
+    fn test_batch_config_custom_values() {
+        let cfg = BatchConfig {
+            max_batch_size: 10,
+            parallel_execution: false,
+            timeout_per_request_ms: 5_000,
+        };
+        assert_eq!(cfg.max_batch_size, 10);
+        assert!(!cfg.parallel_execution);
+        assert_eq!(cfg.timeout_per_request_ms, 5_000);
+    }
+
+    #[test]
+    fn test_batch_executor_validate_empty_batch() {
+        let executor = BatchExecutor::with_defaults();
+        let batch = BatchRequest {
+            requests: vec![],
+            config: BatchConfig::default(),
+        };
+        let result = executor.validate_batch(&batch);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("at least one request"));
+    }
+
+    #[test]
+    fn test_batch_executor_validate_oversized_batch() {
+        let executor = BatchExecutor::new(BatchConfig {
+            max_batch_size: 2,
+            parallel_execution: true,
+            timeout_per_request_ms: 1_000,
+        });
+        let requests = vec![
+            JsonRpcRequest::new(serde_json::json!(1), "method_a"),
+            JsonRpcRequest::new(serde_json::json!(2), "method_b"),
+            JsonRpcRequest::new(serde_json::json!(3), "method_c"),
+        ];
+        let batch = BatchRequest {
+            requests,
+            config: BatchConfig::default(),
+        };
+        let result = executor.validate_batch(&batch);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("exceeds maximum"));
+    }
+
+    #[test]
+    fn test_batch_executor_validate_valid_batch() {
+        let executor = BatchExecutor::with_defaults();
+        let requests = vec![
+            JsonRpcRequest::new(serde_json::json!(1), "tools/list"),
+            JsonRpcRequest::new(serde_json::json!(2), "resources/list"),
+        ];
+        let batch = BatchRequest {
+            requests,
+            config: BatchConfig::default(),
+        };
+        assert!(executor.validate_batch(&batch).is_ok());
+    }
+
+    #[test]
+    fn test_batch_executor_create_batch() {
+        let executor = BatchExecutor::with_defaults();
+        let requests = vec![
+            JsonRpcRequest::new(serde_json::json!(1), "ping"),
+        ];
+        let batch = executor.create_batch(requests);
+        assert_eq!(batch.requests.len(), 1);
+        assert_eq!(batch.config.max_batch_size, 50);
+    }
+
+    #[test]
+    fn test_batch_executor_correlate_responses_matches_by_id() {
+        let executor = BatchExecutor::with_defaults();
+        let requests = vec![
+            JsonRpcRequest::new(serde_json::json!(1), "a"),
+            JsonRpcRequest::new(serde_json::json!(2), "b"),
+        ];
+        let batch = executor.create_batch(requests);
+
+        let responses = vec![
+            JsonRpcResponse::success(serde_json::json!(1), serde_json::json!({"ok": true})),
+            JsonRpcResponse::success(serde_json::json!(2), serde_json::json!({"ok": true})),
+            // Unrelated response should be filtered out
+            JsonRpcResponse::success(serde_json::json!(99), serde_json::json!({"extra": true})),
+        ];
+
+        let result = executor.correlate_responses(&batch, responses);
+        assert_eq!(result.responses.len(), 2);
+        assert_eq!(result.errors, 0);
+    }
+
+    #[test]
+    fn test_batch_response_error_count() {
+        let executor = BatchExecutor::with_defaults();
+        let requests = vec![
+            JsonRpcRequest::new(serde_json::json!(1), "a"),
+            JsonRpcRequest::new(serde_json::json!(2), "b"),
+        ];
+        let batch = executor.create_batch(requests);
+
+        let responses = vec![
+            JsonRpcResponse::success(serde_json::json!(1), serde_json::json!(null)),
+            JsonRpcResponse::error(
+                serde_json::json!(2),
+                McpError {
+                    code: -32600,
+                    message: "Invalid request".to_string(),
+                    data: None,
+                },
+            ),
+        ];
+
+        let result = executor.correlate_responses(&batch, responses);
+        assert_eq!(result.errors, 1);
+        assert_eq!(result.responses.len(), 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // v6 Phase 1 — Completions & Suggestions tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_completion_request_construction() {
+        let req = CompletionRequest {
+            ref_type: CompletionRefType::ResourceUri("file:///tmp".to_string()),
+            argument_name: "path".to_string(),
+            partial_value: "/usr".to_string(),
+        };
+        assert_eq!(req.argument_name, "path");
+        assert_eq!(req.partial_value, "/usr");
+    }
+
+    #[test]
+    fn test_completion_ref_type_variants() {
+        let uri = CompletionRefType::ResourceUri("file:///data".to_string());
+        let prompt = CompletionRefType::PromptName("summarize".to_string());
+        assert_ne!(uri, prompt);
+        if let CompletionRefType::ResourceUri(ref s) = uri {
+            assert_eq!(s, "file:///data");
+        }
+        if let CompletionRefType::PromptName(ref s) = prompt {
+            assert_eq!(s, "summarize");
+        }
+    }
+
+    #[test]
+    fn test_completion_suggestion_construction() {
+        let s = CompletionSuggestion {
+            value: "hello".to_string(),
+            label: Some("Hello World".to_string()),
+            description: Some("A greeting".to_string()),
+        };
+        assert_eq!(s.value, "hello");
+        assert_eq!(s.label.as_deref(), Some("Hello World"));
+        assert_eq!(s.description.as_deref(), Some("A greeting"));
+    }
+
+    #[test]
+    fn test_completion_result_with_suggestions() {
+        let result = CompletionResult {
+            suggestions: vec![
+                CompletionSuggestion {
+                    value: "foo".to_string(),
+                    label: None,
+                    description: None,
+                },
+                CompletionSuggestion {
+                    value: "bar".to_string(),
+                    label: None,
+                    description: None,
+                },
+            ],
+            has_more: false,
+            total: Some(2),
+        };
+        assert_eq!(result.suggestions.len(), 2);
+        assert!(!result.has_more);
+        assert_eq!(result.total, Some(2));
+    }
+
+    #[test]
+    fn test_static_completion_provider_add_values_and_complete() {
+        let mut provider = StaticCompletionProvider::new();
+        provider.add_values("lang".to_string(), vec!["Rust".into(), "Ruby".into(), "Python".into()]);
+
+        let req = CompletionRequest {
+            ref_type: CompletionRefType::PromptName("code".to_string()),
+            argument_name: "lang".to_string(),
+            partial_value: "Ru".to_string(),
+        };
+        let result = provider.complete(&req);
+        assert_eq!(result.suggestions.len(), 2);
+        let vals: Vec<&str> = result.suggestions.iter().map(|s| s.value.as_str()).collect();
+        assert!(vals.contains(&"Rust"));
+        assert!(vals.contains(&"Ruby"));
+    }
+
+    #[test]
+    fn test_static_completion_provider_case_insensitive_prefix() {
+        let mut provider = StaticCompletionProvider::new();
+        provider.add_values("color".to_string(), vec!["Red".into(), "Blue".into(), "Green".into()]);
+
+        let req = CompletionRequest {
+            ref_type: CompletionRefType::ResourceUri("x".to_string()),
+            argument_name: "color".to_string(),
+            partial_value: "re".to_string(), // lowercase prefix matches "Red"
+        };
+        let result = provider.complete(&req);
+        assert_eq!(result.suggestions.len(), 1);
+        assert_eq!(result.suggestions[0].value, "Red");
+    }
+
+    #[test]
+    fn test_static_completion_provider_empty_partial_returns_all() {
+        let mut provider = StaticCompletionProvider::new();
+        provider.add_values("item".to_string(), vec!["A".into(), "B".into(), "C".into()]);
+
+        let req = CompletionRequest {
+            ref_type: CompletionRefType::PromptName("p".to_string()),
+            argument_name: "item".to_string(),
+            partial_value: "".to_string(),
+        };
+        let result = provider.complete(&req);
+        assert_eq!(result.suggestions.len(), 3);
+    }
+
+    #[test]
+    fn test_static_completion_provider_no_match_returns_empty() {
+        let mut provider = StaticCompletionProvider::new();
+        provider.add_values("fruit".to_string(), vec!["Apple".into(), "Banana".into()]);
+
+        let req = CompletionRequest {
+            ref_type: CompletionRefType::PromptName("p".to_string()),
+            argument_name: "fruit".to_string(),
+            partial_value: "Zz".to_string(),
+        };
+        let result = provider.complete(&req);
+        assert!(result.suggestions.is_empty());
+    }
+
+    #[test]
+    fn test_completion_registry_no_providers() {
+        let registry = CompletionRegistry::new();
+        assert_eq!(registry.provider_count(), 0);
+
+        let req = CompletionRequest {
+            ref_type: CompletionRefType::PromptName("p".to_string()),
+            argument_name: "x".to_string(),
+            partial_value: "".to_string(),
+        };
+        let result = registry.complete(&req);
+        assert!(result.suggestions.is_empty());
+    }
+
+    #[test]
+    fn test_completion_registry_multiple_providers_merges_results() {
+        let mut registry = CompletionRegistry::new();
+
+        let mut p1 = StaticCompletionProvider::new();
+        p1.add_values("arg".to_string(), vec!["Alpha".into(), "Apex".into()]);
+        registry.register(Box::new(p1));
+
+        let mut p2 = StaticCompletionProvider::new();
+        p2.add_values("arg".to_string(), vec!["Ant".into(), "Bear".into()]);
+        registry.register(Box::new(p2));
+
+        assert_eq!(registry.provider_count(), 2);
+
+        let req = CompletionRequest {
+            ref_type: CompletionRefType::PromptName("p".to_string()),
+            argument_name: "arg".to_string(),
+            partial_value: "A".to_string(),
+        };
+        let result = registry.complete(&req);
+        // p1 contributes Alpha, Apex; p2 contributes Ant (Bear doesn't match)
+        assert_eq!(result.suggestions.len(), 3);
+        let vals: Vec<&str> = result.suggestions.iter().map(|s| s.value.as_str()).collect();
+        assert!(vals.contains(&"Alpha"));
+        assert!(vals.contains(&"Apex"));
+        assert!(vals.contains(&"Ant"));
+    }
+
+    #[test]
+    fn test_completion_result_has_more_flag() {
+        let result = CompletionResult {
+            suggestions: vec![CompletionSuggestion {
+                value: "partial".to_string(),
+                label: None,
+                description: None,
+            }],
+            has_more: true,
+            total: Some(100),
+        };
+        assert!(result.has_more);
+        assert_eq!(result.total, Some(100));
+        assert_eq!(result.suggestions.len(), 1);
     }
 }
