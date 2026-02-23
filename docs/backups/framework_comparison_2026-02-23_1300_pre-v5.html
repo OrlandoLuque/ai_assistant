@@ -16,8 +16,6 @@
     - framework_comparison_2026-02-21_0500_pre-v2phase2-3-docs.html (v6 snapshot before v2 Phases 2-3 additions)
     - framework_comparison_2026-02-21_1100_pre-v2phase3-4-completion.html (v7 snapshot before v2 Phases 3-4 completion)
     - framework_comparison.html  (v8: v2 Phases 3-4 — Ollama tool calling, PromptToolFallback, GuardrailPipeline, CI/CD, 2510 tests, 215 source files, 2026-02-21)
-    - framework_comparison_2026-02-23_1300_pre-v5.html (v9 snapshot before v5 additions)
-    - framework_comparison.html  (v10: v5 Phases 1-9 — GEPA/MIPROv2, MCP v2, voice agents, media gen, distillation, OTel GenAI, durable execution, constrained decoding, memory evolution, 3907 tests, 230+ source files, 2026-02-23)
 -->
 <html lang="es">
 <head>
@@ -203,11 +201,11 @@
     <div class="stat-label">Comparison Dimensions</div>
   </div>
   <div class="stat-card">
-    <div class="stat-val" style="color:#8b5cf6">230+</div>
+    <div class="stat-val" style="color:#8b5cf6">215</div>
     <div class="stat-label">Our Source Files</div>
   </div>
   <div class="stat-card">
-    <div class="stat-val" style="color:#10b981">3907</div>
+    <div class="stat-val" style="color:#10b981">2510</div>
     <div class="stat-label">Our Tests</div>
   </div>
   <div class="stat-card">
@@ -226,7 +224,7 @@
   <div class="tab" onclick="showTab('matrix')">Comparison Matrix</div>
   <div class="tab" onclick="showTab('detail')">Detailed Analysis</div>
   <div class="tab" onclick="showTab('rust')">Rust Ecosystem</div>
-  <div class="tab" onclick="showTab('gaps')">Gap Analysis (21/21 + Phase 6-11 + v2P1-4 + v5)</div>
+  <div class="tab" onclick="showTab('gaps')">Gap Analysis (21/21 + Phase 6-11 + v2P1-4)</div>
   <div class="tab" onclick="showTab('roadmap')">Improvement Roadmap</div>
 </div>
 
@@ -239,12 +237,12 @@
   <!-- ai_assistant -->
   <div class="fw-card" style="border-color: #8b5cf6;">
     <div class="fw-name text-purple">ai_assistant (Ours)</div>
-    <div class="fw-lang">Rust &bull; 203k+ LoC &bull; 3907 tests &bull; 230+ files &bull; Private</div>
+    <div class="fw-lang">Rust &bull; 30k+ LoC &bull; 2510 tests &bull; 215 files &bull; Private</div>
     <div class="fw-row"><span>LLM Providers</span><div class="fw-bar-bg"><div class="fw-bar" style="width:95%;background:#8b5cf6"></div></div></div>
     <div class="fw-row"><span>RAG / Vector</span><div class="fw-bar-bg"><div class="fw-bar" style="width:93%;background:#8b5cf6"></div></div></div>
-    <div class="fw-row"><span>Agents</span><div class="fw-bar-bg"><div class="fw-bar" style="width:95%;background:#8b5cf6"></div></div></div>
-    <div class="fw-row"><span>Memory</span><div class="fw-bar-bg"><div class="fw-bar" style="width:92%;background:#8b5cf6"></div></div></div>
-    <div class="fw-row"><span>MCP</span><div class="fw-bar-bg"><div class="fw-bar" style="width:90%;background:#8b5cf6"></div></div></div>
+    <div class="fw-row"><span>Agents</span><div class="fw-bar-bg"><div class="fw-bar" style="width:88%;background:#8b5cf6"></div></div></div>
+    <div class="fw-row"><span>Memory</span><div class="fw-bar-bg"><div class="fw-bar" style="width:80%;background:#8b5cf6"></div></div></div>
+    <div class="fw-row"><span>MCP</span><div class="fw-bar-bg"><div class="fw-bar" style="width:80%;background:#8b5cf6"></div></div></div>
     <div class="fw-row"><span>Distributed</span><div class="fw-bar-bg"><div class="fw-bar" style="width:92%;background:#8b5cf6"></div></div></div>
     <div class="fw-row"><span>Security</span><div class="fw-bar-bg"><div class="fw-bar" style="width:95%;background:#8b5cf6"></div></div></div>
     <div class="fw-row"><span>Streaming</span><div class="fw-bar-bg"><div class="fw-bar" style="width:90%;background:#8b5cf6"></div></div></div>
@@ -543,8 +541,8 @@
 
 <div class="card" style="margin-top: 16px;">
   <h3>Key Positioning Insight</h3>
-  <p><strong>ai_assistant</strong> is the <em>only</em> Rust-based AI framework offering a full-stack solution comparable to Python frameworks like LangChain or LlamaIndex. While Rig leads the Rust ecosystem for LLM provider integration, it covers only a fraction of what ai_assistant provides. Our crate uniquely combines RAG, agents, distributed computing (QUIC/CRDTs/P2P), security (RBAC/AES-256-GCM/guardrails), MCP protocol support, streaming, evaluation, and browser automation &mdash; all in a single, zero-stub, fully-tested Rust library. v5 adds 9 new phases: advanced prompt optimization (GEPA/NSGA-II genetic optimizer + MIPROv2 multi-stage instruction proposal + prompt assertions + LM adapters &mdash; comparable to DSPy), MCP v2 protocol (Streamable HTTP, OAuth 2.1 with PKCE, tool annotations), real-time voice agents (bidirectional audio streaming, VAD, conversation turn management), media generation (image gen via DALL-E/Stable Diffusion/Flux/local + image editing + video gen via Runway/Sora/Replicate), distillation pipeline (trajectory collection/scoring/filtering, dataset building in ChatML/Alpaca/ShareGPT formats, data flywheel orchestrator), OTel GenAI conventions (semantic attributes, hierarchical agent tracing, cost attribution with budget enforcement), durable execution and agent patterns (automatic state persistence, 6 named conversation patterns, declarative agent definitions in JSON/TOML, agent handoffs with context transfer), constrained decoding (GBNF grammar-guided generation, JSON Schema-to-grammar compiler, streaming structured validation), and memory evolution (semantic fact consolidation, temporal memory graphs with causal chains, self-evolving procedures via MemRL).</p>
-  <p class="dim small">The main Python frameworks have larger ecosystems and communities, but ai_assistant competes on feature depth, performance (Rust), being fully self-contained with no external service dependencies, and 3907 tests with 0 compiler warnings across 230+ source files. All 39/39 original roadmap items completed. v2 Phases 1-4 added providers, async plugin, LLM-as-Judge, GuardrailPipeline, CI/CD. v5 Phases 1-9 add DSPy-class prompt optimization, MCP v2, voice agents, media generation, distillation, OTel GenAI, durable execution, constrained decoding, and memory evolution. Audio/speech gap is now closed with real-time voice agents.</p>
+  <p><strong>ai_assistant</strong> is the <em>only</em> Rust-based AI framework offering a full-stack solution comparable to Python frameworks like LangChain or LlamaIndex. While Rig leads the Rust ecosystem for LLM provider integration, it covers only a fraction of what ai_assistant provides. Our crate uniquely combines RAG, agents, distributed computing (QUIC/CRDTs/P2P), security (RBAC/AES-256-GCM/guardrails), MCP protocol support, streaming, evaluation, and browser automation &mdash; all in a single, zero-stub, fully-tested Rust library. With Phase 6-8 improvements, we now have production-grade cryptographic security (real SHA-256 + HMAC-SHA256), JSON Schema structured output with retry loops, a 7-model registry with capability metadata, Criterion benchmarks, CDP browser automation fully wired into the assistant, and distributed multi-node agent execution. Phase 9 adds an interactive REPL/CLI engine, neural reranking (CrossEncoder, RRF, MMR diversity), and a full A/B testing framework with ExperimentManager. Phase 10 adds BPE token counting, per-request cost tracking with budget management, and multi-modal RAG pipelines. Phase 11 completes the roadmap with UI framework hooks (ChatStreamEvent, ChatHooks, StreamAdapter) and agent graph visualization (AgentGraph, DOT/Mermaid/JSON export, ExecutionTrace, GraphAnalytics).</p>
+  <p class="dim small">The main Python frameworks have larger ecosystems and communities, but ai_assistant competes on feature depth, performance (Rust), being fully self-contained with no external service dependencies, and 2510 tests with 0 compiler warnings across 215 source files. All 39/39 roadmap items completed. v2 Phase 1 added dedicated EmbeddingProvider trait, native GeminiProvider, and 7 new AiProvider presets. v2 Phases 2-3 added AsyncProviderPlugin, LLM-as-Judge, unified tool calling (Ollama native + PromptToolFallback), and GuardrailPipeline (6 built-in guards). v2 Phase 4 added CI/CD with GitHub Actions. Remaining gap: no audio/speech support.</p>
 </div>
 </div>
 
@@ -751,7 +749,7 @@
 <tr class="cat-row"><td colspan="10">MEMORY / CONTEXT</td></tr>
 <tr>
   <td>Conversation memory</td>
-  <td class="our-col"><span class="badge r5">5</span><br>Sessions, journal, compaction, snapshots, semantic fact consolidation, temporal memory graphs, causal chains, self-evolving procedures (MemRL)</td>
+  <td class="our-col"><span class="badge r4">4</span><br>Sessions, journal, compaction, snapshots</td>
   <td><span class="badge r5">5</span><br>7+ memory types</td>
   <td><span class="badge r4">4</span><br>Memory blocks system</td>
   <td><span class="badge r4">4</span><br>ChatHistoryReducer</td>
@@ -775,7 +773,7 @@
 </tr>
 <tr>
   <td>Adaptive learning</td>
-  <td class="our-col"><span class="badge r5">5</span><br>Preference extraction, style adaptation, few-shot, self-evolving procedures (MemRL), temporal causal reasoning</td>
+  <td class="our-col"><span class="badge r4">4</span><br>Preference extraction, style adaptation, few-shot</td>
   <td><span class="badge r2">2</span></td>
   <td><span class="badge r3">3</span><br>FactExtractionMemoryBlock</td>
   <td><span class="badge r2">2</span></td>
@@ -790,7 +788,7 @@
 <tr class="cat-row"><td colspan="10">MCP (MODEL CONTEXT PROTOCOL)</td></tr>
 <tr>
   <td>MCP protocol implementation</td>
-  <td class="our-col"><span class="badge r5">5</span><br>Server+Client, JSON-RPC, tools/resources/prompts, MCP v2: Streamable HTTP, OAuth 2.1+PKCE, tool annotations (read_only, destructive, idempotent)</td>
+  <td class="our-col"><span class="badge r4">4</span><br>Server+Client, JSON-RPC, tools/resources/prompts, 2025-03-26 spec</td>
   <td><span class="badge r4">4</span><br>langchain-mcp-adapters + interceptors</td>
   <td><span class="badge r3">3</span><br>McpToolSpec</td>
   <td><span class="badge r5">5</span><br>Deep bidirectional, multi-lang</td>
@@ -802,7 +800,7 @@
 </tr>
 <tr>
   <td>MCP spec compliance</td>
-  <td class="our-col"><span class="badge r5">5</span><br>MCP v2 spec, Streamable HTTP, OAuth 2.1+PKCE, tool annotations</td>
+  <td class="our-col"><span class="badge r4">4</span><br>2025-03-26 spec, Streamable HTTP, OAuth 2.1</td>
   <td><span class="badge r4">4</span><br>2025-11-25 spec</td>
   <td><span class="badge r3">3</span><br>SSE + OAuth</td>
   <td><span class="badge r5">5</span><br>Full 2025-11-25</td>
@@ -1008,42 +1006,6 @@
   <td><span class="badge r1">1</span></td>
 </tr>
 <tr>
-  <td>Prompt optimization</td>
-  <td class="our-col"><span class="badge r5">5</span><br>GEPA (NSGA-II genetic Pareto), MIPROv2, prompt assertions &amp; constraints, LM adapters</td>
-  <td><span class="badge r2">2</span><br>Prompt engineering</td>
-  <td><span class="badge r2">2</span></td>
-  <td><span class="badge r2">2</span></td>
-  <td><span class="badge r2">2</span></td>
-  <td><span class="badge r5">5</span><br>MIPRO, BayesianSignatureOptimizer</td>
-  <td><span class="badge r1">1</span></td>
-  <td><span class="badge r2">2</span></td>
-  <td><span class="badge r1">1</span></td>
-</tr>
-<tr>
-  <td>Constrained decoding</td>
-  <td class="our-col"><span class="badge r5">5</span><br>GBNF grammar-guided gen, JSON Schema&rarr;grammar compiler, streaming structured validation</td>
-  <td><span class="badge r3">3</span><br>Structured output</td>
-  <td><span class="badge r3">3</span><br>Pydantic output</td>
-  <td><span class="badge r3">3</span></td>
-  <td><span class="badge r2">2</span></td>
-  <td><span class="badge r2">2</span></td>
-  <td><span class="badge r2">2</span></td>
-  <td><span class="badge r3">3</span><br>generateObject</td>
-  <td><span class="badge r2">2</span></td>
-</tr>
-<tr>
-  <td>Distillation / fine-tuning</td>
-  <td class="our-col"><span class="badge r5">5</span><br>Trajectory collection, scoring, filtering, ChatML/Alpaca/ShareGPT, data flywheel</td>
-  <td><span class="badge r2">2</span></td>
-  <td><span class="badge r1">1</span></td>
-  <td><span class="badge r1">1</span></td>
-  <td><span class="badge r1">1</span></td>
-  <td><span class="badge r3">3</span><br>Bootstrapped examples</td>
-  <td><span class="badge r1">1</span></td>
-  <td><span class="badge r1">1</span></td>
-  <td><span class="badge r1">1</span></td>
-</tr>
-<tr>
   <td>Model ensemble &amp; selection</td>
   <td class="our-col"><span class="badge r5">5</span><br>Ensemble voting, auto-selection, self-consistency, 7-model registry (context, vision, tools, cost)</td>
   <td><span class="badge r3">3</span></td>
@@ -1072,7 +1034,7 @@
 </tr>
 <tr>
   <td>Vision / multimodal</td>
-  <td class="our-col"><span class="badge r4">4</span><br>ImageInput, preprocessing, batch, metadata extraction, image gen (DALL-E/SD/Flux/local), image editing, video gen (Runway/Sora/Replicate)</td>
+  <td class="our-col"><span class="badge r4">4</span><br>ImageInput, preprocessing, batch, metadata extraction</td>
   <td><span class="badge r4">4</span><br>Multimodal messages</td>
   <td><span class="badge r4">4</span><br>Multi-modal RAG</td>
   <td><span class="badge r3">3</span></td>
@@ -1081,30 +1043,6 @@
   <td><span class="badge r2">2</span></td>
   <td><span class="badge r3">3</span></td>
   <td><span class="badge r2">2</span></td>
-</tr>
-<tr>
-  <td>Voice / audio agents</td>
-  <td class="our-col"><span class="badge r5">5</span><br>Bidirectional audio streaming, VAD, conversation turn management</td>
-  <td><span class="badge r1">1</span></td>
-  <td><span class="badge r1">1</span></td>
-  <td><span class="badge r2">2</span></td>
-  <td><span class="badge r1">1</span></td>
-  <td><span class="badge r1">1</span></td>
-  <td><span class="badge r3">3</span><br>Voice (basic)</td>
-  <td><span class="badge r4">4</span><br>Realtime API</td>
-  <td><span class="badge r0">0</span></td>
-</tr>
-<tr>
-  <td>Media generation</td>
-  <td class="our-col"><span class="badge r5">5</span><br>DALL-E, SD, Flux, local image gen; image editing; Runway/Sora/Replicate video gen</td>
-  <td><span class="badge r2">2</span><br>Via tools</td>
-  <td><span class="badge r2">2</span></td>
-  <td><span class="badge r2">2</span></td>
-  <td><span class="badge r1">1</span></td>
-  <td><span class="badge r1">1</span></td>
-  <td><span class="badge r3">3</span><br>Multi-modal (audio/video)</td>
-  <td><span class="badge r4">4</span><br>generateImage v6</td>
-  <td><span class="badge r1">1</span></td>
 </tr>
 <tr>
   <td>WASM support</td>
@@ -1122,8 +1060,8 @@
 <!-- Misc -->
 <tr class="cat-row"><td colspan="10">ADDITIONAL</td></tr>
 <tr>
-  <td>Analytics / telemetry (OTel GenAI)</td>
-  <td class="our-col"><span class="badge r5">5</span><br>10+ metrics, Prometheus, OTel GenAI semantic attrs, hierarchical agent tracing, cost attribution + budget enforcement</td>
+  <td>Analytics / telemetry</td>
+  <td class="our-col"><span class="badge r5">5</span><br>10+ metrics, Prometheus, OpenTelemetry, flow analysis</td>
   <td><span class="badge r4">4</span><br>LangSmith tracing</td>
   <td><span class="badge r3">3</span><br>Observability integrations</td>
   <td><span class="badge r4">4</span><br>Azure telemetry</td>
@@ -1167,18 +1105,6 @@
   <td><span class="badge r2">2</span></td>
   <td><span class="badge r2">2</span></td>
   <td><span class="badge r1">1</span></td>
-  <td><span class="badge r1">1</span></td>
-</tr>
-<tr>
-  <td>Durable execution / state persistence</td>
-  <td class="our-col"><span class="badge r5">5</span><br>Auto state persistence, 6 conversation patterns, declarative agents (JSON/TOML), handoffs w/ context</td>
-  <td><span class="badge r4">4</span><br>LangGraph checkpoints</td>
-  <td><span class="badge r3">3</span></td>
-  <td><span class="badge r2">2</span></td>
-  <td><span class="badge r3">3</span></td>
-  <td><span class="badge r2">2</span></td>
-  <td><span class="badge r3">3</span></td>
-  <td><span class="badge r4">4</span><br>Agent handoffs</td>
   <td><span class="badge r1">1</span></td>
 </tr>
 </tbody>
@@ -1252,7 +1178,7 @@
 </tr>
 <tr>
   <td>Memory / context</td>
-  <td class="our-col"><span class="badge r5">5</span></td>
+  <td class="our-col"><span class="badge r4">4</span></td>
   <td><span class="badge r3">3</span></td>
   <td><span class="badge r2">2</span></td>
   <td><span class="badge r2">2</span></td>
@@ -1266,7 +1192,7 @@
 </tr>
 <tr>
   <td>MCP support</td>
-  <td class="our-col"><span class="badge r5">5</span></td>
+  <td class="our-col"><span class="badge r4">4</span></td>
   <td><span class="badge r4">4</span></td>
   <td><span class="badge r0">0</span></td>
   <td><span class="badge r4">4</span></td>
@@ -1394,7 +1320,7 @@
 </tr>
 <tr>
   <td>Unique trait</td>
-  <td class="our-col"><span class="small">Full-stack Rust, CRDTs, P2P, GEPA, voice, media gen, distillation</span></td>
+  <td class="our-col"><span class="small">Full-stack Rust, CRDTs, P2P</span></td>
   <td><span class="small">50+ messaging channels</span></td>
   <td><span class="small">Auto prompt optimization</span></td>
   <td><span class="small">Computer Use, handoffs</span></td>
@@ -1418,10 +1344,10 @@
 <div class="card-grid">
 <div class="card" style="border-left: 4px solid #8b5cf6;">
   <h3 class="text-purple">ai_assistant (Ours) &mdash; Rust</h3>
-  <p><strong>What it is:</strong> A standalone, zero-dependency AI assistant library in Rust. 230+ source files, 203k+ LoC, 3907 tests (0 warnings), zero stubs. 19+ examples covering all major features.</p>
+  <p><strong>What it is:</strong> A standalone, zero-dependency AI assistant library in Rust. 215 source files, 30k+ LoC, 2510 tests (0 warnings), zero stubs. 19 examples covering all major features.</p>
   <p><strong>Unique strengths:</strong></p>
   <ul>
-    <li>Only full-stack Rust AI framework (RAG + agents + distributed + security + streaming + voice + media + distillation)</li>
+    <li>Only full-stack Rust AI framework (RAG + agents + distributed + security + streaming)</li>
     <li>Built-in distributed computing: CRDTs, DHT, MapReduce, QUIC/TLS, P2P with NAT traversal</li>
     <li>Enterprise security: RBAC, AES-256-GCM, real SHA-256 + HMAC-SHA256 (zero-dependency crypto), PII detection, bias/toxicity detection, Constitutional AI</li>
     <li>Advanced RAG: Self-RAG, CRAG, Graph RAG, RAPTOR, 5-tier auto-selection</li>
@@ -1430,22 +1356,20 @@
     <li>Provider auto-discovery with automatic failover and key rotation</li>
     <li>Full autonomous agent system with 5 autonomy levels, task boards, scheduling, CDP browser automation, distributed multi-node agent execution</li>
     <li>JSON Schema structured output with validation, enforcement, and retry loop</li>
-    <li><strong>[v5]</strong> Advanced prompt optimization: GEPA (NSGA-II genetic Pareto optimizer), MIPROv2 (multi-stage instruction proposal), prompt assertions &amp; constraints, LM adapters &mdash; comparable to DSPy</li>
-    <li><strong>[v5]</strong> MCP v2 protocol: Streamable HTTP transport, OAuth 2.1 with PKCE, tool annotations (read_only, destructive, idempotent)</li>
-    <li><strong>[v5]</strong> Real-time voice agents: Bidirectional audio streaming, VAD (Voice Activity Detection), conversation turn management</li>
-    <li><strong>[v5]</strong> Media generation: Image gen (DALL-E, Stable Diffusion, Flux, local), image editing, video gen (Runway, Sora, Replicate)</li>
-    <li><strong>[v5]</strong> Distillation pipeline: Trajectory collection, scoring &amp; filtering, dataset building (ChatML, Alpaca, ShareGPT), data flywheel orchestrator</li>
-    <li><strong>[v5]</strong> OTel GenAI conventions: GenAI semantic attributes, hierarchical agent tracing, cost attribution &amp; budget enforcement</li>
-    <li><strong>[v5]</strong> Durable execution &amp; agent patterns: Auto state persistence, 6 named conversation patterns, declarative agent definitions (JSON/TOML), agent handoffs with context transfer</li>
-    <li><strong>[v5]</strong> Constrained decoding: GBNF grammar-guided generation, JSON Schema &rarr; grammar compiler, streaming structured validation</li>
-    <li><strong>[v5]</strong> Memory evolution: Semantic fact consolidation, temporal memory graphs with causal chains, self-evolving procedures (MemRL)</li>
+    <li>Model registry: 7 models with capability info (context window, vision, tool calling, cost tier)</li>
+    <li>Production-grade webhook signature verification (HMAC-SHA256)</li>
+    <li>Criterion benchmark suite for performance regression testing</li>
+    <li>Deterministic BestFit agent assignment for reproducible behavior</li>
+    <li>Interactive REPL/CLI with slash commands, history, streaming, and autocompletion</li>
     <li>Neural reranking: CrossEncoder, Reciprocal Rank Fusion, MMR diversity, cascade pipelines</li>
     <li>A/B testing framework: ExperimentManager, VariantAssigner, significance testing</li>
+    <li>BPE token counting: TokenCounter trait, BpeTokenCounter, ApproximateCounter, ProviderTokenCounter, TokenBudget</li>
     <li>Per-request cost tracking: CostDashboard, CostMiddleware, CostAwareConfig, budget alerts</li>
+    <li>Multi-modal RAG: MultiModalRetriever, MultiModalPipeline, ImageCaptionExtractor, cross-modal fusion</li>
     <li>Zero external service dependencies &mdash; fully self-contained</li>
     <li>Rust performance and memory safety</li>
   </ul>
-  <p><strong>Remaining gaps (honest assessment):</strong> No managed platform/SaaS. No public community or ecosystem yet. <span class="text-green">(v5 closed the audio/speech gap with real-time voice agents, added DSPy-class prompt optimization, MCP v2, media generation, distillation, OTel GenAI, durable execution, constrained decoding, and memory evolution. All prior gaps resolved.)</span></p>
+  <p><strong>Remaining gaps (honest assessment):</strong> Vision module exists but is limited, no audio/speech support. No managed platform/SaaS. <span class="text-green">(v2 Phase 1: EmbeddingProvider trait, GeminiProvider, 7 new AiProvider presets. v2 Phases 2-3: AsyncProviderPlugin, LLM-as-Judge, unified tool calling (Ollama native + PromptToolFallback), GuardrailPipeline (6 built-in guards). v2 Phase 4: CI/CD with GitHub Actions. All prior phases resolved: cost tracking, UI hooks, agent graph, REPL/CLI, neural reranking, A/B testing.)</span></p>
 </div>
 
 <div class="card" style="border-left: 4px solid #3b82f6;">
@@ -1615,21 +1539,16 @@
 <tr><td>RAG / Vector</td><td class="our-col">SQLite FTS5, Qdrant, LanceDB, Pinecone, Chroma, Milvus, pgvector, hybrid</td><td>Qdrant, MongoDB, LanceDB</td><td>SurrealDB, Qdrant</td><td>Basic</td><td>Built-in chunking</td><td>N/A</td></tr>
 <tr><td>Advanced RAG</td><td class="our-col">Self-RAG, CRAG, Graph RAG, RAPTOR, neural reranking</td><td>VectorStoreIndex</td><td>Semantic routing</td><td>Data processing</td><td>Semantic chunks</td><td>N/A</td></tr>
 <tr><td>Agent System</td><td class="our-col">5 autonomy levels, multi-agent, task board, distributed agents, deterministic BestFit</td><td>Agentic pipelines, tool use</td><td>Chain-based agents</td><td>Chain architecture</td><td>No agent system</td><td>N/A (inference only)</td></tr>
-<tr><td>Memory</td><td class="our-col">Sessions, compaction, snapshots, adaptive, semantic facts, temporal graphs, causal chains, MemRL</td><td>Conversation history</td><td>LangChain-style memory</td><td>Chain context</td><td>Document pipeline</td><td>N/A</td></tr>
-<tr><td>MCP</td><td class="our-col">Server + Client, MCP v2 spec, Streamable HTTP, OAuth 2.1+PKCE, tool annotations</td><td>Via mcp-rig</td><td>No</td><td>No</td><td>No</td><td>MCP server</td></tr>
+<tr><td>Memory</td><td class="our-col">Sessions, compaction, snapshots, adaptive</td><td>Conversation history</td><td>LangChain-style memory</td><td>Chain context</td><td>Document pipeline</td><td>N/A</td></tr>
+<tr><td>MCP</td><td class="our-col">Server + Client, 2025-03-26 spec, Streamable HTTP, OAuth 2.1</td><td>Via mcp-rig</td><td>No</td><td>No</td><td>No</td><td>MCP server</td></tr>
 <tr><td>Distributed / P2P</td><td class="our-col">QUIC, CRDTs, DHT, MapReduce, NAT traversal</td><td>None</td><td>None</td><td>None</td><td>None</td><td>None</td></tr>
 <tr><td>Security</td><td class="our-col">RBAC, AES-256-GCM, SHA-256, HMAC-SHA256, PII, GuardrailPipeline (6 guards), Constitutional AI, webhook signatures</td><td>None</td><td>None</td><td>None</td><td>None</td><td>None</td></tr>
-<tr><td>Streaming</td><td class="our-col">SSE, WebSocket (RFC 6455), compression, resumable, bidirectional audio</td><td>Async streaming</td><td>Async</td><td>Async</td><td>Structured gen</td><td>Streaming inference</td></tr>
+<tr><td>Streaming</td><td class="our-col">SSE, WebSocket (RFC 6455), compression, resumable</td><td>Async streaming</td><td>Async</td><td>Async</td><td>Structured gen</td><td>Streaming inference</td></tr>
 <tr><td>Documents</td><td class="our-col">PDF, EPUB, DOCX, ODT, HTML, CSV, EML, PPTX, XLSX, images, feeds, S3, GDrive</td><td>None</td><td>PDF, HTML, CSV</td><td>Summarization</td><td>Chunking only</td><td>None</td></tr>
-<tr><td>Evaluation</td><td class="our-col">Criterion benchmarks, hallucination, ensemble, LLM-as-judge, JSON Schema validation, A/B testing, cost tracking, GEPA/MIPROv2 prompt optimization</td><td>None</td><td>None</td><td>None</td><td>None</td><td>Benchmarks (inference)</td></tr>
-<tr><td>Voice / Audio</td><td class="our-col">Bidirectional audio streaming, VAD, conversation turn management</td><td>None</td><td>None</td><td>None</td><td>None</td><td>None</td></tr>
-<tr><td>Media Generation</td><td class="our-col">Image gen (DALL-E/SD/Flux/local), image editing, video gen (Runway/Sora/Replicate)</td><td>None</td><td>None</td><td>None</td><td>None</td><td>None</td></tr>
-<tr><td>Distillation</td><td class="our-col">Trajectory collection/scoring/filtering, ChatML/Alpaca/ShareGPT, data flywheel</td><td>None</td><td>None</td><td>None</td><td>None</td><td>None</td></tr>
-<tr><td>Constrained Decoding</td><td class="our-col">GBNF grammar-guided gen, JSON Schema&rarr;grammar compiler, streaming validation</td><td>None</td><td>None</td><td>None</td><td>None</td><td>None</td></tr>
-<tr><td>Durable Execution</td><td class="our-col">Auto state persistence, 6 conversation patterns, declarative agents (JSON/TOML), handoffs</td><td>None</td><td>None</td><td>None</td><td>None</td><td>None</td></tr>
+<tr><td>Evaluation</td><td class="our-col">Criterion benchmarks, hallucination, ensemble, LLM-as-judge, JSON Schema validation, A/B testing, cost tracking</td><td>None</td><td>None</td><td>None</td><td>None</td><td>Benchmarks (inference)</td></tr>
 <tr><td>Browser</td><td class="our-col">Real CDP, Chrome management, wired into AiAssistant</td><td>None</td><td>None</td><td>None</td><td>None</td><td>None</td></tr>
 <tr><td>WASM</td><td class="our-col">web-sys, js-sys, wasm-bindgen</td><td>N/A</td><td>N/A</td><td>N/A</td><td>WebGPU (planned)</td><td>N/A</td></tr>
-<tr><td>Tests</td><td class="our-col"><strong>3907</strong></td><td>Moderate</td><td>Moderate</td><td>Basic</td><td>Moderate</td><td>Extensive (inference)</td></tr>
+<tr><td>Tests</td><td class="our-col"><strong>2510</strong></td><td>Moderate</td><td>Moderate</td><td>Basic</td><td>Moderate</td><td>Extensive (inference)</td></tr>
 <tr><td>GitHub Stars</td><td class="our-col">Private</td><td>~5.9k</td><td>~1.2k</td><td>~1.6k</td><td>~938</td><td>~6.3k</td></tr>
 </tbody>
 </table>
@@ -1637,7 +1556,7 @@
 
 <div class="card" style="border-left: 4px solid #8b5cf6; margin-top: 16px;">
   <h3>Key Takeaway</h3>
-  <p><strong>ai_assistant covers 20x+ more feature surface</strong> than any other Rust AI library. While Rig leads in community adoption and clean API design for LLM interactions, it only covers ~15% of what ai_assistant implements. No other Rust project has distributed computing, security, evaluation, browser automation, document processing, voice agents, media generation, distillation pipelines, constrained decoding, or durable execution at all. With 3907 tests across 230+ source files, v5 adds DSPy-class prompt optimization (GEPA/MIPROv2), MCP v2 protocol, real-time voice agents, media generation (image + video), distillation pipeline, OTel GenAI conventions, durable execution with 6 agent patterns, GBNF constrained decoding, and memory evolution (temporal graphs, MemRL). ai_assistant now has production-grade tooling that exceeds most open-source AI frameworks in any language.</p>
+  <p><strong>ai_assistant covers 15x more feature surface</strong> than any other Rust AI library. While Rig leads in community adoption and clean API design for LLM interactions, it only covers ~20% of what ai_assistant implements. No other Rust project has distributed computing, security, evaluation, browser automation, or document processing at all. With 2510 tests across 215 source files, Criterion benchmarks, zero-dependency crypto (SHA-256, HMAC-SHA256, AES-256-GCM), structured output with JSON Schema validation, per-request cost tracking, multi-modal RAG pipelines, UI framework hooks, agent graph visualization, dedicated EmbeddingProvider trait (4 backends), native GeminiProvider, 7 OpenAI-compatible presets (Groq, Together, Fireworks, DeepSeek, Mistral, Perplexity, OpenRouter), AsyncProviderPlugin (sync/async bridge), LLM-as-Judge evaluation (6 criteria, pairwise, RAG faithfulness), unified tool calling (Ollama native + PromptToolFallback), GuardrailPipeline (6 guards), and CI/CD, ai_assistant now has production-grade tooling that exceeds most open-source AI frameworks in any language.</p>
 </div>
 
 <div class="card">
@@ -1648,15 +1567,15 @@
     <li><strong>Scale:</strong> 97M+ monthly SDK downloads, 10,000+ active public servers</li>
     <li><strong>Latest spec:</strong> 2025-11-25 (Streamable HTTP, OAuth 2.1, server identity, async ops)</li>
     <li><strong>Rust SDK:</strong> Official <code>rmcp</code> crate supports 2025-11-25 spec, <code>#[tool]</code> macro</li>
-    <li><strong>Our status:</strong> MCP v2 protocol: Streamable HTTP transport, OAuth 2.1 with PKCE, tool annotations (read_only, destructive, idempotent). Full compliance with latest MCP v2 spec.</li>
+    <li><strong>Our status:</strong> MCP server/client upgraded to 2025-03-26 spec with Streamable HTTP transport and OAuth 2.1 support</li>
   </ul>
 </div>
 </div>
 
 <!-- ==================== TAB: GAP ANALYSIS ==================== -->
 <div id="tab-gaps" class="tab-content">
-<h2>Gap Analysis &mdash; Phase 6-11 + v2 Phases 1-4 + v5 Phases 1-9 Updates (Feb 2026)</h2>
-<p class="dim" style="margin-bottom:16px">All 21 previously identified feature gaps have been implemented. Phases 6-11 closed all original roadmap items (39/39). v2 Phases 1-4 added providers, async plugin, evaluation, guardrails, and CI/CD. <strong>v5 Phases 1-9</strong> add 9 major new capability areas: advanced prompt optimization (GEPA, MIPROv2), MCP v2 protocol, real-time voice agents, media generation (image + video), distillation pipeline, OTel GenAI conventions, durable execution &amp; agent patterns, constrained decoding, and memory evolution. The audio/speech gap is now closed. 3907 tests, 230+ source files, 0 warnings. Remaining gaps listed honestly below.</p>
+<h2>Gap Analysis &mdash; Phase 6-11 + v2 Phases 1-4 Updates (Feb 2026)</h2>
+<p class="dim" style="margin-bottom:16px">All 21 previously identified feature gaps have been implemented. Phases 6-8 closed 10 additional quality/parity gaps. Phase 9 closed 3 feature gaps (REPL/CLI, neural reranking, A/B testing). Phase 10 closed 3 more (BPE token counting, per-request cost tracking, multi-modal RAG). Phase 11 closed the final 2 items (UI framework hooks, agent graph visualization). <strong>All 39/39 roadmap items complete.</strong> v2 Phase 1 further strengthened provider coverage with EmbeddingProvider trait (4 backends), native GeminiProvider, and 7 new AiProvider presets. v2 Phases 2-3 added AsyncProviderPlugin, LLM-as-Judge, unified tool calling (Ollama native + PromptToolFallback), and GuardrailPipeline (6 built-in guards). v2 Phase 4 added CI/CD with GitHub Actions. 2510 tests, 215 source files, 0 warnings. Remaining gaps listed honestly below.</p>
 
 <h3 style="color:#10b981">Resolved &mdash; Former Critical Gaps (Now Implemented)</h3>
 
@@ -1666,8 +1585,8 @@
 </div>
 
 <div class="gap-strength">
-  <p><span class="tag tag-str">RESOLVED</span> <strong>MCP v2 Protocol (Full Compliance)</strong></p>
-  <p class="small">MCP v2 protocol with Streamable HTTP transport, OAuth 2.1 with PKCE, and tool annotations (read_only, destructive, idempotent). Compatible with the MCP ecosystem of 10,000+ public servers. v5 Phase 2.</p>
+  <p><span class="tag tag-str">RESOLVED</span> <strong>MCP Spec Compliance (2025-03-26)</strong></p>
+  <p class="small">Upgraded to 2025-03-26 spec with Streamable HTTP transport, OAuth 2.1, and async operations support. Compatible with the MCP ecosystem of 10,000+ public servers.</p>
 </div>
 
 <div class="gap-critical">
@@ -1743,53 +1662,6 @@
   <p class="small">GitHub Actions CI workflow with check, test, clippy, and fmt jobs. Automated quality assurance for the entire project. v2 Phase 4 (4.4).</p>
 </div>
 
-<h3 style="color:#f97316">v5 New Capabilities (Feb 2026)</h3>
-
-<div class="gap-strength">
-  <p><span class="tag tag-str">RESOLVED</span> <strong>Advanced Prompt Optimization (GEPA + MIPROv2)</strong></p>
-  <p class="small">GEPA (Genetic Pareto Optimizer using NSGA-II), MIPROv2 (Multi-stage Instruction Proposal), prompt assertions &amp; constraints, LM adapters (provider-aware formatting). DSPy-class prompt optimization in Rust. v5 Phase 1.</p>
-</div>
-
-<div class="gap-strength">
-  <p><span class="tag tag-str">RESOLVED</span> <strong>MCP v2 Protocol</strong></p>
-  <p class="small">Streamable HTTP transport, OAuth 2.1 with PKCE, tool annotations (read_only, destructive, idempotent). Full MCP v2 spec compliance. v5 Phase 2.</p>
-</div>
-
-<div class="gap-strength">
-  <p><span class="tag tag-str">RESOLVED</span> <strong>Real-Time Voice Agents</strong></p>
-  <p class="small">Bidirectional audio streaming, Voice Activity Detection (VAD), conversation turn management. Comparable to OpenAI Realtime API and Google ADK voice capabilities. v5 Phase 3.</p>
-</div>
-
-<div class="gap-strength">
-  <p><span class="tag tag-str">RESOLVED</span> <strong>Media Generation (Image + Video)</strong></p>
-  <p class="small">Image generation via DALL-E, Stable Diffusion, Flux, and local models. Image editing operations. Video generation via Runway, Sora, and Replicate. Comparable to Vercel AI SDK 6 and Stability AI. v5 Phase 4.</p>
-</div>
-
-<div class="gap-strength">
-  <p><span class="tag tag-str">RESOLVED</span> <strong>Distillation Pipeline (Data Flywheel)</strong></p>
-  <p class="small">Trajectory collection, scoring &amp; filtering, dataset building in ChatML/Alpaca/ShareGPT formats, data flywheel orchestrator. Comparable to OpenAI distillation and NVIDIA Blueprint flywheel. v5 Phase 5.</p>
-</div>
-
-<div class="gap-strength">
-  <p><span class="tag tag-str">RESOLVED</span> <strong>OTel GenAI Conventions</strong></p>
-  <p class="small">GenAI semantic attributes following OTel GenAI spec, hierarchical agent tracing, cost attribution &amp; budget enforcement. Comparable to AG2, CrewAI, and LiteLLM observability. v5 Phase 6.</p>
-</div>
-
-<div class="gap-strength">
-  <p><span class="tag tag-str">RESOLVED</span> <strong>Durable Execution &amp; Agent Patterns</strong></p>
-  <p class="small">Automatic state persistence, 6 named conversation patterns, declarative agent definitions in JSON/TOML, agent handoffs with context transfer. Comparable to LangGraph, Pydantic AI, AG2/AutoGen, and OpenAI Agents SDK handoffs. v5 Phase 7.</p>
-</div>
-
-<div class="gap-strength">
-  <p><span class="tag tag-str">RESOLVED</span> <strong>Constrained Decoding (GBNF)</strong></p>
-  <p class="small">Grammar-guided generation using GBNF, JSON Schema &rarr; grammar compiler, streaming structured validation. Comparable to XGrammar, llguidance, Outlines, and Pydantic AI. v5 Phase 8.</p>
-</div>
-
-<div class="gap-strength">
-  <p><span class="tag tag-str">RESOLVED</span> <strong>Memory Evolution (Temporal Graphs + MemRL)</strong></p>
-  <p class="small">Enhanced memory consolidation with semantic facts, temporal memory graphs with causal chains, self-evolving procedures via MemRL. Based on academic research including MemAgents (ICLR 2026) and MemRL (ICLR 2026). v5 Phase 9.</p>
-</div>
-
 <div class="gap-strength">
   <p><span class="tag tag-str">RESOLVED</span> <strong>Embedding-Based Semantic Chunking</strong></p>
   <p class="small">Embedding-based split points for improved RAG quality, matching Haystack's semantic chunking capability.</p>
@@ -1828,8 +1700,8 @@
 </div>
 
 <div class="gap-strength">
-  <p><span class="tag tag-str">RESOLVED</span> <strong>Test Coverage: 3907 Tests, 0 Warnings</strong></p>
-  <p class="small">Up from 1786 to 3907 tests (2510 at v2, +1397 in v3/v4/v5 phases) with zero compiler warnings across 230+ source files. Exceeds the test coverage of most open-source AI frameworks in any language.</p>
+  <p><span class="tag tag-str">RESOLVED</span> <strong>Test Coverage: 2510 Tests, 0 Warnings</strong></p>
+  <p class="small">Up from 1786 to 2510 tests (+27 in v2 Phase 1, +27 in v2 Phases 2-3, +25 in v2 Phases 3-4) with zero compiler warnings across 215 source files. Exceeds the test coverage of most open-source AI frameworks in any language.</p>
 </div>
 
 <div class="gap-strength">
@@ -1876,14 +1748,14 @@
   <p class="small">CostDashboard, CostMiddleware, CostAwareConfig, RequestCostEntry. Per-request cost tracking with budget alerts and model-aware pricing. Competitive with LiteLLM and LangSmith cost tracking. 12 tests. Phase 10.</p>
 </div>
 
-<div class="gap-strength">
-  <p><span class="tag tag-str">RESOLVED</span> <strong>Vision &amp; Media Generation (v5 Phase 4)</strong></p>
-  <p class="small">Multi-modal RAG pipeline (MultiModalRetriever, cross-modal fusion). v5 adds image generation (DALL-E, Stable Diffusion, Flux, local), image editing operations, and video generation (Runway, Sora, Replicate). Competitive with Vercel AI SDK 6 generateImage. v5 Phase 4.</p>
+<div class="gap-nice">
+  <p><span class="tag tag-nice">PARTIALLY RESOLVED</span> <strong>Vision Module Limitations</strong></p>
+  <p class="small dim">Multi-modal RAG pipeline added (MultiModalRetriever, MultiModalPipeline, ImageCaptionExtractor, cross-modal fusion). Now competitive with LlamaIndex multi-modal RAG. Still no OCR or direct pixel-level image understanding. 15 tests. Phase 10.</p>
 </div>
 
-<div class="gap-strength">
-  <p><span class="tag tag-str">RESOLVED</span> <strong>Real-Time Voice Agents (v5 Phase 3)</strong></p>
-  <p class="small">Bidirectional audio streaming, Voice Activity Detection (VAD), conversation turn management. Competitive with OpenAI Realtime API and Google ADK voice capabilities. v5 Phase 3.</p>
+<div class="gap-nice">
+  <p><span class="tag tag-nice">REMAINING</span> <strong>No Audio/Speech Support</strong></p>
+  <p class="small dim">No text-to-speech, speech-to-text, or audio processing. Agno supports multi-modal (text/image/audio/video). OpenAI Agents SDK supports voice. Not on the roadmap currently.</p>
 </div>
 
 <h3 style="color:#10b981">Our Unique Strengths (What Others Don't Have)</h3>
@@ -1910,27 +1782,7 @@
 
 <div class="gap-strength">
   <p><span class="tag tag-str">UNIQUE</span> <strong>Zero Stubs, Zero External Dependencies for Core</strong></p>
-  <p class="small">Every module is fully implemented with 3907 tests and 0 warnings across 230+ source files. No placeholder code, no "coming soon", no external service requirements. SHA-256, HMAC-SHA256, SHA-1, AES-256-GCM, base64, WebSocket framing, LCS diffing &mdash; all from scratch in pure Rust.</p>
-</div>
-
-<div class="gap-strength">
-  <p><span class="tag tag-str">UNIQUE</span> <strong>DSPy-Class Prompt Optimization in Rust</strong></p>
-  <p class="small">GEPA (NSGA-II genetic Pareto optimizer) and MIPROv2 (multi-stage instruction proposal) &mdash; the only Rust framework with automatic prompt optimization comparable to DSPy. Includes prompt assertions, constraints, and provider-aware LM adapters.</p>
-</div>
-
-<div class="gap-strength">
-  <p><span class="tag tag-str">UNIQUE</span> <strong>Full Media Pipeline (Image + Video Generation)</strong></p>
-  <p class="small">Image generation (DALL-E, Stable Diffusion, Flux, local), image editing, and video generation (Runway, Sora, Replicate) &mdash; no other Rust AI framework offers any media generation capabilities.</p>
-</div>
-
-<div class="gap-strength">
-  <p><span class="tag tag-str">UNIQUE</span> <strong>Distillation Pipeline with Data Flywheel</strong></p>
-  <p class="small">Trajectory collection, scoring, filtering, and dataset building in ChatML/Alpaca/ShareGPT formats with a data flywheel orchestrator. Comparable to OpenAI distillation and NVIDIA Blueprint &mdash; unprecedented in Rust.</p>
-</div>
-
-<div class="gap-strength">
-  <p><span class="tag tag-str">UNIQUE</span> <strong>GBNF Constrained Decoding</strong></p>
-  <p class="small">Grammar-guided generation using GBNF, JSON Schema to grammar compiler, and streaming structured validation. Comparable to XGrammar and Outlines &mdash; no other Rust AI framework has this.</p>
+  <p class="small">Every module is fully implemented with 2510 tests and 0 warnings across 215 source files. No placeholder code, no "coming soon", no external service requirements. SHA-256, HMAC-SHA256, SHA-1, AES-256-GCM, base64, WebSocket framing, LCS diffing &mdash; all from scratch in pure Rust.</p>
 </div>
 
 <div class="gap-strength">
@@ -1949,15 +1801,15 @@
 </div>
 
 <div class="gap-strength">
-  <p><span class="tag tag-str">UNIQUE</span> <strong>3907 Tests with 0 Compiler Warnings</strong></p>
-  <p class="small">More tests than most open-source AI frameworks in any language. LangChain has ~4k tests for 120k stars; ai_assistant has 3907 tests across 230+ source files for a private crate. Zero compiler warnings across the entire codebase. Criterion benchmark suite for performance regression testing.</p>
+  <p><span class="tag tag-str">UNIQUE</span> <strong>2510 Tests with 0 Compiler Warnings</strong></p>
+  <p class="small">More tests than most open-source AI frameworks in any language. LangChain has ~4k tests for 120k stars; ai_assistant has 2510 tests across 215 source files for a private crate. Zero compiler warnings across the entire codebase. Criterion benchmark suite for performance regression testing.</p>
 </div>
 </div>
 
 <!-- ==================== TAB: ROADMAP ==================== -->
 <div id="tab-roadmap" class="tab-content">
-<h2>Improvement Roadmap &mdash; 39/39 + v2 P1-4 + v5 P1-9 All Completed</h2>
-<p class="dim" style="margin-bottom:16px">All 39/39 original roadmap items are complete. v2 Phases 1-4 added providers, async plugin, evaluation, guardrails, and CI/CD. <strong>v5 Phases 1-9</strong> add 9 major new capability areas: advanced prompt optimization, MCP v2, real-time voice agents, media generation, distillation pipeline, OTel GenAI, durable execution, constrained decoding, and memory evolution. 3907 tests, 230+ source files, 0 warnings.</p>
+<h2>Improvement Roadmap &mdash; 39/39 + v2 Phases 1-4 Items Completed</h2>
+<p class="dim" style="margin-bottom:16px">All 21 original technical feature gaps plus 10 Phase 6-8 quality/parity improvements plus 3 Phase 9 feature additions plus 3 Phase 10 feature additions plus 2 Phase 11 feature additions have been implemented. <strong>All 39/39 roadmap items are complete.</strong> v2 Phase 1 adds 3 provider enhancements (EmbeddingProvider trait, GeminiProvider, 7 AiProvider presets). v2 Phases 2-3 add AsyncProviderPlugin, LLM-as-Judge, unified tool calling (Ollama + PromptToolFallback), and GuardrailPipeline (6 guards). v2 Phase 4 adds CI/CD. 2510 tests, 215 source files.</p>
 
 <div class="card" style="border-left: 4px solid #10b981;">
 <h3 style="color:#10b981">Phase 1 &mdash; Critical (High ROI) &mdash; ALL COMPLETED</h3>
@@ -2106,131 +1958,16 @@
 <p class="small dim" style="margin-top:8px">2510 tests, 0 failures, 0 clippy warnings, 215 source files.</p>
 </div>
 
-<div class="card" style="border-left: 4px solid #f97316;">
-<h3 style="color:#f97316">v5 Phase 1 &mdash; Advanced Prompt Optimization (Feb 2026) &mdash; ALL 4 COMPLETED</h3>
-<table style="min-width:auto">
-<thead><tr><th style="text-align:left">Item</th><th>Status</th><th>Details</th></tr></thead>
-<tbody>
-<tr><td style="text-align:left"><s>GEPA (Genetic Pareto Optimizer, NSGA-II)</s></td><td class="text-green">DONE</td><td>Multi-objective genetic optimization for prompt tuning. Comparable to DSPy optimizers.</td></tr>
-<tr><td style="text-align:left"><s>MIPROv2 (Multi-stage Instruction Proposal)</s></td><td class="text-green">DONE</td><td>Multi-stage instruction proposal optimizer. DSPy-class automatic prompt optimization.</td></tr>
-<tr><td style="text-align:left"><s>Prompt Assertions &amp; Constraints</s></td><td class="text-green">DONE</td><td>Declarative prompt assertions and constraint validation. Like DSPy assertions.</td></tr>
-<tr><td style="text-align:left"><s>LM Adapters (provider-aware formatting)</s></td><td class="text-green">DONE</td><td>Provider-aware prompt formatting adapters. Automatic prompt adaptation per LLM provider.</td></tr>
-</tbody>
-</table>
-</div>
-
-<div class="card" style="border-left: 4px solid #f97316;">
-<h3 style="color:#f97316">v5 Phase 2 &mdash; MCP v2 Protocol (Feb 2026) &mdash; ALL 3 COMPLETED</h3>
-<table style="min-width:auto">
-<thead><tr><th style="text-align:left">Item</th><th>Status</th><th>Details</th></tr></thead>
-<tbody>
-<tr><td style="text-align:left"><s>Streamable HTTP Transport</s></td><td class="text-green">DONE</td><td>MCP v2 Streamable HTTP transport. Following latest MCP v2 spec.</td></tr>
-<tr><td style="text-align:left"><s>OAuth 2.1 with PKCE</s></td><td class="text-green">DONE</td><td>OAuth 2.1 authentication with PKCE flow. Following MCP v2 spec.</td></tr>
-<tr><td style="text-align:left"><s>Tool Annotations (read_only, destructive, idempotent)</s></td><td class="text-green">DONE</td><td>Tool behavior annotations for safety classification. Following MCP v2 spec.</td></tr>
-</tbody>
-</table>
-</div>
-
-<div class="card" style="border-left: 4px solid #f97316;">
-<h3 style="color:#f97316">v5 Phase 3 &mdash; Real-time Voice Agents (Feb 2026) &mdash; ALL 3 COMPLETED</h3>
-<table style="min-width:auto">
-<thead><tr><th style="text-align:left">Item</th><th>Status</th><th>Details</th></tr></thead>
-<tbody>
-<tr><td style="text-align:left"><s>Bidirectional Audio Streaming</s></td><td class="text-green">DONE</td><td>Full-duplex audio streaming. Like OpenAI Realtime API, Google ADK.</td></tr>
-<tr><td style="text-align:left"><s>VAD (Voice Activity Detection)</s></td><td class="text-green">DONE</td><td>Voice activity detection for speech segmentation. Like OpenAI Agents SDK.</td></tr>
-<tr><td style="text-align:left"><s>Conversation Turn Management</s></td><td class="text-green">DONE</td><td>Turn-taking protocol for natural voice conversations. Like Google ADK.</td></tr>
-</tbody>
-</table>
-</div>
-
-<div class="card" style="border-left: 4px solid #f97316;">
-<h3 style="color:#f97316">v5 Phase 4 &mdash; Media Generation (Feb 2026) &mdash; ALL 3 COMPLETED</h3>
-<table style="min-width:auto">
-<thead><tr><th style="text-align:left">Item</th><th>Status</th><th>Details</th></tr></thead>
-<tbody>
-<tr><td style="text-align:left"><s>Image Generation (DALL-E, SD, Flux, local)</s></td><td class="text-green">DONE</td><td>Multi-provider image generation. Like Vercel AI SDK 6 generateImage.</td></tr>
-<tr><td style="text-align:left"><s>Image Editing Operations</s></td><td class="text-green">DONE</td><td>Image editing (crop, resize, filter, inpaint). Like Stability AI.</td></tr>
-<tr><td style="text-align:left"><s>Video Generation (Runway, Sora, Replicate)</s></td><td class="text-green">DONE</td><td>Multi-provider video generation. Like Vercel AI SDK 6.</td></tr>
-</tbody>
-</table>
-</div>
-
-<div class="card" style="border-left: 4px solid #f97316;">
-<h3 style="color:#f97316">v5 Phase 5 &mdash; Distillation Pipeline (Feb 2026) &mdash; ALL 4 COMPLETED</h3>
-<table style="min-width:auto">
-<thead><tr><th style="text-align:left">Item</th><th>Status</th><th>Details</th></tr></thead>
-<tbody>
-<tr><td style="text-align:left"><s>Trajectory Collection</s></td><td class="text-green">DONE</td><td>Automatic collection of LLM interaction trajectories. Like OpenAI distillation.</td></tr>
-<tr><td style="text-align:left"><s>Trajectory Scoring &amp; Filtering</s></td><td class="text-green">DONE</td><td>Quality scoring and filtering of collected trajectories. Like NVIDIA Flywheel.</td></tr>
-<tr><td style="text-align:left"><s>Dataset Building (ChatML, Alpaca, ShareGPT)</s></td><td class="text-green">DONE</td><td>Multi-format dataset export for fine-tuning. Like OpenAI data pipelines.</td></tr>
-<tr><td style="text-align:left"><s>Data Flywheel Orchestrator</s></td><td class="text-green">DONE</td><td>End-to-end data flywheel orchestration. Like NVIDIA Blueprint.</td></tr>
-</tbody>
-</table>
-</div>
-
-<div class="card" style="border-left: 4px solid #f97316;">
-<h3 style="color:#f97316">v5 Phase 6 &mdash; OTel GenAI Conventions (Feb 2026) &mdash; ALL 3 COMPLETED</h3>
-<table style="min-width:auto">
-<thead><tr><th style="text-align:left">Item</th><th>Status</th><th>Details</th></tr></thead>
-<tbody>
-<tr><td style="text-align:left"><s>GenAI Semantic Attributes</s></td><td class="text-green">DONE</td><td>OTel GenAI semantic conventions for LLM spans. Following OTel GenAI spec.</td></tr>
-<tr><td style="text-align:left"><s>Hierarchical Agent Tracing</s></td><td class="text-green">DONE</td><td>Nested agent execution traces. Like AG2 and CrewAI observability.</td></tr>
-<tr><td style="text-align:left"><s>Cost Attribution &amp; Budget Enforcement</s></td><td class="text-green">DONE</td><td>Per-agent cost tracking with budget limits and enforcement. Like LiteLLM.</td></tr>
-</tbody>
-</table>
-</div>
-
-<div class="card" style="border-left: 4px solid #f97316;">
-<h3 style="color:#f97316">v5 Phase 7 &mdash; Durable Execution &amp; Agent Patterns (Feb 2026) &mdash; ALL 4 COMPLETED</h3>
-<table style="min-width:auto">
-<thead><tr><th style="text-align:left">Item</th><th>Status</th><th>Details</th></tr></thead>
-<tbody>
-<tr><td style="text-align:left"><s>Automatic State Persistence</s></td><td class="text-green">DONE</td><td>Auto-persist agent state across restarts. Like LangGraph, Pydantic AI.</td></tr>
-<tr><td style="text-align:left"><s>Named Conversation Patterns (6 types)</s></td><td class="text-green">DONE</td><td>6 built-in patterns (sequential, round-robin, supervisor, swarm, debate, consensus). Like AG2/AutoGen.</td></tr>
-<tr><td style="text-align:left"><s>Declarative Agent Definitions (JSON/TOML)</s></td><td class="text-green">DONE</td><td>Define agents declaratively in config files. Like Microsoft Agent Framework.</td></tr>
-<tr><td style="text-align:left"><s>Agent Handoffs with Context Transfer</s></td><td class="text-green">DONE</td><td>Seamless agent-to-agent handoffs preserving conversation context. Like OpenAI Agents SDK.</td></tr>
-</tbody>
-</table>
-</div>
-
-<div class="card" style="border-left: 4px solid #f97316;">
-<h3 style="color:#f97316">v5 Phase 8 &mdash; Constrained Decoding (Feb 2026) &mdash; ALL 3 COMPLETED</h3>
-<table style="min-width:auto">
-<thead><tr><th style="text-align:left">Item</th><th>Status</th><th>Details</th></tr></thead>
-<tbody>
-<tr><td style="text-align:left"><s>Grammar-Guided Generation (GBNF)</s></td><td class="text-green">DONE</td><td>GBNF grammar-guided constrained decoding. Like XGrammar, llguidance.</td></tr>
-<tr><td style="text-align:left"><s>JSON Schema &rarr; Grammar Compiler</s></td><td class="text-green">DONE</td><td>Automatic JSON Schema to GBNF grammar compilation. Like XGrammar, Outlines.</td></tr>
-<tr><td style="text-align:left"><s>Streaming Structured Validation</s></td><td class="text-green">DONE</td><td>Real-time validation during streaming output. Like Pydantic AI.</td></tr>
-</tbody>
-</table>
-</div>
-
-<div class="card" style="border-left: 4px solid #f97316;">
-<h3 style="color:#f97316">v5 Phase 9 &mdash; Memory Evolution (Feb 2026) &mdash; ALL 3 COMPLETED</h3>
-<table style="min-width:auto">
-<thead><tr><th style="text-align:left">Item</th><th>Status</th><th>Details</th></tr></thead>
-<tbody>
-<tr><td style="text-align:left"><s>Enhanced Memory Consolidation (Semantic Facts)</s></td><td class="text-green">DONE</td><td>Semantic fact extraction and consolidation for long-term memory. Academic research-grade.</td></tr>
-<tr><td style="text-align:left"><s>Temporal Memory Graphs (Causal Chains)</s></td><td class="text-green">DONE</td><td>Temporal graphs with causal chain reasoning. Like MemAgents (ICLR 2026).</td></tr>
-<tr><td style="text-align:left"><s>Self-Evolving Procedures (MemRL)</s></td><td class="text-green">DONE</td><td>Procedures that learn and improve from experience. Like MemRL (ICLR 2026).</td></tr>
-</tbody>
-</table>
-<p class="small dim" style="margin-top:8px"><strong>v5: 30/30 items completed across 9 phases. 3907 tests, 0 failures, 0 clippy warnings, 230+ source files.</strong></p>
-</div>
-
 <div class="card" style="border-left: 4px solid #10b981;">
 <h3 style="color:#10b981">Strategic Recommendations (Updated Feb 2026)</h3>
 <ul>
-  <li><strong>Publish to crates.io</strong> &mdash; With 39/39 original gaps closed, v2 Phases 1-4, and v5 Phases 1-9 adding 30 more items, 3907 tests, 230+ source files, ai_assistant is the most comprehensive Rust AI library by a wide margin. A 0.1.0 release would be extremely competitive.</li>
-  <li><s><strong>Adopt rmcp</strong></s> &mdash; <span class="text-green">DONE.</span> MCP upgraded to v2 spec with Streamable HTTP, OAuth 2.1+PKCE, tool annotations.</li>
+  <li><strong>Publish to crates.io</strong> &mdash; With 39/39 gaps closed, 2510 tests, 215 source files, v2 Phase 1 provider expansion (15+ providers including native Gemini), v2 Phases 2-3 (AsyncProviderPlugin, LLM-as-Judge, unified tool calling, GuardrailPipeline), and v2 Phase 4 (CI/CD), ai_assistant is the most comprehensive Rust AI library. A 0.1.0 release would be highly competitive.</li>
+  <li><s><strong>Adopt rmcp</strong></s> &mdash; <span class="text-green">DONE.</span> MCP upgraded to 2025-03-26 spec.</li>
   <li><s><strong>Generic OpenAI-compatible adapter</strong></s> &mdash; <span class="text-green">DONE.</span> Now 7 presets: Groq, Together, Fireworks, DeepSeek, Mistral, Perplexity, OpenRouter (v2 Phase 1).</li>
-  <li><s><strong>Audio/speech support</strong></s> &mdash; <span class="text-green">DONE.</span> Real-time voice agents with bidirectional audio streaming, VAD, conversation turn management (v5 Phase 3).</li>
-  <li><strong>Position as "LangChain for Rust"</strong> &mdash; With 15+ LLM providers, 7 vector DBs, 12+ document formats, MCP v2, DSPy-class prompt optimization (GEPA/MIPROv2), voice agents, media generation (image + video), distillation pipeline, OTel GenAI, durable execution with 6 agent patterns, GBNF constrained decoding, and MemRL memory evolution, the "full-stack" claim is backed by unmatched coverage. No framework in any language covers all these areas.</li>
+  <li><strong>Position as "LangChain for Rust"</strong> &mdash; With 15+ LLM providers (including native GeminiProvider, EmbeddingProvider trait with 4 backends, AsyncProviderPlugin with sync/async bridge, unified tool calling), 7 vector DBs, 12+ document formats, full MCP support, JSON Schema structured output, LLM-as-Judge evaluation, GuardrailPipeline (6 guards), model registry, and CI/CD, the "full-stack" claim is backed by comprehensive coverage.</li>
   <li><strong>Leverage distributed uniqueness</strong> &mdash; No competitor has built-in P2P, CRDTs, or QUIC. Distributed agents now fully wired. This is a differentiator worth marketing.</li>
-  <li><strong>Leverage prompt optimization uniqueness</strong> &mdash; GEPA (NSGA-II) and MIPROv2 make ai_assistant the only non-Python framework with DSPy-class automatic prompt optimization. Combined with constrained decoding (GBNF), this is a powerful differentiator.</li>
-  <li><strong>Leverage media generation uniqueness</strong> &mdash; Image gen (DALL-E/SD/Flux/local) + video gen (Runway/Sora/Replicate) + distillation pipeline make ai_assistant unique among Rust frameworks and competitive with cutting-edge Python frameworks.</li>
-  <li><strong>Security-first messaging</strong> &mdash; Our zero-dependency crypto stack plus RBAC, PII, Constitutional AI, bias detection, GuardrailPipeline (6 guards), and OTel GenAI cost attribution with budget enforcement is unmatched. Enterprise buyers care deeply about this.</li>
-  <li><strong>Address remaining gaps honestly</strong> &mdash; Community and ecosystem growth are the main areas for improvement. No managed platform/SaaS. All technical feature gaps are now closed with v5.</li>
+  <li><strong>Security-first messaging</strong> &mdash; Our zero-dependency crypto stack (SHA-256, HMAC-SHA256, AES-256-GCM) plus RBAC, PII, Constitutional AI, bias detection, and now a full GuardrailPipeline with 6 built-in guards (content length, rate limit, pattern, toxicity, PII, attack) is unmatched. Webhook signatures are production-grade. Enterprise buyers care deeply about this.</li>
+  <li><strong>Address remaining gaps honestly</strong> &mdash; Audio/speech support is the only significant remaining gap for competitive parity. All 39/39 roadmap items are complete. v2 Phase 1 expanded provider coverage to 15+ providers with native Gemini, EmbeddingProvider trait, and 7 OpenAI-compatible presets. v2 Phases 2-3 added async provider interface, LLM-as-Judge evaluation, unified tool calling (Ollama + PromptToolFallback), and GuardrailPipeline. v2 Phase 4 added CI/CD. Community and ecosystem growth are the main areas for improvement.</li>
 </ul>
 </div>
 </div>
@@ -2245,7 +1982,7 @@ function showTab(name) {
 </script>
 
 <p class="dim small" style="text-align:center; margin-top:30px; padding-top:16px; border-top:1px solid var(--border);">
-  Updated 2026-02-23 (v5 Phases 1-9) &bull; ai_assistant Framework Comparison &bull;
+  Updated 2026-02-21 (v2 Phases 3-4) &bull; ai_assistant Framework Comparison &bull;
   Data sources: GitHub, official docs, crates.io, PyPI, npm, web research
 </p>
 
