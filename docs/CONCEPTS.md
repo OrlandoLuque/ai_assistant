@@ -102,6 +102,36 @@ Read this for understanding, inspiration, and to demystify the magic.
 92. [Temporal Memory Graphs](#92-temporal-memory-graphs)
 93. [Self-Evolving Procedures (MemRL)](#93-self-evolving-procedures-memrl)
 94. [Streaming Guardrails (v2)](#94-streaming-guardrails-v2)
+95. [MCP Elicitation](#95-mcp-elicitation)
+96. [MCP Audio Content](#96-mcp-audio-content)
+97. [JSON-RPC Batching](#97-json-rpc-batching)
+98. [MCP Completions](#98-mcp-completions)
+99. [Remote MCP Client](#99-remote-mcp-client)
+100. [AGENTS.md Convention](#100-agentsmd-convention)
+101. [Agent Communication Protocol (ACP)](#101-agent-communication-protocol-acp)
+102. [Human-in-the-Loop (HITL)](#102-human-in-the-loop-hitl)
+103. [Confidence-Based Escalation](#103-confidence-based-escalation)
+104. [SIMBA Optimizer](#104-simba-optimizer)
+105. [Reasoning Trace](#105-reasoning-trace)
+106. [LLM-as-Judge (v2)](#106-llm-as-judge-v2)
+107. [Memory OS](#107-memory-os)
+108. [Memory Scheduler](#108-memory-scheduler)
+109. [Discourse-Aware Chunking](#109-discourse-aware-chunking)
+110. [Maximal Marginal Relevance (MMR)](#110-maximal-marginal-relevance-mmr)
+111. [Hierarchical RAG Router](#111-hierarchical-rag-router)
+112. [Agent Trajectory Analysis](#112-agent-trajectory-analysis)
+113. [Tool-Call Accuracy](#113-tool-call-accuracy)
+114. [Red Teaming](#114-red-teaming)
+115. [Natural Language Guards](#115-natural-language-guards)
+116. [Monte Carlo Tree Search (MCTS)](#116-monte-carlo-tree-search-mcts)
+117. [Process Reward Model (PRM)](#117-process-reward-model-prm)
+118. [Plan Refinement Loop](#118-plan-refinement-loop)
+119. [WebRTC Voice Transport](#119-webrtc-voice-transport)
+120. [Speech-to-Speech Pipeline](#120-speech-to-speech-pipeline)
+121. [Video Frame Analysis](#121-video-frame-analysis)
+122. [Multi-Backend Sandbox](#122-multi-backend-sandbox)
+123. [Agent Deployment Profiles](#123-agent-deployment-profiles)
+124. [Agent DevTools](#124-agent-devtools)
 
 ---
 
@@ -2787,3 +2817,243 @@ The same zoom-in/zoom-out principle applies to knowledge graph entities. A clust
 **The fundamental idea**: Building on the original streaming guardrails concept (Section 67), v2 streaming guardrails extend the model with richer guard types and more granular control. Guards evaluate content chunks in real time during LLM streaming with four configurable actions: **Pass** (content is clean, forward immediately), **Flag** (content is suspicious — forward it but emit an alert for monitoring), **Pause** (content may be harmful — buffer it and wait for additional context or human review before releasing), and **Block** (content is clearly harmful — terminate the stream and return a safe fallback). V2 adds specialized guard implementations for PII detection (identifying personal information patterns like emails, phone numbers, and social security numbers), toxicity scoring (evaluating content against toxicity thresholds), and custom pattern-based guards (user-defined regex patterns for domain-specific content policies). Guards are composable — multiple guards evaluate the same stream independently, and the most restrictive action wins.
 
 **Feature flag**: `security`
+
+---
+
+## 95. MCP Elicitation
+
+**The fundamental idea**: Standard MCP tool execution is a one-shot request/response — the client sends parameters and the server returns results. MCP Elicitation extends this with a mid-execution feedback loop: the server can pause tool execution and request structured input from the user. Supported input types include text fields, single/multi-select dropdowns, booleans, numbers with min/max constraints, and file uploads. This enables interactive tools that collect missing parameters or request confirmation without requiring the client to pre-fill every possible input. The server sends an `elicitation/request` message and blocks until the client responds with the user's input or a cancellation.
+
+**Feature flag**: `core`
+
+---
+
+## 96. MCP Audio Content
+
+**The fundamental idea**: MCP messages originally supported only text and image content types. MCP Audio Content extends the content part union with audio/* MIME types — WAV, OGG, MP3 — allowing MCP tools to return audio recordings and allowing clients to send audio inputs. Audio content is transmitted as base64-encoded data within the standard MCP content part structure. This enables voice-aware MCP tools such as text-to-speech generators, audio analysis tools, and speech-to-text preprocessors to operate natively within the MCP protocol without requiring out-of-band file transfers.
+
+**Feature flag**: `core`
+
+---
+
+## 97. JSON-RPC Batching
+
+**The fundamental idea**: Each MCP tool call is a JSON-RPC 2.0 request that normally requires its own HTTP round trip. JSON-RPC batching allows multiple requests to be packed into a single JSON array and sent in one HTTP call. The server processes all requests (potentially in parallel) and returns a JSON array of responses. This reduces network latency significantly when an agent needs to invoke multiple tools in sequence — instead of N round trips, there is exactly one. The batch is atomic at the transport level but not at the semantic level: each request in the batch succeeds or fails independently.
+
+**Feature flag**: `core`
+
+---
+
+## 98. MCP Completions
+
+**The fundamental idea**: MCP servers expose resource templates with URI parameters (e.g., `files://{path}`) and prompts with named arguments. The completions endpoint (`completion/complete`) provides autocompletion suggestions for these parameters and arguments. When a user types a partial value, the client sends a completion request and the server returns matching suggestions — for example, completing a file path or suggesting valid enum values for a prompt argument. This enables IDE-like autocomplete experiences in MCP-aware CLIs and editors, reducing errors from manually typing resource URIs or prompt arguments.
+
+**Feature flag**: `core`
+
+---
+
+## 99. Remote MCP Client
+
+**The fundamental idea**: Local MCP connections use stdio transport between a client and a co-located server process. The Remote MCP Client extends this to connect to external MCP servers over HTTP using the Streamable HTTP transport. The client sends JSON-RPC requests over HTTP POST and receives responses (or server-sent events for streaming). This allows agents to consume tools exposed by MCP servers running on remote machines, cloud services, or third-party APIs. Authentication is handled via OAuth 2.1 or API keys attached to the HTTP requests. The client manages connection lifecycle, reconnection, and request timeouts.
+
+**Feature flag**: `core`
+
+---
+
+## 100. AGENTS.md Convention
+
+**The fundamental idea**: The AGENTS.md convention is a standardized file format placed in a repository's root (similar to README.md) that describes the agent capabilities available in that project. It specifies the agent's name, description, supported protocols (A2A, ACP, MCP), endpoints, authentication requirements, and available skills. Tools and CI systems can parse AGENTS.md to automatically discover and register agents. The format uses TOML front matter for machine-readable metadata and Markdown body for human-readable documentation, serving both audiences in a single file.
+
+**Feature flag**: `core`
+
+---
+
+## 101. Agent Communication Protocol (ACP)
+
+**The fundamental idea**: ACP is a protocol developed by Google and BeeAI for agent-to-agent interoperability, complementary to A2A. While A2A focuses on task delegation with structured task objects, ACP uses a simpler message-passing model inspired by chat completions APIs. The ACP Bridge translates between A2A task format and ACP message format bidirectionally, allowing agents built for one protocol to communicate with agents built for the other. Incoming A2A tasks are decomposed into ACP message sequences, and ACP responses are wrapped back into A2A task artifacts.
+
+**Feature flag**: `multi-agent`
+
+---
+
+## 102. Human-in-the-Loop (HITL)
+
+**The fundamental idea**: Fully autonomous agents can make mistakes with real-world consequences — sending wrong emails, deleting files, or executing harmful code. Human-in-the-Loop inserts approval gates at critical points in agent execution. Before executing a sensitive tool, the agent pauses and presents the planned action to a human operator for approval, modification, or rejection. HITL supports multiple patterns: explicit approval gates on specific tools, confidence-based escalation (auto-approve high-confidence actions, escalate uncertain ones), interactive corrections where the human can edit the agent's planned parameters, and declarative policies that specify which tools always/never require approval.
+
+**Feature flag**: `autonomous`
+
+---
+
+## 103. Confidence-Based Escalation
+
+**The fundamental idea**: Not every agent action needs human oversight — routine operations can be auto-approved while novel or uncertain actions should be escalated. Confidence-based escalation measures the agent's confidence in its planned action using multiple signals: model output probability, similarity to previously approved actions, tool risk classification, and the number of retries attempted. When aggregate confidence exceeds a configurable threshold, the action proceeds automatically. Below the threshold, the action is escalated to a human supervisor with context about why the agent is uncertain. This creates a graduated autonomy spectrum rather than a binary autonomous/supervised switch.
+
+**Feature flag**: `autonomous`
+
+---
+
+## 104. SIMBA Optimizer
+
+**The fundamental idea**: SIMBA (Simulated Annealing + Multi-Armed Bandit Adaptation) is a prompt optimization algorithm that combines simulated annealing's ability to escape local optima with multi-armed bandit exploration strategies. Starting from an initial prompt, SIMBA generates mutations (instruction rewording, example substitution, format changes) and evaluates them against a scoring function. A temperature parameter controls exploration: high temperature early on accepts worse-performing mutations to explore broadly, while decreasing temperature later focuses on refining the best-found prompts. Compared to GEPA's genetic approach, SIMBA converges faster on problems with smooth fitness landscapes due to its single-solution trajectory with adaptive step sizes.
+
+**Feature flag**: `analytics`
+
+---
+
+## 105. Reasoning Trace
+
+**The fundamental idea**: When models use chain-of-thought reasoning, the intermediate thinking steps contain valuable signal about the model's decision process. A reasoning trace captures this chain-of-thought output as a structured object — the raw text, extracted reasoning steps, confidence annotations, and any tool calls made during reasoning. Traces serve multiple purposes: prompt optimizers analyze traces to understand why certain prompts produce better outputs, debugging tools display traces to help developers understand agent failures, and supervised distillation uses traces from a strong model to train a smaller model to reason similarly.
+
+**Feature flag**: `analytics`
+
+---
+
+## 106. LLM-as-Judge (v2)
+
+**The fundamental idea**: Building on the original LLM-as-Judge concept (Section 52), v2 introduces configurable natural language rubrics and multi-dimensional scoring. Instead of a single quality score, the judge evaluates output across multiple dimensions specified by the user — accuracy, helpfulness, safety, formatting — each with its own rubric described in natural language. The rubric is compiled into a structured prompt that instructs the judge model to evaluate each dimension on a configurable scale (binary, 1-5, 1-10) with mandatory justifications. Scores are aggregated with configurable weights to produce a final composite score. V2 also supports reference-based judging where the judge compares output against a gold standard answer.
+
+**Feature flag**: `analytics`
+
+---
+
+## 107. Memory OS
+
+**The fundamental idea**: Traditional memory systems require explicit API calls to store and retrieve memories. Memory OS automates memory management by intercepting conversation messages and automatically extracting facts, entities, and procedures without any explicit calls from the application. An extraction pipeline runs in the background: it identifies factual statements, named entities, causal relationships, and procedural steps, then stores them in the appropriate memory tier (episodic, semantic, or procedural). When a new message arrives, relevant memories are automatically injected into the context. The application interacts with a simple conversation API while the memory system operates transparently underneath.
+
+**Feature flag**: `multi-agent`
+
+---
+
+## 108. Memory Scheduler
+
+**The fundamental idea**: Memory stores grow indefinitely without maintenance, leading to stale information, contradictions, and bloated retrieval results. The Memory Scheduler runs periodic background tasks to maintain memory health: consolidation merges related episodic memories into coherent semantic facts, decay reduces the importance score of old memories that have not been accessed recently, compression identifies clusters of similar episodes and replaces them with a single representative memory, and garbage collection removes memories whose importance has decayed below a threshold. The scheduler runs on configurable intervals and can be triggered manually for testing.
+
+**Feature flag**: `multi-agent`
+
+---
+
+## 109. Discourse-Aware Chunking
+
+**The fundamental idea**: Fixed-size chunking (split every N tokens) ignores document structure, often cutting sentences mid-thought or separating a heading from its content. Discourse-aware chunking respects the document's natural structure — sections, paragraphs, lists, code blocks — by using structural cues and coherence scoring to find natural break points. The chunker first identifies discourse boundaries (headings, blank lines, topic shifts), then scores the coherence of potential chunks by measuring semantic similarity between adjacent sentences. Chunks are split at points of lowest coherence, producing segments that are topically self-contained and more useful for retrieval.
+
+**Feature flag**: `rag`
+
+---
+
+## 110. Maximal Marginal Relevance (MMR)
+
+**The fundamental idea**: Standard vector similarity retrieval returns the N most similar documents to the query, but these documents are often redundant — they all say roughly the same thing. Maximal Marginal Relevance balances relevance with diversity. It selects documents iteratively: at each step, it picks the document that is most relevant to the query while being most different from the documents already selected. The trade-off is controlled by a lambda parameter: lambda=1.0 optimizes purely for relevance (standard retrieval), lambda=0.0 optimizes purely for diversity, and values in between balance both objectives. This produces a context set that covers more ground with fewer documents.
+
+**Feature flag**: `rag`
+
+---
+
+## 111. Hierarchical RAG Router
+
+**The fundamental idea**: Different query types benefit from different retrieval strategies. A simple factual lookup ("What is the capital of France?") works best with BM25 keyword search, while a complex analytical question ("Compare the economic policies of the last three presidents") needs multi-document synthesis. The Hierarchical RAG Router classifies incoming queries by complexity and routes them to the optimal retrieval strategy: simple keyword queries to BM25, factual queries to dense vector retrieval, multi-hop queries requiring relationship traversal to Graph RAG, and analytical queries requiring hierarchical summarization to RAPTOR. The classifier uses lightweight heuristics (query length, question type, entity count) to avoid adding an LLM call to the critical path.
+
+**Feature flag**: `rag`
+
+---
+
+## 112. Agent Trajectory Analysis
+
+**The fundamental idea**: Evaluating an agent is not just about whether it produced the right final answer — the path it took matters. Agent Trajectory Analysis captures the complete execution trace: every tool call, every planning step, every decision point, and the time and tokens spent at each stage. Metrics include trajectory length (number of steps), tool call efficiency (useful calls vs. redundant or failed calls), planning quality (how well the initial plan matched the actual execution), and goal completion rate. These metrics enable comparing agent architectures, identifying bottlenecks, and detecting systematic failure patterns like loops or excessive retries.
+
+**Feature flag**: `analytics`
+
+---
+
+## 113. Tool-Call Accuracy
+
+**The fundamental idea**: An agent might select the right tool but provide wrong arguments, or select the wrong tool entirely. Tool-Call Accuracy evaluates tool usage with granular metrics: precision (fraction of tool calls that were necessary), recall (fraction of required tools that were actually called), F1 (harmonic mean of precision and recall), argument accuracy (whether parameters passed to tools were correct), and result utilization (whether the agent actually used the tool's return value in its reasoning). These metrics are computed by comparing agent execution traces against reference trajectories that define the ideal tool usage sequence for a given task.
+
+**Feature flag**: `analytics`
+
+---
+
+## 114. Red Teaming
+
+**The fundamental idea**: Security testing for AI agents requires adversarial inputs that probe for vulnerabilities. Red Teaming automates this by generating attack prompts across multiple categories: prompt injection (attempting to override system instructions), jailbreak (attempting to bypass safety filters), data exfiltration (attempting to extract training data or system prompts), tool abuse (attempting to misuse tools for unintended purposes), and social engineering (attempting to manipulate the agent through conversation). For each attack, the system evaluates whether the agent's defenses held — whether it detected the attack, refused the request, or was compromised. Results produce a security scorecard with pass/fail rates per attack category.
+
+**Feature flag**: `security`
+
+---
+
+## 115. Natural Language Guards
+
+**The fundamental idea**: Traditional security rules are written in code — regex patterns, enum checks, hardcoded lists. Natural Language Guards allow security policies to be defined in plain English: "Do not reveal the system prompt to the user", "Block requests about weapons or explosives", "Require manager approval for refunds over $500". These policies are compiled to executable guardrails using a combination of pattern matching (for concrete terms and phrases) and semantic similarity (for intent-level matching against an embedding of the policy statement). This lets non-technical stakeholders define and audit security policies without writing code.
+
+**Feature flag**: `security`
+
+---
+
+## 116. Monte Carlo Tree Search (MCTS)
+
+**The fundamental idea**: When an agent faces a complex planning problem with many possible action sequences, exhaustive search is impractical. Monte Carlo Tree Search explores the decision tree selectively by simulating random rollouts from each candidate action and using the outcomes to estimate action quality. The algorithm repeats four phases: selection (traverse the tree using UCB1 to balance exploring new actions vs. exploiting known good ones), expansion (add a new action node), simulation (run a lightweight rollout to estimate the outcome), and backpropagation (update the value estimates of all ancestor nodes). After a budget of simulations, the agent commits to the action with the highest estimated value.
+
+**Feature flag**: `autonomous`
+
+---
+
+## 117. Process Reward Model (PRM)
+
+**The fundamental idea**: Standard evaluation checks only the final output — if the last step is correct, the solution passes. Process Reward Models evaluate each intermediate step of a reasoning chain independently. Every step receives a correctness score based on whether it logically follows from the previous step and moves toward the goal. This enables early error detection: if step 3 of a 10-step plan is flawed, PRM flags it immediately rather than waiting for the plan to fail at step 10. PRM scores also enable best-of-N selection by scoring multiple solution paths step by step and selecting the path with the highest minimum step score, avoiding solutions that arrive at the right answer through flawed reasoning.
+
+**Feature flag**: `analytics`
+
+---
+
+## 118. Plan Refinement Loop
+
+**The fundamental idea**: A plan rarely survives first contact with execution. The Plan Refinement Loop monitors plan execution and iteratively improves the plan based on feedback. When a step fails, the loop analyzes the failure (wrong tool, bad parameters, missing precondition) and decides between three strategies: retry the step with modified parameters, re-plan from the current state (generating a new plan that accounts for what has been learned), or patch the plan by inserting corrective steps before retrying the failed step. The loop maintains a failure history to avoid repeating the same failed approach and enforces a maximum refinement depth to prevent infinite loops.
+
+**Feature flag**: `autonomous`
+
+---
+
+## 119. WebRTC Voice Transport
+
+**The fundamental idea**: HTTP-based voice communication adds latency at every step — recording, encoding, uploading, processing, downloading, decoding, playing. WebRTC eliminates most of this overhead by establishing a direct peer-to-peer audio channel with sub-200ms end-to-end latency. The implementation handles the full WebRTC lifecycle: SDP offer/answer negotiation to agree on codecs and transport parameters, ICE candidate gathering and exchange to establish connectivity through NATs, and RTP streaming for the actual audio data. Voice Activity Detection (VAD) runs on the audio stream to detect when the user starts and stops speaking, enabling natural turn-taking without push-to-talk.
+
+**Feature flag**: `audio`
+
+---
+
+## 120. Speech-to-Speech Pipeline
+
+**The fundamental idea**: The traditional voice pipeline has three stages: speech-to-text (STT), LLM processing on the text, and text-to-speech (TTS). Each stage adds latency — typically 300-500ms per stage. The Speech-to-Speech Pipeline bypasses the text intermediate when the model supports native audio input/output (e.g., GPT-4o-audio). Audio goes directly from microphone to model and from model to speaker, eliminating two conversion stages and reducing total latency by approximately 300ms. The pipeline detects model audio capabilities at runtime and automatically selects the optimal path: direct audio-to-audio when supported, or the traditional STT-to-LLM-to-TTS fallback when not.
+
+**Feature flag**: `audio`
+
+---
+
+## 121. Video Frame Analysis
+
+**The fundamental idea**: Video is too large and temporally dense to send entirely to a vision model. Video Frame Analysis extracts key frames — representative images at meaningful moments — and processes them individually with vision models. Frame extraction strategies include uniform sampling (every N seconds), scene change detection (when the visual content changes significantly), and motion-based selection (frames with significant movement). Each extracted frame is analyzed for content description, object detection, text extraction (OCR), or custom queries. Results are aggregated into a timestamped summary that maps video moments to their descriptions, enabling search, summarization, and question-answering over video content.
+
+**Feature flag**: `vision`
+
+---
+
+## 122. Multi-Backend Sandbox
+
+**The fundamental idea**: Code execution requires isolation, but different environments need different isolation technologies. The Multi-Backend Sandbox provides a unified execution interface with pluggable backends: Docker containers (full OS-level isolation, widest tool support), Podman (rootless containers for environments where Docker requires elevated privileges), WASM via wasmtime (lightweight, fast startup, memory-safe, but limited syscall support), and isolated processes (OS-level process isolation with restricted permissions, no container runtime required). Each backend implements the same trait — create sandbox, execute command, read/write files, destroy sandbox — so application code is backend-agnostic. Backend selection can be automatic (based on available runtimes) or explicit.
+
+**Feature flag**: `containers`
+
+---
+
+## 123. Agent Deployment Profiles
+
+**The fundamental idea**: Deploying an agent requires configuring many operational parameters beyond the agent's logic: which sandbox backend to use, CPU and memory limits, network access rules, environment variables, health check endpoints, and restart policies. Agent Deployment Profiles capture all of these in a declarative TOML or JSON file. A profile specifies the agent's image or binary, its sandbox backend and resource constraints, volume mounts, network policies (allow/deny lists for outbound connections), health check configuration (endpoint, interval, timeout), and scaling parameters. Profiles can inherit from base profiles and override specific fields, enabling environment-specific configurations (dev, staging, production) without duplication.
+
+**Feature flag**: `containers`
+
+---
+
+## 124. Agent DevTools
+
+**The fundamental idea**: Debugging an agent is harder than debugging a function — the agent's behavior emerges from the interaction of prompts, tools, memory, and planning over multiple steps. Agent DevTools provide development-time tooling for understanding and debugging agent execution: step-through execution that pauses the agent after each action for inspection, breakpoints that trigger on specific conditions (tool name, error type, confidence threshold), execution recording that captures the complete agent trajectory for later replay, and performance profiling that tracks time and token usage per step. Replay mode re-executes a recorded trajectory with modified parameters, enabling counterfactual debugging — "what would have happened if the temperature were lower at step 5?"
+
+**Feature flag**: `autonomous`

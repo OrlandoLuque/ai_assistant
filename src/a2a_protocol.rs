@@ -927,6 +927,435 @@ fn extract_task_id_from_params(
 }
 
 // =============================================================================
+// AGENTS.md Convention (v6 Phase 2.2)
+// =============================================================================
+
+/// An entry parsed from an AGENTS.md file describing an agent's identity,
+/// supported protocols, endpoint, capabilities, and version.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentsMdEntry {
+    pub name: String,
+    pub description: String,
+    pub protocols: Vec<String>,
+    pub endpoint: Option<String>,
+    pub capabilities: Vec<String>,
+    pub version: Option<String>,
+}
+
+/// Parser for AGENTS.md markdown files.
+///
+/// The expected format is one or more agent entries, each starting with a
+/// level-2 heading (`## Agent: <name>` or `## <name>`), followed by bullet
+/// lines with field values:
+///
+/// ```markdown
+/// ## Agent: MyAgent
+/// - Description: Does useful things
+/// - Protocols: A2A, MCP
+/// - Endpoint: http://localhost:8080
+/// - Capabilities: translate, summarize
+/// - Version: 1.2.0
+/// ```
+pub struct AgentsMdParser;
+
+impl AgentsMdParser {
+    /// Create a new parser instance.
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Parse AGENTS.md markdown content into a list of [`AgentsMdEntry`] values.
+    ///
+    /// Each agent block starts with `## Agent: <name>` or `## <name>`.
+    /// Fields are extracted from lines matching `- FieldName: value`.
+    /// Missing optional fields (Endpoint, Version) default to `None`;
+    /// missing list fields (Protocols, Capabilities) default to empty vectors.
+    pub fn parse(&self, content: &str) -> Result<Vec<AgentsMdEntry>, AiError> {
+        let mut entries: Vec<AgentsMdEntry> = Vec::new();
+        let mut current_name: Option<String> = None;
+        let mut description = String::new();
+        let mut protocols: Vec<String> = Vec::new();
+        let mut endpoint: Option<String> = None;
+        let mut capabilities: Vec<String> = Vec::new();
+        let mut version: Option<String> = None;
+
+        for line in content.lines() {
+            let trimmed = line.trim();
+
+            // Detect heading: ## Agent: Name  or  ## Name
+            if trimmed.starts_with("## ") {
+                // Flush previous entry if any
+                if let Some(name) = current_name.take() {
+                    entries.push(AgentsMdEntry {
+                        name,
+                        description: description.clone(),
+                        protocols: protocols.clone(),
+                        endpoint: endpoint.take(),
+                        capabilities: capabilities.clone(),
+                        version: version.take(),
+                    });
+                    description.clear();
+                    protocols.clear();
+                    capabilities.clear();
+                }
+
+                let heading = trimmed.trim_start_matches("## ").trim();
+                let name = if heading.starts_with("Agent:") || heading.starts_with("Agent :") {
+                    heading
+                        .trim_start_matches("Agent:")
+                        .trim_start_matches("Agent :")
+                        .trim()
+                        .to_string()
+                } else {
+                    heading.to_string()
+                };
+
+                if name.is_empty() {
+                    return Err(AiError::Other(
+                        "AGENTS.md: empty agent name in heading".to_string(),
+                    ));
+                }
+                current_name = Some(name);
+                continue;
+            }
+
+            // Only process bullet fields if we are inside an agent block
+            if current_name.is_some() && trimmed.starts_with("- ") {
+                let field_line = trimmed.trim_start_matches("- ");
+                if let Some(val) = strip_field_prefix(field_line, "Description:") {
+                    description = val.to_string();
+                } else if let Some(val) = strip_field_prefix(field_line, "Protocols:") {
+                    protocols = split_comma_list(val);
+                } else if let Some(val) = strip_field_prefix(field_line, "Endpoint:") {
+                    let v = val.trim().to_string();
+                    if !v.is_empty() {
+                        endpoint = Some(v);
+                    }
+                } else if let Some(val) = strip_field_prefix(field_line, "Capabilities:") {
+                    capabilities = split_comma_list(val);
+                } else if let Some(val) = strip_field_prefix(field_line, "Version:") {
+                    let v = val.trim().to_string();
+                    if !v.is_empty() {
+                        version = Some(v);
+                    }
+                }
+            }
+        }
+
+        // Flush the last entry
+        if let Some(name) = current_name.take() {
+            entries.push(AgentsMdEntry {
+                name,
+                description,
+                protocols,
+                endpoint,
+                capabilities,
+                version,
+            });
+        }
+
+        Ok(entries)
+    }
+
+    /// Serialize a slice of [`AgentsMdEntry`] back to AGENTS.md markdown format.
+    pub fn to_markdown(entries: &[AgentsMdEntry]) -> String {
+        let mut out = String::new();
+        for (i, entry) in entries.iter().enumerate() {
+            if i > 0 {
+                out.push('\n');
+            }
+            out.push_str(&format!("## Agent: {}\n", entry.name));
+            out.push_str(&format!("- Description: {}\n", entry.description));
+            if !entry.protocols.is_empty() {
+                out.push_str(&format!("- Protocols: {}\n", entry.protocols.join(", ")));
+            }
+            if let Some(ref ep) = entry.endpoint {
+                out.push_str(&format!("- Endpoint: {}\n", ep));
+            }
+            if !entry.capabilities.is_empty() {
+                out.push_str(&format!(
+                    "- Capabilities: {}\n",
+                    entry.capabilities.join(", ")
+                ));
+            }
+            if let Some(ref ver) = entry.version {
+                out.push_str(&format!("- Version: {}\n", ver));
+            }
+        }
+        out
+    }
+}
+
+/// Discovery service built on top of AGENTS.md parsed entries.
+pub struct AgentsMdDiscovery {
+    entries: Vec<AgentsMdEntry>,
+}
+
+impl AgentsMdDiscovery {
+    /// Create a new empty discovery instance.
+    pub fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
+
+    /// Parse AGENTS.md content and add all entries. Returns the number of
+    /// entries that were added.
+    pub fn load_from_content(&mut self, content: &str) -> Result<usize, AiError> {
+        let parser = AgentsMdParser::new();
+        let parsed = parser.parse(content)?;
+        let count = parsed.len();
+        self.entries.extend(parsed);
+        Ok(count)
+    }
+
+    /// Find all entries that list the given protocol (case-insensitive).
+    pub fn find_by_protocol(&self, protocol: &str) -> Vec<&AgentsMdEntry> {
+        let lower = protocol.to_lowercase();
+        self.entries
+            .iter()
+            .filter(|e| e.protocols.iter().any(|p| p.to_lowercase() == lower))
+            .collect()
+    }
+
+    /// Find an entry by exact name (case-insensitive).
+    pub fn find_by_name(&self, name: &str) -> Option<&AgentsMdEntry> {
+        let lower = name.to_lowercase();
+        self.entries
+            .iter()
+            .find(|e| e.name.to_lowercase() == lower)
+    }
+
+    /// Return a slice of all loaded entries.
+    pub fn all_entries(&self) -> &[AgentsMdEntry] {
+        &self.entries
+    }
+
+    /// Return the number of loaded entries.
+    pub fn entry_count(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Remove all loaded entries.
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
+}
+
+/// Helper: strip a case-insensitive field prefix and return the remainder.
+fn strip_field_prefix<'a>(line: &'a str, prefix: &str) -> Option<&'a str> {
+    let line_lower = line.to_lowercase();
+    let prefix_lower = prefix.to_lowercase();
+    if line_lower.starts_with(&prefix_lower) {
+        Some(line[prefix.len()..].trim())
+    } else {
+        None
+    }
+}
+
+/// Helper: split a comma-separated string into trimmed, non-empty tokens.
+fn split_comma_list(s: &str) -> Vec<String> {
+    s.split(',')
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .collect()
+}
+
+// =============================================================================
+// ACP Bridge (v6 Phase 2.3)
+// =============================================================================
+
+/// A message in the Agent Communication Protocol (ACP) format.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AcpMessage {
+    pub run_id: String,
+    pub content_parts: Vec<AcpContentPart>,
+    pub metadata: HashMap<String, String>,
+    pub timestamp: u64,
+}
+
+/// A content part within an ACP message.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AcpContentPart {
+    Text(String),
+    Data { mime_type: String, data: String },
+}
+
+/// Descriptor for an agent in the ACP ecosystem, analogous to an [`AgentCard`]
+/// in A2A but with ACP-specific fields.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AcpAgentDescriptor {
+    pub name: String,
+    pub description: String,
+    pub url: Option<String>,
+    pub protocols: Vec<String>,
+    pub capabilities: Vec<String>,
+}
+
+/// Bridge that translates between A2A and ACP message formats.
+pub struct AcpBridge;
+
+impl AcpBridge {
+    /// Create a new bridge instance.
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Convert an A2A message to an ACP message.
+    ///
+    /// Text parts become [`AcpContentPart::Text`]; File and Data parts become
+    /// [`AcpContentPart::Data`] with their MIME type and serialized content.
+    /// The `run_id` is generated as a new UUID; the timestamp is the current
+    /// UNIX time. A2A metadata entries are converted to string values.
+    pub fn a2a_to_acp(message: &A2AMessage) -> AcpMessage {
+        let content_parts: Vec<AcpContentPart> = message
+            .parts
+            .iter()
+            .map(|part| match part {
+                A2APart::Text(tp) => AcpContentPart::Text(tp.text.clone()),
+                A2APart::File(fp) => AcpContentPart::Data {
+                    mime_type: fp.mime_type.clone(),
+                    data: fp
+                        .data
+                        .clone()
+                        .or_else(|| fp.uri.clone())
+                        .unwrap_or_default(),
+                },
+                A2APart::Data(dp) => AcpContentPart::Data {
+                    mime_type: dp.mime_type.clone(),
+                    data: dp.data.to_string(),
+                },
+            })
+            .collect();
+
+        let metadata: HashMap<String, String> = message
+            .metadata
+            .iter()
+            .map(|(k, v)| {
+                let str_val = match v.as_str() {
+                    Some(s) => s.to_string(),
+                    None => v.to_string(),
+                };
+                (k.clone(), str_val)
+            })
+            .collect();
+
+        AcpMessage {
+            run_id: uuid::Uuid::new_v4().to_string(),
+            content_parts,
+            metadata,
+            timestamp: current_timestamp(),
+        }
+    }
+
+    /// Convert an ACP message to an A2A message.
+    ///
+    /// ACP Text parts map to [`A2APart::Text`]; ACP Data parts map to
+    /// [`A2APart::Data`] with the data stored as a JSON string value.
+    /// The resulting A2A message has role [`MessageRole::Agent`] and
+    /// metadata converted from string values to JSON string values.
+    pub fn acp_to_a2a(message: &AcpMessage) -> A2AMessage {
+        let parts: Vec<A2APart> = message
+            .content_parts
+            .iter()
+            .map(|cp| match cp {
+                AcpContentPart::Text(text) => A2APart::Text(TextPart {
+                    text: text.clone(),
+                }),
+                AcpContentPart::Data { mime_type, data } => A2APart::Data(DataPart {
+                    mime_type: mime_type.clone(),
+                    data: serde_json::Value::String(data.clone()),
+                }),
+            })
+            .collect();
+
+        let metadata: HashMap<String, serde_json::Value> = message
+            .metadata
+            .iter()
+            .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+            .collect();
+
+        A2AMessage {
+            role: MessageRole::Agent,
+            parts,
+            metadata,
+        }
+    }
+
+    /// Translate an [`AgentCard`] into an [`AcpAgentDescriptor`].
+    ///
+    /// Capabilities are extracted from the card's capabilities map (keys where
+    /// value is `true`) combined with skill names.
+    pub fn translate_card_to_descriptor(card: &AgentCard) -> AcpAgentDescriptor {
+        let mut capabilities: Vec<String> = card
+            .capabilities
+            .iter()
+            .filter(|(_, v)| **v)
+            .map(|(k, _)| k.clone())
+            .collect();
+
+        for skill in &card.skills {
+            capabilities.push(skill.name.clone());
+        }
+
+        AcpAgentDescriptor {
+            name: card.name.clone(),
+            description: card.description.clone(),
+            url: if card.url.is_empty() {
+                None
+            } else {
+                Some(card.url.clone())
+            },
+            protocols: vec!["A2A".to_string()],
+            capabilities,
+        }
+    }
+}
+
+/// Adapter that wraps an [`AcpAgentDescriptor`] and provides bidirectional
+/// conversion to/from [`AgentCard`].
+pub struct AcpAgentAdapter {
+    descriptor: AcpAgentDescriptor,
+}
+
+impl AcpAgentAdapter {
+    /// Create an adapter from an existing [`AgentCard`].
+    pub fn from_agent_card(card: &AgentCard) -> Self {
+        Self {
+            descriptor: AcpBridge::translate_card_to_descriptor(card),
+        }
+    }
+
+    /// Return a reference to the underlying descriptor.
+    pub fn descriptor(&self) -> &AcpAgentDescriptor {
+        &self.descriptor
+    }
+
+    /// Convert the descriptor back to an [`AgentCard`].
+    ///
+    /// Skills are reconstructed from the descriptor's capabilities list.
+    /// The URL defaults to an empty string if none is present.
+    pub fn to_agent_card(&self) -> AgentCard {
+        let skills: Vec<AgentSkill> = self
+            .descriptor
+            .capabilities
+            .iter()
+            .map(|cap| AgentSkill::new(cap.clone(), format!("{} capability", cap), vec![]))
+            .collect();
+
+        AgentCard {
+            name: self.descriptor.name.clone(),
+            description: self.descriptor.description.clone(),
+            url: self.descriptor.url.clone().unwrap_or_default(),
+            version: "1.0.0".to_string(),
+            skills,
+            auth_schemes: Vec::new(),
+            capabilities: HashMap::new(),
+        }
+    }
+}
+
+// =============================================================================
 // Tests
 // =============================================================================
 
@@ -2032,5 +2461,388 @@ mod tests {
         let parsed: AgentSkill = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(parsed.name, "code");
         assert_eq!(parsed.tags, vec!["dev".to_string()]);
+    }
+
+    // ---- AGENTS.md Convention tests (v6 Phase 2.2) ----
+
+    #[test]
+    fn test_agents_md_entry_construction() {
+        let entry = AgentsMdEntry {
+            name: "TestAgent".to_string(),
+            description: "A test agent".to_string(),
+            protocols: vec!["A2A".to_string(), "MCP".to_string()],
+            endpoint: Some("http://localhost:8080".to_string()),
+            capabilities: vec!["translate".to_string()],
+            version: Some("1.0.0".to_string()),
+        };
+        assert_eq!(entry.name, "TestAgent");
+        assert_eq!(entry.description, "A test agent");
+        assert_eq!(entry.protocols.len(), 2);
+        assert_eq!(entry.endpoint, Some("http://localhost:8080".to_string()));
+        assert_eq!(entry.capabilities, vec!["translate"]);
+        assert_eq!(entry.version, Some("1.0.0".to_string()));
+    }
+
+    #[test]
+    fn test_agents_md_parser_parse_valid() {
+        let content = "\
+## Agent: MyAgent
+- Description: Does things
+- Protocols: A2A, MCP
+- Endpoint: http://localhost:9090
+- Capabilities: summarize, translate
+- Version: 2.0.0
+";
+        let parser = AgentsMdParser::new();
+        let entries = parser.parse(content).expect("parse ok");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "MyAgent");
+        assert_eq!(entries[0].description, "Does things");
+        assert_eq!(entries[0].protocols, vec!["A2A", "MCP"]);
+        assert_eq!(entries[0].endpoint, Some("http://localhost:9090".to_string()));
+        assert_eq!(entries[0].capabilities, vec!["summarize", "translate"]);
+        assert_eq!(entries[0].version, Some("2.0.0".to_string()));
+    }
+
+    #[test]
+    fn test_agents_md_parser_parse_multiple_entries() {
+        let content = "\
+## Agent: Alpha
+- Description: First agent
+- Protocols: A2A
+- Endpoint: http://alpha.local
+- Capabilities: search
+- Version: 1.0.0
+
+## Agent: Beta
+- Description: Second agent
+- Protocols: MCP, ACP
+- Capabilities: code, review
+";
+        let parser = AgentsMdParser::new();
+        let entries = parser.parse(content).expect("parse ok");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].name, "Alpha");
+        assert_eq!(entries[0].protocols, vec!["A2A"]);
+        assert_eq!(entries[0].endpoint, Some("http://alpha.local".to_string()));
+        assert_eq!(entries[1].name, "Beta");
+        assert_eq!(entries[1].protocols, vec!["MCP", "ACP"]);
+        assert!(entries[1].endpoint.is_none());
+        assert!(entries[1].version.is_none());
+    }
+
+    #[test]
+    fn test_agents_md_parser_parse_empty_content() {
+        let parser = AgentsMdParser::new();
+        let entries = parser.parse("").expect("parse ok");
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn test_agents_md_parser_to_markdown_roundtrip() {
+        let original_content = "\
+## Agent: RoundTrip
+- Description: Roundtrip test
+- Protocols: A2A, MCP
+- Endpoint: http://rt.local
+- Capabilities: cap1, cap2
+- Version: 3.0.0
+";
+        let parser = AgentsMdParser::new();
+        let entries = parser.parse(original_content).expect("parse ok");
+        assert_eq!(entries.len(), 1);
+
+        let markdown = AgentsMdParser::to_markdown(&entries);
+        let re_parsed = parser.parse(&markdown).expect("re-parse ok");
+        assert_eq!(re_parsed.len(), 1);
+        assert_eq!(re_parsed[0].name, entries[0].name);
+        assert_eq!(re_parsed[0].description, entries[0].description);
+        assert_eq!(re_parsed[0].protocols, entries[0].protocols);
+        assert_eq!(re_parsed[0].endpoint, entries[0].endpoint);
+        assert_eq!(re_parsed[0].capabilities, entries[0].capabilities);
+        assert_eq!(re_parsed[0].version, entries[0].version);
+    }
+
+    #[test]
+    fn test_agents_md_discovery_load_from_content() {
+        let content = "\
+## Agent: Disco
+- Description: Discovery agent
+- Protocols: A2A
+";
+        let mut disc = AgentsMdDiscovery::new();
+        let count = disc.load_from_content(content).expect("load ok");
+        assert_eq!(count, 1);
+        assert_eq!(disc.entry_count(), 1);
+    }
+
+    #[test]
+    fn test_agents_md_discovery_find_by_protocol() {
+        let content = "\
+## Agent: AlphaBot
+- Description: Alpha
+- Protocols: A2A, MCP
+
+## Agent: BetaBot
+- Description: Beta
+- Protocols: ACP
+
+## Agent: GammaBot
+- Description: Gamma
+- Protocols: A2A
+";
+        let mut disc = AgentsMdDiscovery::new();
+        disc.load_from_content(content).expect("load ok");
+        let a2a = disc.find_by_protocol("A2A");
+        assert_eq!(a2a.len(), 2);
+        let acp = disc.find_by_protocol("ACP");
+        assert_eq!(acp.len(), 1);
+        assert_eq!(acp[0].name, "BetaBot");
+        let empty = disc.find_by_protocol("UNKNOWN");
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn test_agents_md_discovery_find_by_name() {
+        let content = "\
+## Agent: UniqueAgent
+- Description: Unique
+- Protocols: A2A
+";
+        let mut disc = AgentsMdDiscovery::new();
+        disc.load_from_content(content).expect("load ok");
+        let found = disc.find_by_name("UniqueAgent");
+        assert!(found.is_some());
+        assert_eq!(found.expect("found").description, "Unique");
+        // Case insensitive
+        let found_lower = disc.find_by_name("uniqueagent");
+        assert!(found_lower.is_some());
+        let not_found = disc.find_by_name("NonExistent");
+        assert!(not_found.is_none());
+    }
+
+    #[test]
+    fn test_agents_md_discovery_entry_count() {
+        let mut disc = AgentsMdDiscovery::new();
+        assert_eq!(disc.entry_count(), 0);
+        let content = "\
+## A1
+- Description: Agent 1
+- Protocols: A2A
+
+## A2
+- Description: Agent 2
+- Protocols: MCP
+";
+        disc.load_from_content(content).expect("load ok");
+        assert_eq!(disc.entry_count(), 2);
+        assert_eq!(disc.all_entries().len(), 2);
+    }
+
+    #[test]
+    fn test_agents_md_discovery_clear() {
+        let content = "\
+## ClearMe
+- Description: Will be cleared
+- Protocols: A2A
+";
+        let mut disc = AgentsMdDiscovery::new();
+        disc.load_from_content(content).expect("load ok");
+        assert_eq!(disc.entry_count(), 1);
+        disc.clear();
+        assert_eq!(disc.entry_count(), 0);
+        assert!(disc.all_entries().is_empty());
+    }
+
+    // ---- ACP Bridge tests (v6 Phase 2.3) ----
+
+    #[test]
+    fn test_acp_message_construction() {
+        let msg = AcpMessage {
+            run_id: "run-001".to_string(),
+            content_parts: vec![AcpContentPart::Text("hello".to_string())],
+            metadata: {
+                let mut m = HashMap::new();
+                m.insert("key".to_string(), "value".to_string());
+                m
+            },
+            timestamp: 1700000000,
+        };
+        assert_eq!(msg.run_id, "run-001");
+        assert_eq!(msg.content_parts.len(), 1);
+        assert_eq!(msg.metadata.get("key"), Some(&"value".to_string()));
+        assert_eq!(msg.timestamp, 1700000000);
+    }
+
+    #[test]
+    fn test_acp_content_part_text_and_data() {
+        let text_part = AcpContentPart::Text("hello world".to_string());
+        match &text_part {
+            AcpContentPart::Text(t) => assert_eq!(t, "hello world"),
+            _ => panic!("Expected Text variant"),
+        }
+
+        let data_part = AcpContentPart::Data {
+            mime_type: "application/json".to_string(),
+            data: r#"{"key":"val"}"#.to_string(),
+        };
+        match &data_part {
+            AcpContentPart::Data { mime_type, data } => {
+                assert_eq!(mime_type, "application/json");
+                assert_eq!(data, r#"{"key":"val"}"#);
+            }
+            _ => panic!("Expected Data variant"),
+        }
+    }
+
+    #[test]
+    fn test_acp_bridge_a2a_to_acp_preserves_content() {
+        let a2a_msg = A2AMessage::text(MessageRole::User, "translate this");
+        let acp_msg = AcpBridge::a2a_to_acp(&a2a_msg);
+
+        assert!(!acp_msg.run_id.is_empty());
+        assert_eq!(acp_msg.content_parts.len(), 1);
+        match &acp_msg.content_parts[0] {
+            AcpContentPart::Text(t) => assert_eq!(t, "translate this"),
+            _ => panic!("Expected Text"),
+        }
+        assert!(acp_msg.timestamp > 0);
+    }
+
+    #[test]
+    fn test_acp_bridge_acp_to_a2a_preserves_content() {
+        let acp_msg = AcpMessage {
+            run_id: "run-x".to_string(),
+            content_parts: vec![
+                AcpContentPart::Text("hello from ACP".to_string()),
+                AcpContentPart::Data {
+                    mime_type: "text/plain".to_string(),
+                    data: "raw-data".to_string(),
+                },
+            ],
+            metadata: {
+                let mut m = HashMap::new();
+                m.insert("source".to_string(), "acp".to_string());
+                m
+            },
+            timestamp: 12345,
+        };
+
+        let a2a_msg = AcpBridge::acp_to_a2a(&acp_msg);
+        assert_eq!(a2a_msg.role, MessageRole::Agent);
+        assert_eq!(a2a_msg.parts.len(), 2);
+
+        match &a2a_msg.parts[0] {
+            A2APart::Text(tp) => assert_eq!(tp.text, "hello from ACP"),
+            _ => panic!("Expected Text part"),
+        }
+        match &a2a_msg.parts[1] {
+            A2APart::Data(dp) => {
+                assert_eq!(dp.mime_type, "text/plain");
+                assert_eq!(dp.data, serde_json::Value::String("raw-data".to_string()));
+            }
+            _ => panic!("Expected Data part"),
+        }
+        assert_eq!(
+            a2a_msg.metadata.get("source"),
+            Some(&serde_json::Value::String("acp".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_acp_bridge_translate_card_to_descriptor() {
+        let card = AgentCard::new("TranslateBot", "Translates things", "http://t.local")
+            .with_skill(AgentSkill::new(
+                "translate",
+                "translate text",
+                vec!["nlp".to_string()],
+            ))
+            .with_capability("streaming", true)
+            .with_capability("push", false);
+
+        let desc = AcpBridge::translate_card_to_descriptor(&card);
+        assert_eq!(desc.name, "TranslateBot");
+        assert_eq!(desc.description, "Translates things");
+        assert_eq!(desc.url, Some("http://t.local".to_string()));
+        assert!(desc.protocols.contains(&"A2A".to_string()));
+        // Should have "streaming" (cap=true) and "translate" (skill), but NOT "push" (cap=false)
+        assert!(desc.capabilities.contains(&"streaming".to_string()));
+        assert!(desc.capabilities.contains(&"translate".to_string()));
+        assert!(!desc.capabilities.contains(&"push".to_string()));
+    }
+
+    #[test]
+    fn test_acp_agent_descriptor_construction() {
+        let desc = AcpAgentDescriptor {
+            name: "Desc1".to_string(),
+            description: "A descriptor".to_string(),
+            url: Some("http://desc.local".to_string()),
+            protocols: vec!["A2A".to_string(), "ACP".to_string()],
+            capabilities: vec!["search".to_string()],
+        };
+        assert_eq!(desc.name, "Desc1");
+        assert_eq!(desc.url, Some("http://desc.local".to_string()));
+        assert_eq!(desc.protocols.len(), 2);
+        assert_eq!(desc.capabilities, vec!["search"]);
+    }
+
+    #[test]
+    fn test_acp_agent_adapter_from_agent_card() {
+        let card = AgentCard::new("AdaptBot", "Adaptive agent", "http://adapt.local")
+            .with_skill(AgentSkill::new("search", "search skill", vec![]));
+        let adapter = AcpAgentAdapter::from_agent_card(&card);
+        let desc = adapter.descriptor();
+        assert_eq!(desc.name, "AdaptBot");
+        assert_eq!(desc.description, "Adaptive agent");
+        assert_eq!(desc.url, Some("http://adapt.local".to_string()));
+        assert!(desc.capabilities.contains(&"search".to_string()));
+    }
+
+    #[test]
+    fn test_acp_agent_adapter_to_agent_card_roundtrip() {
+        let original = AgentCard::new("RoundBot", "Round-trip agent", "http://round.local")
+            .with_skill(AgentSkill::new("analyze", "analyze data", vec!["ml".to_string()]))
+            .with_capability("streaming", true);
+
+        let adapter = AcpAgentAdapter::from_agent_card(&original);
+        let converted = adapter.to_agent_card();
+
+        assert_eq!(converted.name, "RoundBot");
+        assert_eq!(converted.description, "Round-trip agent");
+        assert_eq!(converted.url, "http://round.local");
+        // Skills are reconstructed from capabilities; order may differ but
+        // all original capability names should be present
+        let skill_names: Vec<&str> = converted.skills.iter().map(|s| s.name.as_str()).collect();
+        assert!(skill_names.contains(&"streaming"));
+        assert!(skill_names.contains(&"analyze"));
+    }
+
+    #[test]
+    fn test_acp_agent_adapter_descriptor() {
+        let card = AgentCard::new("DescBot", "Descriptor bot", "http://d.local");
+        let adapter = AcpAgentAdapter::from_agent_card(&card);
+        let desc = adapter.descriptor();
+        assert_eq!(desc.name, "DescBot");
+        assert_eq!(desc.description, "Descriptor bot");
+        assert_eq!(desc.url, Some("http://d.local".to_string()));
+    }
+
+    #[test]
+    fn test_agents_md_parser_parse_missing_optional_fields() {
+        let content = "\
+## Agent: MinimalAgent
+- Description: Minimal
+- Protocols: A2A
+";
+        let parser = AgentsMdParser::new();
+        let entries = parser.parse(content).expect("parse ok");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "MinimalAgent");
+        assert_eq!(entries[0].description, "Minimal");
+        assert_eq!(entries[0].protocols, vec!["A2A"]);
+        // Optional fields should be None / empty
+        assert!(entries[0].endpoint.is_none());
+        assert!(entries[0].version.is_none());
+        assert!(entries[0].capabilities.is_empty());
     }
 }

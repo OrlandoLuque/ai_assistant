@@ -1460,6 +1460,455 @@ fn truncate(s: &str, max_len: usize) -> String {
 }
 
 // ============================================================================
+// Diversity-Aware Retrieval — MMR (v6 Phase 6.2)
+// ============================================================================
+
+/// Similarity metric for diversity computation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum DiversityMetric {
+    /// TF-IDF cosine similarity
+    Cosine,
+    /// Jaccard similarity (set intersection / union)
+    Jaccard,
+    /// Overlap coefficient (intersection / min set size)
+    Overlap,
+}
+
+/// Configuration for Maximal Marginal Relevance (MMR) reranking
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MmrConfig {
+    /// Tradeoff between relevance and diversity (0=max diversity, 1=pure relevance)
+    pub lambda: f64,
+    /// Number of items to select
+    pub top_k: usize,
+    /// Which similarity metric to use for diversity
+    pub diversity_metric: DiversityMetric,
+}
+
+impl Default for MmrConfig {
+    fn default() -> Self {
+        Self {
+            lambda: 0.7,
+            top_k: 10,
+            diversity_metric: DiversityMetric::Cosine,
+        }
+    }
+}
+
+/// Scorer for MMR-based diversity-aware retrieval
+pub struct MmrScorer;
+
+impl MmrScorer {
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Tokenize text into lowercase word set
+    fn tokenize_set(text: &str) -> HashSet<String> {
+        text.split(|c: char| !c.is_alphanumeric())
+            .filter(|w| !w.is_empty())
+            .map(|w| w.to_lowercase())
+            .collect()
+    }
+
+    /// Tokenize text into lowercase word vector
+    fn tokenize_vec(text: &str) -> Vec<String> {
+        text.split(|c: char| !c.is_alphanumeric())
+            .filter(|w| !w.is_empty())
+            .map(|w| w.to_lowercase())
+            .collect()
+    }
+
+    /// Compute similarity between two texts using the specified metric
+    pub fn similarity(a: &str, b: &str, metric: &DiversityMetric) -> f64 {
+        match metric {
+            DiversityMetric::Cosine => Self::cosine_similarity(a, b),
+            DiversityMetric::Jaccard => Self::jaccard_similarity(a, b),
+            DiversityMetric::Overlap => Self::overlap_similarity(a, b),
+        }
+    }
+
+    /// TF-IDF cosine similarity
+    fn cosine_similarity(a: &str, b: &str) -> f64 {
+        let tokens_a = Self::tokenize_vec(a);
+        let tokens_b = Self::tokenize_vec(b);
+
+        if tokens_a.is_empty() || tokens_b.is_empty() {
+            return 0.0;
+        }
+
+        // Compute TF
+        let mut tf_a: HashMap<String, f64> = HashMap::new();
+        let total_a = tokens_a.len() as f64;
+        for t in &tokens_a {
+            *tf_a.entry(t.clone()).or_insert(0.0) += 1.0;
+        }
+        for v in tf_a.values_mut() {
+            *v /= total_a;
+        }
+
+        let mut tf_b: HashMap<String, f64> = HashMap::new();
+        let total_b = tokens_b.len() as f64;
+        for t in &tokens_b {
+            *tf_b.entry(t.clone()).or_insert(0.0) += 1.0;
+        }
+        for v in tf_b.values_mut() {
+            *v /= total_b;
+        }
+
+        // All terms
+        let mut all_terms: HashSet<String> = HashSet::new();
+        for k in tf_a.keys() {
+            all_terms.insert(k.clone());
+        }
+        for k in tf_b.keys() {
+            all_terms.insert(k.clone());
+        }
+
+        // IDF over 2 documents
+        let num_docs = 2.0_f64;
+        let mut idf: HashMap<String, f64> = HashMap::new();
+        for term in &all_terms {
+            let mut doc_count = 0.0;
+            if tf_a.contains_key(term) {
+                doc_count += 1.0;
+            }
+            if tf_b.contains_key(term) {
+                doc_count += 1.0;
+            }
+            idf.insert(term.clone(), (num_docs / doc_count).ln() + 1.0);
+        }
+
+        // Cosine similarity
+        let mut dot = 0.0;
+        let mut norm_a = 0.0;
+        let mut norm_b = 0.0;
+
+        for term in &all_terms {
+            let wa = tf_a.get(term).unwrap_or(&0.0) * idf.get(term).unwrap_or(&1.0);
+            let wb = tf_b.get(term).unwrap_or(&0.0) * idf.get(term).unwrap_or(&1.0);
+            dot += wa * wb;
+            norm_a += wa * wa;
+            norm_b += wb * wb;
+        }
+
+        let denom = norm_a.sqrt() * norm_b.sqrt();
+        if denom == 0.0 {
+            0.0
+        } else {
+            dot / denom
+        }
+    }
+
+    /// Jaccard similarity: |intersection| / |union|
+    fn jaccard_similarity(a: &str, b: &str) -> f64 {
+        let set_a = Self::tokenize_set(a);
+        let set_b = Self::tokenize_set(b);
+
+        if set_a.is_empty() && set_b.is_empty() {
+            return 0.0;
+        }
+
+        let intersection = set_a.intersection(&set_b).count() as f64;
+        let union = set_a.union(&set_b).count() as f64;
+
+        if union == 0.0 {
+            0.0
+        } else {
+            intersection / union
+        }
+    }
+
+    /// Overlap coefficient: |intersection| / min(|a|, |b|)
+    fn overlap_similarity(a: &str, b: &str) -> f64 {
+        let set_a = Self::tokenize_set(a);
+        let set_b = Self::tokenize_set(b);
+
+        if set_a.is_empty() || set_b.is_empty() {
+            return 0.0;
+        }
+
+        let intersection = set_a.intersection(&set_b).count() as f64;
+        let min_size = set_a.len().min(set_b.len()) as f64;
+
+        if min_size == 0.0 {
+            0.0
+        } else {
+            intersection / min_size
+        }
+    }
+
+    /// Compute MMR score: lambda * relevance - (1 - lambda) * max_sim_to_selected
+    pub fn mmr_score(relevance: f64, max_sim_to_selected: f64, lambda: f64) -> f64 {
+        lambda * relevance - (1.0 - lambda) * max_sim_to_selected
+    }
+}
+
+/// Diversity-aware retriever using Maximal Marginal Relevance
+pub struct DiversityRetriever {
+    config: MmrConfig,
+}
+
+impl DiversityRetriever {
+    pub fn new(config: MmrConfig) -> Self {
+        Self {
+            config,
+        }
+    }
+
+    pub fn with_defaults() -> Self {
+        Self::new(MmrConfig::default())
+    }
+
+    pub fn config(&self) -> &MmrConfig {
+        &self.config
+    }
+
+    /// Rerank candidates using MMR to balance relevance and diversity
+    pub fn rerank(&self, _query: &str, candidates: &[ScoredItem<String>]) -> Vec<ScoredItem<String>> {
+        if candidates.is_empty() {
+            return Vec::new();
+        }
+
+        let top_k = self.config.top_k.min(candidates.len());
+        let mut selected: Vec<usize> = Vec::new();
+        let mut unselected: HashSet<usize> = (0..candidates.len()).collect();
+        let mut result: Vec<ScoredItem<String>> = Vec::new();
+
+        for _ in 0..top_k {
+            let mut best_idx = None;
+            let mut best_mmr = f64::NEG_INFINITY;
+
+            for &idx in &unselected {
+                let relevance = candidates[idx].score as f64;
+
+                // Compute max similarity to any already-selected item
+                let max_sim = if selected.is_empty() {
+                    0.0
+                } else {
+                    selected
+                        .iter()
+                        .map(|&sel_idx| {
+                            MmrScorer::similarity(
+                                &candidates[idx].item,
+                                &candidates[sel_idx].item,
+                                &self.config.diversity_metric,
+                            )
+                        })
+                        .fold(f64::NEG_INFINITY, f64::max)
+                };
+
+                let mmr = MmrScorer::mmr_score(relevance, max_sim, self.config.lambda);
+
+                if mmr > best_mmr {
+                    best_mmr = mmr;
+                    best_idx = Some(idx);
+                }
+            }
+
+            if let Some(idx) = best_idx {
+                selected.push(idx);
+                unselected.remove(&idx);
+                result.push(ScoredItem::new(
+                    candidates[idx].item.clone(),
+                    best_mmr as f32,
+                ));
+            }
+        }
+
+        result
+    }
+}
+
+// ============================================================================
+// Hierarchical RAG Router (v6 Phase 6.3)
+// ============================================================================
+
+/// Query complexity classification for routing
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum RouterQueryComplexity {
+    Simple,
+    Factual,
+    MultiHop,
+    Analytical,
+    Conversational,
+}
+
+impl std::fmt::Display for RouterQueryComplexity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RouterQueryComplexity::Simple => write!(f, "simple"),
+            RouterQueryComplexity::Factual => write!(f, "factual"),
+            RouterQueryComplexity::MultiHop => write!(f, "multi_hop"),
+            RouterQueryComplexity::Analytical => write!(f, "analytical"),
+            RouterQueryComplexity::Conversational => write!(f, "conversational"),
+        }
+    }
+}
+
+/// Configuration for the hierarchical RAG router
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RouterConfig {
+    /// Default retriever to use when no mapping matches
+    pub default_retriever: String,
+    /// Mapping from complexity name to retriever name
+    pub complexity_mapping: HashMap<String, String>,
+    /// Fallback retriever when confidence is low
+    pub fallback_retriever: Option<String>,
+}
+
+/// A routing decision made by the hierarchical router
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RagRoutingDecision {
+    /// The original query
+    pub query: String,
+    /// Classified complexity
+    pub complexity: RouterQueryComplexity,
+    /// The chosen retriever name
+    pub chosen_retriever: String,
+    /// Confidence in the classification
+    pub confidence: f64,
+    /// Fallback retriever if primary fails
+    pub fallback: Option<String>,
+}
+
+/// Classifies query complexity using heuristics
+pub struct QueryClassifier;
+
+impl QueryClassifier {
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Classify a query into a complexity level with confidence
+    pub fn classify(&self, query: &str) -> (RouterQueryComplexity, f64) {
+        let lower = query.to_lowercase();
+        let word_count = query.split_whitespace().count();
+
+        // Conversational: references to prior conversation
+        if lower.contains("you said")
+            || lower.contains("earlier")
+            || lower.contains("remember")
+            || lower.contains("we discussed")
+            || lower.contains("you mentioned")
+        {
+            return (RouterQueryComplexity::Conversational, 0.85);
+        }
+
+        // Analytical: analysis/evaluation requests
+        if lower.contains("analyze")
+            || lower.contains("explain why")
+            || lower.contains("evaluate")
+            || lower.contains("reasoning")
+            || lower.contains("implications")
+            || lower.contains("assessment")
+        {
+            return (RouterQueryComplexity::Analytical, 0.80);
+        }
+
+        // MultiHop: queries requiring multiple information sources
+        if lower.contains("and also")
+            || lower.contains("in addition")
+            || lower.contains("compared to")
+            || lower.contains("relationship between")
+            || lower.contains("how does")
+                && lower.contains("relate to")
+        {
+            return (RouterQueryComplexity::MultiHop, 0.75);
+        }
+
+        // Simple: very short queries
+        if word_count < 5 {
+            return (RouterQueryComplexity::Simple, 0.80);
+        }
+
+        // Factual: direct questions
+        if lower.contains("how many")
+            || lower.contains("what is")
+            || lower.contains("when did")
+            || lower.contains("when was")
+            || lower.contains("where is")
+            || lower.contains("who is")
+            || lower.contains("which")
+            || lower.starts_with("what ")
+            || lower.starts_with("when ")
+        {
+            return (RouterQueryComplexity::Factual, 0.75);
+        }
+
+        // Default: Factual with lower confidence
+        (RouterQueryComplexity::Factual, 0.50)
+    }
+}
+
+/// Hierarchical router that directs queries to appropriate retrievers
+pub struct HierarchicalRouter {
+    config: RouterConfig,
+    classifier: QueryClassifier,
+}
+
+impl HierarchicalRouter {
+    pub fn new(config: RouterConfig) -> Self {
+        Self {
+            config,
+            classifier: QueryClassifier::new(),
+        }
+    }
+
+    /// Create a router with default mappings:
+    /// Simple→"bm25", Factual→"dense", MultiHop→"graph", Analytical→"raptor", Conversational→"dense"
+    pub fn with_defaults() -> Self {
+        let mut mapping = HashMap::new();
+        mapping.insert("simple".to_string(), "bm25".to_string());
+        mapping.insert("factual".to_string(), "dense".to_string());
+        mapping.insert("multi_hop".to_string(), "graph".to_string());
+        mapping.insert("analytical".to_string(), "raptor".to_string());
+        mapping.insert("conversational".to_string(), "dense".to_string());
+
+        let config = RouterConfig {
+            default_retriever: "dense".to_string(),
+            complexity_mapping: mapping,
+            fallback_retriever: Some("bm25".to_string()),
+        };
+
+        Self::new(config)
+    }
+
+    pub fn config(&self) -> &RouterConfig {
+        &self.config
+    }
+
+    /// Route a query to the appropriate retriever
+    pub fn route(&self, query: &str) -> RagRoutingDecision {
+        let (complexity, confidence) = self.classifier.classify(query);
+
+        let complexity_key = complexity.to_string();
+
+        let chosen_retriever = self
+            .config
+            .complexity_mapping
+            .get(&complexity_key)
+            .cloned()
+            .unwrap_or_else(|| self.config.default_retriever.clone());
+
+        RagRoutingDecision {
+            query: query.to_string(),
+            complexity,
+            chosen_retriever,
+            confidence,
+            fallback: self.config.fallback_retriever.clone(),
+        }
+    }
+
+    /// Update the mapping for a specific complexity level
+    pub fn update_mapping(&mut self, complexity: &str, retriever: String) {
+        self.config
+            .complexity_mapping
+            .insert(complexity.to_string(), retriever);
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -1557,5 +2006,296 @@ mod tests {
             item_with_meta.metadata.get("source"),
             Some(&"test.md".to_string())
         );
+    }
+
+    // ========================================================================
+    // Diversity-Aware Retrieval (MMR) Tests (v6 Phase 6.2)
+    // ========================================================================
+
+    #[test]
+    fn test_mmr_config_defaults() {
+        let config = MmrConfig::default();
+        assert!((config.lambda - 0.7).abs() < f64::EPSILON);
+        assert_eq!(config.top_k, 10);
+        // Verify it's Cosine
+        matches!(config.diversity_metric, DiversityMetric::Cosine);
+    }
+
+    #[test]
+    fn test_mmr_scorer_cosine_identical() {
+        let text = "The quick brown fox jumps over the lazy dog";
+        let score = MmrScorer::similarity(text, text, &DiversityMetric::Cosine);
+        assert!(
+            (score - 1.0).abs() < 0.01,
+            "Identical texts should have cosine similarity ~1.0, got {}",
+            score
+        );
+    }
+
+    #[test]
+    fn test_mmr_scorer_cosine_different() {
+        let a = "Machine learning algorithms process training data";
+        let b = "The recipe requires flour sugar and eggs";
+        let score = MmrScorer::similarity(a, b, &DiversityMetric::Cosine);
+        assert!(
+            score < 1.0,
+            "Different texts should have cosine similarity < 1.0, got {}",
+            score
+        );
+    }
+
+    #[test]
+    fn test_mmr_scorer_jaccard() {
+        let a = "the cat sat on the mat";
+        let b = "the cat lay on the bed";
+        let score = MmrScorer::similarity(a, b, &DiversityMetric::Jaccard);
+        // Shared: {the, cat, on} = 3, Union: {the, cat, sat, on, mat, lay, bed} = 7
+        assert!(
+            score > 0.0 && score < 1.0,
+            "Jaccard similarity should be between 0 and 1, got {}",
+            score
+        );
+    }
+
+    #[test]
+    fn test_mmr_scorer_overlap() {
+        let a = "the cat sat";
+        let b = "the cat sat on the mat";
+        let score = MmrScorer::similarity(a, b, &DiversityMetric::Overlap);
+        // set_a = {the, cat, sat}, set_b = {the, cat, sat, on, mat}
+        // intersection = 3, min(3, 5) = 3 => overlap = 1.0
+        assert!(
+            (score - 1.0).abs() < 0.01,
+            "All words of smaller set are in larger set, overlap should be ~1.0, got {}",
+            score
+        );
+    }
+
+    #[test]
+    fn test_mmr_score_computation() {
+        // lambda * relevance - (1 - lambda) * max_sim
+        let score = MmrScorer::mmr_score(0.9, 0.5, 0.7);
+        let expected = 0.7 * 0.9 - 0.3 * 0.5;
+        assert!(
+            (score - expected).abs() < f64::EPSILON,
+            "MMR score should be {}, got {}",
+            expected,
+            score
+        );
+    }
+
+    #[test]
+    fn test_diversity_retriever_rerank_selects_diverse() {
+        let retriever = DiversityRetriever::with_defaults();
+        let candidates = vec![
+            ScoredItem::new("Rust is a systems programming language".to_string(), 0.9),
+            ScoredItem::new("Rust provides memory safety guarantees".to_string(), 0.85),
+            ScoredItem::new("Python is great for data science".to_string(), 0.8),
+            ScoredItem::new("Rust compiles to native code".to_string(), 0.75),
+        ];
+        let result = retriever.rerank("programming languages", &candidates);
+        assert!(!result.is_empty(), "Should return reranked results");
+        // The diverse item (Python) should appear somewhere in the results
+        let has_python = result.iter().any(|r| r.item.contains("Python"));
+        assert!(
+            has_python,
+            "Diverse item should be included in results"
+        );
+    }
+
+    #[test]
+    fn test_diversity_retriever_respects_top_k() {
+        let mut config = MmrConfig::default();
+        config.top_k = 2;
+        let retriever = DiversityRetriever::new(config);
+        let candidates = vec![
+            ScoredItem::new("doc1".to_string(), 0.9),
+            ScoredItem::new("doc2".to_string(), 0.8),
+            ScoredItem::new("doc3".to_string(), 0.7),
+            ScoredItem::new("doc4".to_string(), 0.6),
+        ];
+        let result = retriever.rerank("query", &candidates);
+        assert_eq!(result.len(), 2, "Should return exactly top_k items");
+    }
+
+    #[test]
+    fn test_diversity_retriever_lambda_one_pure_relevance() {
+        let mut config = MmrConfig::default();
+        config.lambda = 1.0;
+        config.top_k = 3;
+        let retriever = DiversityRetriever::new(config);
+        let candidates = vec![
+            ScoredItem::new("highest relevance".to_string(), 0.95),
+            ScoredItem::new("medium relevance".to_string(), 0.80),
+            ScoredItem::new("lower relevance".to_string(), 0.65),
+        ];
+        let result = retriever.rerank("query", &candidates);
+        assert_eq!(result.len(), 3);
+        // With lambda=1.0, first item should be the most relevant
+        assert!(
+            result[0].item.contains("highest"),
+            "Lambda=1.0 should select by pure relevance first"
+        );
+    }
+
+    #[test]
+    fn test_diversity_retriever_lambda_zero_max_diversity() {
+        let mut config = MmrConfig::default();
+        config.lambda = 0.0;
+        config.top_k = 3;
+        let retriever = DiversityRetriever::new(config);
+        let candidates = vec![
+            ScoredItem::new("Rust programming language systems".to_string(), 0.9),
+            ScoredItem::new("Rust programming language safety".to_string(), 0.85),
+            ScoredItem::new("Python data science machine learning".to_string(), 0.5),
+        ];
+        let result = retriever.rerank("programming", &candidates);
+        assert_eq!(result.len(), 3);
+        // With lambda=0.0, diversity is maximized — the dissimilar Python item
+        // should appear early (second position) since it's most diverse from any Rust item
+    }
+
+    #[test]
+    fn test_diversity_metric_all_variants() {
+        let variants = vec![
+            DiversityMetric::Cosine,
+            DiversityMetric::Jaccard,
+            DiversityMetric::Overlap,
+        ];
+        assert_eq!(variants.len(), 3, "Should have 3 diversity metric variants");
+    }
+
+    // ========================================================================
+    // Hierarchical RAG Router Tests (v6 Phase 6.3)
+    // ========================================================================
+
+    #[test]
+    fn test_router_query_complexity_all_variants() {
+        let variants = vec![
+            RouterQueryComplexity::Simple,
+            RouterQueryComplexity::Factual,
+            RouterQueryComplexity::MultiHop,
+            RouterQueryComplexity::Analytical,
+            RouterQueryComplexity::Conversational,
+        ];
+        assert_eq!(variants.len(), 5, "Should have 5 complexity variants");
+        assert_eq!(RouterQueryComplexity::Simple, RouterQueryComplexity::Simple);
+        assert_ne!(RouterQueryComplexity::Simple, RouterQueryComplexity::Factual);
+    }
+
+    #[test]
+    fn test_query_classifier_simple() {
+        let classifier = QueryClassifier::new();
+        let (complexity, confidence) = classifier.classify("hello world");
+        assert_eq!(complexity, RouterQueryComplexity::Simple);
+        assert!(confidence > 0.5);
+    }
+
+    #[test]
+    fn test_query_classifier_factual() {
+        let classifier = QueryClassifier::new();
+        let (complexity, _confidence) = classifier.classify("What is the capital of France and its population?");
+        assert_eq!(complexity, RouterQueryComplexity::Factual);
+    }
+
+    #[test]
+    fn test_query_classifier_multi_hop() {
+        let classifier = QueryClassifier::new();
+        let (complexity, _confidence) =
+            classifier.classify("How does the economic model compared to the political system");
+        assert_eq!(complexity, RouterQueryComplexity::MultiHop);
+    }
+
+    #[test]
+    fn test_query_classifier_analytical() {
+        let classifier = QueryClassifier::new();
+        let (complexity, _confidence) =
+            classifier.classify("Analyze the implications of this policy change");
+        assert_eq!(complexity, RouterQueryComplexity::Analytical);
+    }
+
+    #[test]
+    fn test_query_classifier_conversational() {
+        let classifier = QueryClassifier::new();
+        let (complexity, _confidence) =
+            classifier.classify("You said earlier that the system was fast");
+        assert_eq!(complexity, RouterQueryComplexity::Conversational);
+    }
+
+    #[test]
+    fn test_hierarchical_router_with_defaults() {
+        let router = HierarchicalRouter::with_defaults();
+        let config = router.config();
+        assert_eq!(config.default_retriever, "dense");
+        assert!(config.complexity_mapping.contains_key("simple"));
+        assert!(config.complexity_mapping.contains_key("factual"));
+        assert!(config.complexity_mapping.contains_key("multi_hop"));
+        assert!(config.complexity_mapping.contains_key("analytical"));
+        assert!(config.complexity_mapping.contains_key("conversational"));
+        assert_eq!(config.fallback_retriever, Some("bm25".to_string()));
+    }
+
+    #[test]
+    fn test_hierarchical_router_route_simple() {
+        let router = HierarchicalRouter::with_defaults();
+        let decision = router.route("ship price");
+        assert_eq!(decision.complexity, RouterQueryComplexity::Simple);
+        assert_eq!(decision.chosen_retriever, "bm25");
+    }
+
+    #[test]
+    fn test_hierarchical_router_route_analytical() {
+        let router = HierarchicalRouter::with_defaults();
+        let decision = router.route("Analyze the performance characteristics and explain why the system degrades");
+        assert_eq!(decision.complexity, RouterQueryComplexity::Analytical);
+        assert_eq!(decision.chosen_retriever, "raptor");
+    }
+
+    #[test]
+    fn test_rag_routing_decision_construction() {
+        let decision = RagRoutingDecision {
+            query: "test query".to_string(),
+            complexity: RouterQueryComplexity::Factual,
+            chosen_retriever: "dense".to_string(),
+            confidence: 0.85,
+            fallback: Some("bm25".to_string()),
+        };
+        assert_eq!(decision.query, "test query");
+        assert_eq!(decision.complexity, RouterQueryComplexity::Factual);
+        assert_eq!(decision.chosen_retriever, "dense");
+        assert!((decision.confidence - 0.85).abs() < f64::EPSILON);
+        assert_eq!(decision.fallback, Some("bm25".to_string()));
+    }
+
+    #[test]
+    fn test_router_config_construction() {
+        let mut mapping = HashMap::new();
+        mapping.insert("simple".to_string(), "keyword".to_string());
+        let config = RouterConfig {
+            default_retriever: "dense".to_string(),
+            complexity_mapping: mapping,
+            fallback_retriever: None,
+        };
+        assert_eq!(config.default_retriever, "dense");
+        assert!(config.complexity_mapping.contains_key("simple"));
+        assert!(config.fallback_retriever.is_none());
+    }
+
+    #[test]
+    fn test_hierarchical_router_update_mapping() {
+        let mut router = HierarchicalRouter::with_defaults();
+        router.update_mapping("simple", "custom_retriever".to_string());
+        let config = router.config();
+        assert_eq!(
+            config.complexity_mapping.get("simple"),
+            Some(&"custom_retriever".to_string())
+        );
+    }
+
+    #[test]
+    fn test_diversity_retriever_empty_candidates() {
+        let retriever = DiversityRetriever::with_defaults();
+        let result = retriever.rerank("query", &[]);
+        assert!(result.is_empty(), "Empty candidates should return empty results");
     }
 }

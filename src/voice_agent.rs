@@ -13,13 +13,14 @@ mod inner {
     use std::fmt;
 
     use crate::error::{AiError, VoiceAgentError};
+    use serde::{Deserialize, Serialize};
 
     // ========================================================================
     // 3.1 — Audio Types
     // ========================================================================
 
     /// Audio encoding format for voice chunks.
-    #[derive(Debug, Clone, PartialEq)]
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     pub enum AudioFormat {
         /// Raw PCM 16-bit signed little-endian
         Pcm16,
@@ -1085,6 +1086,484 @@ mod inner {
     }
 
     // ========================================================================
+    // 9.1 — WebRTC Voice Transport
+    // ========================================================================
+
+    #[cfg(feature = "webrtc")]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct WebRtcConfig {
+        pub stun_servers: Vec<String>,
+        pub turn_servers: Vec<TurnServer>,
+        pub audio_codec: WebRtcAudioCodec,
+        pub sample_rate: u32,
+        pub enable_dtls: bool,
+        pub ice_timeout_ms: u64,
+    }
+
+    #[cfg(feature = "webrtc")]
+    impl Default for WebRtcConfig {
+        fn default() -> Self {
+            Self {
+                stun_servers: vec!["stun:stun.l.google.com:19302".to_string()],
+                turn_servers: Vec::new(),
+                audio_codec: WebRtcAudioCodec::Opus,
+                sample_rate: 48000,
+                enable_dtls: true,
+                ice_timeout_ms: 5000,
+            }
+        }
+    }
+
+    #[cfg(feature = "webrtc")]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct TurnServer {
+        pub url: String,
+        pub username: String,
+        pub credential: String,
+    }
+
+    #[cfg(feature = "webrtc")]
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub enum WebRtcAudioCodec {
+        Opus,
+        Pcm16,
+        G711,
+    }
+
+    #[cfg(feature = "webrtc")]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct SdpOffer {
+        pub sdp: String,
+        pub session_id: String,
+    }
+
+    #[cfg(feature = "webrtc")]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct SdpAnswer {
+        pub sdp: String,
+        pub session_id: String,
+    }
+
+    #[cfg(feature = "webrtc")]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct WebRtcIceCandidate {
+        pub candidate: String,
+        pub sdp_mid: Option<String>,
+        pub sdp_m_line_index: Option<u32>,
+        pub priority: u32,
+        pub candidate_type: IceCandidateType,
+    }
+
+    #[cfg(feature = "webrtc")]
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub enum IceCandidateType {
+        Host,
+        ServerReflexive,
+        PeerReflexive,
+        Relay,
+    }
+
+    #[cfg(feature = "webrtc")]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct RtpStreamConfig {
+        pub ssrc: u32,
+        pub payload_type: u8,
+        pub clock_rate: u32,
+        pub jitter_buffer_ms: u32,
+    }
+
+    #[cfg(feature = "webrtc")]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct WebRtcSessionStats {
+        pub latency_ms: f64,
+        pub packet_loss_pct: f64,
+        pub jitter_ms: f64,
+        pub bytes_sent: u64,
+        pub bytes_received: u64,
+    }
+
+    #[cfg(feature = "webrtc")]
+    impl Default for WebRtcSessionStats {
+        fn default() -> Self {
+            Self {
+                latency_ms: 0.0,
+                packet_loss_pct: 0.0,
+                jitter_ms: 0.0,
+                bytes_sent: 0,
+                bytes_received: 0,
+            }
+        }
+    }
+
+    #[cfg(feature = "webrtc")]
+    pub struct WebRtcTransport {
+        config: WebRtcConfig,
+        local_sdp: Option<SdpOffer>,
+        remote_sdp: Option<SdpAnswer>,
+        ice_candidates: Vec<WebRtcIceCandidate>,
+        connected: bool,
+        stats: WebRtcSessionStats,
+    }
+
+    #[cfg(feature = "webrtc")]
+    impl WebRtcTransport {
+        /// Create a new WebRTC transport with the given configuration.
+        pub fn new(config: WebRtcConfig) -> Self {
+            Self {
+                config,
+                local_sdp: None,
+                remote_sdp: None,
+                ice_candidates: Vec::new(),
+                connected: false,
+                stats: WebRtcSessionStats::default(),
+            }
+        }
+
+        /// Create a WebRTC transport with default configuration.
+        pub fn with_defaults() -> Self {
+            Self::new(WebRtcConfig::default())
+        }
+
+        /// Generate a mock SDP offer. In production, this would delegate to a
+        /// real WebRTC stack (e.g. libwebrtc). The SDP string follows the
+        /// general structure of a real offer for testing purposes.
+        pub fn create_offer(&mut self) -> SdpOffer {
+            let session_id = format!("webrtc-{}", {
+                use std::sync::atomic::{AtomicU64, Ordering};
+                static COUNTER: AtomicU64 = AtomicU64::new(0);
+                let ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis();
+                let count = COUNTER.fetch_add(1, Ordering::Relaxed);
+                format!("{:x}-{:04x}", ts, count)
+            });
+
+            let codec_name = match &self.config.audio_codec {
+                WebRtcAudioCodec::Opus => "opus",
+                WebRtcAudioCodec::Pcm16 => "PCMU",
+                WebRtcAudioCodec::G711 => "PCMA",
+            };
+
+            let sdp = format!(
+                "v=0\r\n\
+                 o=- {session_id} 2 IN IP4 127.0.0.1\r\n\
+                 s=-\r\n\
+                 t=0 0\r\n\
+                 m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n\
+                 a=rtpmap:111 {codec}/{rate}/2\r\n\
+                 a=fmtp:111 minptime=10;useinbandfec=1\r\n\
+                 a=sendrecv\r\n",
+                session_id = session_id,
+                codec = codec_name,
+                rate = self.config.sample_rate,
+            );
+
+            let offer = SdpOffer {
+                sdp,
+                session_id: session_id.clone(),
+            };
+            self.local_sdp = Some(offer.clone());
+            offer
+        }
+
+        /// Set the remote SDP answer received from the peer.
+        pub fn set_remote_answer(&mut self, answer: SdpAnswer) {
+            self.remote_sdp = Some(answer);
+        }
+
+        /// Add an ICE candidate gathered during the negotiation process.
+        pub fn add_ice_candidate(&mut self, candidate: WebRtcIceCandidate) {
+            self.ice_candidates.push(candidate);
+        }
+
+        /// Get all ICE candidates gathered so far.
+        pub fn ice_candidates(&self) -> &[WebRtcIceCandidate] {
+            &self.ice_candidates
+        }
+
+        /// Attempt to establish the WebRTC connection.
+        ///
+        /// Requires both local SDP offer and remote SDP answer to be set.
+        /// In production this would perform the full ICE connectivity check
+        /// and DTLS handshake. Here we simulate a successful connection.
+        pub fn connect(&mut self) -> Result<(), VoiceAgentError> {
+            if self.local_sdp.is_none() {
+                return Err(VoiceAgentError::StreamFailed {
+                    reason: "No local SDP offer — call create_offer() first".to_string(),
+                });
+            }
+            if self.remote_sdp.is_none() {
+                return Err(VoiceAgentError::StreamFailed {
+                    reason: "No remote SDP answer — call set_remote_answer() first".to_string(),
+                });
+            }
+            self.connected = true;
+            // Simulate initial stats from a successful connection
+            self.stats = WebRtcSessionStats {
+                latency_ms: 25.0,
+                packet_loss_pct: 0.0,
+                jitter_ms: 2.0,
+                bytes_sent: 0,
+                bytes_received: 0,
+            };
+            Ok(())
+        }
+
+        /// Disconnect the transport, resetting connection state.
+        pub fn disconnect(&mut self) {
+            self.connected = false;
+        }
+
+        /// Whether the transport is currently connected.
+        pub fn is_connected(&self) -> bool {
+            self.connected
+        }
+
+        /// Get the current session statistics.
+        pub fn stats(&self) -> &WebRtcSessionStats {
+            &self.stats
+        }
+
+        /// Get the transport configuration.
+        pub fn config(&self) -> &WebRtcConfig {
+            &self.config
+        }
+    }
+
+    #[cfg(feature = "webrtc")]
+    impl VoiceTransport for WebRtcTransport {
+        fn send_audio(&self, chunk: &AudioChunk) -> Result<(), AiError> {
+            if !self.connected {
+                return Err(VoiceAgentError::StreamFailed {
+                    reason: "WebRTC transport is not connected".to_string(),
+                }
+                .into());
+            }
+            // In production, this would encode and send via RTP.
+            // For simulation, we just validate the chunk is non-empty.
+            if chunk.is_empty() {
+                return Err(VoiceAgentError::StreamFailed {
+                    reason: "Cannot send empty audio chunk".to_string(),
+                }
+                .into());
+            }
+            Ok(())
+        }
+
+        fn receive_audio(&mut self) -> Result<Option<AudioChunk>, AiError> {
+            if !self.connected {
+                return Err(VoiceAgentError::StreamFailed {
+                    reason: "WebRTC transport is not connected".to_string(),
+                }
+                .into());
+            }
+            // In production, this would dequeue from a jitter buffer.
+            // Simulated: no data available.
+            Ok(None)
+        }
+
+        fn close(&mut self) -> Result<(), AiError> {
+            self.disconnect();
+            self.local_sdp = None;
+            self.remote_sdp = None;
+            self.ice_candidates.clear();
+            Ok(())
+        }
+    }
+
+    // ========================================================================
+    // 9.2 — Speech-to-Speech Pipeline
+    // ========================================================================
+
+    /// Describes the audio I/O capabilities of a model.
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub enum AudioModelCapability {
+        /// Model only accepts and produces text.
+        TextOnly,
+        /// Model can accept audio input but produces text output.
+        AudioInput,
+        /// Model produces audio output but only accepts text input.
+        AudioOutput,
+        /// Model can accept audio input and produce audio output (native S2S).
+        AudioInputOutput,
+    }
+
+    /// Configuration for a Speech-to-Speech pipeline.
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct S2SConfig {
+        /// Model identifier for the S2S model.
+        pub model_id: String,
+        /// Expected input audio format.
+        pub input_format: AudioFormat,
+        /// Desired output audio format.
+        pub output_format: AudioFormat,
+        /// Optional voice identifier for the output voice.
+        pub voice_id: Option<String>,
+        /// The audio capability of the model.
+        pub capability: AudioModelCapability,
+    }
+
+    /// Fallback strategy when the model does not support direct audio I/O.
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub enum S2SFallbackMode {
+        /// Standard fallback: STT -> LLM -> TTS
+        SttLlmTts,
+        /// No fallback — return an error if model does not support direct S2S.
+        Disabled,
+    }
+
+    /// A transcript entry recorded by the S2S pipeline for each processed audio.
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct S2STranscript {
+        /// Transcribed input text (if available via STT or model transcription).
+        pub input_text: Option<String>,
+        /// Generated output text (if available via model or TTS input).
+        pub output_text: Option<String>,
+        /// The model that processed this interaction.
+        pub model_id: String,
+        /// Whether the fallback STT->LLM->TTS pipeline was used instead of direct S2S.
+        pub used_fallback: bool,
+        /// End-to-end latency in milliseconds.
+        pub latency_ms: u64,
+        /// Unix timestamp in milliseconds when this was processed.
+        pub timestamp: u64,
+    }
+
+    /// Speech-to-Speech pipeline that processes audio input and produces audio output.
+    ///
+    /// When the model supports `AudioInputOutput`, audio is processed directly (native S2S).
+    /// Otherwise, depending on the fallback mode, the pipeline falls back to the
+    /// traditional STT -> LLM -> TTS chain.
+    pub struct SpeechToSpeechPipeline {
+        config: S2SConfig,
+        fallback: S2SFallbackMode,
+        transcripts: Vec<S2STranscript>,
+    }
+
+    impl SpeechToSpeechPipeline {
+        /// Create a new S2S pipeline with the given configuration and fallback mode.
+        pub fn new(config: S2SConfig, fallback: S2SFallbackMode) -> Self {
+            Self {
+                config,
+                fallback,
+                transcripts: Vec::new(),
+            }
+        }
+
+        /// Returns true if the configured model supports direct audio-to-audio processing.
+        pub fn supports_direct_audio(&self) -> bool {
+            self.config.capability == AudioModelCapability::AudioInputOutput
+        }
+
+        /// Process an audio input chunk and return an audio output chunk.
+        ///
+        /// If the model supports `AudioInputOutput`, the audio is processed directly
+        /// (simulated here). Otherwise, falls back to STT -> LLM -> TTS if fallback
+        /// mode is `SttLlmTts`, or returns an error if fallback is `Disabled`.
+        pub fn process_audio(
+            &mut self,
+            input: &AudioChunk,
+        ) -> Result<AudioChunk, VoiceAgentError> {
+            let start = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+
+            let (output, used_fallback, input_text, output_text) =
+                if self.supports_direct_audio() {
+                    // Native S2S: simulate direct audio processing
+                    // In production, this sends audio to the model and receives audio back.
+                    let response_bytes = vec![0u8; input.bytes.len()];
+                    let output_chunk = AudioChunk::new(
+                        response_bytes,
+                        input.sample_rate,
+                        input.channels,
+                        self.config.output_format.clone(),
+                    );
+                    (
+                        output_chunk,
+                        false,
+                        Some("[direct audio input]".to_string()),
+                        Some("[direct audio output]".to_string()),
+                    )
+                } else {
+                    // Model does not support direct S2S
+                    match &self.fallback {
+                        S2SFallbackMode::SttLlmTts => {
+                            // Simulate STT -> LLM -> TTS fallback
+                            let stt_text = format!(
+                                "[stt: {} bytes, {}Hz]",
+                                input.bytes.len(),
+                                input.sample_rate
+                            );
+                            let llm_response = format!("[llm response to: {}]", stt_text);
+                            // Simulate TTS output
+                            let tts_bytes = llm_response.as_bytes().to_vec();
+                            let output_chunk = AudioChunk::new(
+                                tts_bytes,
+                                input.sample_rate,
+                                input.channels,
+                                self.config.output_format.clone(),
+                            );
+                            (
+                                output_chunk,
+                                true,
+                                Some(stt_text),
+                                Some(llm_response),
+                            )
+                        }
+                        S2SFallbackMode::Disabled => {
+                            return Err(VoiceAgentError::StreamFailed {
+                                reason: format!(
+                                    "Model '{}' does not support AudioInputOutput and fallback is disabled",
+                                    self.config.model_id
+                                ),
+                            });
+                        }
+                    }
+                };
+
+            let end = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+
+            let transcript = S2STranscript {
+                input_text,
+                output_text,
+                model_id: self.config.model_id.clone(),
+                used_fallback,
+                latency_ms: end.saturating_sub(start),
+                timestamp: end,
+            };
+            self.transcripts.push(transcript);
+
+            Ok(output)
+        }
+
+        /// Get all recorded transcripts.
+        pub fn transcripts(&self) -> &[S2STranscript] {
+            &self.transcripts
+        }
+
+        /// Get the pipeline configuration.
+        pub fn config(&self) -> &S2SConfig {
+            &self.config
+        }
+
+        /// Get the current fallback mode.
+        pub fn fallback_mode(&self) -> &S2SFallbackMode {
+            &self.fallback
+        }
+
+        /// Clear all recorded transcripts.
+        pub fn clear_transcripts(&mut self) {
+            self.transcripts.clear();
+        }
+    }
+
+    // ========================================================================
     // Tests
     // ========================================================================
 
@@ -1955,6 +2434,547 @@ mod inner {
             });
             assert_eq!(session.interruptions().len(), 1);
             assert_eq!(session.interruptions()[0].timestamp_ms, 1000);
+        }
+
+        // ----------------------------------------------------------------
+        // 9.1 — WebRTC Voice Transport tests
+        // ----------------------------------------------------------------
+
+        #[cfg(feature = "webrtc")]
+        #[test]
+        fn test_webrtc_config_defaults() {
+            let cfg = WebRtcConfig::default();
+            assert_eq!(cfg.stun_servers, vec!["stun:stun.l.google.com:19302"]);
+            assert!(cfg.turn_servers.is_empty());
+            assert_eq!(cfg.audio_codec, WebRtcAudioCodec::Opus);
+            assert_eq!(cfg.sample_rate, 48000);
+            assert!(cfg.enable_dtls);
+            assert_eq!(cfg.ice_timeout_ms, 5000);
+        }
+
+        #[cfg(feature = "webrtc")]
+        #[test]
+        fn test_webrtc_transport_new() {
+            let cfg = WebRtcConfig::default();
+            let transport = WebRtcTransport::new(cfg);
+            assert!(!transport.is_connected());
+            assert!(transport.ice_candidates().is_empty());
+            assert_eq!(transport.stats().bytes_sent, 0);
+            assert_eq!(transport.config().sample_rate, 48000);
+        }
+
+        #[cfg(feature = "webrtc")]
+        #[test]
+        fn test_webrtc_transport_create_offer() {
+            let mut transport = WebRtcTransport::with_defaults();
+            let offer = transport.create_offer();
+            assert!(!offer.sdp.is_empty());
+            assert!(offer.sdp.contains("v=0"));
+            assert!(offer.sdp.contains("opus"));
+            assert!(offer.sdp.contains("48000"));
+            assert!(offer.session_id.starts_with("webrtc-"));
+        }
+
+        #[cfg(feature = "webrtc")]
+        #[test]
+        fn test_webrtc_transport_set_remote_answer() {
+            let mut transport = WebRtcTransport::with_defaults();
+            let answer = SdpAnswer {
+                sdp: "v=0\r\no=- answer 2 IN IP4 127.0.0.1\r\n".to_string(),
+                session_id: "answer-001".to_string(),
+            };
+            transport.set_remote_answer(answer);
+            // Verify we can still access the transport after setting the answer
+            assert!(!transport.is_connected());
+        }
+
+        #[cfg(feature = "webrtc")]
+        #[test]
+        fn test_webrtc_transport_add_ice_candidate() {
+            let mut transport = WebRtcTransport::with_defaults();
+            assert!(transport.ice_candidates().is_empty());
+
+            let candidate = WebRtcIceCandidate {
+                candidate: "candidate:1 1 udp 2130706431 192.168.1.1 5000 typ host".to_string(),
+                sdp_mid: Some("0".to_string()),
+                sdp_m_line_index: Some(0),
+                priority: 2130706431,
+                candidate_type: IceCandidateType::Host,
+            };
+            transport.add_ice_candidate(candidate);
+            assert_eq!(transport.ice_candidates().len(), 1);
+            assert_eq!(transport.ice_candidates()[0].priority, 2130706431);
+
+            // Add a second candidate
+            let relay_candidate = WebRtcIceCandidate {
+                candidate: "candidate:2 1 udp 1 10.0.0.1 3478 typ relay".to_string(),
+                sdp_mid: None,
+                sdp_m_line_index: None,
+                priority: 1,
+                candidate_type: IceCandidateType::Relay,
+            };
+            transport.add_ice_candidate(relay_candidate);
+            assert_eq!(transport.ice_candidates().len(), 2);
+        }
+
+        #[cfg(feature = "webrtc")]
+        #[test]
+        fn test_webrtc_transport_connect_without_sdp_fails() {
+            let mut transport = WebRtcTransport::with_defaults();
+            // No offer created, no answer set — should fail
+            let result = transport.connect();
+            assert!(result.is_err());
+        }
+
+        #[cfg(feature = "webrtc")]
+        #[test]
+        fn test_webrtc_transport_connect_with_offer_no_answer_fails() {
+            let mut transport = WebRtcTransport::with_defaults();
+            transport.create_offer();
+            // Offer created but no answer — should fail
+            let result = transport.connect();
+            assert!(result.is_err());
+        }
+
+        #[cfg(feature = "webrtc")]
+        #[test]
+        fn test_webrtc_transport_connect_success() {
+            let mut transport = WebRtcTransport::with_defaults();
+            transport.create_offer();
+            transport.set_remote_answer(SdpAnswer {
+                sdp: "v=0\r\n".to_string(),
+                session_id: "remote-1".to_string(),
+            });
+            let result = transport.connect();
+            assert!(result.is_ok());
+            assert!(transport.is_connected());
+        }
+
+        #[cfg(feature = "webrtc")]
+        #[test]
+        fn test_webrtc_transport_disconnect() {
+            let mut transport = WebRtcTransport::with_defaults();
+            transport.create_offer();
+            transport.set_remote_answer(SdpAnswer {
+                sdp: "v=0\r\n".to_string(),
+                session_id: "remote-2".to_string(),
+            });
+            transport.connect().unwrap();
+            assert!(transport.is_connected());
+
+            transport.disconnect();
+            assert!(!transport.is_connected());
+        }
+
+        #[cfg(feature = "webrtc")]
+        #[test]
+        fn test_webrtc_transport_stats() {
+            let mut transport = WebRtcTransport::with_defaults();
+            // Before connection, stats are default/zeroed
+            assert_eq!(transport.stats().latency_ms, 0.0);
+            assert_eq!(transport.stats().bytes_sent, 0);
+
+            transport.create_offer();
+            transport.set_remote_answer(SdpAnswer {
+                sdp: "v=0\r\n".to_string(),
+                session_id: "remote-3".to_string(),
+            });
+            transport.connect().unwrap();
+
+            // After connection, stats are populated with initial values
+            assert!(transport.stats().latency_ms > 0.0);
+            assert!((transport.stats().packet_loss_pct - 0.0).abs() < f64::EPSILON);
+        }
+
+        #[cfg(feature = "webrtc")]
+        #[test]
+        fn test_sdp_offer_construction() {
+            let offer = SdpOffer {
+                sdp: "v=0\r\no=- session 2 IN IP4 0.0.0.0\r\n".to_string(),
+                session_id: "test-offer-1".to_string(),
+            };
+            assert!(offer.sdp.contains("v=0"));
+            assert_eq!(offer.session_id, "test-offer-1");
+        }
+
+        #[cfg(feature = "webrtc")]
+        #[test]
+        fn test_sdp_answer_construction() {
+            let answer = SdpAnswer {
+                sdp: "v=0\r\no=- answer 2 IN IP4 0.0.0.0\r\n".to_string(),
+                session_id: "test-answer-1".to_string(),
+            };
+            assert!(answer.sdp.contains("v=0"));
+            assert_eq!(answer.session_id, "test-answer-1");
+        }
+
+        #[cfg(feature = "webrtc")]
+        #[test]
+        fn test_webrtc_ice_candidate_construction() {
+            let candidate = WebRtcIceCandidate {
+                candidate: "candidate:1 1 udp 2130706431 192.168.1.1 5000 typ host".to_string(),
+                sdp_mid: Some("audio".to_string()),
+                sdp_m_line_index: Some(0),
+                priority: 2130706431,
+                candidate_type: IceCandidateType::Host,
+            };
+            assert!(candidate.candidate.contains("host"));
+            assert_eq!(candidate.sdp_mid, Some("audio".to_string()));
+            assert_eq!(candidate.sdp_m_line_index, Some(0));
+            assert_eq!(candidate.priority, 2130706431);
+        }
+
+        #[cfg(feature = "webrtc")]
+        #[test]
+        fn test_ice_candidate_type_all_variants() {
+            let types = vec![
+                IceCandidateType::Host,
+                IceCandidateType::ServerReflexive,
+                IceCandidateType::PeerReflexive,
+                IceCandidateType::Relay,
+            ];
+            // Ensure all variants are distinct
+            for (i, t1) in types.iter().enumerate() {
+                for (j, t2) in types.iter().enumerate() {
+                    if i == j {
+                        assert_eq!(t1, t2);
+                    } else {
+                        assert_ne!(t1, t2);
+                    }
+                }
+            }
+        }
+
+        #[cfg(feature = "webrtc")]
+        #[test]
+        fn test_webrtc_audio_codec_all_variants() {
+            let codecs = vec![
+                WebRtcAudioCodec::Opus,
+                WebRtcAudioCodec::Pcm16,
+                WebRtcAudioCodec::G711,
+            ];
+            assert_eq!(codecs.len(), 3);
+            assert_ne!(WebRtcAudioCodec::Opus, WebRtcAudioCodec::G711);
+            assert_ne!(WebRtcAudioCodec::Pcm16, WebRtcAudioCodec::G711);
+            assert_eq!(WebRtcAudioCodec::Opus, WebRtcAudioCodec::Opus);
+        }
+
+        #[cfg(feature = "webrtc")]
+        #[test]
+        fn test_turn_server_construction() {
+            let server = TurnServer {
+                url: "turn:turn.example.com:3478".to_string(),
+                username: "user".to_string(),
+                credential: "pass123".to_string(),
+            };
+            assert!(server.url.starts_with("turn:"));
+            assert_eq!(server.username, "user");
+            assert_eq!(server.credential, "pass123");
+        }
+
+        #[cfg(feature = "webrtc")]
+        #[test]
+        fn test_rtp_stream_config_construction() {
+            let config = RtpStreamConfig {
+                ssrc: 12345,
+                payload_type: 111,
+                clock_rate: 48000,
+                jitter_buffer_ms: 50,
+            };
+            assert_eq!(config.ssrc, 12345);
+            assert_eq!(config.payload_type, 111);
+            assert_eq!(config.clock_rate, 48000);
+            assert_eq!(config.jitter_buffer_ms, 50);
+        }
+
+        #[cfg(feature = "webrtc")]
+        #[test]
+        fn test_webrtc_session_stats_defaults() {
+            let stats = WebRtcSessionStats::default();
+            assert!((stats.latency_ms - 0.0).abs() < f64::EPSILON);
+            assert!((stats.packet_loss_pct - 0.0).abs() < f64::EPSILON);
+            assert!((stats.jitter_ms - 0.0).abs() < f64::EPSILON);
+            assert_eq!(stats.bytes_sent, 0);
+            assert_eq!(stats.bytes_received, 0);
+        }
+
+        #[cfg(feature = "webrtc")]
+        #[test]
+        fn test_webrtc_voice_transport_impl() {
+            let mut transport = WebRtcTransport::with_defaults();
+            transport.create_offer();
+            transport.set_remote_answer(SdpAnswer {
+                sdp: "v=0\r\n".to_string(),
+                session_id: "vt-test".to_string(),
+            });
+            transport.connect().unwrap();
+
+            // send_audio with valid data should succeed
+            let chunk = AudioChunk::new(vec![1, 2, 3, 4], 48000, 1, AudioFormat::Pcm16);
+            assert!(transport.send_audio(&chunk).is_ok());
+
+            // send_audio with empty data should fail
+            let empty_chunk = AudioChunk::new(vec![], 48000, 1, AudioFormat::Pcm16);
+            assert!(transport.send_audio(&empty_chunk).is_err());
+
+            // receive_audio returns None (simulated)
+            let received = transport.receive_audio().unwrap();
+            assert!(received.is_none());
+
+            // close disconnects and clears state
+            transport.close().unwrap();
+            assert!(!transport.is_connected());
+            assert!(transport.ice_candidates().is_empty());
+
+            // Operations on closed/disconnected transport should fail
+            let chunk2 = AudioChunk::new(vec![5, 6], 48000, 1, AudioFormat::Pcm16);
+            assert!(transport.send_audio(&chunk2).is_err());
+            assert!(transport.receive_audio().is_err());
+        }
+
+        // ----------------------------------------------------------------
+        // 9.2 — Speech-to-Speech Pipeline tests
+        // ----------------------------------------------------------------
+
+        #[test]
+        fn test_audio_model_capability_all_variants() {
+            let capabilities = vec![
+                AudioModelCapability::TextOnly,
+                AudioModelCapability::AudioInput,
+                AudioModelCapability::AudioOutput,
+                AudioModelCapability::AudioInputOutput,
+            ];
+            assert_eq!(capabilities.len(), 4);
+            assert_ne!(AudioModelCapability::TextOnly, AudioModelCapability::AudioInputOutput);
+            assert_ne!(AudioModelCapability::AudioInput, AudioModelCapability::AudioOutput);
+            assert_eq!(AudioModelCapability::TextOnly, AudioModelCapability::TextOnly);
+        }
+
+        #[test]
+        fn test_s2s_config_construction() {
+            let config = S2SConfig {
+                model_id: "gpt-4o-audio".to_string(),
+                input_format: AudioFormat::Pcm16,
+                output_format: AudioFormat::Pcm16,
+                voice_id: Some("alloy".to_string()),
+                capability: AudioModelCapability::AudioInputOutput,
+            };
+            assert_eq!(config.model_id, "gpt-4o-audio");
+            assert_eq!(config.input_format, AudioFormat::Pcm16);
+            assert_eq!(config.output_format, AudioFormat::Pcm16);
+            assert_eq!(config.voice_id, Some("alloy".to_string()));
+            assert_eq!(config.capability, AudioModelCapability::AudioInputOutput);
+        }
+
+        #[test]
+        fn test_s2s_fallback_mode_variants() {
+            assert_eq!(S2SFallbackMode::SttLlmTts, S2SFallbackMode::SttLlmTts);
+            assert_eq!(S2SFallbackMode::Disabled, S2SFallbackMode::Disabled);
+            assert_ne!(S2SFallbackMode::SttLlmTts, S2SFallbackMode::Disabled);
+        }
+
+        #[test]
+        fn test_s2s_pipeline_new() {
+            let config = S2SConfig {
+                model_id: "test-model".to_string(),
+                input_format: AudioFormat::Pcm16,
+                output_format: AudioFormat::Wav,
+                voice_id: None,
+                capability: AudioModelCapability::AudioInputOutput,
+            };
+            let pipeline = SpeechToSpeechPipeline::new(config, S2SFallbackMode::Disabled);
+            assert!(pipeline.transcripts().is_empty());
+            assert_eq!(pipeline.config().model_id, "test-model");
+            assert_eq!(*pipeline.fallback_mode(), S2SFallbackMode::Disabled);
+        }
+
+        #[test]
+        fn test_s2s_pipeline_supports_direct_audio_true() {
+            let config = S2SConfig {
+                model_id: "native-s2s".to_string(),
+                input_format: AudioFormat::Pcm16,
+                output_format: AudioFormat::Pcm16,
+                voice_id: None,
+                capability: AudioModelCapability::AudioInputOutput,
+            };
+            let pipeline = SpeechToSpeechPipeline::new(config, S2SFallbackMode::Disabled);
+            assert!(pipeline.supports_direct_audio());
+        }
+
+        #[test]
+        fn test_s2s_pipeline_supports_direct_audio_false() {
+            let text_only = S2SConfig {
+                model_id: "text-only".to_string(),
+                input_format: AudioFormat::Pcm16,
+                output_format: AudioFormat::Pcm16,
+                voice_id: None,
+                capability: AudioModelCapability::TextOnly,
+            };
+            let p1 = SpeechToSpeechPipeline::new(text_only, S2SFallbackMode::SttLlmTts);
+            assert!(!p1.supports_direct_audio());
+
+            let audio_in = S2SConfig {
+                model_id: "audio-in".to_string(),
+                input_format: AudioFormat::Pcm16,
+                output_format: AudioFormat::Pcm16,
+                voice_id: None,
+                capability: AudioModelCapability::AudioInput,
+            };
+            let p2 = SpeechToSpeechPipeline::new(audio_in, S2SFallbackMode::SttLlmTts);
+            assert!(!p2.supports_direct_audio());
+
+            let audio_out = S2SConfig {
+                model_id: "audio-out".to_string(),
+                input_format: AudioFormat::Pcm16,
+                output_format: AudioFormat::Pcm16,
+                voice_id: None,
+                capability: AudioModelCapability::AudioOutput,
+            };
+            let p3 = SpeechToSpeechPipeline::new(audio_out, S2SFallbackMode::SttLlmTts);
+            assert!(!p3.supports_direct_audio());
+        }
+
+        #[test]
+        fn test_s2s_pipeline_process_audio_direct() {
+            let config = S2SConfig {
+                model_id: "native-s2s".to_string(),
+                input_format: AudioFormat::Pcm16,
+                output_format: AudioFormat::Pcm16,
+                voice_id: Some("echo".to_string()),
+                capability: AudioModelCapability::AudioInputOutput,
+            };
+            let mut pipeline = SpeechToSpeechPipeline::new(config, S2SFallbackMode::Disabled);
+            let input = AudioChunk::new(vec![0u8; 640], 16000, 1, AudioFormat::Pcm16);
+
+            let output = pipeline.process_audio(&input).unwrap();
+            assert_eq!(output.bytes.len(), 640);
+            assert_eq!(output.sample_rate, 16000);
+            assert_eq!(output.format, AudioFormat::Pcm16);
+            assert_eq!(pipeline.transcripts().len(), 1);
+            assert!(!pipeline.transcripts()[0].used_fallback);
+            assert_eq!(pipeline.transcripts()[0].model_id, "native-s2s");
+        }
+
+        #[test]
+        fn test_s2s_pipeline_transcripts() {
+            let config = S2SConfig {
+                model_id: "s2s-model".to_string(),
+                input_format: AudioFormat::Pcm16,
+                output_format: AudioFormat::Pcm16,
+                voice_id: None,
+                capability: AudioModelCapability::AudioInputOutput,
+            };
+            let mut pipeline = SpeechToSpeechPipeline::new(config, S2SFallbackMode::Disabled);
+
+            let input1 = AudioChunk::new(vec![0u8; 320], 16000, 1, AudioFormat::Pcm16);
+            let input2 = AudioChunk::new(vec![1u8; 640], 16000, 1, AudioFormat::Pcm16);
+
+            pipeline.process_audio(&input1).unwrap();
+            pipeline.process_audio(&input2).unwrap();
+
+            assert_eq!(pipeline.transcripts().len(), 2);
+            assert!(pipeline.transcripts()[0].input_text.is_some());
+            assert!(pipeline.transcripts()[1].output_text.is_some());
+            assert!(pipeline.transcripts()[0].timestamp > 0);
+        }
+
+        #[test]
+        fn test_s2s_pipeline_clear_transcripts() {
+            let config = S2SConfig {
+                model_id: "model".to_string(),
+                input_format: AudioFormat::Pcm16,
+                output_format: AudioFormat::Pcm16,
+                voice_id: None,
+                capability: AudioModelCapability::AudioInputOutput,
+            };
+            let mut pipeline = SpeechToSpeechPipeline::new(config, S2SFallbackMode::Disabled);
+            let input = AudioChunk::new(vec![0u8; 100], 16000, 1, AudioFormat::Pcm16);
+            pipeline.process_audio(&input).unwrap();
+            assert_eq!(pipeline.transcripts().len(), 1);
+
+            pipeline.clear_transcripts();
+            assert!(pipeline.transcripts().is_empty());
+        }
+
+        #[test]
+        fn test_s2s_transcript_construction() {
+            let transcript = S2STranscript {
+                input_text: Some("Hello".to_string()),
+                output_text: Some("Hi there!".to_string()),
+                model_id: "test-model".to_string(),
+                used_fallback: false,
+                latency_ms: 42,
+                timestamp: 1700000000000,
+            };
+            assert_eq!(transcript.input_text, Some("Hello".to_string()));
+            assert_eq!(transcript.output_text, Some("Hi there!".to_string()));
+            assert_eq!(transcript.model_id, "test-model");
+            assert!(!transcript.used_fallback);
+            assert_eq!(transcript.latency_ms, 42);
+            assert_eq!(transcript.timestamp, 1700000000000);
+        }
+
+        #[test]
+        fn test_s2s_pipeline_text_only_with_fallback() {
+            let config = S2SConfig {
+                model_id: "text-llm".to_string(),
+                input_format: AudioFormat::Pcm16,
+                output_format: AudioFormat::Wav,
+                voice_id: None,
+                capability: AudioModelCapability::TextOnly,
+            };
+            let mut pipeline = SpeechToSpeechPipeline::new(config, S2SFallbackMode::SttLlmTts);
+            let input = AudioChunk::new(vec![0u8; 640], 16000, 1, AudioFormat::Pcm16);
+
+            let output = pipeline.process_audio(&input).unwrap();
+            // Fallback produces TTS audio bytes
+            assert!(!output.bytes.is_empty());
+            assert_eq!(output.format, AudioFormat::Wav);
+            assert_eq!(pipeline.transcripts().len(), 1);
+            assert!(pipeline.transcripts()[0].used_fallback);
+            assert!(pipeline.transcripts()[0].input_text.is_some());
+            assert!(pipeline.transcripts()[0].output_text.is_some());
+        }
+
+        #[test]
+        fn test_s2s_pipeline_text_only_disabled_fallback_errors() {
+            let config = S2SConfig {
+                model_id: "text-llm".to_string(),
+                input_format: AudioFormat::Pcm16,
+                output_format: AudioFormat::Pcm16,
+                voice_id: None,
+                capability: AudioModelCapability::TextOnly,
+            };
+            let mut pipeline = SpeechToSpeechPipeline::new(config, S2SFallbackMode::Disabled);
+            let input = AudioChunk::new(vec![0u8; 640], 16000, 1, AudioFormat::Pcm16);
+
+            let result = pipeline.process_audio(&input);
+            assert!(result.is_err());
+            // No transcript should be recorded on error
+            assert!(pipeline.transcripts().is_empty());
+        }
+
+        #[test]
+        fn test_s2s_pipeline_audio_input_output_direct() {
+            let config = S2SConfig {
+                model_id: "gpt-4o-audio-preview".to_string(),
+                input_format: AudioFormat::Wav,
+                output_format: AudioFormat::Mp3,
+                voice_id: Some("nova".to_string()),
+                capability: AudioModelCapability::AudioInputOutput,
+            };
+            let mut pipeline = SpeechToSpeechPipeline::new(config, S2SFallbackMode::SttLlmTts);
+            let input = AudioChunk::new(vec![42u8; 1024], 24000, 1, AudioFormat::Wav);
+
+            let output = pipeline.process_audio(&input).unwrap();
+            // Direct S2S: output should have same byte count as input (simulated)
+            assert_eq!(output.bytes.len(), 1024);
+            assert_eq!(output.format, AudioFormat::Mp3);
+            assert_eq!(output.sample_rate, 24000);
+
+            let t = &pipeline.transcripts()[0];
+            assert!(!t.used_fallback);
+            assert_eq!(t.model_id, "gpt-4o-audio-preview");
         }
     }
 }

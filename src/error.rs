@@ -41,6 +41,18 @@ pub enum AiError {
     Distillation(DistillationError),
     /// Constrained decoding errors
     ConstrainedDecoding(ConstrainedDecodingError),
+    /// Human-in-the-Loop errors
+    Hitl(HitlError),
+    /// Remote MCP client errors
+    McpClient(McpClientError),
+    /// Agent evaluation errors
+    AgentEval(AgentEvalError),
+    /// Red team / adversarial testing errors
+    RedTeam(RedTeamError),
+    /// MCTS planning errors
+    Mcts(MctsError),
+    /// Agent DevTools errors
+    DevTools(DevToolsError),
     /// Generic error with message
     Other(String),
 }
@@ -63,6 +75,12 @@ impl std::error::Error for AiError {
             AiError::MediaGeneration(e) => Some(e),
             AiError::Distillation(e) => Some(e),
             AiError::ConstrainedDecoding(e) => Some(e),
+            AiError::Hitl(e) => Some(e),
+            AiError::McpClient(e) => Some(e),
+            AiError::AgentEval(e) => Some(e),
+            AiError::RedTeam(e) => Some(e),
+            AiError::Mcts(e) => Some(e),
+            AiError::DevTools(e) => Some(e),
             AiError::Other(_) => None,
         }
     }
@@ -86,6 +104,12 @@ impl fmt::Display for AiError {
             AiError::MediaGeneration(e) => write!(f, "Media generation error: {}", e),
             AiError::Distillation(e) => write!(f, "Distillation error: {}", e),
             AiError::ConstrainedDecoding(e) => write!(f, "Constrained decoding error: {}", e),
+            AiError::Hitl(e) => write!(f, "HITL error: {}", e),
+            AiError::McpClient(e) => write!(f, "MCP client error: {}", e),
+            AiError::AgentEval(e) => write!(f, "Agent evaluation error: {}", e),
+            AiError::RedTeam(e) => write!(f, "Red team error: {}", e),
+            AiError::Mcts(e) => write!(f, "MCTS planning error: {}", e),
+            AiError::DevTools(e) => write!(f, "DevTools error: {}", e),
             AiError::Other(msg) => write!(f, "{}", msg),
         }
     }
@@ -115,6 +139,12 @@ impl AiError {
             AiError::MediaGeneration(e) => e.suggestion(),
             AiError::Distillation(e) => e.suggestion(),
             AiError::ConstrainedDecoding(e) => e.suggestion(),
+            AiError::Hitl(e) => e.suggestion(),
+            AiError::McpClient(e) => e.suggestion(),
+            AiError::AgentEval(e) => e.suggestion(),
+            AiError::RedTeam(e) => e.suggestion(),
+            AiError::Mcts(e) => e.suggestion(),
+            AiError::DevTools(e) => e.suggestion(),
             AiError::Other(_) => None,
         }
     }
@@ -131,6 +161,12 @@ impl AiError {
             AiError::MediaGeneration(e) => e.is_recoverable(),
             AiError::Distillation(_) => false,
             AiError::ConstrainedDecoding(_) => false,
+            AiError::Hitl(e) => e.is_recoverable(),
+            AiError::McpClient(e) => e.is_recoverable(),
+            AiError::AgentEval(_) => false,
+            AiError::RedTeam(_) => false,
+            AiError::Mcts(e) => e.is_recoverable(),
+            AiError::DevTools(_) => false,
             _ => false,
         }
     }
@@ -153,6 +189,12 @@ impl AiError {
             AiError::MediaGeneration(_) => "MEDIA_GENERATION",
             AiError::Distillation(_) => "DISTILLATION",
             AiError::ConstrainedDecoding(_) => "CONSTRAINED_DECODING",
+            AiError::Hitl(_) => "HITL",
+            AiError::McpClient(_) => "MCP_CLIENT",
+            AiError::AgentEval(_) => "AGENT_EVAL",
+            AiError::RedTeam(_) => "RED_TEAM",
+            AiError::Mcts(_) => "MCTS",
+            AiError::DevTools(_) => "DEVTOOLS",
             AiError::Other(_) => "OTHER",
         }
     }
@@ -1444,6 +1486,417 @@ impl From<ConstrainedDecodingError> for AiError {
     }
 }
 
+// === HITL Errors ===
+
+/// Errors related to Human-in-the-Loop operations
+#[derive(Debug)]
+pub enum HitlError {
+    /// Approval request timed out waiting for human response
+    ApprovalTimeout { tool_name: String, timeout_secs: u64 },
+    /// Action violated an approval policy
+    PolicyViolation { policy_name: String, reason: String },
+    /// No approval gate configured for the operation
+    GateNotConfigured { operation: String },
+    /// Human correction was rejected by the system
+    CorrectionRejected { step_id: String, reason: String },
+    /// Confidence estimation failed
+    ConfidenceEstimationFailed { reason: String },
+    /// Escalation target not available
+    EscalationUnavailable { target: String, reason: String },
+}
+
+impl std::error::Error for HitlError {}
+
+impl fmt::Display for HitlError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            HitlError::ApprovalTimeout { tool_name, timeout_secs } => {
+                write!(f, "Approval timeout for tool '{}' after {}s", tool_name, timeout_secs)
+            }
+            HitlError::PolicyViolation { policy_name, reason } => {
+                write!(f, "Policy '{}' violated: {}", policy_name, reason)
+            }
+            HitlError::GateNotConfigured { operation } => {
+                write!(f, "No approval gate configured for '{}'", operation)
+            }
+            HitlError::CorrectionRejected { step_id, reason } => {
+                write!(f, "Correction rejected for step '{}': {}", step_id, reason)
+            }
+            HitlError::ConfidenceEstimationFailed { reason } => {
+                write!(f, "Confidence estimation failed: {}", reason)
+            }
+            HitlError::EscalationUnavailable { target, reason } => {
+                write!(f, "Escalation target '{}' unavailable: {}", target, reason)
+            }
+        }
+    }
+}
+
+impl HitlError {
+    pub fn suggestion(&self) -> Option<&'static str> {
+        match self {
+            HitlError::ApprovalTimeout { .. } => Some("Increase timeout or configure auto-approve for this tool"),
+            HitlError::PolicyViolation { .. } => Some("Review approval policies or adjust action parameters"),
+            HitlError::GateNotConfigured { .. } => Some("Register an approval gate before executing sensitive operations"),
+            HitlError::CorrectionRejected { .. } => Some("Verify the correction format and target step"),
+            HitlError::ConfidenceEstimationFailed { .. } => Some("Check confidence estimator configuration"),
+            HitlError::EscalationUnavailable { .. } => Some("Ensure escalation handlers are registered and reachable"),
+        }
+    }
+
+    pub fn is_recoverable(&self) -> bool {
+        matches!(
+            self,
+            HitlError::ApprovalTimeout { .. }
+                | HitlError::EscalationUnavailable { .. }
+                | HitlError::ConfidenceEstimationFailed { .. }
+        )
+    }
+}
+
+impl From<HitlError> for AiError {
+    fn from(e: HitlError) -> Self {
+        AiError::Hitl(e)
+    }
+}
+
+// === MCP Client Errors ===
+
+/// Errors related to remote MCP client connections
+#[derive(Debug)]
+pub enum McpClientError {
+    /// Failed to connect to remote MCP server
+    ConnectionFailed { url: String, reason: String },
+    /// Authentication with MCP server failed
+    AuthFailed { url: String, reason: String },
+    /// MCP server returned an error
+    ServerError { url: String, code: i64, message: String },
+    /// Connection timed out
+    Timeout { url: String, timeout_ms: u64 },
+    /// Protocol version mismatch
+    ProtocolMismatch { expected: String, got: String },
+    /// Tool not found on remote server
+    ToolNotFound { server: String, tool_name: String },
+    /// Session expired or invalid
+    SessionExpired { session_id: String },
+}
+
+impl std::error::Error for McpClientError {}
+
+impl fmt::Display for McpClientError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            McpClientError::ConnectionFailed { url, reason } => {
+                write!(f, "MCP connection to '{}' failed: {}", url, reason)
+            }
+            McpClientError::AuthFailed { url, reason } => {
+                write!(f, "MCP authentication with '{}' failed: {}", url, reason)
+            }
+            McpClientError::ServerError { url, code, message } => {
+                write!(f, "MCP server '{}' error {}: {}", url, code, message)
+            }
+            McpClientError::Timeout { url, timeout_ms } => {
+                write!(f, "MCP connection to '{}' timed out after {}ms", url, timeout_ms)
+            }
+            McpClientError::ProtocolMismatch { expected, got } => {
+                write!(f, "MCP protocol mismatch: expected '{}', got '{}'", expected, got)
+            }
+            McpClientError::ToolNotFound { server, tool_name } => {
+                write!(f, "Tool '{}' not found on MCP server '{}'", tool_name, server)
+            }
+            McpClientError::SessionExpired { session_id } => {
+                write!(f, "MCP session '{}' expired", session_id)
+            }
+        }
+    }
+}
+
+impl McpClientError {
+    pub fn suggestion(&self) -> Option<&'static str> {
+        match self {
+            McpClientError::ConnectionFailed { .. } => Some("Check the MCP server URL and network connectivity"),
+            McpClientError::AuthFailed { .. } => Some("Verify OAuth credentials or bearer token"),
+            McpClientError::ServerError { .. } => Some("Check MCP server logs for details"),
+            McpClientError::Timeout { .. } => Some("Increase timeout or check server availability"),
+            McpClientError::ProtocolMismatch { .. } => Some("Update MCP client to match server protocol version"),
+            McpClientError::ToolNotFound { .. } => Some("Verify tool name and refresh the tool registry"),
+            McpClientError::SessionExpired { .. } => Some("Reconnect to the MCP server to create a new session"),
+        }
+    }
+
+    pub fn is_recoverable(&self) -> bool {
+        matches!(
+            self,
+            McpClientError::ConnectionFailed { .. }
+                | McpClientError::Timeout { .. }
+                | McpClientError::SessionExpired { .. }
+        )
+    }
+}
+
+impl From<McpClientError> for AiError {
+    fn from(e: McpClientError) -> Self {
+        AiError::McpClient(e)
+    }
+}
+
+// === Agent Evaluation Errors ===
+
+/// Errors related to agent trajectory evaluation
+#[derive(Debug)]
+pub enum AgentEvalError {
+    /// Trajectory is empty — nothing to evaluate
+    TrajectoryEmpty { agent_id: String },
+    /// A metric computation failed
+    MetricFailed { metric_name: String, reason: String },
+    /// Baseline trajectory not found for comparison
+    BaselineNotFound { eval_id: String },
+    /// Invalid evaluation configuration
+    InvalidConfig { field: String, reason: String },
+    /// Tool call matching failed
+    ToolCallMatchFailed { expected: String, actual: String },
+    /// Report generation failed
+    ReportFailed { reason: String },
+}
+
+impl std::error::Error for AgentEvalError {}
+
+impl fmt::Display for AgentEvalError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AgentEvalError::TrajectoryEmpty { agent_id } => {
+                write!(f, "Trajectory for agent '{}' is empty", agent_id)
+            }
+            AgentEvalError::MetricFailed { metric_name, reason } => {
+                write!(f, "Metric '{}' failed: {}", metric_name, reason)
+            }
+            AgentEvalError::BaselineNotFound { eval_id } => {
+                write!(f, "Baseline not found for evaluation '{}'", eval_id)
+            }
+            AgentEvalError::InvalidConfig { field, reason } => {
+                write!(f, "Invalid eval config '{}': {}", field, reason)
+            }
+            AgentEvalError::ToolCallMatchFailed { expected, actual } => {
+                write!(f, "Tool call mismatch: expected '{}', got '{}'", expected, actual)
+            }
+            AgentEvalError::ReportFailed { reason } => {
+                write!(f, "Eval report generation failed: {}", reason)
+            }
+        }
+    }
+}
+
+impl AgentEvalError {
+    pub fn suggestion(&self) -> Option<&'static str> {
+        match self {
+            AgentEvalError::TrajectoryEmpty { .. } => Some("Ensure the agent ran and TrajectoryRecorder was attached"),
+            AgentEvalError::MetricFailed { .. } => Some("Check metric configuration and input data"),
+            AgentEvalError::BaselineNotFound { .. } => Some("Create a baseline trajectory before running comparisons"),
+            AgentEvalError::InvalidConfig { .. } => Some("Review evaluation configuration parameters"),
+            AgentEvalError::ToolCallMatchFailed { .. } => Some("Check expected tool call definitions"),
+            AgentEvalError::ReportFailed { .. } => Some("Ensure all metrics completed before generating the report"),
+        }
+    }
+}
+
+impl From<AgentEvalError> for AiError {
+    fn from(e: AgentEvalError) -> Self {
+        AiError::AgentEval(e)
+    }
+}
+
+// === Red Team Errors ===
+
+/// Errors related to automated red teaming
+#[derive(Debug)]
+pub enum RedTeamError {
+    /// Attack generation failed
+    GenerationFailed { category: String, reason: String },
+    /// Attack execution failed
+    ExecutionFailed { attack_id: String, reason: String },
+    /// Invalid attack category
+    InvalidCategory { category: String },
+    /// Defense evaluation failed
+    DefenseEvalFailed { guard_name: String, reason: String },
+    /// Report aggregation failed
+    ReportFailed { reason: String },
+}
+
+impl std::error::Error for RedTeamError {}
+
+impl fmt::Display for RedTeamError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RedTeamError::GenerationFailed { category, reason } => {
+                write!(f, "Attack generation failed for '{}': {}", category, reason)
+            }
+            RedTeamError::ExecutionFailed { attack_id, reason } => {
+                write!(f, "Attack '{}' execution failed: {}", attack_id, reason)
+            }
+            RedTeamError::InvalidCategory { category } => {
+                write!(f, "Invalid attack category: '{}'", category)
+            }
+            RedTeamError::DefenseEvalFailed { guard_name, reason } => {
+                write!(f, "Defense evaluation failed for '{}': {}", guard_name, reason)
+            }
+            RedTeamError::ReportFailed { reason } => {
+                write!(f, "Red team report generation failed: {}", reason)
+            }
+        }
+    }
+}
+
+impl RedTeamError {
+    pub fn suggestion(&self) -> Option<&'static str> {
+        match self {
+            RedTeamError::GenerationFailed { .. } => Some("Check attack templates and generator configuration"),
+            RedTeamError::ExecutionFailed { .. } => Some("Verify the target agent is accessible"),
+            RedTeamError::InvalidCategory { .. } => Some("Use a valid AttackCategory variant"),
+            RedTeamError::DefenseEvalFailed { .. } => Some("Ensure guardrails are properly configured"),
+            RedTeamError::ReportFailed { .. } => Some("Check that all attacks completed before reporting"),
+        }
+    }
+}
+
+impl From<RedTeamError> for AiError {
+    fn from(e: RedTeamError) -> Self {
+        AiError::RedTeam(e)
+    }
+}
+
+// === MCTS Planning Errors ===
+
+/// Errors related to Monte Carlo Tree Search planning
+#[derive(Debug)]
+pub enum MctsError {
+    /// Maximum iterations reached without finding a solution
+    MaxIterations { iterations: usize, best_reward: f64 },
+    /// No valid actions available from current state
+    NoValidActions { state_description: String },
+    /// Simulation failed
+    SimulationFailed { depth: usize, reason: String },
+    /// State transition error
+    StateError { action: String, reason: String },
+    /// Reward model error
+    RewardModelError { step: usize, reason: String },
+    /// Refinement loop exhausted
+    RefinementExhausted { iterations: usize, last_improvement: f64 },
+}
+
+impl std::error::Error for MctsError {}
+
+impl fmt::Display for MctsError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            MctsError::MaxIterations { iterations, best_reward } => {
+                write!(f, "MCTS reached {} iterations, best reward: {:.4}", iterations, best_reward)
+            }
+            MctsError::NoValidActions { state_description } => {
+                write!(f, "No valid actions from state: {}", state_description)
+            }
+            MctsError::SimulationFailed { depth, reason } => {
+                write!(f, "MCTS simulation failed at depth {}: {}", depth, reason)
+            }
+            MctsError::StateError { action, reason } => {
+                write!(f, "State error for action '{}': {}", action, reason)
+            }
+            MctsError::RewardModelError { step, reason } => {
+                write!(f, "Reward model error at step {}: {}", step, reason)
+            }
+            MctsError::RefinementExhausted { iterations, last_improvement } => {
+                write!(f, "Refinement exhausted after {} iterations (last improvement: {:.4})", iterations, last_improvement)
+            }
+        }
+    }
+}
+
+impl MctsError {
+    pub fn suggestion(&self) -> Option<&'static str> {
+        match self {
+            MctsError::MaxIterations { .. } => Some("Increase max_iterations or adjust exploration constant"),
+            MctsError::NoValidActions { .. } => Some("Check state implementation returns available actions"),
+            MctsError::SimulationFailed { .. } => Some("Review simulation policy and state transitions"),
+            MctsError::StateError { .. } => Some("Verify state transition logic for this action"),
+            MctsError::RewardModelError { .. } => Some("Check reward model configuration and input format"),
+            MctsError::RefinementExhausted { .. } => Some("Lower improvement threshold or increase iteration limit"),
+        }
+    }
+
+    pub fn is_recoverable(&self) -> bool {
+        matches!(
+            self,
+            MctsError::MaxIterations { .. }
+                | MctsError::SimulationFailed { .. }
+                | MctsError::RefinementExhausted { .. }
+        )
+    }
+}
+
+impl From<MctsError> for AiError {
+    fn from(e: MctsError) -> Self {
+        AiError::Mcts(e)
+    }
+}
+
+// === DevTools Errors ===
+
+/// Errors related to agent debugging and profiling tools
+#[derive(Debug)]
+pub enum DevToolsError {
+    /// Recording failed
+    RecordingFailed { agent_id: String, reason: String },
+    /// Replay failed
+    ReplayFailed { recording_id: String, reason: String },
+    /// Invalid breakpoint configuration
+    BreakpointInvalid { description: String },
+    /// State inspection failed
+    InspectionFailed { agent_id: String, reason: String },
+    /// Profiling data unavailable
+    ProfilingUnavailable { reason: String },
+}
+
+impl std::error::Error for DevToolsError {}
+
+impl fmt::Display for DevToolsError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DevToolsError::RecordingFailed { agent_id, reason } => {
+                write!(f, "Recording failed for agent '{}': {}", agent_id, reason)
+            }
+            DevToolsError::ReplayFailed { recording_id, reason } => {
+                write!(f, "Replay failed for recording '{}': {}", recording_id, reason)
+            }
+            DevToolsError::BreakpointInvalid { description } => {
+                write!(f, "Invalid breakpoint: {}", description)
+            }
+            DevToolsError::InspectionFailed { agent_id, reason } => {
+                write!(f, "State inspection failed for agent '{}': {}", agent_id, reason)
+            }
+            DevToolsError::ProfilingUnavailable { reason } => {
+                write!(f, "Profiling data unavailable: {}", reason)
+            }
+        }
+    }
+}
+
+impl DevToolsError {
+    pub fn suggestion(&self) -> Option<&'static str> {
+        match self {
+            DevToolsError::RecordingFailed { .. } => Some("Ensure ExecutionRecorder is attached before agent runs"),
+            DevToolsError::ReplayFailed { .. } => Some("Verify the recording file exists and is not corrupted"),
+            DevToolsError::BreakpointInvalid { .. } => Some("Check breakpoint conditions and target identifiers"),
+            DevToolsError::InspectionFailed { .. } => Some("Ensure the agent supports state inspection"),
+            DevToolsError::ProfilingUnavailable { .. } => Some("Enable profiling in DevToolsConfig before running"),
+        }
+    }
+}
+
+impl From<DevToolsError> for AiError {
+    fn from(e: DevToolsError) -> Self {
+        AiError::DevTools(e)
+    }
+}
+
 // === Conversions from anyhow ===
 
 impl From<anyhow::Error> for AiError {
@@ -1566,6 +2019,12 @@ mod tests {
             AiError::MediaGeneration(MediaGenerationError::GenerationFailed { provider: "dalle".into(), reason: "timeout".into() }),
             AiError::Distillation(DistillationError::NoValidTrajectories { min_score: 0.8, total_checked: 100 }),
             AiError::ConstrainedDecoding(ConstrainedDecodingError::ProviderUnsupported { provider: "openai".into() }),
+            AiError::Hitl(HitlError::ApprovalTimeout { tool_name: "delete".into(), timeout_secs: 30 }),
+            AiError::McpClient(McpClientError::ConnectionFailed { url: "http://mcp.local".into(), reason: "refused".into() }),
+            AiError::AgentEval(AgentEvalError::TrajectoryEmpty { agent_id: "agent-1".into() }),
+            AiError::RedTeam(RedTeamError::GenerationFailed { category: "injection".into(), reason: "template".into() }),
+            AiError::Mcts(MctsError::MaxIterations { iterations: 1000, best_reward: 0.75 }),
+            AiError::DevTools(DevToolsError::RecordingFailed { agent_id: "a".into(), reason: "no recorder".into() }),
             AiError::Other("something went wrong".into()),
         ];
 
@@ -1890,6 +2349,157 @@ mod tests {
     }
 
     #[test]
+    fn test_hitl_error_display_and_suggestion() {
+        let errors: Vec<HitlError> = vec![
+            HitlError::ApprovalTimeout { tool_name: "delete_file".into(), timeout_secs: 30 },
+            HitlError::PolicyViolation { policy_name: "no-destructive".into(), reason: "tool is destructive".into() },
+            HitlError::GateNotConfigured { operation: "deploy".into() },
+            HitlError::CorrectionRejected { step_id: "s-1".into(), reason: "invalid format".into() },
+            HitlError::ConfidenceEstimationFailed { reason: "no signals".into() },
+            HitlError::EscalationUnavailable { target: "supervisor".into(), reason: "offline".into() },
+        ];
+        for err in &errors {
+            assert!(!err.to_string().is_empty());
+            assert!(err.suggestion().is_some());
+        }
+    }
+
+    #[test]
+    fn test_hitl_error_recoverable() {
+        assert!(HitlError::ApprovalTimeout { tool_name: "t".into(), timeout_secs: 10 }.is_recoverable());
+        assert!(HitlError::EscalationUnavailable { target: "t".into(), reason: "r".into() }.is_recoverable());
+        assert!(HitlError::ConfidenceEstimationFailed { reason: "r".into() }.is_recoverable());
+        assert!(!HitlError::PolicyViolation { policy_name: "p".into(), reason: "r".into() }.is_recoverable());
+        assert!(!HitlError::GateNotConfigured { operation: "o".into() }.is_recoverable());
+        assert!(!HitlError::CorrectionRejected { step_id: "s".into(), reason: "r".into() }.is_recoverable());
+    }
+
+    #[test]
+    fn test_mcp_client_error_display_and_suggestion() {
+        let errors: Vec<McpClientError> = vec![
+            McpClientError::ConnectionFailed { url: "http://mcp.local:3000".into(), reason: "refused".into() },
+            McpClientError::AuthFailed { url: "http://mcp.local:3000".into(), reason: "invalid token".into() },
+            McpClientError::ServerError { url: "http://mcp.local".into(), code: -32600, message: "invalid request".into() },
+            McpClientError::Timeout { url: "http://mcp.local".into(), timeout_ms: 5000 },
+            McpClientError::ProtocolMismatch { expected: "2025-11-05".into(), got: "2024-11-05".into() },
+            McpClientError::ToolNotFound { server: "mcp.local".into(), tool_name: "search".into() },
+            McpClientError::SessionExpired { session_id: "sess-123".into() },
+        ];
+        for err in &errors {
+            assert!(!err.to_string().is_empty());
+            assert!(err.suggestion().is_some());
+        }
+    }
+
+    #[test]
+    fn test_mcp_client_error_recoverable() {
+        assert!(McpClientError::ConnectionFailed { url: "u".into(), reason: "r".into() }.is_recoverable());
+        assert!(McpClientError::Timeout { url: "u".into(), timeout_ms: 100 }.is_recoverable());
+        assert!(McpClientError::SessionExpired { session_id: "s".into() }.is_recoverable());
+        assert!(!McpClientError::AuthFailed { url: "u".into(), reason: "r".into() }.is_recoverable());
+        assert!(!McpClientError::ProtocolMismatch { expected: "a".into(), got: "b".into() }.is_recoverable());
+        assert!(!McpClientError::ToolNotFound { server: "s".into(), tool_name: "t".into() }.is_recoverable());
+    }
+
+    #[test]
+    fn test_agent_eval_error_display_and_suggestion() {
+        let errors: Vec<AgentEvalError> = vec![
+            AgentEvalError::TrajectoryEmpty { agent_id: "agent-1".into() },
+            AgentEvalError::MetricFailed { metric_name: "accuracy".into(), reason: "div by zero".into() },
+            AgentEvalError::BaselineNotFound { eval_id: "eval-42".into() },
+            AgentEvalError::InvalidConfig { field: "top_k".into(), reason: "must be > 0".into() },
+            AgentEvalError::ToolCallMatchFailed { expected: "search".into(), actual: "browse".into() },
+            AgentEvalError::ReportFailed { reason: "incomplete data".into() },
+        ];
+        for err in &errors {
+            assert!(!err.to_string().is_empty());
+            assert!(err.suggestion().is_some());
+        }
+    }
+
+    #[test]
+    fn test_red_team_error_display_and_suggestion() {
+        let errors: Vec<RedTeamError> = vec![
+            RedTeamError::GenerationFailed { category: "jailbreak".into(), reason: "template parse".into() },
+            RedTeamError::ExecutionFailed { attack_id: "atk-1".into(), reason: "target unreachable".into() },
+            RedTeamError::InvalidCategory { category: "unknown".into() },
+            RedTeamError::DefenseEvalFailed { guard_name: "pii".into(), reason: "timeout".into() },
+            RedTeamError::ReportFailed { reason: "aggregation".into() },
+        ];
+        for err in &errors {
+            assert!(!err.to_string().is_empty());
+            assert!(err.suggestion().is_some());
+        }
+    }
+
+    #[test]
+    fn test_mcts_error_display_and_suggestion() {
+        let errors: Vec<MctsError> = vec![
+            MctsError::MaxIterations { iterations: 1000, best_reward: 0.72 },
+            MctsError::NoValidActions { state_description: "terminal state".into() },
+            MctsError::SimulationFailed { depth: 5, reason: "invalid transition".into() },
+            MctsError::StateError { action: "search".into(), reason: "state locked".into() },
+            MctsError::RewardModelError { step: 3, reason: "nan score".into() },
+            MctsError::RefinementExhausted { iterations: 10, last_improvement: 0.001 },
+        ];
+        for err in &errors {
+            assert!(!err.to_string().is_empty());
+            assert!(err.suggestion().is_some());
+        }
+    }
+
+    #[test]
+    fn test_mcts_error_recoverable() {
+        assert!(MctsError::MaxIterations { iterations: 100, best_reward: 0.5 }.is_recoverable());
+        assert!(MctsError::SimulationFailed { depth: 1, reason: "r".into() }.is_recoverable());
+        assert!(MctsError::RefinementExhausted { iterations: 5, last_improvement: 0.0 }.is_recoverable());
+        assert!(!MctsError::NoValidActions { state_description: "s".into() }.is_recoverable());
+        assert!(!MctsError::StateError { action: "a".into(), reason: "r".into() }.is_recoverable());
+    }
+
+    #[test]
+    fn test_devtools_error_display_and_suggestion() {
+        let errors: Vec<DevToolsError> = vec![
+            DevToolsError::RecordingFailed { agent_id: "agent-1".into(), reason: "no storage".into() },
+            DevToolsError::ReplayFailed { recording_id: "rec-1".into(), reason: "corrupted".into() },
+            DevToolsError::BreakpointInvalid { description: "unknown tool name".into() },
+            DevToolsError::InspectionFailed { agent_id: "agent-2".into(), reason: "not running".into() },
+            DevToolsError::ProfilingUnavailable { reason: "not enabled".into() },
+        ];
+        for err in &errors {
+            assert!(!err.to_string().is_empty());
+            assert!(err.suggestion().is_some());
+        }
+    }
+
+    #[test]
+    fn test_v6_error_from_conversions() {
+        let hitl_err = HitlError::ApprovalTimeout { tool_name: "t".into(), timeout_secs: 10 };
+        let ai_err: AiError = hitl_err.into();
+        assert_eq!(ai_err.code(), "HITL");
+
+        let mcp_err = McpClientError::ConnectionFailed { url: "u".into(), reason: "r".into() };
+        let ai_err: AiError = mcp_err.into();
+        assert_eq!(ai_err.code(), "MCP_CLIENT");
+
+        let eval_err = AgentEvalError::TrajectoryEmpty { agent_id: "a".into() };
+        let ai_err: AiError = eval_err.into();
+        assert_eq!(ai_err.code(), "AGENT_EVAL");
+
+        let rt_err = RedTeamError::InvalidCategory { category: "c".into() };
+        let ai_err: AiError = rt_err.into();
+        assert_eq!(ai_err.code(), "RED_TEAM");
+
+        let mcts_err = MctsError::NoValidActions { state_description: "s".into() };
+        let ai_err: AiError = mcts_err.into();
+        assert_eq!(ai_err.code(), "MCTS");
+
+        let dt_err = DevToolsError::BreakpointInvalid { description: "d".into() };
+        let ai_err: AiError = dt_err.into();
+        assert_eq!(ai_err.code(), "DEVTOOLS");
+    }
+
+    #[test]
     fn test_new_v5_error_from_conversions() {
         let va_err = VoiceAgentError::StreamFailed { reason: "test".into() };
         let ai_err: AiError = va_err.into();
@@ -1961,6 +2571,30 @@ mod tests {
             (
                 AiError::ConstrainedDecoding(ConstrainedDecodingError::ProviderUnsupported { provider: "x".into() }),
                 "CONSTRAINED_DECODING",
+            ),
+            (
+                AiError::Hitl(HitlError::GateNotConfigured { operation: "x".into() }),
+                "HITL",
+            ),
+            (
+                AiError::McpClient(McpClientError::Timeout { url: "x".into(), timeout_ms: 5000 }),
+                "MCP_CLIENT",
+            ),
+            (
+                AiError::AgentEval(AgentEvalError::TrajectoryEmpty { agent_id: "x".into() }),
+                "AGENT_EVAL",
+            ),
+            (
+                AiError::RedTeam(RedTeamError::InvalidCategory { category: "x".into() }),
+                "RED_TEAM",
+            ),
+            (
+                AiError::Mcts(MctsError::NoValidActions { state_description: "x".into() }),
+                "MCTS",
+            ),
+            (
+                AiError::DevTools(DevToolsError::BreakpointInvalid { description: "x".into() }),
+                "DEVTOOLS",
             ),
             (AiError::Other("misc".into()), "OTHER"),
         ];

@@ -2655,6 +2655,1051 @@ impl AdapterRouter {
 }
 
 // ============================================================================
+// 4.1 SIMBA Optimizer (Simulated Annealing + Multi-Armed Bandit Adaptation)
+// ============================================================================
+
+/// Cooling schedule for simulated annealing in the SIMBA optimizer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum CoolingSchedule {
+    /// Linear cooling: temperature decreases linearly from `initial_temp` to `min_temp`.
+    Linear { initial_temp: f64, min_temp: f64 },
+    /// Exponential cooling: temperature = initial_temp * decay_rate^iteration.
+    Exponential { initial_temp: f64, decay_rate: f64 },
+    /// Adaptive cooling: temperature = initial_temp * improvement_factor^(iteration * 0.1).
+    Adaptive {
+        initial_temp: f64,
+        improvement_factor: f64,
+    },
+}
+
+impl CoolingSchedule {
+    /// Compute the temperature at a given iteration.
+    pub fn temperature(&self, iteration: usize, max_iterations: usize) -> f64 {
+        match self {
+            CoolingSchedule::Linear {
+                initial_temp,
+                min_temp,
+            } => {
+                if max_iterations == 0 {
+                    return *initial_temp;
+                }
+                let progress = iteration as f64 / max_iterations as f64;
+                initial_temp - (initial_temp - min_temp) * progress
+            }
+            CoolingSchedule::Exponential {
+                initial_temp,
+                decay_rate,
+            } => initial_temp * decay_rate.powi(iteration as i32),
+            CoolingSchedule::Adaptive {
+                initial_temp,
+                improvement_factor,
+            } => initial_temp * improvement_factor.powf(iteration as f64 * 0.1),
+        }
+    }
+}
+
+/// Strategy for mutating prompt instructions in the SIMBA optimizer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MutationStrategy {
+    /// Randomly perturb instruction text with given strength (0.0..1.0).
+    RandomPerturbation { strength: f64 },
+    /// Crossover parts of two instructions with the given rate.
+    Crossover { crossover_rate: f64 },
+    /// Use an LLM-guided mutation with a prompt template.
+    LlmGuided { prompt_template: String },
+    /// Combine multiple strategies with weighted selection.
+    Combined {
+        strategies: Vec<MutationStrategy>,
+        weights: Vec<f64>,
+    },
+}
+
+/// Configuration for the SIMBA optimizer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimbaConfig {
+    /// Number of prompt variants in the population.
+    pub population_size: usize,
+    /// Number of evolutionary generations.
+    pub generations: usize,
+    /// Probability of mutating an individual (0.0..1.0).
+    pub mutation_rate: f64,
+    /// Cooling schedule for simulated annealing.
+    pub cooling_schedule: CoolingSchedule,
+    /// Number of individuals in tournament selection.
+    pub tournament_size: usize,
+    /// Number of elite individuals carried unchanged to the next generation.
+    pub elite_count: usize,
+    /// Number of examples to evaluate per candidate in each generation.
+    pub mini_batch_size: usize,
+}
+
+impl Default for SimbaConfig {
+    fn default() -> Self {
+        Self {
+            population_size: 20,
+            generations: 50,
+            mutation_rate: 0.3,
+            cooling_schedule: CoolingSchedule::Linear {
+                initial_temp: 1.0,
+                min_temp: 0.01,
+            },
+            tournament_size: 3,
+            elite_count: 2,
+            mini_batch_size: 5,
+        }
+    }
+}
+
+/// Tournament selection with elitism for the SIMBA optimizer.
+pub struct TournamentSelector {
+    tournament_size: usize,
+    elite_count: usize,
+}
+
+impl TournamentSelector {
+    /// Create a new tournament selector.
+    pub fn new(tournament_size: usize, elite_count: usize) -> Self {
+        Self {
+            tournament_size,
+            elite_count,
+        }
+    }
+
+    /// Select individuals from the population using tournament selection.
+    ///
+    /// Keeps the `elite_count` best individuals unchanged. For the remaining
+    /// slots, picks `tournament_size` random candidates and selects the best.
+    /// Returns `population.len()` selected instruction strings.
+    pub fn select(&self, population: &[(String, f64)]) -> Vec<String> {
+        if population.is_empty() {
+            return Vec::new();
+        }
+
+        let n = population.len();
+        let mut result = Vec::with_capacity(n);
+
+        // Sort by score descending to identify elites
+        let mut indexed: Vec<(usize, f64)> = population.iter().enumerate().map(|(i, (_, s))| (i, *s)).collect();
+        indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Keep elites
+        let elite_count = self.elite_count.min(n);
+        for i in 0..elite_count {
+            result.push(population[indexed[i].0].0.clone());
+        }
+
+        // Fill remaining via tournament selection
+        let mut seed: usize = 42;
+        while result.len() < n {
+            let mut best_idx = seed % n;
+            let mut best_score = population[best_idx].1;
+            for t in 1..self.tournament_size {
+                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                let candidate_idx = (seed >> 16) % n;
+                if population[candidate_idx].1 > best_score {
+                    best_score = population[candidate_idx].1;
+                    best_idx = candidate_idx;
+                }
+                let _ = t;
+            }
+            result.push(population[best_idx].0.clone());
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        }
+
+        result
+    }
+}
+
+/// SIMBA (Simulated Annealing + Multi-Armed Bandit Adaptation) prompt optimizer.
+///
+/// Combines evolutionary population-based search with simulated annealing
+/// acceptance criteria and tournament selection to find optimal prompt
+/// formulations.
+pub struct SimbaOptimizer {
+    config: SimbaConfig,
+    mutation_strategy: MutationStrategy,
+    selector: TournamentSelector,
+}
+
+impl SimbaOptimizer {
+    /// Create a new SIMBA optimizer with default RandomPerturbation strategy.
+    pub fn new(config: SimbaConfig) -> Self {
+        let selector = TournamentSelector::new(config.tournament_size, config.elite_count);
+        Self {
+            mutation_strategy: MutationStrategy::RandomPerturbation { strength: 0.3 },
+            config,
+            selector,
+        }
+    }
+
+    /// Create a new SIMBA optimizer with a specific mutation strategy.
+    pub fn with_strategy(config: SimbaConfig, strategy: MutationStrategy) -> Self {
+        let selector = TournamentSelector::new(config.tournament_size, config.elite_count);
+        Self {
+            mutation_strategy: strategy,
+            config,
+            selector,
+        }
+    }
+
+    /// Access the configuration.
+    pub fn config(&self) -> &SimbaConfig {
+        &self.config
+    }
+
+    /// Mutate an instruction string by applying heuristic word-level transformations.
+    ///
+    /// Based on `strength` (0.0..1.0), applies random word swaps, capitalization
+    /// changes, and emphasis markers.
+    fn mutate_instruction(instruction: &str, strength: f64, seed: usize) -> String {
+        let mut words: Vec<String> = instruction.split_whitespace().map(|w| w.to_string()).collect();
+        if words.is_empty() {
+            // Generate a base instruction if empty
+            let bases = [
+                "Answer carefully and precisely.",
+                "Think step by step.",
+                "Be thorough in your response.",
+                "Focus on accuracy.",
+            ];
+            return bases[seed % bases.len()].to_string();
+        }
+
+        let mut rng_state: usize = seed;
+        let mut next_rng = || -> usize {
+            rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (rng_state >> 16) & 0xFFFF
+        };
+
+        // Swap adjacent words based on strength probability
+        let len = words.len();
+        if len >= 2 {
+            for i in 0..(len - 1) {
+                let r = next_rng();
+                let prob = (r as f64) / 65535.0;
+                if prob < strength {
+                    words.swap(i, i + 1);
+                }
+            }
+        }
+
+        // Randomly capitalize/lowercase words
+        for word in &mut words {
+            let r = next_rng();
+            let prob = (r as f64) / 65535.0;
+            if prob < strength * 0.5 {
+                let r2 = next_rng();
+                if r2 % 2 == 0 {
+                    *word = word.to_uppercase();
+                } else {
+                    *word = word.to_lowercase();
+                }
+            }
+        }
+
+        // Add emphasis markers with probability proportional to strength
+        let emphasis_markers = ["importantly,", "carefully", "precisely", "notably,"];
+        let r = next_rng();
+        let prob = (r as f64) / 65535.0;
+        if prob < strength * 0.3 {
+            let marker = emphasis_markers[next_rng() % emphasis_markers.len()];
+            let insert_pos = if words.is_empty() { 0 } else { next_rng() % words.len() };
+            words.insert(insert_pos, marker.to_string());
+        }
+
+        words.join(" ")
+    }
+
+    /// Evaluate a prompt instruction against a mini-batch of examples.
+    fn evaluate_instruction(
+        signature: &Signature,
+        instruction: &str,
+        examples: &[TrainingExample],
+        metric: &dyn EvalMetric,
+        batch_size: usize,
+    ) -> f64 {
+        let sig_variant = signature.clone().with_instructions(instruction);
+        let compiled = sig_variant.compile();
+
+        let eval_count = batch_size.min(examples.len());
+        let mut total = 0.0;
+        let mut count = 0usize;
+
+        for i in 0..eval_count {
+            let ex = &examples[i];
+            for output_field in &signature.outputs {
+                if let Some(expected) = ex.expected_outputs.get(&output_field.name) {
+                    let rendered = compiled.build_full_prompt(&ex.inputs);
+                    let sim_predicted = if rendered.contains(&output_field.name) {
+                        expected.clone()
+                    } else {
+                        String::new()
+                    };
+                    total += metric.score(&sim_predicted, expected);
+                    count += 1;
+                }
+            }
+        }
+
+        if count > 0 {
+            total / count as f64
+        } else {
+            0.0
+        }
+    }
+
+    /// Run the SIMBA optimization loop.
+    ///
+    /// 1. Initialize a population of prompt instruction variants.
+    /// 2. For each generation: evaluate on mini-batch, select via tournament,
+    ///    mutate offspring, accept/reject via simulated annealing.
+    /// 3. Return the best variant found.
+    pub fn optimize(
+        &self,
+        signature: &Signature,
+        examples: &[TrainingExample],
+        metric: &dyn EvalMetric,
+    ) -> OptimizationResult {
+        let base = signature
+            .instructions
+            .as_deref()
+            .unwrap_or("Answer the question accurately.");
+
+        // Step 1: Initialize population
+        let mut population: Vec<(String, f64)> = Vec::with_capacity(self.config.population_size);
+        for i in 0..self.config.population_size {
+            let variant = Self::mutate_instruction(base, 0.5, i * 7 + 13);
+            let score = Self::evaluate_instruction(
+                signature,
+                &variant,
+                examples,
+                metric,
+                self.config.mini_batch_size,
+            );
+            population.push((variant, score));
+        }
+
+        let mut best_instruction = base.to_string();
+        let mut best_score = f64::NEG_INFINITY;
+        let mut scores_history: Vec<f64> = Vec::new();
+
+        // Find initial best
+        for (instr, score) in &population {
+            if *score > best_score {
+                best_score = *score;
+                best_instruction = instr.clone();
+            }
+        }
+        scores_history.push(best_score);
+
+        // Step 2: Evolutionary loop
+        for gen in 0..self.config.generations {
+            let temperature = self
+                .config
+                .cooling_schedule
+                .temperature(gen, self.config.generations);
+
+            // Select parents via tournament
+            let selected = self.selector.select(&population);
+
+            // Create offspring via mutation
+            let mut new_population: Vec<(String, f64)> = Vec::with_capacity(self.config.population_size);
+
+            // Determine mutation strength from strategy
+            let mutation_strength = match &self.mutation_strategy {
+                MutationStrategy::RandomPerturbation { strength } => *strength,
+                MutationStrategy::Crossover { crossover_rate } => *crossover_rate * 0.5,
+                MutationStrategy::LlmGuided { .. } => 0.3,
+                MutationStrategy::Combined { weights, .. } => {
+                    let sum: f64 = weights.iter().sum();
+                    if sum > 0.0 { 0.3 * (weights.len() as f64 / sum).min(1.0) } else { 0.3 }
+                }
+            };
+
+            for (i, parent_instr) in selected.iter().enumerate() {
+                let seed = gen * 1000 + i * 37 + 7;
+
+                // Decide whether to mutate
+                let rng_val = seed.wrapping_mul(2654435761) % 1000;
+                let should_mutate = (rng_val as f64 / 1000.0) < self.config.mutation_rate;
+
+                let child_instr = if should_mutate {
+                    Self::mutate_instruction(parent_instr, mutation_strength, seed)
+                } else {
+                    parent_instr.clone()
+                };
+
+                let child_score = Self::evaluate_instruction(
+                    signature,
+                    &child_instr,
+                    examples,
+                    metric,
+                    self.config.mini_batch_size,
+                );
+
+                // Simulated annealing acceptance
+                let parent_score = population.get(i).map(|(_, s)| *s).unwrap_or(0.0);
+                let accept = if child_score >= parent_score {
+                    true
+                } else if temperature > 1e-10 {
+                    let delta = parent_score - child_score;
+                    let acceptance_prob = (-delta / temperature).exp();
+                    let rng_accept = (seed.wrapping_mul(48271) % 10000) as f64 / 10000.0;
+                    rng_accept < acceptance_prob
+                } else {
+                    false
+                };
+
+                if accept {
+                    new_population.push((child_instr, child_score));
+                } else {
+                    // Keep parent
+                    new_population.push((parent_instr.clone(), parent_score));
+                }
+            }
+
+            population = new_population;
+
+            // Track best
+            for (instr, score) in &population {
+                if *score > best_score {
+                    best_score = *score;
+                    best_instruction = instr.clone();
+                }
+            }
+            scores_history.push(best_score);
+        }
+
+        // Build final result
+        let best_sig = signature
+            .clone()
+            .with_instructions(best_instruction);
+        let best_prompt = best_sig.compile();
+
+        OptimizationResult {
+            best_prompt,
+            best_score,
+            trials_run: self.config.generations * self.config.population_size,
+            scores_history,
+        }
+    }
+}
+
+// ============================================================================
+// 4.2 Reasoning Trace Capture
+// ============================================================================
+
+/// A single step in a reasoning trace.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReasoningStep {
+    /// The thought or reasoning content of this step.
+    pub thought: String,
+    /// Optional conclusion drawn from this step.
+    pub conclusion: Option<String>,
+    /// Evidence supporting this step's reasoning.
+    pub evidence: Vec<String>,
+    /// Confidence level for this step (0.0..1.0).
+    pub confidence: f64,
+    /// Estimated token count for this step.
+    pub token_count: usize,
+}
+
+/// A complete reasoning trace for a signature execution.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReasoningTrace {
+    /// The individual reasoning steps.
+    pub steps: Vec<ReasoningStep>,
+    /// Total token count across all steps.
+    pub total_tokens: usize,
+    /// The signature ID that produced this trace.
+    pub signature_id: String,
+    /// Hash of the input that produced this trace.
+    pub input_hash: String,
+}
+
+impl ReasoningTrace {
+    /// Create a new empty reasoning trace.
+    pub fn new(signature_id: String, input_hash: String) -> Self {
+        Self {
+            steps: Vec::new(),
+            total_tokens: 0,
+            signature_id,
+            input_hash,
+        }
+    }
+
+    /// Add a reasoning step to this trace.
+    pub fn add_step(&mut self, step: ReasoningStep) {
+        self.total_tokens += step.token_count;
+        self.steps.push(step);
+    }
+
+    /// Return the number of reasoning steps.
+    pub fn step_count(&self) -> usize {
+        self.steps.len()
+    }
+
+    /// Compute the average confidence across all steps.
+    pub fn avg_confidence(&self) -> f64 {
+        if self.steps.is_empty() {
+            return 0.0;
+        }
+        let sum: f64 = self.steps.iter().map(|s| s.confidence).sum();
+        sum / self.steps.len() as f64
+    }
+
+    /// Return the total token count.
+    pub fn total_tokens(&self) -> usize {
+        self.total_tokens
+    }
+
+    /// Return the conclusion of the last step, if any.
+    pub fn final_conclusion(&self) -> Option<&str> {
+        self.steps.last().and_then(|s| s.conclusion.as_deref())
+    }
+}
+
+/// Extracts reasoning traces from text using configurable markers.
+pub struct TraceExtractor {
+    /// Markers that indicate the start of a reasoning thought.
+    thought_markers: Vec<String>,
+    /// Markers that indicate a conclusion within a step.
+    conclusion_markers: Vec<String>,
+}
+
+impl TraceExtractor {
+    /// Create a new trace extractor with no markers.
+    pub fn new() -> Self {
+        Self {
+            thought_markers: Vec::new(),
+            conclusion_markers: Vec::new(),
+        }
+    }
+
+    /// Create a trace extractor with common default markers.
+    pub fn with_defaults() -> Self {
+        Self {
+            thought_markers: vec![
+                "<thinking>".to_string(),
+                "Let me think".to_string(),
+                "Step 1:".to_string(),
+                "Step 2:".to_string(),
+                "Step 3:".to_string(),
+                "Step 4:".to_string(),
+                "Step 5:".to_string(),
+                "First,".to_string(),
+                "Next,".to_string(),
+                "Then,".to_string(),
+            ],
+            conclusion_markers: vec![
+                "Therefore".to_string(),
+                "In conclusion".to_string(),
+                "Answer:".to_string(),
+                "Thus,".to_string(),
+                "So,".to_string(),
+                "Finally,".to_string(),
+                "</thinking>".to_string(),
+            ],
+        }
+    }
+
+    /// Add a thought marker.
+    pub fn add_thought_marker(&mut self, marker: String) {
+        self.thought_markers.push(marker);
+    }
+
+    /// Add a conclusion marker.
+    pub fn add_conclusion_marker(&mut self, marker: String) {
+        self.conclusion_markers.push(marker);
+    }
+
+    /// Extract a reasoning trace from the given text.
+    ///
+    /// Splits text by thought markers into segments, then looks for conclusion
+    /// markers within each segment to identify conclusions.
+    pub fn extract(&self, text: &str) -> ReasoningTrace {
+        let mut trace = ReasoningTrace::new(String::new(), String::new());
+
+        if text.trim().is_empty() {
+            return trace;
+        }
+
+        // If no thought markers configured, treat entire text as one step
+        if self.thought_markers.is_empty() {
+            let conclusion = self.find_conclusion(text);
+            let token_count = text.split_whitespace().count();
+            trace.add_step(ReasoningStep {
+                thought: text.to_string(),
+                conclusion,
+                evidence: Vec::new(),
+                confidence: 0.5,
+                token_count,
+            });
+            return trace;
+        }
+
+        // Find all marker positions and sort by position
+        let mut split_positions: Vec<usize> = Vec::new();
+        for marker in &self.thought_markers {
+            let mut search_start = 0;
+            while let Some(pos) = text[search_start..].find(marker.as_str()) {
+                split_positions.push(search_start + pos);
+                search_start += pos + marker.len();
+            }
+        }
+        split_positions.sort();
+        split_positions.dedup();
+
+        if split_positions.is_empty() {
+            // No markers found, treat entire text as one step
+            let conclusion = self.find_conclusion(text);
+            let token_count = text.split_whitespace().count();
+            trace.add_step(ReasoningStep {
+                thought: text.to_string(),
+                conclusion,
+                evidence: Vec::new(),
+                confidence: 0.5,
+                token_count,
+            });
+            return trace;
+        }
+
+        // Extract segments between markers
+        // Include text before first marker if non-empty
+        if split_positions[0] > 0 {
+            let pre_text = text[..split_positions[0]].trim();
+            if !pre_text.is_empty() {
+                let conclusion = self.find_conclusion(pre_text);
+                let token_count = pre_text.split_whitespace().count();
+                trace.add_step(ReasoningStep {
+                    thought: pre_text.to_string(),
+                    conclusion,
+                    evidence: Vec::new(),
+                    confidence: 0.5,
+                    token_count,
+                });
+            }
+        }
+
+        for (idx, &pos) in split_positions.iter().enumerate() {
+            let end = if idx + 1 < split_positions.len() {
+                split_positions[idx + 1]
+            } else {
+                text.len()
+            };
+            let segment = text[pos..end].trim();
+            if segment.is_empty() {
+                continue;
+            }
+            let conclusion = self.find_conclusion(segment);
+            let token_count = segment.split_whitespace().count();
+            // Higher confidence for segments with conclusions
+            let confidence = if conclusion.is_some() { 0.8 } else { 0.5 };
+            trace.add_step(ReasoningStep {
+                thought: segment.to_string(),
+                conclusion,
+                evidence: Vec::new(),
+                confidence,
+                token_count,
+            });
+        }
+
+        trace
+    }
+
+    /// Look for a conclusion within a text segment.
+    fn find_conclusion(&self, text: &str) -> Option<String> {
+        for marker in &self.conclusion_markers {
+            if let Some(pos) = text.find(marker.as_str()) {
+                let after_marker = text[pos + marker.len()..].trim();
+                if !after_marker.is_empty() {
+                    return Some(after_marker.to_string());
+                } else {
+                    return Some(marker.clone());
+                }
+            }
+        }
+        None
+    }
+}
+
+/// Stores reasoning traces indexed by signature ID.
+pub struct TraceStore {
+    traces: HashMap<String, Vec<ReasoningTrace>>,
+    max_per_signature: usize,
+}
+
+impl TraceStore {
+    /// Create a new trace store with the given per-signature capacity.
+    pub fn new(max_per_signature: usize) -> Self {
+        Self {
+            traces: HashMap::new(),
+            max_per_signature,
+        }
+    }
+
+    /// Store a reasoning trace.
+    pub fn store(&mut self, trace: ReasoningTrace) {
+        let entry = self.traces.entry(trace.signature_id.clone()).or_default();
+        if entry.len() >= self.max_per_signature {
+            entry.remove(0); // Remove oldest
+        }
+        entry.push(trace);
+    }
+
+    /// Get all traces for a given signature ID.
+    pub fn get(&self, signature_id: &str) -> Option<&[ReasoningTrace]> {
+        self.traces.get(signature_id).map(|v| v.as_slice())
+    }
+
+    /// Get traces with average confidence at or above the threshold.
+    pub fn get_best(&self, signature_id: &str, min_confidence: f64) -> Vec<&ReasoningTrace> {
+        match self.traces.get(signature_id) {
+            Some(traces) => traces
+                .iter()
+                .filter(|t| t.avg_confidence() >= min_confidence)
+                .collect(),
+            None => Vec::new(),
+        }
+    }
+
+    /// Return the total number of traces across all signatures.
+    pub fn trace_count(&self) -> usize {
+        self.traces.values().map(|v| v.len()).sum()
+    }
+
+    /// Return the number of distinct signatures stored.
+    pub fn signature_count(&self) -> usize {
+        self.traces.len()
+    }
+
+    /// Clear all stored traces.
+    pub fn clear(&mut self) {
+        self.traces.clear();
+    }
+}
+
+/// Analyzes patterns across multiple reasoning traces.
+pub struct TraceAnalyzer;
+
+impl TraceAnalyzer {
+    /// Create a new trace analyzer.
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Find common words/phrases that appear in more than 50% of the given traces.
+    pub fn common_patterns(&self, traces: &[ReasoningTrace]) -> Vec<String> {
+        if traces.is_empty() {
+            return Vec::new();
+        }
+
+        let threshold = traces.len() as f64 * 0.5;
+
+        // Count word occurrences across traces (count each word once per trace)
+        let mut word_trace_count: HashMap<String, usize> = HashMap::new();
+
+        for trace in traces {
+            let mut seen_in_trace: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            for step in &trace.steps {
+                for word in step.thought.split_whitespace() {
+                    let normalized = word.to_lowercase().trim_matches(|c: char| c.is_ascii_punctuation()).to_string();
+                    if normalized.len() >= 3 {
+                        seen_in_trace.insert(normalized);
+                    }
+                }
+            }
+            for word in seen_in_trace {
+                *word_trace_count.entry(word).or_insert(0) += 1;
+            }
+        }
+
+        let mut common: Vec<String> = word_trace_count
+            .into_iter()
+            .filter(|(_, count)| *count as f64 > threshold)
+            .map(|(word, _)| word)
+            .collect();
+
+        common.sort();
+        common
+    }
+
+    /// Compute the average number of steps across traces.
+    pub fn avg_steps(&self, traces: &[ReasoningTrace]) -> f64 {
+        if traces.is_empty() {
+            return 0.0;
+        }
+        let total: usize = traces.iter().map(|t| t.step_count()).sum();
+        total as f64 / traces.len() as f64
+    }
+
+    /// Compute the average confidence across all traces.
+    pub fn avg_confidence(&self, traces: &[ReasoningTrace]) -> f64 {
+        if traces.is_empty() {
+            return 0.0;
+        }
+        let total: f64 = traces.iter().map(|t| t.avg_confidence()).sum();
+        total / traces.len() as f64
+    }
+
+    /// Compute the fraction of traces with average confidence at or above the threshold.
+    pub fn success_rate(&self, traces: &[ReasoningTrace], min_confidence: f64) -> f64 {
+        if traces.is_empty() {
+            return 0.0;
+        }
+        let successes = traces
+            .iter()
+            .filter(|t| t.avg_confidence() >= min_confidence)
+            .count();
+        successes as f64 / traces.len() as f64
+    }
+}
+
+// ============================================================================
+// 4.3 LLM-as-Judge Automated Grading
+// ============================================================================
+
+/// A single criterion in a judge rubric.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JudgeCriterion {
+    /// Name of the criterion (e.g., "relevance", "fluency").
+    pub name: String,
+    /// Description of what this criterion measures.
+    pub description: String,
+    /// Weight of this criterion in the overall score.
+    pub weight: f64,
+    /// Score scale as (min, max).
+    pub scale: (f64, f64),
+}
+
+/// A rubric defining multiple criteria for judging.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JudgeRubric {
+    /// The criteria that make up this rubric.
+    pub criteria: Vec<JudgeCriterion>,
+    /// Overall instruction for the judge.
+    pub overall_instruction: String,
+}
+
+impl JudgeRubric {
+    /// Create a new rubric with the given overall instruction.
+    pub fn new(overall_instruction: String) -> Self {
+        Self {
+            criteria: Vec::new(),
+            overall_instruction,
+        }
+    }
+
+    /// Add a criterion to this rubric.
+    pub fn add_criterion(&mut self, criterion: JudgeCriterion) {
+        self.criteria.push(criterion);
+    }
+
+    /// Return the number of criteria.
+    pub fn criterion_count(&self) -> usize {
+        self.criteria.len()
+    }
+
+    /// Return the sum of all criterion weights.
+    pub fn total_weight(&self) -> f64 {
+        self.criteria.iter().map(|c| c.weight).sum()
+    }
+
+    /// Validate the rubric: checks that weights are positive and criteria are non-empty.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.criteria.is_empty() {
+            return Err("Rubric must have at least one criterion".to_string());
+        }
+        for criterion in &self.criteria {
+            if criterion.weight <= 0.0 {
+                return Err(format!(
+                    "Criterion '{}' has non-positive weight: {}",
+                    criterion.name, criterion.weight
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The result of an LLM-as-judge evaluation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptJudgeResult {
+    /// The weighted overall score.
+    pub overall_score: f64,
+    /// Individual scores per criterion.
+    pub per_criterion: Vec<CriterionScore>,
+    /// Reasoning for the overall judgment.
+    pub reasoning: String,
+    /// Confidence in the judgment (0.0..1.0).
+    pub confidence: f64,
+}
+
+/// Score for a single criterion.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CriterionScore {
+    /// Name of the criterion that was scored.
+    pub criterion_name: String,
+    /// The score assigned.
+    pub score: f64,
+    /// Reasoning for this particular score.
+    pub reasoning: String,
+}
+
+/// Configuration for an LLM-as-judge evaluator.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JudgeConfig {
+    /// The rubric to use for evaluation.
+    pub rubric: JudgeRubric,
+    /// Few-shot examples of judge evaluations.
+    pub few_shot_examples: Vec<JudgeExample>,
+    /// Temperature for judge inference.
+    pub temperature: f64,
+}
+
+/// A few-shot example demonstrating judge behavior.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JudgeExample {
+    /// The input that was evaluated.
+    pub input: String,
+    /// The output that was evaluated.
+    pub output: String,
+    /// The expected score.
+    pub expected_score: f64,
+    /// The expected reasoning.
+    pub reasoning: String,
+}
+
+/// An evaluation metric that uses an LLM-as-judge scoring function.
+pub struct JudgeMetric {
+    config: JudgeConfig,
+    scorer: Box<dyn Fn(&str, &str, &JudgeRubric) -> f64 + Send + Sync>,
+}
+
+impl JudgeMetric {
+    /// Create a new judge metric with the given configuration and scorer function.
+    pub fn new(
+        config: JudgeConfig,
+        scorer: Box<dyn Fn(&str, &str, &JudgeRubric) -> f64 + Send + Sync>,
+    ) -> Self {
+        Self { config, scorer }
+    }
+
+    /// Evaluate an input/output pair using the judge.
+    pub fn evaluate(&self, input: &str, output: &str) -> PromptJudgeResult {
+        let overall_score = (self.scorer)(input, output, &self.config.rubric);
+
+        // Generate per-criterion scores proportionally
+        let mut per_criterion = Vec::new();
+        let total_weight = self.config.rubric.total_weight();
+
+        for criterion in &self.config.rubric.criteria {
+            let criterion_score = if total_weight > 0.0 {
+                // Scale score within the criterion's scale range
+                let (min_s, max_s) = criterion.scale;
+                min_s + (max_s - min_s) * overall_score.clamp(0.0, 1.0)
+            } else {
+                overall_score
+            };
+
+            per_criterion.push(CriterionScore {
+                criterion_name: criterion.name.clone(),
+                score: criterion_score,
+                reasoning: format!(
+                    "Score for '{}' based on overall evaluation",
+                    criterion.name
+                ),
+            });
+        }
+
+        PromptJudgeResult {
+            overall_score,
+            per_criterion,
+            reasoning: format!(
+                "Evaluated output against rubric: {}",
+                self.config.rubric.overall_instruction
+            ),
+            confidence: 0.8,
+        }
+    }
+
+    /// Access the configuration.
+    pub fn config(&self) -> &JudgeConfig {
+        &self.config
+    }
+}
+
+impl EvalMetric for JudgeMetric {
+    fn name(&self) -> &str {
+        "judge_metric"
+    }
+
+    fn score(&self, predicted: &str, expected: &str) -> f64 {
+        (self.scorer)(predicted, expected, &self.config.rubric)
+    }
+}
+
+/// A set of calibration examples for measuring judge accuracy.
+pub struct CalibrationSet {
+    examples: Vec<CalibrationExample>,
+}
+
+/// A single calibration example with a known human score.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CalibrationExample {
+    /// The input text.
+    pub input: String,
+    /// The output text to judge.
+    pub output: String,
+    /// The human-assigned ground truth score.
+    pub human_score: f64,
+}
+
+impl CalibrationSet {
+    /// Create a new empty calibration set.
+    pub fn new() -> Self {
+        Self {
+            examples: Vec::new(),
+        }
+    }
+
+    /// Add a calibration example.
+    pub fn add(&mut self, example: CalibrationExample) {
+        self.examples.push(example);
+    }
+
+    /// Compute the mean absolute calibration error between judge scores and human scores.
+    pub fn calibration_error(&self, judge: &JudgeMetric) -> f64 {
+        if self.examples.is_empty() {
+            return 0.0;
+        }
+
+        let mut total_error = 0.0;
+        for ex in &self.examples {
+            let judge_score = (judge.scorer)(&ex.input, &ex.output, &judge.config.rubric);
+            total_error += (judge_score - ex.human_score).abs();
+        }
+
+        total_error / self.examples.len() as f64
+    }
+
+    /// Return a slice of all calibration examples.
+    pub fn examples(&self) -> &[CalibrationExample] {
+        &self.examples
+    }
+
+    /// Return the number of calibration examples.
+    pub fn len(&self) -> usize {
+        self.examples.len()
+    }
+
+    /// Return whether the calibration set is empty.
+    pub fn is_empty(&self) -> bool {
+        self.examples.is_empty()
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -5018,5 +6063,845 @@ mod tests {
         let cloned = prompt.clone();
         assert_eq!(cloned.system_message, prompt.system_message);
         assert_eq!(cloned.messages.len(), 1);
+    }
+
+    // ========================================================================
+    // 4.1 SIMBA Optimizer tests
+    // ========================================================================
+
+    #[test]
+    fn test_cooling_schedule_linear_temperature_decreases() {
+        let schedule = CoolingSchedule::Linear {
+            initial_temp: 1.0,
+            min_temp: 0.01,
+        };
+        let t0 = schedule.temperature(0, 100);
+        let t50 = schedule.temperature(50, 100);
+        let t100 = schedule.temperature(100, 100);
+
+        assert!((t0 - 1.0).abs() < 1e-9);
+        assert!(t50 < t0);
+        assert!(t100 < t50);
+        assert!((t100 - 0.01).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_cooling_schedule_exponential_temperature_decreases() {
+        let schedule = CoolingSchedule::Exponential {
+            initial_temp: 1.0,
+            decay_rate: 0.95,
+        };
+        let t0 = schedule.temperature(0, 100);
+        let t10 = schedule.temperature(10, 100);
+        let t50 = schedule.temperature(50, 100);
+
+        assert!((t0 - 1.0).abs() < 1e-9);
+        assert!(t10 < t0);
+        assert!(t50 < t10);
+        // Verify exponential formula: 1.0 * 0.95^10
+        let expected_t10 = 0.95_f64.powi(10);
+        assert!((t10 - expected_t10).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_cooling_schedule_adaptive_temperature() {
+        let schedule = CoolingSchedule::Adaptive {
+            initial_temp: 1.0,
+            improvement_factor: 0.9,
+        };
+        let t0 = schedule.temperature(0, 100);
+        let t10 = schedule.temperature(10, 100);
+
+        assert!((t0 - 1.0).abs() < 1e-9);
+        // Adaptive: 1.0 * 0.9^(10 * 0.1) = 1.0 * 0.9^1.0 = 0.9
+        assert!((t10 - 0.9).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_simba_config_default_values() {
+        let config = SimbaConfig::default();
+        assert_eq!(config.population_size, 20);
+        assert_eq!(config.generations, 50);
+        assert!((config.mutation_rate - 0.3).abs() < 1e-9);
+        assert_eq!(config.tournament_size, 3);
+        assert_eq!(config.elite_count, 2);
+        assert_eq!(config.mini_batch_size, 5);
+        // Verify default cooling schedule is Linear
+        match &config.cooling_schedule {
+            CoolingSchedule::Linear {
+                initial_temp,
+                min_temp,
+            } => {
+                assert!((initial_temp - 1.0).abs() < 1e-9);
+                assert!((min_temp - 0.01).abs() < 1e-9);
+            }
+            _ => panic!("Expected Linear cooling schedule as default"),
+        }
+    }
+
+    #[test]
+    fn test_tournament_selector_select_keeps_elites() {
+        let selector = TournamentSelector::new(3, 2);
+        let population = vec![
+            ("variant_a".to_string(), 0.9),
+            ("variant_b".to_string(), 0.1),
+            ("variant_c".to_string(), 0.5),
+            ("variant_d".to_string(), 0.3),
+            ("variant_e".to_string(), 0.8),
+        ];
+
+        let selected = selector.select(&population);
+
+        assert_eq!(selected.len(), population.len());
+        // The top 2 by score are "variant_a" (0.9) and "variant_e" (0.8)
+        assert_eq!(selected[0], "variant_a");
+        assert_eq!(selected[1], "variant_e");
+    }
+
+    #[test]
+    fn test_tournament_selector_select_returns_correct_size() {
+        let selector = TournamentSelector::new(2, 1);
+        let population = vec![
+            ("a".to_string(), 0.5),
+            ("b".to_string(), 0.6),
+            ("c".to_string(), 0.7),
+        ];
+
+        let selected = selector.select(&population);
+        assert_eq!(selected.len(), 3);
+    }
+
+    #[test]
+    fn test_tournament_selector_with_elite_count_zero() {
+        let selector = TournamentSelector::new(2, 0);
+        let population = vec![
+            ("a".to_string(), 0.5),
+            ("b".to_string(), 0.6),
+            ("c".to_string(), 0.7),
+        ];
+
+        let selected = selector.select(&population);
+        assert_eq!(selected.len(), 3);
+        // With 0 elites, all selections are from tournament
+    }
+
+    #[test]
+    fn test_simba_optimizer_new() {
+        let config = SimbaConfig::default();
+        let optimizer = SimbaOptimizer::new(config);
+        assert_eq!(optimizer.config().population_size, 20);
+        assert_eq!(optimizer.config().generations, 50);
+        match &optimizer.mutation_strategy {
+            MutationStrategy::RandomPerturbation { strength } => {
+                assert!((strength - 0.3).abs() < 1e-9);
+            }
+            _ => panic!("Expected RandomPerturbation as default strategy"),
+        }
+    }
+
+    #[test]
+    fn test_simba_optimizer_optimize_runs_and_returns_result() {
+        let mut config = SimbaConfig::default();
+        config.population_size = 5;
+        config.generations = 3;
+        config.mini_batch_size = 2;
+
+        let optimizer = SimbaOptimizer::new(config);
+
+        let sig = make_qa_signature();
+        let examples = make_training_examples();
+
+        let result = optimizer.optimize(&sig, &examples, &ContainsAnswer);
+
+        assert!(result.best_score >= 0.0);
+        assert!(!result.scores_history.is_empty());
+        assert!(result.trials_run > 0);
+    }
+
+    #[test]
+    fn test_simba_optimizer_with_exponential_cooling() {
+        let mut config = SimbaConfig::default();
+        config.population_size = 4;
+        config.generations = 2;
+        config.mini_batch_size = 2;
+        config.cooling_schedule = CoolingSchedule::Exponential {
+            initial_temp: 2.0,
+            decay_rate: 0.9,
+        };
+
+        let optimizer = SimbaOptimizer::new(config);
+        let sig = make_qa_signature();
+        let examples = make_training_examples();
+
+        let result = optimizer.optimize(&sig, &examples, &ContainsAnswer);
+        assert!(result.best_score >= 0.0);
+        assert!(!result.scores_history.is_empty());
+    }
+
+    #[test]
+    fn test_mutation_strategy_variants() {
+        // Test that all variants can be constructed and serialized
+        let perturbation = MutationStrategy::RandomPerturbation { strength: 0.5 };
+        let json = serde_json::to_string(&perturbation).expect("serialize");
+        assert!(json.contains("RandomPerturbation"));
+
+        let crossover = MutationStrategy::Crossover {
+            crossover_rate: 0.7,
+        };
+        let json = serde_json::to_string(&crossover).expect("serialize");
+        assert!(json.contains("Crossover"));
+
+        let llm = MutationStrategy::LlmGuided {
+            prompt_template: "improve: {instruction}".to_string(),
+        };
+        let json = serde_json::to_string(&llm).expect("serialize");
+        assert!(json.contains("LlmGuided"));
+    }
+
+    #[test]
+    fn test_combined_mutation_strategy() {
+        let combined = MutationStrategy::Combined {
+            strategies: vec![
+                MutationStrategy::RandomPerturbation { strength: 0.3 },
+                MutationStrategy::Crossover {
+                    crossover_rate: 0.5,
+                },
+            ],
+            weights: vec![0.7, 0.3],
+        };
+        let json = serde_json::to_string(&combined).expect("serialize");
+        assert!(json.contains("Combined"));
+
+        // Test with_strategy
+        let mut config = SimbaConfig::default();
+        config.population_size = 4;
+        config.generations = 2;
+        config.mini_batch_size = 2;
+        let optimizer = SimbaOptimizer::with_strategy(config, combined);
+        let sig = make_qa_signature();
+        let examples = make_training_examples();
+        let result = optimizer.optimize(&sig, &examples, &ContainsAnswer);
+        assert!(result.best_score >= 0.0);
+    }
+
+    // ========================================================================
+    // 4.2 Reasoning Trace Capture tests
+    // ========================================================================
+
+    #[test]
+    fn test_reasoning_step_construction() {
+        let step = ReasoningStep {
+            thought: "The capital of France is Paris".to_string(),
+            conclusion: Some("Paris".to_string()),
+            evidence: vec!["Known fact".to_string()],
+            confidence: 0.95,
+            token_count: 7,
+        };
+        assert_eq!(step.thought, "The capital of France is Paris");
+        assert_eq!(step.conclusion, Some("Paris".to_string()));
+        assert_eq!(step.evidence.len(), 1);
+        assert!((step.confidence - 0.95).abs() < 1e-9);
+        assert_eq!(step.token_count, 7);
+    }
+
+    #[test]
+    fn test_reasoning_trace_new_add_step_step_count_avg_confidence() {
+        let mut trace = ReasoningTrace::new("sig_1".to_string(), "hash_abc".to_string());
+        assert_eq!(trace.step_count(), 0);
+        assert!((trace.avg_confidence() - 0.0).abs() < 1e-9);
+
+        trace.add_step(ReasoningStep {
+            thought: "Step A".to_string(),
+            conclusion: None,
+            evidence: Vec::new(),
+            confidence: 0.8,
+            token_count: 5,
+        });
+        trace.add_step(ReasoningStep {
+            thought: "Step B".to_string(),
+            conclusion: Some("Result".to_string()),
+            evidence: Vec::new(),
+            confidence: 0.6,
+            token_count: 3,
+        });
+
+        assert_eq!(trace.step_count(), 2);
+        assert!((trace.avg_confidence() - 0.7).abs() < 1e-9);
+        assert_eq!(trace.total_tokens(), 8);
+        assert_eq!(trace.signature_id, "sig_1");
+        assert_eq!(trace.input_hash, "hash_abc");
+    }
+
+    #[test]
+    fn test_reasoning_trace_final_conclusion() {
+        let mut trace = ReasoningTrace::new("sig".to_string(), "hash".to_string());
+
+        // Empty trace has no conclusion
+        assert!(trace.final_conclusion().is_none());
+
+        trace.add_step(ReasoningStep {
+            thought: "Thinking...".to_string(),
+            conclusion: None,
+            evidence: Vec::new(),
+            confidence: 0.5,
+            token_count: 1,
+        });
+        assert!(trace.final_conclusion().is_none());
+
+        trace.add_step(ReasoningStep {
+            thought: "Concluding...".to_string(),
+            conclusion: Some("Final answer".to_string()),
+            evidence: Vec::new(),
+            confidence: 0.9,
+            token_count: 2,
+        });
+        assert_eq!(trace.final_conclusion(), Some("Final answer"));
+    }
+
+    #[test]
+    fn test_trace_extractor_with_defaults() {
+        let extractor = TraceExtractor::with_defaults();
+        assert!(!extractor.thought_markers.is_empty());
+        assert!(!extractor.conclusion_markers.is_empty());
+        assert!(extractor.thought_markers.contains(&"<thinking>".to_string()));
+        assert!(extractor.conclusion_markers.contains(&"Therefore".to_string()));
+    }
+
+    #[test]
+    fn test_trace_extractor_extract_with_thought_markers() {
+        let extractor = TraceExtractor::with_defaults();
+        let text = "Let me think about this. The question is about geography. \
+                     Step 1: France is in Europe. \
+                     Step 2: The capital is Paris. \
+                     Therefore the answer is Paris.";
+        let trace = extractor.extract(text);
+        assert!(trace.step_count() >= 2);
+        // The last step should have a conclusion containing "Paris"
+        let conclusion = trace.final_conclusion();
+        assert!(conclusion.is_some());
+    }
+
+    #[test]
+    fn test_trace_extractor_extract_with_no_markers_returns_single_step() {
+        let extractor = TraceExtractor::new();
+        let text = "The answer is 42.";
+        let trace = extractor.extract(text);
+        assert_eq!(trace.step_count(), 1);
+        assert_eq!(trace.steps[0].thought, "The answer is 42.");
+    }
+
+    #[test]
+    fn test_trace_store_store_and_get() {
+        let mut store = TraceStore::new(10);
+
+        let mut trace = ReasoningTrace::new("sig_a".to_string(), "h1".to_string());
+        trace.add_step(ReasoningStep {
+            thought: "t1".to_string(),
+            conclusion: None,
+            evidence: Vec::new(),
+            confidence: 0.7,
+            token_count: 2,
+        });
+        store.store(trace);
+
+        let retrieved = store.get("sig_a");
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().len(), 1);
+
+        assert!(store.get("sig_b").is_none());
+    }
+
+    #[test]
+    fn test_trace_store_get_best_filters_by_confidence() {
+        let mut store = TraceStore::new(10);
+
+        // Low confidence trace
+        let mut t1 = ReasoningTrace::new("sig".to_string(), "h1".to_string());
+        t1.add_step(ReasoningStep {
+            thought: "low".to_string(),
+            conclusion: None,
+            evidence: Vec::new(),
+            confidence: 0.3,
+            token_count: 1,
+        });
+        store.store(t1);
+
+        // High confidence trace
+        let mut t2 = ReasoningTrace::new("sig".to_string(), "h2".to_string());
+        t2.add_step(ReasoningStep {
+            thought: "high".to_string(),
+            conclusion: Some("good".to_string()),
+            evidence: Vec::new(),
+            confidence: 0.9,
+            token_count: 1,
+        });
+        store.store(t2);
+
+        let best = store.get_best("sig", 0.5);
+        assert_eq!(best.len(), 1);
+        assert!((best[0].avg_confidence() - 0.9).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_trace_store_trace_count_and_signature_count() {
+        let mut store = TraceStore::new(10);
+
+        let t1 = ReasoningTrace::new("sig_a".to_string(), "h1".to_string());
+        let t2 = ReasoningTrace::new("sig_a".to_string(), "h2".to_string());
+        let t3 = ReasoningTrace::new("sig_b".to_string(), "h3".to_string());
+
+        store.store(t1);
+        store.store(t2);
+        store.store(t3);
+
+        assert_eq!(store.trace_count(), 3);
+        assert_eq!(store.signature_count(), 2);
+    }
+
+    #[test]
+    fn test_trace_store_clear() {
+        let mut store = TraceStore::new(10);
+        store.store(ReasoningTrace::new("sig".to_string(), "h".to_string()));
+        assert_eq!(store.trace_count(), 1);
+
+        store.clear();
+        assert_eq!(store.trace_count(), 0);
+        assert_eq!(store.signature_count(), 0);
+    }
+
+    #[test]
+    fn test_trace_analyzer_avg_steps() {
+        let analyzer = TraceAnalyzer::new();
+
+        let mut t1 = ReasoningTrace::new("s".to_string(), "h".to_string());
+        t1.add_step(ReasoningStep {
+            thought: "a".to_string(),
+            conclusion: None,
+            evidence: Vec::new(),
+            confidence: 0.5,
+            token_count: 1,
+        });
+        t1.add_step(ReasoningStep {
+            thought: "b".to_string(),
+            conclusion: None,
+            evidence: Vec::new(),
+            confidence: 0.5,
+            token_count: 1,
+        });
+
+        let mut t2 = ReasoningTrace::new("s".to_string(), "h".to_string());
+        t2.add_step(ReasoningStep {
+            thought: "c".to_string(),
+            conclusion: None,
+            evidence: Vec::new(),
+            confidence: 0.5,
+            token_count: 1,
+        });
+
+        let avg = analyzer.avg_steps(&[t1, t2]);
+        assert!((avg - 1.5).abs() < 1e-9); // (2 + 1) / 2 = 1.5
+    }
+
+    #[test]
+    fn test_trace_analyzer_avg_confidence() {
+        let analyzer = TraceAnalyzer::new();
+
+        let mut t1 = ReasoningTrace::new("s".to_string(), "h".to_string());
+        t1.add_step(ReasoningStep {
+            thought: "a".to_string(),
+            conclusion: None,
+            evidence: Vec::new(),
+            confidence: 0.8,
+            token_count: 1,
+        });
+
+        let mut t2 = ReasoningTrace::new("s".to_string(), "h".to_string());
+        t2.add_step(ReasoningStep {
+            thought: "b".to_string(),
+            conclusion: None,
+            evidence: Vec::new(),
+            confidence: 0.6,
+            token_count: 1,
+        });
+
+        let avg = analyzer.avg_confidence(&[t1, t2]);
+        assert!((avg - 0.7).abs() < 1e-9); // (0.8 + 0.6) / 2
+    }
+
+    #[test]
+    fn test_trace_analyzer_success_rate() {
+        let analyzer = TraceAnalyzer::new();
+
+        let mut t1 = ReasoningTrace::new("s".to_string(), "h".to_string());
+        t1.add_step(ReasoningStep {
+            thought: "a".to_string(),
+            conclusion: None,
+            evidence: Vec::new(),
+            confidence: 0.9,
+            token_count: 1,
+        });
+
+        let mut t2 = ReasoningTrace::new("s".to_string(), "h".to_string());
+        t2.add_step(ReasoningStep {
+            thought: "b".to_string(),
+            conclusion: None,
+            evidence: Vec::new(),
+            confidence: 0.3,
+            token_count: 1,
+        });
+
+        let mut t3 = ReasoningTrace::new("s".to_string(), "h".to_string());
+        t3.add_step(ReasoningStep {
+            thought: "c".to_string(),
+            conclusion: None,
+            evidence: Vec::new(),
+            confidence: 0.7,
+            token_count: 1,
+        });
+
+        let rate = analyzer.success_rate(&[t1, t2, t3], 0.5);
+        // t1 (0.9) and t3 (0.7) pass, t2 (0.3) fails => 2/3
+        assert!((rate - 2.0 / 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_trace_analyzer_common_patterns() {
+        let analyzer = TraceAnalyzer::new();
+
+        let mut t1 = ReasoningTrace::new("s".to_string(), "h".to_string());
+        t1.add_step(ReasoningStep {
+            thought: "the answer involves reasoning carefully about facts".to_string(),
+            conclusion: None,
+            evidence: Vec::new(),
+            confidence: 0.8,
+            token_count: 7,
+        });
+
+        let mut t2 = ReasoningTrace::new("s".to_string(), "h".to_string());
+        t2.add_step(ReasoningStep {
+            thought: "we need careful reasoning about the problem".to_string(),
+            conclusion: None,
+            evidence: Vec::new(),
+            confidence: 0.7,
+            token_count: 7,
+        });
+
+        let mut t3 = ReasoningTrace::new("s".to_string(), "h".to_string());
+        t3.add_step(ReasoningStep {
+            thought: "reasoning about this topic requires analysis".to_string(),
+            conclusion: None,
+            evidence: Vec::new(),
+            confidence: 0.6,
+            token_count: 6,
+        });
+
+        let patterns = analyzer.common_patterns(&[t1, t2, t3]);
+        // "reasoning" and "about" appear in all 3 traces (>50% of 3)
+        assert!(patterns.contains(&"reasoning".to_string()));
+        assert!(patterns.contains(&"about".to_string()));
+    }
+
+    // ========================================================================
+    // 4.3 LLM-as-Judge Automated Grading tests
+    // ========================================================================
+
+    #[test]
+    fn test_judge_criterion_construction() {
+        let criterion = JudgeCriterion {
+            name: "relevance".to_string(),
+            description: "How relevant is the answer".to_string(),
+            weight: 0.5,
+            scale: (0.0, 1.0),
+        };
+        assert_eq!(criterion.name, "relevance");
+        assert_eq!(criterion.description, "How relevant is the answer");
+        assert!((criterion.weight - 0.5).abs() < 1e-9);
+        assert!((criterion.scale.0 - 0.0).abs() < 1e-9);
+        assert!((criterion.scale.1 - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_judge_rubric_new_add_criterion_validate() {
+        let mut rubric = JudgeRubric::new("Evaluate the answer quality".to_string());
+        assert_eq!(rubric.criterion_count(), 0);
+
+        rubric.add_criterion(JudgeCriterion {
+            name: "accuracy".to_string(),
+            description: "Is the answer correct".to_string(),
+            weight: 1.0,
+            scale: (0.0, 1.0),
+        });
+
+        assert_eq!(rubric.criterion_count(), 1);
+        assert!(rubric.validate().is_ok());
+    }
+
+    #[test]
+    fn test_judge_rubric_validate_fails_on_empty_criteria() {
+        let rubric = JudgeRubric::new("Empty rubric".to_string());
+        let result = rubric.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("at least one criterion"));
+    }
+
+    #[test]
+    fn test_judge_rubric_validate_fails_on_non_positive_weight() {
+        let mut rubric = JudgeRubric::new("Bad weight".to_string());
+        rubric.add_criterion(JudgeCriterion {
+            name: "bad".to_string(),
+            description: "zero weight".to_string(),
+            weight: 0.0,
+            scale: (0.0, 1.0),
+        });
+        let result = rubric.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("non-positive weight"));
+    }
+
+    #[test]
+    fn test_judge_rubric_total_weight() {
+        let mut rubric = JudgeRubric::new("test".to_string());
+        rubric.add_criterion(JudgeCriterion {
+            name: "a".to_string(),
+            description: "first".to_string(),
+            weight: 0.6,
+            scale: (0.0, 1.0),
+        });
+        rubric.add_criterion(JudgeCriterion {
+            name: "b".to_string(),
+            description: "second".to_string(),
+            weight: 0.4,
+            scale: (0.0, 1.0),
+        });
+        assert!((rubric.total_weight() - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_judge_rubric_with_multiple_criteria() {
+        let mut rubric = JudgeRubric::new("Multi-criterion".to_string());
+        rubric.add_criterion(JudgeCriterion {
+            name: "relevance".to_string(),
+            description: "How relevant".to_string(),
+            weight: 0.4,
+            scale: (0.0, 1.0),
+        });
+        rubric.add_criterion(JudgeCriterion {
+            name: "fluency".to_string(),
+            description: "How fluent".to_string(),
+            weight: 0.3,
+            scale: (0.0, 5.0),
+        });
+        rubric.add_criterion(JudgeCriterion {
+            name: "accuracy".to_string(),
+            description: "How accurate".to_string(),
+            weight: 0.3,
+            scale: (0.0, 10.0),
+        });
+
+        assert_eq!(rubric.criterion_count(), 3);
+        assert!((rubric.total_weight() - 1.0).abs() < 1e-9);
+        assert!(rubric.validate().is_ok());
+    }
+
+    #[test]
+    fn test_prompt_judge_result_construction() {
+        let result = PromptJudgeResult {
+            overall_score: 0.85,
+            per_criterion: vec![CriterionScore {
+                criterion_name: "accuracy".to_string(),
+                score: 0.9,
+                reasoning: "Very accurate".to_string(),
+            }],
+            reasoning: "Overall good quality".to_string(),
+            confidence: 0.9,
+        };
+        assert!((result.overall_score - 0.85).abs() < 1e-9);
+        assert_eq!(result.per_criterion.len(), 1);
+        assert!((result.confidence - 0.9).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_criterion_score_construction() {
+        let score = CriterionScore {
+            criterion_name: "fluency".to_string(),
+            score: 4.5,
+            reasoning: "Very fluent output".to_string(),
+        };
+        assert_eq!(score.criterion_name, "fluency");
+        assert!((score.score - 4.5).abs() < 1e-9);
+        assert_eq!(score.reasoning, "Very fluent output");
+    }
+
+    #[test]
+    fn test_judge_config_construction() {
+        let mut rubric = JudgeRubric::new("test".to_string());
+        rubric.add_criterion(JudgeCriterion {
+            name: "q".to_string(),
+            description: "quality".to_string(),
+            weight: 1.0,
+            scale: (0.0, 1.0),
+        });
+        let config = JudgeConfig {
+            rubric,
+            few_shot_examples: Vec::new(),
+            temperature: 0.0,
+        };
+        assert_eq!(config.few_shot_examples.len(), 0);
+        assert!((config.temperature - 0.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_judge_example_construction() {
+        let ex = JudgeExample {
+            input: "What is 2+2?".to_string(),
+            output: "4".to_string(),
+            expected_score: 1.0,
+            reasoning: "Correct arithmetic".to_string(),
+        };
+        assert_eq!(ex.input, "What is 2+2?");
+        assert_eq!(ex.output, "4");
+        assert!((ex.expected_score - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_judge_metric_evaluate_returns_result() {
+        let mut rubric = JudgeRubric::new("Evaluate answer".to_string());
+        rubric.add_criterion(JudgeCriterion {
+            name: "correctness".to_string(),
+            description: "Is it correct".to_string(),
+            weight: 1.0,
+            scale: (0.0, 1.0),
+        });
+
+        let config = JudgeConfig {
+            rubric,
+            few_shot_examples: Vec::new(),
+            temperature: 0.0,
+        };
+
+        let judge = JudgeMetric::new(
+            config,
+            Box::new(|_input: &str, output: &str, _rubric: &JudgeRubric| -> f64 {
+                if output.contains("Paris") {
+                    0.9
+                } else {
+                    0.2
+                }
+            }),
+        );
+
+        let result = judge.evaluate("What is the capital of France?", "Paris");
+        assert!((result.overall_score - 0.9).abs() < 1e-9);
+        assert_eq!(result.per_criterion.len(), 1);
+        assert!((result.confidence - 0.8).abs() < 1e-9);
+
+        let result2 = judge.evaluate("What is the capital of France?", "London");
+        assert!((result2.overall_score - 0.2).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_judge_metric_eval_metric_impl_score() {
+        let mut rubric = JudgeRubric::new("test".to_string());
+        rubric.add_criterion(JudgeCriterion {
+            name: "match".to_string(),
+            description: "does it match".to_string(),
+            weight: 1.0,
+            scale: (0.0, 1.0),
+        });
+
+        let config = JudgeConfig {
+            rubric,
+            few_shot_examples: Vec::new(),
+            temperature: 0.0,
+        };
+
+        let judge = JudgeMetric::new(
+            config,
+            Box::new(|predicted: &str, expected: &str, _rubric: &JudgeRubric| -> f64 {
+                if predicted == expected {
+                    1.0
+                } else {
+                    0.0
+                }
+            }),
+        );
+
+        // Test EvalMetric trait impl
+        assert_eq!(judge.name(), "judge_metric");
+        assert!((judge.score("hello", "hello") - 1.0).abs() < 1e-9);
+        assert!((judge.score("hello", "world") - 0.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_calibration_set_new_add_len() {
+        let mut cal = CalibrationSet::new();
+        assert!(cal.is_empty());
+        assert_eq!(cal.len(), 0);
+
+        cal.add(CalibrationExample {
+            input: "q1".to_string(),
+            output: "a1".to_string(),
+            human_score: 0.8,
+        });
+        cal.add(CalibrationExample {
+            input: "q2".to_string(),
+            output: "a2".to_string(),
+            human_score: 0.6,
+        });
+
+        assert!(!cal.is_empty());
+        assert_eq!(cal.len(), 2);
+        assert_eq!(cal.examples().len(), 2);
+    }
+
+    #[test]
+    fn test_calibration_example_construction() {
+        let ex = CalibrationExample {
+            input: "test input".to_string(),
+            output: "test output".to_string(),
+            human_score: 0.75,
+        };
+        assert_eq!(ex.input, "test input");
+        assert_eq!(ex.output, "test output");
+        assert!((ex.human_score - 0.75).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_calibration_set_calibration_error_computation() {
+        let mut rubric = JudgeRubric::new("test".to_string());
+        rubric.add_criterion(JudgeCriterion {
+            name: "q".to_string(),
+            description: "quality".to_string(),
+            weight: 1.0,
+            scale: (0.0, 1.0),
+        });
+
+        let config = JudgeConfig {
+            rubric,
+            few_shot_examples: Vec::new(),
+            temperature: 0.0,
+        };
+
+        // Judge always returns 0.7
+        let judge = JudgeMetric::new(
+            config,
+            Box::new(|_: &str, _: &str, _: &JudgeRubric| -> f64 { 0.7 }),
+        );
+
+        let mut cal = CalibrationSet::new();
+        cal.add(CalibrationExample {
+            input: "q1".to_string(),
+            output: "a1".to_string(),
+            human_score: 0.8, // error = |0.7 - 0.8| = 0.1
+        });
+        cal.add(CalibrationExample {
+            input: "q2".to_string(),
+            output: "a2".to_string(),
+            human_score: 0.5, // error = |0.7 - 0.5| = 0.2
+        });
+
+        let error = cal.calibration_error(&judge);
+        // Mean absolute error = (0.1 + 0.2) / 2 = 0.15
+        assert!((error - 0.15).abs() < 1e-9);
     }
 }

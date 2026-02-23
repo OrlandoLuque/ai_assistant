@@ -186,6 +186,18 @@ distillation = []
 # Not in 'full' by default — only useful with local providers. Opt-in: --features constrained-decoding
 constrained-decoding = []
 
+# Human-in-the-Loop: tool approval gates, confidence escalation, corrections, policies
+# Not in 'full' by default — adds workflow overhead. Opt-in: --features hitl
+hitl = []
+
+# WebRTC voice transport: real-time voice with SDP, ICE, RTP
+# Not in 'full' by default — heavy networking. Opt-in: --features webrtc
+webrtc = ["dep:tokio"]
+
+# Agent DevTools: debugging, profiling, execution replay for agents
+# Not in 'full' by default — development-only. Opt-in: --features devtools
+devtools = []
+
 # Local Whisper STT: offline speech-to-text via whisper.cpp bindings
 # Not in 'full' by default — heavy native C++ dep. Opt-in: --features whisper-local
 whisper-local = ["dep:whisper-rs", "audio"]

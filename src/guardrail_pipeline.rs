@@ -14,9 +14,12 @@
 //! - [`PiiGuard`] — wraps [`crate::pii_detection::PiiDetector`]
 //! - [`AttackGuard`] — wraps [`crate::advanced_guardrails::AttackDetector`]
 
+use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::sync::Mutex;
 use std::time::Instant;
+
+use serde::{Deserialize, Serialize};
 
 use crate::advanced_guardrails::{AttackDetector, ToxicityDetector};
 use crate::pii_detection::PiiDetector;
@@ -908,6 +911,449 @@ impl StreamingGuard for StreamingPatternGuard {
     }
 }
 
+// =============================================================================
+// NATURAL LANGUAGE POLICY GUARDS (v6 - item 7.4)
+// =============================================================================
+
+/// A natural-language policy statement that describes a rule the system must
+/// follow. The [`PolicyCompiler`] extracts actionable keywords from the
+/// human-readable `text`, and the [`SemanticChecker`] uses those keywords to
+/// detect violations in generated content.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PolicyStatement {
+    /// Unique identifier for this policy.
+    pub id: String,
+    /// Natural language description of the policy, e.g. "Never reveal API keys".
+    pub text: String,
+    /// How important this policy is — determines the severity of a violation.
+    pub priority: PolicyPriority,
+    /// Which outputs this policy applies to.
+    pub scope: PolicyScope,
+}
+
+/// Priority level for a policy statement, used to determine violation severity.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum PolicyPriority {
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+/// Scope of a policy — controls which outputs are checked.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum PolicyScope {
+    /// Check all model outputs regardless of context.
+    AllOutputs,
+    /// Only check outputs that are the result of tool/function calls.
+    ToolCallOutputs,
+    /// Only check outputs that will be shown directly to the user.
+    UserFacingOnly,
+}
+
+/// A detected violation of a natural-language policy.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PolicyViolation {
+    /// The id of the policy statement that was violated.
+    pub statement_id: String,
+    /// The full text of the violated policy.
+    pub statement_text: String,
+    /// Severity derived from the policy priority.
+    pub severity: PolicyPriority,
+    /// The specific evidence (matched keyword or phrase) that triggered the violation.
+    pub evidence: String,
+    /// An optional suggestion for how to fix the violation.
+    pub suggested_fix: Option<String>,
+}
+
+/// Compiles natural-language policy statements into keyword lists that can be
+/// used for fast content scanning.
+///
+/// The compiler tokenises the policy text, looks for negative directives
+/// ("never", "do not", "prohibit", etc.) and sensitive terms ("API key",
+/// "password", "secret", etc.), and stores the extracted keywords keyed by
+/// policy id.
+pub struct PolicyCompiler {
+    keywords_per_policy: HashMap<String, Vec<String>>,
+}
+
+/// List of well-known sensitive terms that are always extracted when they
+/// appear in a policy.
+const SENSITIVE_TERMS: &[&str] = &[
+    "api key",
+    "api keys",
+    "password",
+    "passwords",
+    "secret",
+    "secrets",
+    "ssn",
+    "social security",
+    "credit card",
+    "credit cards",
+    "private key",
+    "private keys",
+    "token",
+    "tokens",
+    "credentials",
+    "auth token",
+    "access key",
+    "encryption key",
+];
+
+/// Negation words that signal the next meaningful word(s) should be treated as
+/// keywords.
+const NEGATION_PREFIXES: &[&str] = &[
+    "never",
+    "don't",
+    "do not",
+    "prohibit",
+    "avoid",
+    "no",
+    "must not",
+    "should not",
+    "shouldn't",
+    "cannot",
+    "can't",
+    "forbid",
+    "disallow",
+    "block",
+    "reject",
+    "prevent",
+];
+
+impl PolicyCompiler {
+    /// Create a new, empty compiler.
+    pub fn new() -> Self {
+        Self {
+            keywords_per_policy: HashMap::new(),
+        }
+    }
+
+    /// Compile a [`PolicyStatement`] into a list of keywords.
+    ///
+    /// The keywords are derived from:
+    /// 1. Words immediately following negation prefixes ("never", "do not", etc.)
+    /// 2. Well-known sensitive terms that appear anywhere in the text.
+    ///
+    /// The resulting keyword list is stored internally (keyed by `statement.id`)
+    /// and also returned to the caller.
+    pub fn compile(&mut self, statement: &PolicyStatement) -> Vec<String> {
+        let text_lower = statement.text.to_lowercase();
+        let mut keywords: Vec<String> = Vec::new();
+
+        // --- 1. Extract words after negation prefixes ---
+        for prefix in NEGATION_PREFIXES {
+            if let Some(pos) = text_lower.find(prefix) {
+                let after = &text_lower[pos + prefix.len()..];
+                let after_trimmed = after.trim_start();
+                // Collect the next 1-3 meaningful words after the negation.
+                let words: Vec<&str> = after_trimmed
+                    .split_whitespace()
+                    .take(3)
+                    .collect();
+                for word in &words {
+                    let cleaned = word
+                        .trim_matches(|c: char| !c.is_alphanumeric())
+                        .to_string();
+                    if cleaned.len() > 2 && !keywords.contains(&cleaned) {
+                        keywords.push(cleaned);
+                    }
+                }
+                // Also add the multi-word phrase (up to 3 words joined).
+                if words.len() >= 2 {
+                    let phrase = words
+                        .iter()
+                        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()))
+                        .collect::<Vec<&str>>()
+                        .join(" ");
+                    let phrase = phrase.trim().to_string();
+                    if phrase.len() > 2 && !keywords.contains(&phrase) {
+                        keywords.push(phrase);
+                    }
+                }
+            }
+        }
+
+        // --- 2. Extract well-known sensitive terms ---
+        for term in SENSITIVE_TERMS {
+            if text_lower.contains(term) && !keywords.contains(&term.to_string()) {
+                keywords.push(term.to_string());
+            }
+        }
+
+        self.keywords_per_policy
+            .insert(statement.id.clone(), keywords.clone());
+        keywords
+    }
+
+    /// Return the compiled keywords for a previously compiled policy, or `None`
+    /// if the policy id has not been compiled yet.
+    pub fn keywords_for(&self, statement_id: &str) -> Option<&[String]> {
+        self.keywords_per_policy.get(statement_id).map(|v| v.as_slice())
+    }
+
+    /// Remove all compiled policies.
+    pub fn clear(&mut self) {
+        self.keywords_per_policy.clear();
+    }
+}
+
+impl Default for PolicyCompiler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Checks text against a set of compiled policies by looking for keyword
+/// matches. Each match produces a [`PolicyViolation`].
+pub struct SemanticChecker {
+    /// Pairs of (policy, compiled keywords).
+    compiled_policies: Vec<(PolicyStatement, Vec<String>)>,
+}
+
+impl SemanticChecker {
+    /// Create a new, empty checker.
+    pub fn new() -> Self {
+        Self {
+            compiled_policies: Vec::new(),
+        }
+    }
+
+    /// Register a policy together with its compiled keywords.
+    pub fn add_policy(&mut self, statement: PolicyStatement, keywords: Vec<String>) {
+        self.compiled_policies.push((statement, keywords));
+    }
+
+    /// Check `text` against all registered policies. Returns a list of
+    /// violations — one per policy whose keywords appear in the text.
+    ///
+    /// Matching is case-insensitive.
+    pub fn check(&self, text: &str) -> Vec<PolicyViolation> {
+        let text_lower = text.to_lowercase();
+        let mut violations = Vec::new();
+
+        for (policy, keywords) in &self.compiled_policies {
+            for keyword in keywords {
+                if text_lower.contains(&keyword.to_lowercase()) {
+                    violations.push(PolicyViolation {
+                        statement_id: policy.id.clone(),
+                        statement_text: policy.text.clone(),
+                        severity: policy.priority.clone(),
+                        evidence: keyword.clone(),
+                        suggested_fix: Some(format!(
+                            "Remove or redact content matching '{}'",
+                            keyword
+                        )),
+                    });
+                    // One violation per policy is enough — break to the next policy.
+                    break;
+                }
+            }
+        }
+
+        violations
+    }
+
+    /// Return the number of registered policies.
+    pub fn policy_count(&self) -> usize {
+        self.compiled_policies.len()
+    }
+
+    /// Remove all registered policies.
+    pub fn clear(&mut self) {
+        self.compiled_policies.clear();
+    }
+}
+
+impl Default for SemanticChecker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// High-level guard that combines [`PolicyCompiler`] and [`SemanticChecker`]
+/// into a single, easy-to-use interface for natural-language policy enforcement.
+pub struct NaturalLanguageGuard {
+    compiler: PolicyCompiler,
+    checker: SemanticChecker,
+    policies: Vec<PolicyStatement>,
+}
+
+impl NaturalLanguageGuard {
+    /// Create a new guard with no policies.
+    pub fn new() -> Self {
+        Self {
+            compiler: PolicyCompiler::new(),
+            checker: SemanticChecker::new(),
+            policies: Vec::new(),
+        }
+    }
+
+    /// Add a single policy. The policy text is compiled immediately and
+    /// registered with the internal semantic checker.
+    pub fn add_policy(&mut self, statement: PolicyStatement) {
+        let keywords = self.compiler.compile(&statement);
+        self.checker.add_policy(statement.clone(), keywords);
+        self.policies.push(statement);
+    }
+
+    /// Add multiple policies at once.
+    pub fn add_policies(&mut self, statements: Vec<PolicyStatement>) {
+        for statement in statements {
+            self.add_policy(statement);
+        }
+    }
+
+    /// Check `text` against all registered policies. Returns a list of
+    /// [`PolicyViolation`]s (empty if compliant).
+    pub fn check(&self, text: &str) -> Vec<PolicyViolation> {
+        self.checker.check(text)
+    }
+
+    /// Check `text` only against policies that match the given `scope`.
+    pub fn check_with_scope(&self, text: &str, scope: &PolicyScope) -> Vec<PolicyViolation> {
+        let text_lower = text.to_lowercase();
+        let mut violations = Vec::new();
+
+        for (policy, keywords) in &self.checker.compiled_policies {
+            if &policy.scope != scope {
+                continue;
+            }
+            for keyword in keywords {
+                if text_lower.contains(&keyword.to_lowercase()) {
+                    violations.push(PolicyViolation {
+                        statement_id: policy.id.clone(),
+                        statement_text: policy.text.clone(),
+                        severity: policy.priority.clone(),
+                        evidence: keyword.clone(),
+                        suggested_fix: Some(format!(
+                            "Remove or redact content matching '{}'",
+                            keyword
+                        )),
+                    });
+                    break;
+                }
+            }
+        }
+
+        violations
+    }
+
+    /// Return `true` if the text does not violate any registered policy.
+    pub fn is_compliant(&self, text: &str) -> bool {
+        self.checker.check(text).is_empty()
+    }
+
+    /// Return the number of registered policies.
+    pub fn policy_count(&self) -> usize {
+        self.policies.len()
+    }
+
+    /// Remove a policy by id. Returns `true` if the policy was found and
+    /// removed, `false` otherwise.
+    ///
+    /// This rebuilds the internal checker to exclude the removed policy.
+    pub fn remove_policy(&mut self, id: &str) -> bool {
+        let original_len = self.policies.len();
+        self.policies.retain(|p| p.id != id);
+
+        if self.policies.len() == original_len {
+            return false;
+        }
+
+        // Rebuild compiler and checker from remaining policies.
+        self.compiler.clear();
+        self.checker.clear();
+        for policy in &self.policies {
+            let keywords = self.compiler.compile(policy);
+            self.checker.add_policy(policy.clone(), keywords);
+        }
+
+        true
+    }
+}
+
+impl Default for NaturalLanguageGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Guard for NaturalLanguageGuard {
+    fn name(&self) -> &str {
+        "natural_language_policy"
+    }
+
+    fn stage(&self) -> GuardStage {
+        GuardStage::PostReceive
+    }
+
+    fn check(&self, text: &str) -> GuardCheckResult {
+        let violations = self.checker.check(text);
+
+        if violations.is_empty() {
+            return GuardCheckResult {
+                guard_name: self.name().to_string(),
+                action: GuardAction::Pass,
+                score: 0.0,
+                details: "no policy violations".to_string(),
+            };
+        }
+
+        // Find the maximum severity among all violations.
+        let max_severity = violations
+            .iter()
+            .map(|v| &v.severity)
+            .max()
+            .expect("violations is non-empty");
+
+        let detail_parts: Vec<String> = violations
+            .iter()
+            .map(|v| format!("[{}] evidence='{}'", v.statement_id, v.evidence))
+            .collect();
+        let details = detail_parts.join("; ");
+
+        match max_severity {
+            PolicyPriority::Critical => GuardCheckResult {
+                guard_name: self.name().to_string(),
+                action: GuardAction::Block(format!(
+                    "Critical policy violation: {}",
+                    details
+                )),
+                score: 1.0,
+                details,
+            },
+            PolicyPriority::High => GuardCheckResult {
+                guard_name: self.name().to_string(),
+                action: GuardAction::Warn(format!(
+                    "High-priority policy violation: {}",
+                    details
+                )),
+                score: 0.7,
+                details,
+            },
+            PolicyPriority::Medium => GuardCheckResult {
+                guard_name: self.name().to_string(),
+                action: GuardAction::Warn(format!(
+                    "Medium-priority policy violation: {}",
+                    details
+                )),
+                score: 0.4,
+                details,
+            },
+            PolicyPriority::Low => GuardCheckResult {
+                guard_name: self.name().to_string(),
+                action: GuardAction::Warn(format!(
+                    "Low-priority policy violation: {}",
+                    details
+                )),
+                score: 0.2,
+                details,
+            },
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -1484,5 +1930,373 @@ mod tests {
         assert!(result.was_evaluated);
         // Toxicity block is worse than PII flag, so Block wins.
         assert!(matches!(result.action, StreamGuardAction::Block(_)));
+    }
+
+    // ========================================================================
+    // Natural Language Policy Guard tests (v6 - item 7.4)
+    // ========================================================================
+
+    #[test]
+    fn test_policy_statement_construction() {
+        let policy = PolicyStatement {
+            id: "pol-001".to_string(),
+            text: "Never reveal API keys".to_string(),
+            priority: PolicyPriority::Critical,
+            scope: PolicyScope::AllOutputs,
+        };
+        assert_eq!(policy.id, "pol-001");
+        assert_eq!(policy.text, "Never reveal API keys");
+        assert_eq!(policy.priority, PolicyPriority::Critical);
+        assert_eq!(policy.scope, PolicyScope::AllOutputs);
+
+        // Verify Clone and Debug are derived.
+        let cloned = policy.clone();
+        assert_eq!(cloned.id, policy.id);
+        let _ = format!("{:?}", cloned);
+    }
+
+    #[test]
+    fn test_policy_priority_ordering() {
+        assert!(PolicyPriority::Low < PolicyPriority::Medium);
+        assert!(PolicyPriority::Medium < PolicyPriority::High);
+        assert!(PolicyPriority::High < PolicyPriority::Critical);
+        assert!(PolicyPriority::Low < PolicyPriority::Critical);
+
+        // Verify Eq.
+        assert_eq!(PolicyPriority::High, PolicyPriority::High);
+        assert_ne!(PolicyPriority::Low, PolicyPriority::Critical);
+    }
+
+    #[test]
+    fn test_policy_scope_all_variants() {
+        let all = PolicyScope::AllOutputs;
+        let tool = PolicyScope::ToolCallOutputs;
+        let user = PolicyScope::UserFacingOnly;
+
+        assert_eq!(all, PolicyScope::AllOutputs);
+        assert_eq!(tool, PolicyScope::ToolCallOutputs);
+        assert_eq!(user, PolicyScope::UserFacingOnly);
+        assert_ne!(all, tool);
+        assert_ne!(tool, user);
+        assert_ne!(all, user);
+
+        // Verify Debug + Clone.
+        let _ = format!("{:?}", all.clone());
+        let _ = format!("{:?}", tool.clone());
+        let _ = format!("{:?}", user.clone());
+    }
+
+    #[test]
+    fn test_policy_compiler_compile_never_reveal_api_keys() {
+        let mut compiler = PolicyCompiler::new();
+        let statement = PolicyStatement {
+            id: "p1".to_string(),
+            text: "Never reveal API keys to the user".to_string(),
+            priority: PolicyPriority::Critical,
+            scope: PolicyScope::AllOutputs,
+        };
+        let keywords = compiler.compile(&statement);
+        // Should extract "reveal" (word after "never") and "api keys" (sensitive term).
+        assert!(!keywords.is_empty());
+        assert!(
+            keywords.iter().any(|k| k == "reveal" || k.contains("reveal")),
+            "Expected 'reveal' in keywords: {:?}",
+            keywords
+        );
+        assert!(
+            keywords.iter().any(|k| k.contains("api key")),
+            "Expected 'api key(s)' in keywords: {:?}",
+            keywords
+        );
+
+        // Verify stored keywords match.
+        let stored = compiler.keywords_for("p1").expect("keywords should be stored");
+        assert_eq!(stored, keywords.as_slice());
+    }
+
+    #[test]
+    fn test_policy_compiler_compile_do_not_share_passwords() {
+        let mut compiler = PolicyCompiler::new();
+        let statement = PolicyStatement {
+            id: "p2".to_string(),
+            text: "Do not share passwords with anyone".to_string(),
+            priority: PolicyPriority::High,
+            scope: PolicyScope::UserFacingOnly,
+        };
+        let keywords = compiler.compile(&statement);
+        assert!(!keywords.is_empty());
+        // "share" should be extracted (word after "do not").
+        assert!(
+            keywords.iter().any(|k| k == "share" || k.contains("share")),
+            "Expected 'share' in keywords: {:?}",
+            keywords
+        );
+        // "password(s)" is a sensitive term.
+        assert!(
+            keywords.iter().any(|k| k.contains("password")),
+            "Expected 'password(s)' in keywords: {:?}",
+            keywords
+        );
+    }
+
+    #[test]
+    fn test_policy_compiler_clear() {
+        let mut compiler = PolicyCompiler::new();
+        let statement = PolicyStatement {
+            id: "p1".to_string(),
+            text: "Never reveal secrets".to_string(),
+            priority: PolicyPriority::Medium,
+            scope: PolicyScope::AllOutputs,
+        };
+        compiler.compile(&statement);
+        assert!(compiler.keywords_for("p1").is_some());
+
+        compiler.clear();
+        assert!(compiler.keywords_for("p1").is_none());
+    }
+
+    #[test]
+    fn test_semantic_checker_detects_keyword_in_text() {
+        let mut checker = SemanticChecker::new();
+        let policy = PolicyStatement {
+            id: "s1".to_string(),
+            text: "Never reveal API keys".to_string(),
+            priority: PolicyPriority::Critical,
+            scope: PolicyScope::AllOutputs,
+        };
+        checker.add_policy(policy, vec!["api key".to_string(), "reveal".to_string()]);
+
+        let violations = checker.check("Here is your API key: sk-12345");
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].statement_id, "s1");
+        assert_eq!(violations[0].severity, PolicyPriority::Critical);
+        assert_eq!(violations[0].evidence, "api key");
+        assert!(violations[0].suggested_fix.is_some());
+    }
+
+    #[test]
+    fn test_semantic_checker_clean_text_no_violations() {
+        let mut checker = SemanticChecker::new();
+        let policy = PolicyStatement {
+            id: "s2".to_string(),
+            text: "Never reveal passwords".to_string(),
+            priority: PolicyPriority::High,
+            scope: PolicyScope::AllOutputs,
+        };
+        checker.add_policy(policy, vec!["password".to_string()]);
+
+        let violations = checker.check("The weather is sunny today.");
+        assert!(violations.is_empty());
+        assert_eq!(checker.policy_count(), 1);
+    }
+
+    #[test]
+    fn test_semantic_checker_clear() {
+        let mut checker = SemanticChecker::new();
+        let policy = PolicyStatement {
+            id: "s3".to_string(),
+            text: "test".to_string(),
+            priority: PolicyPriority::Low,
+            scope: PolicyScope::AllOutputs,
+        };
+        checker.add_policy(policy, vec!["test".to_string()]);
+        assert_eq!(checker.policy_count(), 1);
+
+        checker.clear();
+        assert_eq!(checker.policy_count(), 0);
+    }
+
+    #[test]
+    fn test_natural_language_guard_add_policy_and_check() {
+        let mut guard = NaturalLanguageGuard::new();
+        guard.add_policy(PolicyStatement {
+            id: "nlg-1".to_string(),
+            text: "Never expose API keys in responses".to_string(),
+            priority: PolicyPriority::Critical,
+            scope: PolicyScope::AllOutputs,
+        });
+        assert_eq!(guard.policy_count(), 1);
+
+        let violations = guard.check("Your API key is sk-abc123");
+        assert!(!violations.is_empty());
+        assert_eq!(violations[0].statement_id, "nlg-1");
+    }
+
+    #[test]
+    fn test_natural_language_guard_is_compliant() {
+        let mut guard = NaturalLanguageGuard::new();
+        guard.add_policy(PolicyStatement {
+            id: "nlg-2".to_string(),
+            text: "Never mention passwords".to_string(),
+            priority: PolicyPriority::High,
+            scope: PolicyScope::AllOutputs,
+        });
+
+        assert!(guard.is_compliant("The sky is blue."));
+        assert!(!guard.is_compliant("Your password is hunter2"));
+    }
+
+    #[test]
+    fn test_natural_language_guard_check_with_scope_filters() {
+        let mut guard = NaturalLanguageGuard::new();
+
+        guard.add_policy(PolicyStatement {
+            id: "scope-all".to_string(),
+            text: "Never reveal secrets".to_string(),
+            priority: PolicyPriority::High,
+            scope: PolicyScope::AllOutputs,
+        });
+        guard.add_policy(PolicyStatement {
+            id: "scope-tool".to_string(),
+            text: "Never expose credentials in tool calls".to_string(),
+            priority: PolicyPriority::Critical,
+            scope: PolicyScope::ToolCallOutputs,
+        });
+
+        let text = "The secret credential is exposed";
+
+        // Checking with AllOutputs should only match the AllOutputs policy.
+        let v_all = guard.check_with_scope(text, &PolicyScope::AllOutputs);
+        assert!(v_all.iter().all(|v| v.statement_id == "scope-all"));
+
+        // Checking with ToolCallOutputs should only match the ToolCallOutputs policy.
+        let v_tool = guard.check_with_scope(text, &PolicyScope::ToolCallOutputs);
+        assert!(v_tool.iter().all(|v| v.statement_id == "scope-tool"));
+
+        // Checking with UserFacingOnly should match neither.
+        let v_user = guard.check_with_scope(text, &PolicyScope::UserFacingOnly);
+        assert!(v_user.is_empty());
+    }
+
+    #[test]
+    fn test_natural_language_guard_trait_impl_block_on_critical() {
+        let mut nlg = NaturalLanguageGuard::new();
+        nlg.add_policy(PolicyStatement {
+            id: "critical-1".to_string(),
+            text: "Never reveal API keys".to_string(),
+            priority: PolicyPriority::Critical,
+            scope: PolicyScope::AllOutputs,
+        });
+
+        // Use the Guard trait's check method (not NaturalLanguageGuard::check).
+        let guard: &dyn Guard = &nlg;
+        assert_eq!(guard.name(), "natural_language_policy");
+        assert_eq!(guard.stage(), GuardStage::PostReceive);
+
+        // Text containing "api key" should trigger a Block action.
+        let result = guard.check("Here is your api key: sk-12345");
+        assert!(
+            matches!(result.action, GuardAction::Block(_)),
+            "Expected Block for critical violation, got {:?}",
+            result.action
+        );
+        assert_eq!(result.score, 1.0);
+
+        // Clean text should Pass.
+        let clean = guard.check("Hello, how can I help you?");
+        assert!(matches!(clean.action, GuardAction::Pass));
+        assert_eq!(clean.score, 0.0);
+    }
+
+    #[test]
+    fn test_natural_language_guard_trait_impl_warn_on_high() {
+        let mut nlg = NaturalLanguageGuard::new();
+        nlg.add_policy(PolicyStatement {
+            id: "high-1".to_string(),
+            text: "Do not share passwords".to_string(),
+            priority: PolicyPriority::High,
+            scope: PolicyScope::AllOutputs,
+        });
+
+        let guard: &dyn Guard = &nlg;
+        let result = guard.check("Your password is hunter2");
+        assert!(
+            matches!(result.action, GuardAction::Warn(_)),
+            "Expected Warn for high violation, got {:?}",
+            result.action
+        );
+        assert!((result.score - 0.7).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_policy_violation_construction_with_evidence() {
+        let violation = PolicyViolation {
+            statement_id: "v1".to_string(),
+            statement_text: "Never reveal API keys".to_string(),
+            severity: PolicyPriority::Critical,
+            evidence: "api key".to_string(),
+            suggested_fix: Some("Redact the API key from the response".to_string()),
+        };
+
+        assert_eq!(violation.statement_id, "v1");
+        assert_eq!(violation.statement_text, "Never reveal API keys");
+        assert_eq!(violation.severity, PolicyPriority::Critical);
+        assert_eq!(violation.evidence, "api key");
+        assert_eq!(
+            violation.suggested_fix.as_deref(),
+            Some("Redact the API key from the response")
+        );
+
+        // Verify Debug + Clone.
+        let cloned = violation.clone();
+        assert_eq!(cloned.evidence, violation.evidence);
+        let _ = format!("{:?}", cloned);
+    }
+
+    #[test]
+    fn test_natural_language_guard_remove_policy() {
+        let mut guard = NaturalLanguageGuard::new();
+        guard.add_policy(PolicyStatement {
+            id: "rem-1".to_string(),
+            text: "Never reveal secrets".to_string(),
+            priority: PolicyPriority::High,
+            scope: PolicyScope::AllOutputs,
+        });
+        guard.add_policy(PolicyStatement {
+            id: "rem-2".to_string(),
+            text: "Never share passwords".to_string(),
+            priority: PolicyPriority::Critical,
+            scope: PolicyScope::AllOutputs,
+        });
+        assert_eq!(guard.policy_count(), 2);
+
+        // Remove first policy.
+        assert!(guard.remove_policy("rem-1"));
+        assert_eq!(guard.policy_count(), 1);
+
+        // Text with "secret" should no longer violate (that policy was removed).
+        let violations = guard.check("here is a secret");
+        assert!(
+            violations.iter().all(|v| v.statement_id != "rem-1"),
+            "Removed policy should not trigger violations"
+        );
+
+        // Removing nonexistent policy returns false.
+        assert!(!guard.remove_policy("nonexistent"));
+
+        // Password policy still works.
+        let violations2 = guard.check("the password is abc");
+        assert!(!violations2.is_empty());
+        assert_eq!(violations2[0].statement_id, "rem-2");
+    }
+
+    #[test]
+    fn test_natural_language_guard_add_policies_batch() {
+        let mut guard = NaturalLanguageGuard::new();
+        guard.add_policies(vec![
+            PolicyStatement {
+                id: "batch-1".to_string(),
+                text: "Never reveal API keys".to_string(),
+                priority: PolicyPriority::Critical,
+                scope: PolicyScope::AllOutputs,
+            },
+            PolicyStatement {
+                id: "batch-2".to_string(),
+                text: "Avoid sharing credit card numbers".to_string(),
+                priority: PolicyPriority::High,
+                scope: PolicyScope::UserFacingOnly,
+            },
+        ]);
+        assert_eq!(guard.policy_count(), 2);
     }
 }

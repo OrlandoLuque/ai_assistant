@@ -497,6 +497,8 @@ pub mod mode_manager;
 #[cfg(feature = "autonomous")]
 pub mod container_tools;
 #[cfg(feature = "autonomous")]
+pub mod mcts_planner;
+#[cfg(feature = "autonomous")]
 pub mod os_tools;
 #[cfg(feature = "scheduler")]
 pub mod scheduler;
@@ -563,6 +565,14 @@ pub use interactive_commands::{CommandProcessor, CommandResult, UserIntent};
 
 #[cfg(feature = "autonomous")]
 pub use multi_agent::{MultiAgentSession, SessionSummary as MultiAgentSessionSummary};
+
+#[cfg(feature = "autonomous")]
+pub use mcts_planner::{
+    AgentMctsState, AggregationStrategy, ExecutionFeedback, LlmPRM, MctsConfig, MctsNode,
+    MctsPlanner, MctsResult, MctsState, PrmAggregator, PrmRule, PrmRuleCheck,
+    ProcessRewardModel, RefinementConfig, RefinementLoop, RefinementResult, RefinementStrategy,
+    RuleBasedPRM, SimulationPolicy, StepScore,
+};
 
 // =============================================================================
 // MULTI-LAYER GRAPH (always available)
@@ -657,10 +667,11 @@ pub use advanced_guardrails::{
 #[cfg(feature = "security")]
 pub use guardrail_pipeline::{
     AttackGuard, ContentLengthGuard, Guard, GuardAction, GuardCheckResult, GuardStage,
-    GuardrailPipeline, PatternGuard, PiiGuard, PipelineResult, RateLimitGuard,
-    StreamGuardAction, StreamingGuard, StreamingGuardrailConfig, StreamingGuardrailMetrics,
-    StreamingGuardrailPipeline, StreamingPatternGuard, StreamingPiiGuard, StreamingToxicityGuard,
-    ToxicityGuard,
+    GuardrailPipeline, NaturalLanguageGuard, PatternGuard, PiiGuard, PipelineResult,
+    PolicyCompiler, PolicyPriority, PolicyScope, PolicyStatement, PolicyViolation,
+    RateLimitGuard, SemanticChecker, StreamGuardAction, StreamingGuard,
+    StreamingGuardrailConfig, StreamingGuardrailMetrics, StreamingGuardrailPipeline,
+    StreamingPatternGuard, StreamingPiiGuard, StreamingToxicityGuard, ToxicityGuard,
 };
 
 // =============================================================================
@@ -914,6 +925,8 @@ pub mod agentic_loop;
 #[cfg(feature = "tools")]
 pub mod function_calling;
 #[cfg(feature = "tools")]
+pub mod mcp_client;
+#[cfg(feature = "tools")]
 pub mod mcp_protocol;
 #[cfg(feature = "tools")]
 pub mod model_integration;
@@ -975,6 +988,15 @@ pub use mcp_protocol::{
     McpSession, McpSessionStore, McpTool, McpV2OAuthConfig, OAuthToken, OAuthTokenManager,
     PkceChallenge, StreamableHttpTransport, ToolAnnotationRegistry, ToolAnnotations,
     TransportMode, MCP_VERSION,
+};
+
+#[cfg(feature = "tools")]
+pub use mcp_client::{
+    ClientInfo as McpRemoteClientInfo, McpClientAuth, McpClientConfig, McpClientPool,
+    RemoteMcpClient, RemoteResource, RemoteTool, RemoteToolAnnotations, RemoteToolRegistry,
+    ResourceContent as McpResourceContentRemote,
+    ServerCapabilities as McpRemoteServerCapabilities, ToolCallResult as McpToolCallResult,
+    ToolResultContent as McpToolResultContent,
 };
 
 #[cfg(feature = "tools")]
@@ -1043,6 +1065,8 @@ pub use html_extraction::{
 #[cfg(feature = "eval")]
 pub mod ab_testing;
 #[cfg(feature = "eval")]
+pub mod agent_eval;
+#[cfg(feature = "eval")]
 pub mod auto_model_selection;
 #[cfg(feature = "eval")]
 pub mod benchmark;
@@ -1061,6 +1085,8 @@ pub mod model_ensemble;
 #[cfg(feature = "eval")]
 pub mod output_validation;
 #[cfg(feature = "eval")]
+pub mod red_team;
+#[cfg(feature = "eval")]
 pub mod self_consistency;
 
 #[cfg(feature = "eval")]
@@ -1068,6 +1094,13 @@ pub use ab_testing::{
     AbTestError, Experiment as AbExperiment, ExperimentManager,
     ExperimentResult as AbExperimentResult, ExperimentStatus, ExperimentVariant, MetricRecord,
     SignificanceCalculator, VariantAssigner, VariantAssignment, VariantStats,
+};
+
+#[cfg(feature = "eval")]
+pub use agent_eval::{
+    AgentMetrics, AnalyzerConfig, EvalReport, EvalTrajectoryStep, ExpectedToolCall,
+    MetricsComparison, ReportBuilder, StepActionType, StepBreakdown, ToolAccuracyMetrics,
+    ToolCallEvaluator, ToolCallMatch, TrajectoryAnalyzer, TrajectoryRecorder,
 };
 
 #[cfg(feature = "eval")]
@@ -1139,6 +1172,13 @@ pub use output_validation::{
     IssueSeverity, IssueType, OutputFormat, OutputValidator,
     SchemaValidator as OutputSchemaValidator, ValidationConfig, ValidationIssue,
     ValidationResult as OutputValidationResult,
+};
+
+#[cfg(feature = "eval")]
+pub use red_team::{
+    AttackCategory, AttackGenerator, AttackInstance, AttackSeverity, AttackTemplate,
+    CategoryReport, DefenseEvaluator, DetectionMethod, RedTeamConfig, RedTeamReport,
+    RedTeamResult, RedTeamSuite,
 };
 
 // =============================================================================
@@ -1945,4 +1985,35 @@ pub use constrained_decoding::{
     Grammar, GrammarAlternative, GrammarBuilder, GrammarConstraint, GrammarElement, GrammarRule,
     ProviderGrammarFormat, RepeatKind, SchemaToGrammar, StreamingValidationConfig,
     StreamingValidator, ValidationState as GrammarValidationState,
+};
+
+// =============================================================================
+// HUMAN-IN-THE-LOOP (tool approval gates, confidence escalation, corrections)
+// =============================================================================
+
+#[cfg(feature = "hitl")]
+pub mod hitl;
+
+#[cfg(feature = "hitl")]
+pub use hitl::{
+    ApprovalDecision, ApprovalLog, ApprovalLogEntry, ApprovalPolicy, ApprovalRequest,
+    AutoApproveGate, AutoDenyGate, CallbackApprovalGate, ConfidenceEstimator, ConfidenceSignal,
+    Correction, CorrectionHistory, CorrectionType, EscalationAction, EscalationEvaluator,
+    EscalationPolicy, EscalationThreshold, EscalationTrigger, HitlApprovalGate, ImpactLevel,
+    MinimumEstimator, PolicyAction, PolicyCondition, PolicyEngine, PolicyLoader, PolicyRule,
+    WeightedAverageEstimator,
+};
+
+// =============================================================================
+// AGENT DEVTOOLS (debugging, profiling, execution replay)
+// =============================================================================
+
+#[cfg(feature = "devtools")]
+pub mod agent_devtools;
+
+#[cfg(feature = "devtools")]
+pub use agent_devtools::{
+    AgentDebugger, Breakpoint, DebugEvent, DebugEventType, DevToolsConfig, ExecutionRecorder,
+    ExecutionReplay, PerformanceProfiler, ProfileSummary, StateDiff, StateInspector, StateSnapshot,
+    StepProfile,
 };
