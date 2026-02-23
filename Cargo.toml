@@ -170,6 +170,22 @@ a2a = ["dep:tokio"]
 # Advanced memory: episodic, procedural, entity memory with consolidation
 advanced-memory = []
 
+# Real-time voice agents: bidirectional audio streaming, VAD, interruption handling
+# Not in 'full' by default — requires tokio for async streams. Opt-in: --features voice-agent
+voice-agent = ["dep:tokio"]
+
+# Media generation: image (DALL-E, SD, Flux) and video (Runway, Sora) generation
+# Not in 'full' by default — involves external API calls. Opt-in: --features media-generation
+media-generation = []
+
+# Distillation pipeline: trajectory collection, scoring, dataset building, data flywheel
+# Not in 'full' by default — involves LLM calls and storage. Opt-in: --features distillation
+distillation = []
+
+# Constrained decoding: grammar-guided generation for local models (GBNF, JSON Schema)
+# Not in 'full' by default — only useful with local providers. Opt-in: --features constrained-decoding
+constrained-decoding = []
+
 # Local Whisper STT: offline speech-to-text via whisper.cpp bindings
 # Not in 'full' by default — heavy native C++ dep. Opt-in: --features whisper-local
 whisper-local = ["dep:whisper-rs", "audio"]

@@ -347,8 +347,11 @@ pub mod task_decomposition;
 #[cfg(feature = "multi-agent")]
 pub use multi_agent::{
     Agent, AgentMessage, AgentOrchestrator, AgentRole, AgentStatus, AgentTask, BusMessage,
-    CollaborationSession, ContextEntry, MessageBus, MessageType, OrchestrationError,
-    OrchestrationStatus, OrchestrationStrategy, SharedContext, TaskDispatcher, TaskStatus,
+    CollaborationSession, ContextEntry, ConversationPattern, ContextTransferPolicy,
+    HandoffManager, HandoffRequest, HandoffResult, MessageBus, MessageType, OrchestrationError,
+    OrchestrationStatus, OrchestrationStrategy, PatternAgent, PatternConfig, PatternMessage,
+    PatternResult, PatternRunner, SharedContext, TaskDispatcher, TaskStatus,
+    TerminationCondition,
 };
 
 #[cfg(feature = "multi-agent")]
@@ -654,7 +657,10 @@ pub use advanced_guardrails::{
 #[cfg(feature = "security")]
 pub use guardrail_pipeline::{
     AttackGuard, ContentLengthGuard, Guard, GuardAction, GuardCheckResult, GuardStage,
-    GuardrailPipeline, PatternGuard, PiiGuard, PipelineResult, RateLimitGuard, ToxicityGuard,
+    GuardrailPipeline, PatternGuard, PiiGuard, PipelineResult, RateLimitGuard,
+    StreamGuardAction, StreamingGuard, StreamingGuardrailConfig, StreamingGuardrailMetrics,
+    StreamingGuardrailPipeline, StreamingPatternGuard, StreamingPiiGuard, StreamingToxicityGuard,
+    ToxicityGuard,
 };
 
 // =============================================================================
@@ -963,8 +969,12 @@ pub use function_calling::{
 
 #[cfg(feature = "tools")]
 pub use mcp_protocol::{
-    McpClient, McpContent, McpError, McpPrompt, McpPromptMessage, McpRequest, McpResource,
-    McpResourceContent, McpResponse, McpServer, McpServerCapabilities, McpTool, MCP_VERSION,
+    AnnotatedTool, AuthorizationServerMetadata, DynamicClientRegistration,
+    InMemorySessionStore, McpClient, McpContent, McpError, McpPrompt, McpPromptMessage,
+    McpRequest, McpResource, McpResourceContent, McpResponse, McpServer, McpServerCapabilities,
+    McpSession, McpSessionStore, McpTool, McpV2OAuthConfig, OAuthToken, OAuthTokenManager,
+    PkceChallenge, StreamableHttpTransport, ToolAnnotationRegistry, ToolAnnotations,
+    TransportMode, MCP_VERSION,
 };
 
 #[cfg(feature = "tools")]
@@ -1658,9 +1668,13 @@ pub use vector_db_pgvector::{PgVectorConfig, PgVectorDb};
 pub mod opentelemetry_integration;
 
 pub use opentelemetry_integration::{
-    create_llm_span, create_rag_span, create_tool_span, semantic_conventions, AiSpan,
-    ExportFormat as OtelExportFormat, HistogramStats, MetricsCollector, OtelConfig, OtelTracer,
-    SpanExporter, TracingMiddleware,
+    create_llm_span, create_rag_span, create_tool_span, semantic_conventions, AgentSpan,
+    AgentTracer, AiSpan, BudgetAlert as OtelBudgetAlert,
+    BudgetCheckResult as OtelBudgetCheckResult, CostAttributor, CostBreakdownEntry, CostBudget,
+    CostReport, ExportFormat as OtelExportFormat, GenAiAttributes, GenAiEvent, GenAiEventType,
+    GenAiSystem, HistogramStats, MetricsCollector, ModelPricing as OtelModelPricing, OtelConfig,
+    OtelTracer, PricingTable, SpanExporter, SpanStatus, SpanTree, SpanTreeNode,
+    TracingMiddleware,
 };
 
 // =============================================================================
@@ -1786,10 +1800,11 @@ pub mod event_workflow;
 
 #[cfg(feature = "workflows")]
 pub use event_workflow::{
-    Checkpointer, ErrorSnapshot, InMemoryCheckpointer, NodeHandler, SimpleEvent, WorkflowBreakpoint,
-    WorkflowCheckpoint, WorkflowDefinition, WorkflowEdgeDef, WorkflowEvent, WorkflowGraph,
-    WorkflowNode, WorkflowNodeDef, WorkflowResult, WorkflowRunner, WorkflowState, WorkflowTool,
-    WorkflowToolDefinition, WorkflowToolParam,
+    Checkpointer, DurableBackend, DurableCheckpoint, DurableConfig, DurableExecutor, ErrorSnapshot,
+    InMemoryCheckpointer, NodeHandler, RecoveryManager, RetentionPolicy, SimpleEvent,
+    WorkflowBreakpoint, WorkflowCheckpoint, WorkflowDefinition, WorkflowEdgeDef, WorkflowEvent,
+    WorkflowGraph, WorkflowNode, WorkflowNodeDef, WorkflowResult, WorkflowRunner, WorkflowState,
+    WorkflowTool, WorkflowToolDefinition, WorkflowToolParam,
 };
 
 // =============================================================================
@@ -1801,10 +1816,14 @@ pub mod prompt_signature;
 
 #[cfg(feature = "prompt-signatures")]
 pub use prompt_signature::{
-    BayesianOptimizer, BootstrapFewShot, CompiledPrompt, ContainsAnswer, EvalMetric,
-    EvaluationBudget, ExactMatch, F1Score, FieldType, GridSearchOptimizer, ImprovementRule,
-    OptimizationResult, PromptExample, RandomSearchOptimizer, SelfReflector, Signature,
-    SignatureField, TrainingExample,
+    AdapterRouter, AssertedSignature, AssertionResult, BayesianOptimizer, BootstrapFewShot,
+    ChatAdapter, CompletionAdapter, CompiledPrompt, ContainsAnswer, ContainsAssertion,
+    CustomAssertion, DiscreteSearchStrategy, EvalMetric, EvaluationBudget, ExactMatch, F1Score,
+    FieldType, FormatAssertion, FormattedMessage, FormattedPrompt, FunctionCallingAdapter,
+    GEPAConfig, GEPAOptimizer, GridSearchOptimizer, ImprovementRule, InstructionProposer,
+    JsonSchemaAssertion, LengthAssertion, LmAdapter, MIPROv2Config, MIPROv2Optimizer,
+    OptimizationResult, ParetoFront, ParetoSolution, PromptAssertion, PromptExample,
+    RandomSearchOptimizer, SelfReflector, Signature, SignatureField, TrainingExample,
 };
 
 // =============================================================================
@@ -1816,8 +1835,13 @@ pub mod advanced_memory;
 
 #[cfg(feature = "advanced-memory")]
 pub use advanced_memory::{
-    AdvancedMemoryManager, ConsolidationResult, EntityRecord, EntityRelation, EntityStore, Episode,
-    EpisodicStore, MemoryConsolidator, Procedure, ProceduralStore,
+    AdvancedMemoryManager, ConsolidationPipelineResult, ConsolidationResult,
+    ConsolidationSchedule, EnhancedConsolidator, EntityRecord, EntityRelation, EntityStore,
+    Episode, EpisodicStore, EvolutionConfig, EvolutionReport, EvolutionStatistics,
+    FactExtractor as MemoryFactExtractor, FactStore as MemoryFactStore, FeedbackOutcome,
+    LlmFactExtractor, MemoryConsolidator, PatternFactExtractor, Procedure, ProceduralStore,
+    ProcedureEvolver, ProcedureFeedback, SemanticFact, TemporalEdge, TemporalEdgeType,
+    TemporalGraph, TemporalQuery, TemporalQueryType,
     cosine_similarity as memory_cosine_similarity, new_episode,
 };
 
@@ -1846,4 +1870,79 @@ pub use context_composer::{
     OverflowLevel as ComposerOverflowLevel, OverflowThresholds as ComposerOverflowThresholds,
     SectionBudget, SectionPriority, TokenBudgetAllocator,
     estimate_tokens as composer_estimate_tokens, generate_mini_summary,
+};
+
+// =============================================================================
+// VOICE AGENT (real-time bidirectional audio, VAD, turn management)
+// =============================================================================
+
+#[cfg(feature = "voice-agent")]
+pub mod voice_agent;
+
+#[cfg(feature = "voice-agent")]
+pub use voice_agent::{
+    AudioChunk, AudioFormat as VoiceAudioFormat, ConversationTurn as VoiceTurn, InMemoryTransport,
+    InterruptionEvent, InterruptionPolicy, TurnManager, TurnPolicy, TurnSpeaker, VadConfig,
+    VadDetector, VadEvent, VoiceAgent, VoiceAgentConfig, VoiceSession, VoiceSessionState,
+    VoiceTransport,
+};
+
+// =============================================================================
+// MEDIA GENERATION (image & video generation providers)
+// =============================================================================
+
+#[cfg(feature = "media-generation")]
+pub mod media_generation;
+
+#[cfg(feature = "media-generation")]
+pub use media_generation::{
+    AspectRatio, DallEEditProvider, DallEProvider, FluxProvider, GeneratedImage, GeneratedVideo,
+    ImageEditConfig, ImageEditOperation, ImageEditProvider, ImageFormat as MediaImageFormat,
+    ImageGenConfig, ImageGenerationProvider, ImageProviderRouter, ImageQuality, ImageStyle,
+    LocalDiffusionProvider, ReplicateVideoProvider, RunwayProvider, SoraProvider,
+    StabilityEditProvider, StableDiffusionProvider, VideoFormat, VideoGenConfig,
+    VideoGenerationProvider, VideoJob, VideoJobStatus, VideoProviderRouter, VideoResolution,
+};
+
+// =============================================================================
+// DISTILLATION PIPELINE (trajectory collection, scoring, dataset building)
+// =============================================================================
+
+#[cfg(feature = "distillation")]
+pub mod distillation;
+
+#[cfg(feature = "distillation")]
+pub use distillation::{
+    CompositeScorer as DistillationCompositeScorer, CycleStatus, DataFlywheel, DatasetBuilder,
+    DatasetConfig, DatasetEntry, DatasetFormat, DatasetMessage, DiversityScorer,
+    EfficiencyScorer, FlatteningStrategy, FlywheelConfig, FlywheelCycle, FlywheelTrigger,
+    InMemoryTrajectoryStore, JsonlTrajectoryStore, LogTrigger, OutcomeScorer, RequiredOutcome,
+    StepType as DistillationStepType, Trajectory, TrajectoryCollector, TrajectoryDataset,
+    TrajectoryFilter, TrajectoryId, TrajectoryOutcome, TrajectoryScorer, TrajectoryStep,
+    TrajectoryStore, WebhookTrigger,
+};
+
+// =============================================================================
+// AGENT DEFINITION (declarative agent configuration from JSON/TOML)
+// =============================================================================
+
+pub mod agent_definition;
+
+pub use agent_definition::{
+    AgentDefinition, AgentDefinitionLoader, AgentSpec, GuardrailSpec, MemorySpec, ToolRef,
+    ValidationWarning, WarningSeverity,
+};
+
+// =============================================================================
+// CONSTRAINED DECODING (grammar-guided generation, GBNF, JSON Schema)
+// =============================================================================
+
+#[cfg(feature = "constrained-decoding")]
+pub mod constrained_decoding;
+
+#[cfg(feature = "constrained-decoding")]
+pub use constrained_decoding::{
+    Grammar, GrammarAlternative, GrammarBuilder, GrammarConstraint, GrammarElement, GrammarRule,
+    ProviderGrammarFormat, RepeatKind, SchemaToGrammar, StreamingValidationConfig,
+    StreamingValidator, ValidationState as GrammarValidationState,
 };

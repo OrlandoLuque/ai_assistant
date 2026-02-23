@@ -5212,3 +5212,818 @@ node.set_conflict_resolution(ConflictResolution::LastWriterWins);
 ```
 
 **Feature flag**: `distributed-network`
+
+---
+
+## 101. Voice Agent
+
+**What**: Real-time bidirectional audio streaming with a full STT -> LLM -> TTS pipeline, energy-based voice activity detection (VAD), conversation turn management with configurable policies, and interruption handling. The `VoiceAgent` orchestrates sessions, processes incoming audio through VAD to detect speech boundaries, and manages turns between user and agent.
+
+**Why**: Voice interfaces require tight coordination between speech detection, transcription, reasoning, and synthesis. This module provides the entire pipeline as a single cohesive unit, handling the hard parts -- silence detection, barge-in interruptions, and turn-taking -- so you can focus on the conversation logic.
+
+```rust
+use ai_assistant::voice_agent::{
+    VoiceAgent, VoiceAgentConfig, VoiceSession, VadConfig, VadDetector,
+    VadEvent, TurnManager, TurnPolicy, InterruptionPolicy,
+    AudioChunk, AudioFormat,
+};
+
+// Configure the voice agent
+let config = VoiceAgentConfig {
+    model_stt: "whisper-1".to_string(),
+    model_tts: "tts-1".to_string(),
+    vad_config: VadConfig {
+        energy_threshold: 0.02,
+        silence_duration_ms: 500,
+        min_speech_duration_ms: 200,
+        frame_size_ms: 20,
+    },
+    interruption_policy: InterruptionPolicy::Immediate,
+    voice_id: "alloy".to_string(),
+    sample_rate: 16000,
+    chunk_size_ms: 20,
+    turn_policy: TurnPolicy::NaturalOverlap,
+};
+
+// Create the agent and start a session
+let mut agent = VoiceAgent::new(config)?;
+let session = agent.start_session()?;
+println!("Session started: {}", session.session_id);
+
+// Process audio through VAD to detect speech boundaries
+let mut vad = VadDetector::with_defaults();
+let pcm_frame: Vec<i16> = vec![0i16; 320]; // 20ms at 16kHz mono
+match vad.process_frame(&pcm_frame) {
+    VadEvent::SpeechStart { timestamp_ms } => {
+        println!("Speech started at {}ms", timestamp_ms);
+    }
+    VadEvent::SpeechEnd { timestamp_ms, duration_ms } => {
+        println!("Speech ended at {}ms (duration: {}ms)", timestamp_ms, duration_ms);
+    }
+    VadEvent::Silence => { /* no speech activity */ }
+}
+
+// Manage conversation turns
+let mut turns = TurnManager::new(TurnPolicy::StrictAlternating);
+turns.start_turn(ai_assistant::voice_agent::TurnSpeaker::User)?;
+let turn = turns.end_turn("Hello, how are you?".to_string(), 1200)?;
+println!("Turn {}: {} said '{}'", turn.turn_number, turn.speaker, turn.transcript);
+
+// Feed audio chunks to the agent
+let chunk = AudioChunk::new(vec![0u8; 640], 16000, 1, AudioFormat::Pcm16);
+println!("Chunk duration: {}ms", chunk.duration_ms());
+```
+
+**Key types**: `VoiceAgent`, `VoiceAgentConfig`, `VoiceSession`, `VadDetector`, `VadConfig`, `VadEvent`, `TurnManager`, `TurnPolicy`, `InterruptionPolicy`, `AudioChunk`, `AudioFormat`
+
+**Feature flag**: `voice-agent`
+
+---
+
+## 102. Media Generation
+
+**What**: Multi-provider image generation (DALL-E, Stable Diffusion, Flux, local ComfyUI), image editing (inpaint, outpaint, style transfer, upscale, remove background), and video generation (Runway Gen-3, OpenAI Sora, Replicate). Image providers implement the `ImageGenerationProvider` trait and are registered in an `ImageProviderRouter` for unified access. Video generation follows an async job model: submit, poll status, download.
+
+**Why**: Generative AI is not limited to text. A unified interface across image and video providers lets you swap backends without changing application code, and the router pattern enables fallback strategies.
+
+```rust
+use ai_assistant::media_generation::{
+    ImageProviderRouter, DallEProvider, StableDiffusionProvider, FluxProvider,
+    ImageGenConfig, ImageQuality, ImageStyle,
+    ImageEditConfig, ImageEditOperation, DallEEditProvider,
+    VideoProviderRouter, RunwayProvider, SoraProvider,
+    VideoGenConfig, VideoResolution,
+};
+
+// --- Image Generation ---
+
+// Register multiple image providers in a router
+let mut image_router = ImageProviderRouter::new();
+image_router.register(Box::new(DallEProvider::new("sk-openai-key")));
+image_router.register(Box::new(StableDiffusionProvider::new("sk-stability-key")));
+image_router.register(Box::new(FluxProvider::new("sk-flux-key")));
+
+// Configure and generate
+let config = ImageGenConfig {
+    width: 1024,
+    height: 1024,
+    style: Some(ImageStyle::Photorealistic),
+    quality: ImageQuality::HD,
+    num_images: 1,
+    negative_prompt: Some("blurry, low quality".to_string()),
+    seed: Some(42),
+    guidance_scale: Some(7.5),
+};
+
+let image = image_router.generate("dall-e", "A sunset over the ocean", &config)?;
+println!("Generated {}x{} image ({} bytes)", image.width, image.height, image.bytes.len());
+
+// --- Image Editing ---
+
+let edit_config = ImageEditConfig {
+    operation: ImageEditOperation::Upscale,
+    prompt: "Enhance details and sharpen".to_string(),
+    mask: None,
+    strength: 0.75,
+    guidance_scale: 7.5,
+};
+let editor = DallEEditProvider::new("sk-openai-key");
+// editor.edit_image(&source_bytes, &edit_config)?;
+
+// --- Video Generation ---
+
+let mut video_router = VideoProviderRouter::new();
+video_router.register(Box::new(RunwayProvider::new("sk-runway-key")));
+video_router.register(Box::new(SoraProvider::new("sk-openai-key")));
+
+let video_config = VideoGenConfig {
+    duration_seconds: 5,
+    resolution: VideoResolution::Hd1080p,
+    fps: 24,
+    ..Default::default()
+};
+
+// Submit a video generation job (async workflow)
+let job = video_router.submit("runway", "A cat walking on the moon", &video_config)?;
+let status = video_router.check_status("runway", &job)?;
+// When complete: let video = video_router.download("runway", &job)?;
+```
+
+**Key types**: `ImageProviderRouter`, `ImageGenConfig`, `ImageStyle`, `ImageQuality`, `DallEProvider`, `StableDiffusionProvider`, `FluxProvider`, `LocalDiffusionProvider`, `ImageEditConfig`, `ImageEditOperation`, `VideoProviderRouter`, `RunwayProvider`, `SoraProvider`, `VideoGenConfig`, `VideoResolution`
+
+**Feature flag**: `media-generation`
+
+---
+
+## 103. Distillation Pipeline
+
+**What**: End-to-end pipeline for converting agent execution traces into fine-tuning datasets. The `TrajectoryCollector` records every step an agent takes (LLM calls, tool uses, decisions, observations). The `TrajectoryScorer` grades trajectories on outcome, efficiency, and diversity. The `DatasetBuilder` converts scored trajectories into standard fine-tuning formats (OpenAI JSONL, Alpaca, ShareGPT). The `DataFlywheel` orchestrates the full collect-score-filter-build cycle for continuous model improvement.
+
+**Why**: Agents generate valuable training signal as a by-product of doing useful work. Distillation captures this signal, filters for quality, and produces datasets that can improve the underlying model -- a positive feedback loop (data flywheel).
+
+```rust
+use ai_assistant::distillation::{
+    TrajectoryCollector, TrajectoryStep, TrajectoryOutcome, StepType,
+    OutcomeScorer, EfficiencyScorer, TrajectoryFilter,
+    DatasetBuilder, DatasetConfig, DatasetFormat, FlatteningStrategy,
+    DataFlywheel, FlywheelConfig, InMemoryTrajectoryStore,
+};
+
+// 1. Collect agent trajectories
+let mut collector = TrajectoryCollector::new();
+let traj_id = collector.start_trajectory("research-agent", "Summarize recent AI papers");
+
+collector.add_step(&traj_id, TrajectoryStep {
+    step_number: 0,
+    step_type: StepType::ToolUse { tool_name: "web_search".to_string() },
+    input: "latest AI papers 2026".to_string(),
+    output: "Found 15 relevant papers...".to_string(),
+    tokens_used: 250,
+    latency_ms: 1200,
+    timestamp: chrono::Utc::now(),
+    metadata: Default::default(),
+})?;
+
+collector.finish_trajectory(&traj_id, TrajectoryOutcome::Success { score: 0.95 })?;
+
+// 2. Score and filter
+let outcome_scorer = OutcomeScorer;
+let efficiency_scorer = EfficiencyScorer {
+    max_steps: 20,
+    token_penalty_per_1k: 0.1,
+};
+let filter = TrajectoryFilter::new(0.5); // minimum score threshold
+
+// 3. Build a fine-tuning dataset
+let config = DatasetConfig::new(DatasetFormat::ShareGPT)
+    .with_system_prompt("You are a research assistant.")
+    .with_max_examples(1000)
+    .with_flattening(FlatteningStrategy::AllSteps);
+
+// DatasetBuilder::build(&trajectory_dataset, &config)?;
+
+// 4. Data flywheel: automate the cycle
+let flywheel_config = FlywheelConfig {
+    score_threshold: 0.7,
+    min_trajectories: 10,
+    ..Default::default()
+};
+let store = Box::new(InMemoryTrajectoryStore::new());
+// let mut flywheel = DataFlywheel::new(flywheel_config, store, trigger);
+// flywheel.run_cycle()?;
+```
+
+**Key types**: `TrajectoryCollector`, `Trajectory`, `TrajectoryStep`, `StepType`, `TrajectoryOutcome`, `OutcomeScorer`, `EfficiencyScorer`, `TrajectoryFilter`, `DatasetBuilder`, `DatasetConfig`, `DatasetFormat`, `FlatteningStrategy`, `DataFlywheel`, `FlywheelConfig`
+
+**Feature flag**: `distillation`
+
+---
+
+## 104. Advanced Prompt Optimization (v5)
+
+**What**: Two new multi-objective prompt optimizers building on the existing signature system (Section 93). GEPA (Genetic Pareto Optimizer) uses NSGA-II-inspired evolutionary search with crossover, mutation, and Pareto-front selection to jointly optimize multiple metrics. MIPROv2 runs a three-stage pipeline: instruction proposal, few-shot selection, and Bayesian tuning. Additionally, prompt assertions let you attach hard constraints (length, format, regex, JSON validity, custom predicates) to any signature, and the adapter router reformats prompts per provider.
+
+**Why**: Single-metric optimization misses trade-offs (e.g., accuracy vs. conciseness). GEPA explores the Pareto front across multiple objectives simultaneously. MIPROv2 automates the tedious manual cycle of proposing, testing, and refining instructions. Assertions catch regressions before they reach users.
+
+```rust
+use ai_assistant::prompt_signatures::{
+    Signature, SignatureField, CompiledPrompt,
+    GEPAOptimizer, GEPAConfig,
+    MIPROv2Optimizer, MIPROv2Config,
+    AssertedSignature, LengthAssertion, FormatAssertion, ContainsAssertion,
+    JsonSchemaAssertion, AssertionResult,
+    AdapterRouter,
+};
+
+// --- GEPA: multi-objective genetic optimizer ---
+let config = GEPAConfig {
+    population_size: 50,
+    generations: 20,
+    mutation_rate: 0.1,
+    ..GEPAConfig::default()
+};
+let optimizer = GEPAOptimizer::new(config);
+// let pareto_front = optimizer.optimize(&signature, &metrics, &provider).await?;
+
+// --- MIPROv2: three-stage instruction proposal ---
+let mipro_config = MIPROv2Config {
+    num_candidates: 10,
+    num_trials: 5,
+    ..MIPROv2Config::default()
+};
+let mipro = MIPROv2Optimizer::new(mipro_config);
+// let best = mipro.optimize(&signature, &training_set, &provider).await?;
+
+// --- Prompt Assertions: hard constraints on output ---
+let sig = Signature::new("qa", "Answer questions concisely")
+    .add_input(SignatureField::new("question", "The user question"))
+    .add_output(SignatureField::new("answer", "A concise answer"));
+
+let mut asserted = AssertedSignature::new(sig);
+asserted.add_assertion(Box::new(LengthAssertion {
+    min_chars: Some(10),
+    max_chars: Some(500),
+    min_words: None,
+    max_words: None,
+}));
+asserted.add_assertion(Box::new(ContainsAssertion {
+    required_substrings: vec!["answer".to_string()],
+    case_sensitive: false,
+}));
+asserted.add_assertion(Box::new(JsonSchemaAssertion));
+
+// Check output against all assertions
+let results = asserted.check_output("The answer is 42.");
+for (name, result) in &results {
+    match result {
+        AssertionResult::Pass => println!("{}: PASS", name),
+        AssertionResult::Fail { reason } => println!("{}: FAIL - {}", name, reason),
+        AssertionResult::Warn { reason } => println!("{}: WARN - {}", name, reason),
+    }
+}
+
+// Compute an overall penalty score (0.0 = all pass, higher = more violations)
+let penalty = asserted.assertion_penalty("The answer is 42.");
+```
+
+**Key types**: `GEPAOptimizer`, `GEPAConfig`, `MIPROv2Optimizer`, `MIPROv2Config`, `AssertedSignature`, `LengthAssertion`, `FormatAssertion`, `ContainsAssertion`, `JsonSchemaAssertion`, `CustomAssertion`, `AssertionResult`, `AdapterRouter`
+
+**Feature flag**: `prompt-signatures`
+
+---
+
+## 105. MCP v2 Protocol
+
+**What**: Upgrades the existing MCP support (Section 61) with the 2025-03-26 specification additions. Streamable HTTP transport replaces SSE as the default, supporting both JSON and SSE response modes auto-detected via `Content-Type`. OAuth 2.1 with PKCE (`McpV2OAuthConfig`) adds standards-based authentication with dynamic client registration, token caching, and refresh. Tool annotations (`ToolAnnotations`) provide structured metadata -- `read_only`, `destructive`, `idempotent`, `open_world`, `requires_confirmation` -- enabling UIs and guardrails to make informed decisions about tool invocation safety.
+
+**Why**: The MCP v2 specification addresses real-world deployment needs: HTTP replaces stdio for cloud-native deployments, OAuth replaces ad-hoc API keys for enterprise auth, and tool annotations let agent frameworks apply safety policies (e.g., always confirm before running destructive tools).
+
+```rust
+use ai_assistant::mcp_protocol::{
+    StreamableHttpTransport, TransportMode,
+    McpV2OAuthConfig, McpV2OAuthClient,
+    ToolAnnotations, ToolAnnotationRegistry, AnnotatedTool,
+    McpTool,
+};
+
+// --- Streamable HTTP Transport ---
+let transport = StreamableHttpTransport::new("http://localhost:8080/mcp");
+assert_eq!(transport.mode(), TransportMode::StreamableHTTP);
+
+// Auto-detect response mode from Content-Type header
+let mode = StreamableHttpTransport::detect_transport("text/event-stream");
+assert_eq!(mode, TransportMode::SSE);
+
+let mode = StreamableHttpTransport::detect_transport("application/json");
+assert_eq!(mode, TransportMode::StreamableHTTP);
+
+// --- OAuth 2.1 with PKCE ---
+let oauth_config = McpV2OAuthConfig {
+    authorization_endpoint: "https://auth.example.com/authorize".to_string(),
+    token_endpoint: "https://auth.example.com/token".to_string(),
+    client_id: "my-mcp-client".to_string(),
+    client_secret: None, // Public client (PKCE only)
+    scopes: vec!["tools.read".to_string(), "tools.execute".to_string()],
+    redirect_uri: "http://localhost:3000/callback".to_string(),
+    use_pkce: true,
+};
+let client = McpV2OAuthClient::new(oauth_config);
+// client.start_authorization_flow()?;
+
+// --- Tool Annotations ---
+let mut registry = ToolAnnotationRegistry::new();
+registry.register("file_read", ToolAnnotations {
+    read_only: true,
+    destructive: false,
+    idempotent: true,
+    open_world: false,
+    requires_confirmation: false,
+});
+registry.register("file_delete", ToolAnnotations {
+    read_only: false,
+    destructive: true,
+    idempotent: true,
+    open_world: false,
+    requires_confirmation: true,
+});
+
+// Query annotations for safety decisions
+if let Some(ann) = registry.get("file_delete") {
+    if ann.destructive && ann.requires_confirmation {
+        println!("This tool requires user confirmation before execution");
+    }
+}
+
+// Wrap a tool with its annotations
+let tool = McpTool::new("web_search", "Search the web");
+let annotated = AnnotatedTool::with_annotations(tool, ToolAnnotations::default());
+```
+
+**Key types**: `StreamableHttpTransport`, `TransportMode`, `McpV2OAuthConfig`, `McpV2OAuthClient`, `ToolAnnotations`, `ToolAnnotationRegistry`, `AnnotatedTool`
+
+**Feature flag**: `tools`
+
+---
+
+## 106. OTel GenAI Semantic Conventions
+
+**What**: Standardized telemetry following the OpenTelemetry GenAI semantic conventions. `GenAiAttributes` builds attribute sets with standard keys (`gen_ai.system`, `gen_ai.request.model`, `gen_ai.request.temperature`, token counts, finish reasons) for any LLM provider. `AgentTracer` creates hierarchical spans for multi-turn agent sessions: a root session span, child turn spans, and nested LLM call spans with full GenAI attributes. `PricingTable` holds per-model cost rates, and `CostAttributor` tracks per-scope spend with budget enforcement and alerts.
+
+**Why**: Observability is critical in production. Standard OTel attributes mean your traces are compatible with any OTel-capable backend (Jaeger, Grafana Tempo, Datadog). Hierarchical agent tracing lets you see exactly which LLM call within which turn caused latency or errors. Cost attribution prevents runaway spend.
+
+```rust
+use ai_assistant::opentelemetry_integration::{
+    GenAiAttributes, GenAiSystem,
+    AgentTracer,
+    PricingTable, CostAttributor,
+};
+
+// --- GenAI Attributes ---
+let attrs = GenAiAttributes::new(GenAiSystem::OpenAI, "gpt-4o")
+    .with_temperature(0.7)
+    .with_max_tokens(2048)
+    .with_tokens(150, 350)
+    .with_finish_reason("stop");
+
+// Convert to OTel-compatible key-value pairs
+let otel_attrs = attrs.to_attributes();
+for (key, value) in &otel_attrs {
+    println!("{}: {}", key, value);
+    // gen_ai.system: openai
+    // gen_ai.request.model: gpt-4o
+    // gen_ai.usage.input_tokens: 150
+    // gen_ai.usage.output_tokens: 350
+}
+
+// --- Hierarchical Agent Tracing ---
+let mut tracer = AgentTracer::new();
+
+// Start a session (root span)
+let (trace_id, root_span) = tracer.start_session("research-agent");
+
+// Start a turn within the session
+let turn_span = tracer.start_turn(&trace_id, &root_span, 1);
+
+// Start an LLM call within the turn
+let llm_span = tracer.start_llm_call(&trace_id, &turn_span, &attrs);
+
+// End spans when operations complete
+tracer.end_span(&trace_id, &llm_span);
+tracer.end_span(&trace_id, &turn_span);
+tracer.end_span(&trace_id, &root_span);
+
+// --- Cost Attribution with Budget Enforcement ---
+let mut attributor = CostAttributor::new(PricingTable::with_defaults());
+attributor.set_budget("project-alpha", 50.0); // $50 budget
+
+let cost = attributor.attribute_cost("project-alpha", "gpt-4o", 1000, 2000)?;
+println!("This call cost: ${:.4}", cost);
+```
+
+**Key types**: `GenAiAttributes`, `GenAiSystem`, `AgentTracer`, `AgentSpan`, `PricingTable`, `ModelPricing`, `CostAttributor`, `CostBudget`, `BudgetCheckResult`
+
+**Feature flag**: always available (no feature gate required)
+
+---
+
+## 107. Conversation Patterns & Agent Handoffs
+
+**What**: Six named multi-agent conversation patterns and first-class agent handoffs. Patterns: **Swarm** (agents pull from a shared task queue), **Debate** (agents argue, a judge synthesizes), **RoundRobin** (agents speak in order, output chains), **Sequential** (linear pipeline A->B->C), **NestedChat** (master agent triggers sub-conversations), **Broadcast** (input sent to all agents, all responses collected). Handoffs let one agent transfer a conversation to another with configurable context transfer policies (Full, Summary, LastN, None) and circular-handoff detection.
+
+**Why**: Different multi-agent tasks call for different coordination topologies. A debate pattern works for adversarial fact-checking, round-robin for iterative refinement, broadcast for parallel brainstorming. Handoffs enable specialization: a general agent can route to domain experts, transferring exactly as much context as needed.
+
+```rust
+use ai_assistant::multi_agent::{
+    ConversationPattern, PatternRunner, PatternConfig, PatternAgent,
+    TerminationCondition,
+    HandoffManager, HandoffRequest, ContextTransferPolicy,
+};
+
+// --- Debate Pattern ---
+let config = PatternConfig::new()
+    .with_max_rounds(5)
+    .with_termination(TerminationCondition::JudgeDecision)
+    .with_judge("judge-1");
+
+let mut runner = PatternRunner::new(ConversationPattern::Debate, config);
+runner.add_agent(PatternAgent::new(
+    "pro-1", "Proponent", "debater",
+    "Argue in favor of the proposition.",
+));
+runner.add_agent(PatternAgent::new(
+    "con-1", "Opponent", "debater",
+    "Argue against the proposition.",
+));
+runner.add_agent(PatternAgent::new(
+    "judge-1", "Judge", "judge",
+    "Synthesize arguments and reach a verdict.",
+));
+
+let result = runner.run("Should AI systems be open-sourced?")?;
+println!("Debate concluded after {} rounds", result.rounds_completed);
+if let Some(verdict) = &result.final_output {
+    println!("Verdict: {}", verdict);
+}
+
+// --- Broadcast Pattern ---
+let config = PatternConfig::new().with_max_rounds(1);
+let mut broadcast = PatternRunner::new(ConversationPattern::Broadcast, config);
+broadcast.add_agent(PatternAgent::new("a1", "Analyst", "analyst", "Analyze from a financial perspective."));
+broadcast.add_agent(PatternAgent::new("a2", "Engineer", "engineer", "Analyze from a technical perspective."));
+let result = broadcast.run("Evaluate this startup idea")?;
+println!("Collected {} responses", result.messages.len());
+
+// --- Agent Handoffs ---
+let mut mgr = HandoffManager::new();
+mgr.register_agent(PatternAgent::new("general", "General Agent", "router", "Route to specialists."));
+mgr.register_agent(PatternAgent::new("legal", "Legal Expert", "expert", "Answer legal questions."));
+
+let request = HandoffRequest::new(
+    "general", "legal",
+    "User asked a legal question",
+    ContextTransferPolicy::LastN(5),
+);
+let result = mgr.request_handoff(request)?;
+println!("Handoff {}: transferred {} messages",
+    if result.success { "succeeded" } else { "failed" },
+    result.transferred_messages,
+);
+```
+
+**Key types**: `ConversationPattern`, `PatternRunner`, `PatternConfig`, `PatternAgent`, `PatternResult`, `TerminationCondition`, `HandoffManager`, `HandoffRequest`, `HandoffResult`, `ContextTransferPolicy`
+
+**Feature flag**: `multi-agent`
+
+---
+
+## 108. Durable Execution
+
+**What**: Automatic state persistence at every workflow step, providing durable execution semantics for the event-driven workflow engine (Section 92). The `DurableExecutor` wraps a `WorkflowRunner` and saves durable checkpoints before and after each node execution. If a workflow is interrupted (process crash, timeout), the `RecoveryManager` can list incomplete executions and resume from the last checkpoint. Configurable retention policies (KeepAll, KeepLast N, KeepCheckpointsOnly) control storage growth.
+
+**Why**: Long-running agent workflows (multi-step research, code generation pipelines) must survive interruptions. Without durable execution, a crash means restarting from scratch. With it, the workflow resumes exactly where it left off.
+
+```rust
+use ai_assistant::event_workflow::{
+    DurableExecutor, DurableConfig, DurableBackend, RetentionPolicy,
+    RecoveryManager,
+    WorkflowRunner, WorkflowGraph, WorkflowNode, WorkflowState,
+    InMemoryCheckpointer,
+};
+
+// Build a workflow graph
+let mut graph = WorkflowGraph::new("start");
+// ... add nodes with handlers ...
+
+let runner = WorkflowRunner::new(graph);
+
+// Wrap in a durable executor
+let config = DurableConfig {
+    backend: DurableBackend::InMemory,
+    auto_checkpoint: true,
+    retention_policy: RetentionPolicy::KeepAll,
+    recovery_enabled: true,
+};
+let checkpointer: Box<dyn ai_assistant::event_workflow::Checkpointer> =
+    Box::new(InMemoryCheckpointer::new());
+
+let mut executor = DurableExecutor::new(runner, config, checkpointer);
+println!("Execution ID: {}", executor.get_execution_id());
+
+// Execute with automatic persistence
+let initial_state = WorkflowState::new();
+let final_state = executor.execute(initial_state)?;
+println!("Workflow completed with {} checkpoints", executor.get_checkpoint_count());
+
+// --- Recovery after interruption ---
+let recovery_store: Box<dyn ai_assistant::event_workflow::Checkpointer> =
+    Box::new(InMemoryCheckpointer::new());
+let recovery = RecoveryManager::new(recovery_store);
+
+// List incomplete executions
+let incomplete = recovery.list_incomplete()?;
+for exec_id in &incomplete {
+    println!("Incomplete execution: {}", exec_id);
+    // Recover from last checkpoint
+    // let checkpoint = recovery.get_latest_checkpoint(exec_id)?;
+}
+```
+
+**Key types**: `DurableExecutor`, `DurableConfig`, `DurableBackend`, `DurableCheckpoint`, `RetentionPolicy`, `RecoveryManager`, `Checkpointer`, `InMemoryCheckpointer`
+
+**Feature flag**: `workflows`
+
+---
+
+## 109. Declarative Agent Definitions
+
+**What**: Define agents in JSON or TOML files instead of code, and load them at runtime. An `AgentDefinition` specifies the agent's name, role, model, system prompt, tools, memory configuration, and guardrails. The `AgentDefinitionLoader` parses and validates these files, returning structured types ready to instantiate agents. Validation checks field presence, value ranges (temperature 0.0-2.0), and known enums (roles, autonomy levels, memory types), producing warnings and errors with severity levels.
+
+**Why**: Configuration-driven agent definitions let non-developers (product managers, domain experts) customize agent behavior without touching Rust code. They also enable dynamic reconfiguration and A/B testing of agent personalities.
+
+```rust
+use ai_assistant::agent_definition::{
+    AgentDefinition, AgentDefinitionLoader, AgentSpec, ToolRef,
+    MemorySpec, GuardrailSpec,
+};
+
+// Load from a JSON string
+let json = r#"{
+    "agent": {
+        "name": "research_assistant",
+        "role": "Analyst",
+        "model": "openai/gpt-4o",
+        "system_prompt": "You are a helpful research assistant.",
+        "temperature": 0.7,
+        "max_tokens": 4096
+    },
+    "tools": [
+        { "name": "web_search", "needs_approval": false },
+        { "name": "file_write", "needs_approval": true, "timeout_ms": 30000 }
+    ],
+    "memory": {
+        "memory_type": "episodic",
+        "max_episodes": 1000,
+        "consolidation_enabled": true
+    },
+    "guardrails": {
+        "max_tokens_per_response": 2000,
+        "block_pii": true,
+        "max_turns": 50,
+        "require_approval_for_destructive": true
+    },
+    "metadata": {
+        "author": "Lander",
+        "version": "1.0"
+    }
+}"#;
+
+let definition: AgentDefinition = AgentDefinitionLoader::load_from_json(json)?;
+println!("Agent: {}", definition.agent.name);
+println!("Model: {:?}", definition.agent.model);
+println!("Tools: {}", definition.tools.len());
+
+// Validate the definition
+let findings = AgentDefinitionLoader::validate(&definition);
+for finding in &findings {
+    println!("[{:?}] {}: {}", finding.severity, finding.field, finding.message);
+}
+
+// Load from a file
+// let def = AgentDefinitionLoader::load_from_file("agents/research.json")?;
+
+// Access individual specs
+if let Some(ref memory) = definition.memory {
+    println!("Memory type: {}", memory.memory_type);
+}
+if let Some(ref guardrails) = definition.guardrails {
+    println!("PII blocking: {}", guardrails.block_pii);
+}
+```
+
+**Key types**: `AgentDefinition`, `AgentDefinitionLoader`, `AgentSpec`, `ToolRef`, `MemorySpec`, `GuardrailSpec`, `ValidationFinding`, `ValidationSeverity`
+
+**Feature flag**: always available (no feature gate required)
+
+---
+
+## 110. Constrained Decoding
+
+**What**: Grammar-guided generation using the GBNF format (GGML BNF, used by llama.cpp and Ollama). Grammars are built programmatically with `GrammarBuilder` or compiled from JSON Schema via `SchemaToGrammar`. The `StreamingValidator` validates token-by-token output against a grammar incrementally, catching violations as they occur rather than after generation completes.
+
+**Why**: Free-form LLM output is unreliable for structured tasks (JSON APIs, SQL queries, function calls). Grammar constraints guarantee syntactic validity at the decoding level, eliminating the retry loop of "generate, validate, retry if malformed."
+
+```rust
+use ai_assistant::constrained_decoding::{
+    Grammar, GrammarRule, GrammarAlternative, GrammarElement, RepeatKind,
+    GrammarBuilder,
+    SchemaToGrammar,
+    StreamingValidator,
+};
+
+// --- Build a grammar programmatically ---
+let mut builder = GrammarBuilder::new("root");
+
+// root ::= "{" ws "\"name\"" ws ":" ws string ws "}"
+builder.add_rule(GrammarRule::new("root").add_alternative(
+    GrammarAlternative::new()
+        .push(GrammarElement::Literal("{".to_string()))
+        .push(GrammarElement::RuleRef("ws".to_string()))
+        .push(GrammarElement::Literal("\"name\"".to_string()))
+        .push(GrammarElement::RuleRef("ws".to_string()))
+        .push(GrammarElement::Literal(":".to_string()))
+        .push(GrammarElement::RuleRef("ws".to_string()))
+        .push(GrammarElement::RuleRef("string".to_string()))
+        .push(GrammarElement::RuleRef("ws".to_string()))
+        .push(GrammarElement::Literal("}".to_string()))
+));
+
+let grammar = builder.build();
+let gbnf_text = grammar.to_gbnf();
+println!("GBNF:\n{}", gbnf_text);
+
+// --- Compile a grammar from JSON Schema ---
+let schema = serde_json::json!({
+    "type": "object",
+    "properties": {
+        "name": { "type": "string" },
+        "age": { "type": "integer" },
+        "active": { "type": "boolean" }
+    },
+    "required": ["name", "age"]
+});
+
+let compiler = SchemaToGrammar::new(schema);
+let compiled_grammar = compiler.compile()?;
+println!("Compiled grammar has {} rules", compiled_grammar.rules().len());
+
+// --- Streaming validation ---
+let validator = StreamingValidator::new(compiled_grammar);
+// Feed tokens as they arrive from the LLM
+// let result = validator.feed_token("{")?;
+// let result = validator.feed_token("\"name\"")?;
+// ...
+```
+
+**Key types**: `Grammar`, `GrammarRule`, `GrammarAlternative`, `GrammarElement`, `RepeatKind`, `GrammarBuilder`, `SchemaToGrammar`, `StreamingValidator`
+
+**Feature flag**: `constrained-decoding`
+
+---
+
+## 111. Memory Evolution (v5)
+
+**What**: Three enhancements to the advanced memory system (Section 95). `EnhancedConsolidator` extracts semantic facts (subject-predicate-object triples) from episodic memories using pattern-based and keyword extractors, storing them in a deduplicated `SemanticFactStore`. `TemporalGraph` builds a directed graph of events with causal chains, supporting path queries, temporal range filtering, and root cause analysis. `ProcedureEvolver` applies a MemRL-inspired loop that evolves procedural memories based on execution feedback -- reinforcing successful procedures and mutating underperforming ones.
+
+**Why**: Raw episodic memory grows without bound and lacks structure. Consolidation extracts reusable knowledge (facts, causal patterns, procedures) that agents can leverage for better reasoning. Temporal graphs answer "what caused X?" questions. Procedure evolution enables self-improving agents.
+
+```rust
+use ai_assistant::advanced_memory::{
+    EpisodicStore, Episode,
+    EnhancedConsolidator, ConsolidationSchedule,
+    SemanticFact,
+    TemporalGraph,
+    ProcedureEvolver, EvolutionConfig,
+    ProceduralStore, Procedure,
+};
+
+// --- Enhanced Consolidation ---
+let mut consolidator = EnhancedConsolidator::new(ConsolidationSchedule::EveryNEpisodes(10));
+
+// After accumulating episodes, consolidate into semantic facts
+// consolidator.consolidate(&episodes)?;
+
+// Query extracted facts
+// let facts = consolidator.fact_store().find_by_subject("Rust");
+// for fact in facts {
+//     println!("{} {} {}", fact.subject, fact.predicate, fact.object);
+// }
+
+// --- Temporal Memory Graph ---
+let mut graph = TemporalGraph::new();
+
+// Add events with timestamps and causal links
+graph.add_event("e1", "User reported bug", 1000, vec![])?;
+graph.add_event("e2", "Investigated logs", 1100, vec!["e1".to_string()])?;
+graph.add_event("e3", "Found root cause", 1200, vec!["e2".to_string()])?;
+graph.add_event("e4", "Deployed fix", 1300, vec!["e3".to_string()])?;
+
+// Query causal chains
+let chain = graph.causal_chain("e4")?;
+println!("Causal chain to 'Deployed fix': {:?}", chain);
+// -> ["e1", "e2", "e3", "e4"]
+
+// Find events in a time range
+let events = graph.events_in_range(1000, 1200)?;
+println!("Events between t=1000 and t=1200: {}", events.len());
+
+// --- Procedure Evolution (MemRL) ---
+let config = EvolutionConfig {
+    mutation_rate: 0.2,
+    min_executions_before_evolve: 3,
+    reward_threshold: 0.7,
+    ..EvolutionConfig::default()
+};
+let mut evolver = ProcedureEvolver::new(config);
+
+// Register a procedure and provide feedback
+// evolver.register_procedure(procedure)?;
+// evolver.record_execution("proc-1", 0.9)?; // success
+// evolver.record_execution("proc-1", 0.3)?; // failure
+// let evolved = evolver.evolve()?;
+```
+
+**Key types**: `EnhancedConsolidator`, `ConsolidationSchedule`, `SemanticFact`, `SemanticFactStore`, `TemporalGraph`, `ProcedureEvolver`, `EvolutionConfig`
+
+**Feature flag**: `advanced-memory`
+
+---
+
+## 112. Streaming Guardrails
+
+**What**: Real-time content filtering for streaming LLM responses. The `StreamingGuardrailPipeline` runs multiple `StreamingGuard` implementations on each incoming text chunk, accumulating context across the stream. Four actions are possible: `Pass`, `Flag` (log but continue), `Pause` (temporarily halt), or `Block` (stop the stream). Built-in guards include `StreamingPiiGuard` (detects email addresses, phone numbers, SSNs), `StreamingToxicityGuard` (keyword blocklist), and `StreamingPatternGuard` (regex pattern matching). The pipeline tracks metrics (total chunks, flags, pauses, blocks) and supports configurable window sizes for accumulated context.
+
+**Why**: Traditional guardrails run on complete responses, but streaming responses are delivered token-by-token. By the time you see the complete response, the user has already seen potentially harmful content. Streaming guardrails catch issues in real time, allowing immediate intervention.
+
+```rust
+use ai_assistant::guardrail_pipeline::{
+    StreamingGuardrailPipeline, StreamingGuardrailConfig,
+    StreamGuardAction,
+    StreamingPiiGuard, StreamingToxicityGuard, StreamingPatternGuard,
+};
+
+// Configure the streaming pipeline
+let config = StreamingGuardrailConfig {
+    max_accumulated_chars: 10_000,
+    enable_metrics: true,
+    ..StreamingGuardrailConfig::default()
+};
+
+let mut pipeline = StreamingGuardrailPipeline::with_config(config)
+    .add_guard(Box::new(StreamingPiiGuard::new()))
+    .add_guard(Box::new(StreamingToxicityGuard::new(
+        vec!["harmful".to_string(), "dangerous".to_string()],
+    )))
+    .add_guard(Box::new(StreamingPatternGuard::new(
+        vec!["password:\\s*\\S+".to_string()],
+    )));
+
+// Process streaming chunks as they arrive from the LLM
+let chunks = vec!["Hello, ", "my email is ", "user@example.com", " and I need help."];
+for chunk in chunks {
+    let result = pipeline.process_chunk(chunk);
+    match result.action {
+        StreamGuardAction::Pass => {
+            // Safe to forward to user
+            print!("{}", chunk);
+        }
+        StreamGuardAction::Flag(reason) => {
+            // Log but continue streaming
+            eprintln!("[FLAG] {}", reason);
+            print!("{}", chunk);
+        }
+        StreamGuardAction::Pause => {
+            // Temporarily halt stream for review
+            eprintln!("[PAUSE] Stream paused for review");
+        }
+        StreamGuardAction::Block(reason) => {
+            // Stop the stream immediately
+            eprintln!("[BLOCK] {}", reason);
+            break;
+        }
+    }
+}
+
+// Check pipeline metrics
+let metrics = pipeline.get_metrics();
+println!(
+    "Processed {} chunks: {} flags, {} pauses, {} blocks",
+    metrics.total_chunks, metrics.flags, metrics.pauses, metrics.blocks
+);
+
+// Reset for a new stream
+pipeline.reset();
+```
+
+**Key types**: `StreamingGuardrailPipeline`, `StreamingGuardrailConfig`, `StreamingGuard` (trait), `StreamGuardAction`, `StreamingPiiGuard`, `StreamingToxicityGuard`, `StreamingPatternGuard`, `StreamingGuardrailMetrics`
+
+**Feature flag**: `security`
