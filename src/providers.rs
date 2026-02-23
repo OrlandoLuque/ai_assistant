@@ -1073,6 +1073,7 @@ fn fetch_openai_model_context(base_url: &str, model_name: &str) -> Option<usize>
 // ---------------------------------------------------------------------------
 
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 /// A registry that maps `"provider/model"` identifiers to pre-configured
 /// [`AiConfig`] instances, with support for short aliases
@@ -1236,6 +1237,765 @@ impl ProviderRegistry {
 impl Default for ProviderRegistry {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ===========================================================================
+// ResilientProviderRegistry — fallback chain, circuit breakers, health, pool
+// ===========================================================================
+
+/// Configuration for a provider within the resilient registry.
+#[derive(Debug, Clone)]
+pub struct ProviderConfig {
+    /// Human-readable provider name (e.g. "openai-primary")
+    pub name: String,
+    /// Provider type identifier (e.g. "openai", "ollama")
+    pub provider_type: String,
+    /// Base URL for this provider
+    pub base_url: String,
+    /// Optional API key
+    pub api_key: Option<String>,
+    /// Priority — lower values are tried first
+    pub priority: u32,
+}
+
+impl ProviderConfig {
+    /// Create a new provider config with the given name and base URL.
+    pub fn new(name: impl Into<String>, base_url: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            provider_type: String::new(),
+            base_url: base_url.into(),
+            api_key: None,
+            priority: 0,
+        }
+    }
+
+    /// Set the provider type.
+    pub fn with_provider_type(mut self, provider_type: impl Into<String>) -> Self {
+        self.provider_type = provider_type.into();
+        self
+    }
+
+    /// Set the API key.
+    pub fn with_api_key(mut self, key: impl Into<String>) -> Self {
+        self.api_key = Some(key.into());
+        self
+    }
+
+    /// Set the priority (lower = tried first).
+    pub fn with_priority(mut self, priority: u32) -> Self {
+        self.priority = priority;
+        self
+    }
+}
+
+/// Health status of a provider within the resilient registry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProviderHealthStatus {
+    /// Provider is responding normally
+    Healthy,
+    /// Provider is responding but with errors or degraded performance
+    Degraded,
+    /// Provider is not responding or returning server errors
+    Unhealthy,
+    /// Provider has not been checked yet
+    Unknown,
+}
+
+/// Per-provider rate limit state, updated from response headers.
+#[derive(Debug, Clone)]
+pub struct ProviderRateState {
+    /// Remaining requests in the current window (from `x-ratelimit-remaining-requests`)
+    pub remaining_requests: Option<u32>,
+    /// Remaining tokens in the current window (from `x-ratelimit-remaining-tokens`)
+    pub remaining_tokens: Option<u32>,
+    /// When the current rate-limit window resets
+    pub reset_at: Option<Instant>,
+    /// Server-requested retry-after delay in seconds
+    pub retry_after_secs: Option<u64>,
+}
+
+impl ProviderRateState {
+    fn new() -> Self {
+        Self {
+            remaining_requests: None,
+            remaining_tokens: None,
+            reset_at: None,
+            retry_after_secs: None,
+        }
+    }
+}
+
+/// Parsed rate-limit headers from an HTTP response.
+pub struct RateLimitHeaders {
+    /// Value of `x-ratelimit-remaining-requests`
+    pub remaining_requests: Option<u32>,
+    /// Value of `x-ratelimit-remaining-tokens`
+    pub remaining_tokens: Option<u32>,
+    /// Value of `x-ratelimit-reset` (seconds until window resets)
+    pub reset_secs: Option<u64>,
+    /// Value of `retry-after` header (seconds)
+    pub retry_after_secs: Option<u64>,
+}
+
+impl RateLimitHeaders {
+    /// Parse rate limit headers from a list of (name, value) pairs.
+    ///
+    /// Recognises:
+    /// - `x-ratelimit-remaining-requests`
+    /// - `x-ratelimit-remaining-tokens`
+    /// - `x-ratelimit-reset`
+    /// - `retry-after`
+    pub fn from_response_headers(headers: &[(&str, &str)]) -> Self {
+        let mut remaining_requests = None;
+        let mut remaining_tokens = None;
+        let mut reset_secs = None;
+        let mut retry_after_secs = None;
+
+        for &(name, value) in headers {
+            match name.to_lowercase().as_str() {
+                "x-ratelimit-remaining-requests" => {
+                    remaining_requests = value.trim().parse::<u32>().ok();
+                }
+                "x-ratelimit-remaining-tokens" => {
+                    remaining_tokens = value.trim().parse::<u32>().ok();
+                }
+                "x-ratelimit-reset" => {
+                    reset_secs = value.trim().parse::<u64>().ok();
+                }
+                "retry-after" => {
+                    retry_after_secs = value.trim().parse::<u64>().ok();
+                }
+                _ => {}
+            }
+        }
+
+        Self {
+            remaining_requests,
+            remaining_tokens,
+            reset_secs,
+            retry_after_secs,
+        }
+    }
+}
+
+/// Circuit-breaker state for a single provider.
+#[derive(Debug, Clone)]
+struct CircuitState {
+    /// Consecutive failure count
+    failures: u32,
+    /// Current state kind
+    state: CircuitStateKind,
+    /// Timestamp of the last recorded failure
+    last_failure: Option<Instant>,
+    /// Timestamp of the last recorded success
+    last_success: Option<Instant>,
+}
+
+impl CircuitState {
+    fn new() -> Self {
+        Self {
+            failures: 0,
+            state: CircuitStateKind::Closed,
+            last_failure: None,
+            last_success: None,
+        }
+    }
+}
+
+/// The three states of a circuit breaker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CircuitStateKind {
+    /// Normal operation — requests are allowed
+    Closed,
+    /// Too many failures — requests are blocked
+    Open,
+    /// Recovery period expired — one probe request is allowed
+    HalfOpen,
+}
+
+/// Error returned by [`ResilientProviderRegistry::generate_with_fallback`].
+#[derive(Debug)]
+pub enum ResilientError {
+    /// All providers in the chain failed.
+    AllProvidersFailed {
+        /// Per-provider error messages in the order they were tried.
+        errors: Vec<(String, String)>,
+    },
+    /// No providers are available (all circuits open / unhealthy / rate-limited).
+    NoAvailableProviders,
+}
+
+impl std::fmt::Display for ResilientError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AllProvidersFailed { errors } => {
+                write!(f, "All providers failed: ")?;
+                for (i, (name, err)) in errors.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, "; ")?;
+                    }
+                    write!(f, "{}={}", name, err)?;
+                }
+                Ok(())
+            }
+            Self::NoAvailableProviders => write!(f, "No available providers"),
+        }
+    }
+}
+
+impl std::error::Error for ResilientError {}
+
+// ---------------------------------------------------------------------------
+// ConnectionPoolHandle
+// ---------------------------------------------------------------------------
+
+/// Configuration for the lightweight connection-pool handle.
+pub struct PoolHandleConfig {
+    /// Per-request timeout in seconds
+    pub timeout_secs: u64,
+    /// Maximum idle connections to keep per host (ureq manages this internally)
+    pub max_idle_per_host: usize,
+}
+
+impl Default for PoolHandleConfig {
+    fn default() -> Self {
+        Self {
+            timeout_secs: 30,
+            max_idle_per_host: 4,
+        }
+    }
+}
+
+/// Lightweight connection-pool wrapper that creates one [`ureq::Agent`] per
+/// host and reuses it for subsequent requests, keeping TCP connections alive.
+pub struct ConnectionPoolHandle {
+    agents: HashMap<String, ureq::Agent>,
+    config: PoolHandleConfig,
+}
+
+impl ConnectionPoolHandle {
+    /// Create a new pool handle with the given configuration.
+    pub fn new(config: PoolHandleConfig) -> Self {
+        Self {
+            agents: HashMap::new(),
+            config,
+        }
+    }
+
+    /// Return a reference to the [`ureq::Agent`] for the given host,
+    /// creating one lazily if it does not yet exist.
+    pub fn get_agent(&mut self, host: &str) -> &ureq::Agent {
+        if !self.agents.contains_key(host) {
+            let agent = ureq::AgentBuilder::new()
+                .timeout_connect(Duration::from_secs(self.config.timeout_secs))
+                .timeout_read(Duration::from_secs(self.config.timeout_secs))
+                .max_idle_connections_per_host(self.config.max_idle_per_host)
+                .build();
+            self.agents.insert(host.to_string(), agent);
+        }
+        self.agents.get(host).expect("just inserted")
+    }
+}
+
+impl std::fmt::Debug for ConnectionPoolHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectionPoolHandle")
+            .field("hosts", &self.agents.keys().collect::<Vec<_>>())
+            .finish()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ResilientProviderRegistry
+// ---------------------------------------------------------------------------
+
+/// Provider registry with built-in resilience: fallback, health checking,
+/// connection pooling, and per-provider rate limiting.
+///
+/// This is a **separate** type from [`ProviderRegistry`]; it does not replace
+/// or modify the existing provider functions. It wraps any provider-level
+/// operation via a generic closure so that callers can choose what "generate"
+/// means for their use-case.
+///
+/// # Example
+///
+/// ```rust
+/// use ai_assistant::providers::{ResilientProviderRegistry, ProviderConfig};
+///
+/// let primary = ProviderConfig::new("ollama", "http://localhost:11434")
+///     .with_priority(0);
+/// let mut registry = ResilientProviderRegistry::new(primary);
+///
+/// let fallback = ProviderConfig::new("lmstudio", "http://localhost:1234")
+///     .with_priority(1);
+/// registry.add_fallback(fallback);
+///
+/// // The closure receives each ProviderConfig in priority order until one succeeds.
+/// let result = registry.generate_with_fallback(|provider| -> Result<String, String> {
+///     // In reality you would call the provider's API here.
+///     Err(format!("{} is offline", provider.name))
+/// });
+/// ```
+pub struct ResilientProviderRegistry {
+    /// Primary provider configuration
+    primary: ProviderConfig,
+    /// Fallback providers in priority order
+    fallbacks: Vec<ProviderConfig>,
+    /// Circuit-breaker state per provider (keyed by `ProviderConfig::name`)
+    circuit_states: HashMap<String, CircuitState>,
+    /// Maximum consecutive failures before a circuit opens
+    max_failures: u32,
+    /// Seconds to wait after a circuit opens before allowing a half-open probe
+    recovery_secs: u64,
+    /// Optional connection-pool handle for HTTP connection reuse
+    pool: Option<ConnectionPoolHandle>,
+    /// Health status per provider (keyed by `ProviderConfig::name`)
+    health_status: HashMap<String, ProviderHealthStatus>,
+    /// Per-provider rate-limit state (keyed by `ProviderConfig::name`)
+    rate_limits: HashMap<String, ProviderRateState>,
+}
+
+impl ResilientProviderRegistry {
+    /// Create a new registry with the given primary provider.
+    pub fn new(primary: ProviderConfig) -> Self {
+        let name = primary.name.clone();
+        let mut circuit_states = HashMap::new();
+        circuit_states.insert(name.clone(), CircuitState::new());
+        let mut health_status = HashMap::new();
+        health_status.insert(name.clone(), ProviderHealthStatus::Unknown);
+        let mut rate_limits = HashMap::new();
+        rate_limits.insert(name, ProviderRateState::new());
+
+        Self {
+            primary,
+            fallbacks: Vec::new(),
+            circuit_states,
+            max_failures: 3,
+            recovery_secs: 30,
+            pool: None,
+            health_status,
+            rate_limits,
+        }
+    }
+
+    /// Add a fallback provider. Providers are tried in ascending priority order.
+    pub fn add_fallback(&mut self, provider: ProviderConfig) {
+        let name = provider.name.clone();
+        self.circuit_states
+            .entry(name.clone())
+            .or_insert_with(CircuitState::new);
+        self.health_status
+            .entry(name.clone())
+            .or_insert(ProviderHealthStatus::Unknown);
+        self.rate_limits
+            .entry(name)
+            .or_insert_with(ProviderRateState::new);
+        self.fallbacks.push(provider);
+        // Keep fallbacks sorted by priority (ascending)
+        self.fallbacks.sort_by_key(|p| p.priority);
+    }
+
+    /// Set the maximum consecutive failures before a circuit opens.
+    pub fn set_max_failures(&mut self, max: u32) {
+        self.max_failures = max;
+    }
+
+    /// Set the recovery time in seconds after a circuit opens.
+    pub fn set_recovery_secs(&mut self, secs: u64) {
+        self.recovery_secs = secs;
+    }
+
+    /// Attach a connection pool handle for HTTP reuse.
+    pub fn set_pool(&mut self, pool: ConnectionPoolHandle) {
+        self.pool = Some(pool);
+    }
+
+    // -- Circuit breaker helpers -------------------------------------------
+
+    /// Determine whether a provider is available for a request right now.
+    ///
+    /// A provider is skipped when:
+    /// - Its circuit is **Open** and the recovery time has not elapsed.
+    /// - Its health status is **Unhealthy**.
+    /// - It is currently rate-limited.
+    ///
+    /// If the circuit is Open but the recovery window has elapsed the state
+    /// transitions to **HalfOpen** and the provider is allowed one probe.
+    fn is_provider_available(&mut self, name: &str) -> bool {
+        // Check health status
+        if let Some(status) = self.health_status.get(name) {
+            if *status == ProviderHealthStatus::Unhealthy {
+                return false;
+            }
+        }
+
+        // Check rate limits
+        if self.is_rate_limited(name) {
+            return false;
+        }
+
+        // Check circuit state
+        if let Some(cs) = self.circuit_states.get_mut(name) {
+            match cs.state {
+                CircuitStateKind::Closed | CircuitStateKind::HalfOpen => true,
+                CircuitStateKind::Open => {
+                    // Check if recovery time has elapsed
+                    if let Some(last_fail) = cs.last_failure {
+                        if last_fail.elapsed() >= Duration::from_secs(self.recovery_secs) {
+                            cs.state = CircuitStateKind::HalfOpen;
+                            return true;
+                        }
+                    }
+                    false
+                }
+            }
+        } else {
+            // No state tracked — treat as available
+            true
+        }
+    }
+
+    /// Build the ordered list of provider references to try: primary first,
+    /// then fallbacks in ascending priority order.
+    fn ordered_providers(&self) -> Vec<&ProviderConfig> {
+        let mut providers = vec![&self.primary];
+        for fb in &self.fallbacks {
+            providers.push(fb);
+        }
+        providers
+    }
+
+    /// Try to execute `operation` against providers in priority order.
+    ///
+    /// For each available provider the closure is called. On success the
+    /// circuit is reset (or closed if half-open). On failure the failure
+    /// counter is incremented and the next provider is tried.
+    ///
+    /// Returns `Ok((value, provider_name))` on success, or a
+    /// [`ResilientError`] if all providers fail or none are available.
+    pub fn generate_with_fallback<F, T, E>(
+        &mut self,
+        mut operation: F,
+    ) -> Result<(T, String), ResilientError>
+    where
+        F: FnMut(&ProviderConfig) -> Result<T, E>,
+        E: std::fmt::Display,
+    {
+        let providers = self.ordered_providers();
+        let names: Vec<String> = providers.iter().map(|p| p.name.clone()).collect();
+        // We need to clone configs because we call &mut self methods below.
+        let configs: Vec<ProviderConfig> = providers.iter().map(|p| (*p).clone()).collect();
+
+        let mut errors: Vec<(String, String)> = Vec::new();
+        let mut tried_any = false;
+
+        for (cfg, name) in configs.iter().zip(names.iter()) {
+            if !self.is_provider_available(name) {
+                continue;
+            }
+
+            tried_any = true;
+
+            match operation(cfg) {
+                Ok(value) => {
+                    self.record_success(name);
+                    return Ok((value, name.clone()));
+                }
+                Err(e) => {
+                    let msg = e.to_string();
+                    self.record_failure(name);
+                    errors.push((name.clone(), msg));
+                }
+            }
+        }
+
+        if !tried_any {
+            return Err(ResilientError::NoAvailableProviders);
+        }
+
+        Err(ResilientError::AllProvidersFailed { errors })
+    }
+
+    /// Record a successful request for the named provider.
+    ///
+    /// - Resets the failure counter to zero.
+    /// - If the circuit was HalfOpen, transitions to Closed.
+    pub fn record_success(&mut self, provider_name: &str) {
+        if let Some(cs) = self.circuit_states.get_mut(provider_name) {
+            cs.failures = 0;
+            cs.last_success = Some(Instant::now());
+            if cs.state == CircuitStateKind::HalfOpen {
+                cs.state = CircuitStateKind::Closed;
+            }
+        }
+    }
+
+    /// Record a failed request for the named provider.
+    ///
+    /// - Increments the failure counter.
+    /// - If the failure count reaches `max_failures`, opens the circuit.
+    pub fn record_failure(&mut self, provider_name: &str) {
+        let max = self.max_failures;
+        if let Some(cs) = self.circuit_states.get_mut(provider_name) {
+            cs.failures += 1;
+            cs.last_failure = Some(Instant::now());
+            if cs.failures >= max {
+                cs.state = CircuitStateKind::Open;
+            }
+        }
+    }
+
+    /// Return the current health status for a provider.
+    pub fn health_status(&self, provider_name: &str) -> ProviderHealthStatus {
+        self.health_status
+            .get(provider_name)
+            .cloned()
+            .unwrap_or(ProviderHealthStatus::Unknown)
+    }
+
+    /// Manually set the health status for a provider.
+    pub fn set_health_status(&mut self, provider_name: &str, status: ProviderHealthStatus) {
+        self.health_status
+            .insert(provider_name.to_string(), status);
+    }
+
+    /// Perform a lightweight health check against a provider by issuing a
+    /// `GET /` request with a 5-second timeout.
+    ///
+    /// The result is stored in the internal health-status map and also returned.
+    pub fn check_health(&mut self, provider: &ProviderConfig) -> ProviderHealthStatus {
+        let url = format!("{}/", provider.base_url);
+        let status = match ureq::get(&url)
+            .timeout(Duration::from_secs(5))
+            .call()
+        {
+            Ok(_) => ProviderHealthStatus::Healthy,
+            Err(ureq::Error::Status(code, _)) if code < 500 => ProviderHealthStatus::Degraded,
+            Err(_) => ProviderHealthStatus::Unhealthy,
+        };
+        self.health_status
+            .insert(provider.name.clone(), status.clone());
+        status
+    }
+
+    /// Return the names of all providers whose circuits are not Open.
+    pub fn active_providers(&self) -> Vec<&str> {
+        let mut result = Vec::new();
+        let all_names: Vec<&str> = std::iter::once(self.primary.name.as_str())
+            .chain(self.fallbacks.iter().map(|p| p.name.as_str()))
+            .collect();
+        for name in all_names {
+            if let Some(cs) = self.circuit_states.get(name) {
+                if cs.state != CircuitStateKind::Open {
+                    result.push(name);
+                }
+            } else {
+                result.push(name);
+            }
+        }
+        result
+    }
+
+    // -- Rate-limit helpers ------------------------------------------------
+
+    /// Update the rate-limit state for a provider from parsed response headers.
+    pub fn update_rate_limits(&mut self, provider_name: &str, headers: &RateLimitHeaders) {
+        let state = self
+            .rate_limits
+            .entry(provider_name.to_string())
+            .or_insert_with(ProviderRateState::new);
+
+        state.remaining_requests = headers.remaining_requests;
+        state.remaining_tokens = headers.remaining_tokens;
+        state.retry_after_secs = headers.retry_after_secs;
+
+        if let Some(secs) = headers.reset_secs {
+            state.reset_at = Some(Instant::now() + Duration::from_secs(secs));
+        }
+        if let Some(secs) = headers.retry_after_secs {
+            // retry-after takes precedence if present
+            state.reset_at = Some(Instant::now() + Duration::from_secs(secs));
+        }
+    }
+
+    /// Check whether a provider is currently rate-limited.
+    ///
+    /// A provider is considered rate-limited when:
+    /// - `remaining_requests` is `Some(0)` **and** the reset time has not passed, or
+    /// - `retry_after_secs` is set **and** the reset time has not passed.
+    pub fn is_rate_limited(&self, provider_name: &str) -> bool {
+        if let Some(state) = self.rate_limits.get(provider_name) {
+            // Check if we have a reset_at and it's in the future
+            let within_window = state
+                .reset_at
+                .map(|r| Instant::now() < r)
+                .unwrap_or(false);
+
+            if !within_window {
+                return false;
+            }
+
+            // Within the window — check if we've exhausted requests
+            if let Some(0) = state.remaining_requests {
+                return true;
+            }
+
+            // retry-after header means we should back off
+            if state.retry_after_secs.is_some() {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Return the number of consecutive failures for the named provider.
+    pub fn failure_count(&self, provider_name: &str) -> u32 {
+        self.circuit_states
+            .get(provider_name)
+            .map(|cs| cs.failures)
+            .unwrap_or(0)
+    }
+
+    /// Return `true` if the circuit for the named provider is open.
+    pub fn is_circuit_open(&self, provider_name: &str) -> bool {
+        self.circuit_states
+            .get(provider_name)
+            .map(|cs| cs.state == CircuitStateKind::Open)
+            .unwrap_or(false)
+    }
+}
+
+impl std::fmt::Debug for ResilientProviderRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ResilientProviderRegistry")
+            .field("primary", &self.primary.name)
+            .field(
+                "fallbacks",
+                &self.fallbacks.iter().map(|p| &p.name).collect::<Vec<_>>(),
+            )
+            .field("max_failures", &self.max_failures)
+            .field("recovery_secs", &self.recovery_secs)
+            .finish()
+    }
+}
+
+// ============================================================================
+// AuditedProvider (Item 4.3)
+// ============================================================================
+
+/// Audit entry recording a single LLM provider call.
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct AuditEntry {
+    pub timestamp: std::time::SystemTime,
+    pub provider: String,
+    pub model: String,
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub latency_ms: u64,
+    pub success: bool,
+    pub error: Option<String>,
+}
+
+/// Aggregate statistics from audit log entries.
+#[allow(dead_code)]
+pub struct AuditSummary {
+    pub total_calls: usize,
+    pub successful: usize,
+    pub failed: usize,
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
+    pub avg_latency_ms: f64,
+    pub by_provider: std::collections::HashMap<String, usize>,
+    pub by_model: std::collections::HashMap<String, usize>,
+}
+
+/// Provider wrapper that logs every LLM call to an in-memory audit log.
+#[allow(dead_code)]
+pub struct AuditedProvider {
+    audit_log: std::sync::Arc<std::sync::Mutex<Vec<AuditEntry>>>,
+    max_entries: usize,
+}
+
+#[allow(dead_code)]
+impl AuditedProvider {
+    pub fn new(max_entries: usize) -> Self {
+        Self {
+            audit_log: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            max_entries,
+        }
+    }
+
+    /// Record an audit entry, evicting the oldest if over max.
+    pub fn record(&self, entry: AuditEntry) {
+        let mut log = self.audit_log.lock().unwrap_or_else(|e| e.into_inner());
+        log.push(entry);
+        while log.len() > self.max_entries {
+            log.remove(0);
+        }
+    }
+
+    /// Clone all current audit entries.
+    pub fn entries(&self) -> Vec<AuditEntry> {
+        let log = self.audit_log.lock().unwrap_or_else(|e| e.into_inner());
+        log.clone()
+    }
+
+    /// Number of entries currently in the audit log.
+    pub fn entry_count(&self) -> usize {
+        let log = self.audit_log.lock().unwrap_or_else(|e| e.into_inner());
+        log.len()
+    }
+
+    /// Clear all entries.
+    pub fn clear(&self) {
+        let mut log = self.audit_log.lock().unwrap_or_else(|e| e.into_inner());
+        log.clear();
+    }
+
+    /// Return entries recorded at or after the given timestamp.
+    pub fn entries_since(&self, since: std::time::SystemTime) -> Vec<AuditEntry> {
+        let log = self.audit_log.lock().unwrap_or_else(|e| e.into_inner());
+        log.iter()
+            .filter(|e| e.timestamp >= since)
+            .cloned()
+            .collect()
+    }
+
+    /// Compute aggregate statistics from the current audit log.
+    pub fn summary(&self) -> AuditSummary {
+        let log = self.audit_log.lock().unwrap_or_else(|e| e.into_inner());
+        let total_calls = log.len();
+        let successful = log.iter().filter(|e| e.success).count();
+        let failed = total_calls - successful;
+        let total_input_tokens: u64 = log.iter().filter_map(|e| e.input_tokens).sum();
+        let total_output_tokens: u64 = log.iter().filter_map(|e| e.output_tokens).sum();
+        let total_latency: u64 = log.iter().map(|e| e.latency_ms).sum();
+        let avg_latency_ms = if total_calls > 0 {
+            total_latency as f64 / total_calls as f64
+        } else {
+            0.0
+        };
+
+        let mut by_provider: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        let mut by_model: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for entry in log.iter() {
+            *by_provider.entry(entry.provider.clone()).or_insert(0) += 1;
+            *by_model.entry(entry.model.clone()).or_insert(0) += 1;
+        }
+
+        AuditSummary {
+            total_calls,
+            successful,
+            failed,
+            total_input_tokens,
+            total_output_tokens,
+            avg_latency_ms,
+            by_provider,
+            by_model,
+        }
     }
 }
 
@@ -1588,5 +2348,660 @@ mod tests {
             result.contains("trading"),
             "prompt should contain second interest"
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ResilientProviderRegistry tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod resilient_registry_tests {
+    use super::*;
+
+    /// Helper: create a simple primary config.
+    fn primary() -> ProviderConfig {
+        ProviderConfig::new("primary", "http://localhost:11434")
+            .with_provider_type("ollama")
+            .with_priority(0)
+    }
+
+    /// Helper: create a simple fallback config.
+    fn fallback(name: &str, priority: u32) -> ProviderConfig {
+        ProviderConfig::new(name, &format!("http://localhost:{}", 11435 + priority))
+            .with_provider_type("openai")
+            .with_priority(priority)
+    }
+
+    // -- Item 3.1: Fallback chain tests ------------------------------------
+
+    #[test]
+    fn test_resilient_registry_primary_success() {
+        let mut reg = ResilientProviderRegistry::new(primary());
+
+        let result = reg.generate_with_fallback(|p| -> Result<String, String> {
+            Ok(format!("ok from {}", p.name))
+        });
+
+        assert!(result.is_ok());
+        let (value, name) = result.expect("should succeed");
+        assert_eq!(value, "ok from primary");
+        assert_eq!(name, "primary");
+    }
+
+    #[test]
+    fn test_resilient_registry_fallback_on_failure() {
+        let mut reg = ResilientProviderRegistry::new(primary());
+        reg.add_fallback(fallback("backup", 1));
+
+        let result = reg.generate_with_fallback(|p| -> Result<String, String> {
+            if p.name == "primary" {
+                Err("primary down".to_string())
+            } else {
+                Ok(format!("ok from {}", p.name))
+            }
+        });
+
+        assert!(result.is_ok());
+        let (value, name) = result.expect("should succeed via fallback");
+        assert_eq!(value, "ok from backup");
+        assert_eq!(name, "backup");
+    }
+
+    #[test]
+    fn test_resilient_registry_all_fail() {
+        let mut reg = ResilientProviderRegistry::new(primary());
+        reg.add_fallback(fallback("backup", 1));
+
+        let result = reg.generate_with_fallback(|p| -> Result<String, String> {
+            Err(format!("{} is offline", p.name))
+        });
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ResilientError::AllProvidersFailed { errors } => {
+                assert_eq!(errors.len(), 2);
+                assert_eq!(errors[0].0, "primary");
+                assert!(errors[0].1.contains("offline"));
+                assert_eq!(errors[1].0, "backup");
+            }
+            other => panic!("Expected AllProvidersFailed, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_circuit_breaker_opens_after_failures() {
+        let mut reg = ResilientProviderRegistry::new(primary());
+        reg.set_max_failures(3);
+
+        // Record 3 failures
+        reg.record_failure("primary");
+        reg.record_failure("primary");
+        assert!(!reg.is_circuit_open("primary"), "2 failures should not open circuit");
+        reg.record_failure("primary");
+        assert!(reg.is_circuit_open("primary"), "3 failures should open circuit");
+
+        // Now generate_with_fallback should return NoAvailableProviders
+        let result = reg.generate_with_fallback(|_| -> Result<String, String> {
+            Ok("should not reach".to_string())
+        });
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ResilientError::NoAvailableProviders => {}
+            other => panic!("Expected NoAvailableProviders, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_circuit_breaker_half_open_recovery() {
+        let mut reg = ResilientProviderRegistry::new(primary());
+        reg.set_max_failures(1);
+        // Use a zero-second recovery so half-open triggers immediately
+        reg.set_recovery_secs(0);
+
+        // Open the circuit
+        reg.record_failure("primary");
+        assert!(reg.is_circuit_open("primary"));
+
+        // With recovery_secs=0, the circuit should transition to HalfOpen
+        // when checked, allowing a probe request.
+        let result = reg.generate_with_fallback(|p| -> Result<String, String> {
+            Ok(format!("recovered from {}", p.name))
+        });
+
+        assert!(result.is_ok());
+        let (value, _) = result.expect("half-open should allow probe");
+        assert_eq!(value, "recovered from primary");
+    }
+
+    #[test]
+    fn test_circuit_breaker_reclose_on_success() {
+        let mut reg = ResilientProviderRegistry::new(primary());
+        reg.set_max_failures(2);
+
+        // Accumulate some failures (not enough to open)
+        reg.record_failure("primary");
+        assert_eq!(reg.failure_count("primary"), 1);
+
+        // A success should reset
+        reg.record_success("primary");
+        assert_eq!(reg.failure_count("primary"), 0);
+        assert!(!reg.is_circuit_open("primary"));
+    }
+
+    // -- Item 3.3: Health status integration tests -------------------------
+
+    #[test]
+    fn test_health_status_skip_unhealthy() {
+        let mut reg = ResilientProviderRegistry::new(primary());
+        reg.add_fallback(fallback("backup", 1));
+
+        // Mark primary as unhealthy
+        reg.set_health_status("primary", ProviderHealthStatus::Unhealthy);
+
+        let result = reg.generate_with_fallback(|p| -> Result<String, String> {
+            Ok(format!("ok from {}", p.name))
+        });
+
+        assert!(result.is_ok());
+        let (_, name) = result.expect("should skip primary");
+        assert_eq!(name, "backup", "primary should be skipped because unhealthy");
+    }
+
+    #[test]
+    fn test_health_status_try_degraded() {
+        let mut reg = ResilientProviderRegistry::new(primary());
+
+        // Mark primary as degraded — should still be tried
+        reg.set_health_status("primary", ProviderHealthStatus::Degraded);
+
+        let result = reg.generate_with_fallback(|p| -> Result<String, String> {
+            Ok(format!("ok from {}", p.name))
+        });
+
+        assert!(result.is_ok());
+        let (_, name) = result.expect("degraded should still work");
+        assert_eq!(name, "primary");
+    }
+
+    #[test]
+    fn test_health_status_get_set() {
+        let mut reg = ResilientProviderRegistry::new(primary());
+        assert_eq!(reg.health_status("primary"), ProviderHealthStatus::Unknown);
+
+        reg.set_health_status("primary", ProviderHealthStatus::Healthy);
+        assert_eq!(reg.health_status("primary"), ProviderHealthStatus::Healthy);
+
+        reg.set_health_status("primary", ProviderHealthStatus::Unhealthy);
+        assert_eq!(reg.health_status("primary"), ProviderHealthStatus::Unhealthy);
+    }
+
+    // -- Item 3.2: Connection pool handle tests ----------------------------
+
+    #[test]
+    fn test_connection_pool_handle_reuses_agent() {
+        let mut pool = ConnectionPoolHandle::new(PoolHandleConfig::default());
+
+        let _agent1 = pool.get_agent("http://localhost:11434");
+        let _agent2 = pool.get_agent("http://localhost:11434");
+
+        // The agents HashMap should have exactly one entry
+        assert_eq!(pool.agents.len(), 1, "same host should reuse agent");
+    }
+
+    #[test]
+    fn test_connection_pool_handle_different_hosts() {
+        let mut pool = ConnectionPoolHandle::new(PoolHandleConfig::default());
+
+        let _agent1 = pool.get_agent("http://localhost:11434");
+        let _agent2 = pool.get_agent("http://localhost:1234");
+
+        assert_eq!(pool.agents.len(), 2, "different hosts should get different agents");
+    }
+
+    #[test]
+    fn test_connection_pool_handle_custom_config() {
+        let config = PoolHandleConfig {
+            timeout_secs: 60,
+            max_idle_per_host: 8,
+        };
+        let mut pool = ConnectionPoolHandle::new(config);
+        // Just ensure we can get an agent without panicking
+        let _agent = pool.get_agent("http://example.com");
+        assert_eq!(pool.agents.len(), 1);
+    }
+
+    #[test]
+    fn test_connection_pool_handle_debug() {
+        let pool = ConnectionPoolHandle::new(PoolHandleConfig::default());
+        let debug = format!("{:?}", pool);
+        assert!(debug.contains("ConnectionPoolHandle"));
+    }
+
+    // -- Item 3.4: Rate limit tests ----------------------------------------
+
+    #[test]
+    fn test_rate_limit_headers_parsing() {
+        let headers = vec![
+            ("x-ratelimit-remaining-requests", "42"),
+            ("x-ratelimit-remaining-tokens", "10000"),
+            ("x-ratelimit-reset", "30"),
+            ("retry-after", "5"),
+        ];
+
+        let parsed = RateLimitHeaders::from_response_headers(&headers);
+        assert_eq!(parsed.remaining_requests, Some(42));
+        assert_eq!(parsed.remaining_tokens, Some(10000));
+        assert_eq!(parsed.reset_secs, Some(30));
+        assert_eq!(parsed.retry_after_secs, Some(5));
+    }
+
+    #[test]
+    fn test_rate_limit_headers_parsing_case_insensitive() {
+        let headers = vec![
+            ("X-RateLimit-Remaining-Requests", "100"),
+            ("X-RATELIMIT-REMAINING-TOKENS", "5000"),
+        ];
+
+        let parsed = RateLimitHeaders::from_response_headers(&headers);
+        assert_eq!(parsed.remaining_requests, Some(100));
+        assert_eq!(parsed.remaining_tokens, Some(5000));
+    }
+
+    #[test]
+    fn test_rate_limit_headers_parsing_empty() {
+        let headers: Vec<(&str, &str)> = vec![];
+        let parsed = RateLimitHeaders::from_response_headers(&headers);
+        assert_eq!(parsed.remaining_requests, None);
+        assert_eq!(parsed.remaining_tokens, None);
+        assert_eq!(parsed.reset_secs, None);
+        assert_eq!(parsed.retry_after_secs, None);
+    }
+
+    #[test]
+    fn test_rate_limit_headers_parsing_invalid_values() {
+        let headers = vec![
+            ("x-ratelimit-remaining-requests", "not-a-number"),
+            ("retry-after", "abc"),
+        ];
+        let parsed = RateLimitHeaders::from_response_headers(&headers);
+        assert_eq!(parsed.remaining_requests, None);
+        assert_eq!(parsed.retry_after_secs, None);
+    }
+
+    #[test]
+    fn test_rate_limited_provider_skipped() {
+        let mut reg = ResilientProviderRegistry::new(primary());
+        reg.add_fallback(fallback("backup", 1));
+
+        // Simulate rate-limit: 0 remaining requests with a reset far in the future
+        let rl_headers = RateLimitHeaders {
+            remaining_requests: Some(0),
+            remaining_tokens: None,
+            reset_secs: Some(3600), // 1 hour from now
+            retry_after_secs: None,
+        };
+        reg.update_rate_limits("primary", &rl_headers);
+        assert!(reg.is_rate_limited("primary"), "primary should be rate-limited");
+
+        let result = reg.generate_with_fallback(|p| -> Result<String, String> {
+            Ok(format!("ok from {}", p.name))
+        });
+
+        assert!(result.is_ok());
+        let (_, name) = result.expect("should use backup");
+        assert_eq!(name, "backup", "rate-limited primary should be skipped");
+    }
+
+    #[test]
+    fn test_rate_limit_not_limited_with_remaining() {
+        let mut reg = ResilientProviderRegistry::new(primary());
+
+        // Provider has remaining requests — should NOT be rate-limited
+        let rl_headers = RateLimitHeaders {
+            remaining_requests: Some(100),
+            remaining_tokens: None,
+            reset_secs: Some(60),
+            retry_after_secs: None,
+        };
+        reg.update_rate_limits("primary", &rl_headers);
+        assert!(!reg.is_rate_limited("primary"));
+    }
+
+    #[test]
+    fn test_rate_limit_reset() {
+        let mut reg = ResilientProviderRegistry::new(primary());
+
+        // Set rate limit that expires immediately (0 seconds)
+        let rl_headers = RateLimitHeaders {
+            remaining_requests: Some(0),
+            remaining_tokens: None,
+            reset_secs: Some(0),
+            retry_after_secs: None,
+        };
+        reg.update_rate_limits("primary", &rl_headers);
+
+        // With reset_secs=0, the reset_at should be essentially now.
+        // A tiny sleep or even just the passage of code execution should
+        // make Instant::now() >= reset_at, so the provider is available.
+        // We test that is_rate_limited returns false after the window expires.
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        assert!(!reg.is_rate_limited("primary"), "after reset, should not be rate-limited");
+    }
+
+    #[test]
+    fn test_rate_limit_retry_after() {
+        let mut reg = ResilientProviderRegistry::new(primary());
+
+        let rl_headers = RateLimitHeaders {
+            remaining_requests: None,
+            remaining_tokens: None,
+            reset_secs: None,
+            retry_after_secs: Some(300),
+        };
+        reg.update_rate_limits("primary", &rl_headers);
+        assert!(reg.is_rate_limited("primary"), "retry-after should rate-limit");
+    }
+
+    // -- Priority ordering tests -------------------------------------------
+
+    #[test]
+    fn test_provider_priority_ordering() {
+        let mut reg = ResilientProviderRegistry::new(
+            ProviderConfig::new("first", "http://first").with_priority(0),
+        );
+        reg.add_fallback(ProviderConfig::new("third", "http://third").with_priority(10));
+        reg.add_fallback(ProviderConfig::new("second", "http://second").with_priority(5));
+
+        // Mark "first" as unhealthy to force fallback path
+        reg.set_health_status("first", ProviderHealthStatus::Unhealthy);
+
+        let mut tried_order = Vec::new();
+
+        let result = reg.generate_with_fallback(|p| -> Result<String, String> {
+            tried_order.push(p.name.clone());
+            Err("fail".to_string())
+        });
+
+        // Should have tried second (priority 5) before third (priority 10)
+        assert!(result.is_err());
+        assert_eq!(tried_order, vec!["second", "third"]);
+    }
+
+    // -- Active providers test ---------------------------------------------
+
+    #[test]
+    fn test_active_providers() {
+        let mut reg = ResilientProviderRegistry::new(primary());
+        reg.add_fallback(fallback("backup1", 1));
+        reg.add_fallback(fallback("backup2", 2));
+
+        let active = reg.active_providers();
+        assert_eq!(active.len(), 3);
+
+        // Open circuit on backup1
+        reg.set_max_failures(1);
+        reg.record_failure("backup1");
+        assert!(reg.is_circuit_open("backup1"));
+
+        let active = reg.active_providers();
+        assert_eq!(active.len(), 2);
+        assert!(!active.contains(&"backup1"), "backup1 circuit is open");
+        assert!(active.contains(&"primary"));
+        assert!(active.contains(&"backup2"));
+    }
+
+    // -- Record success / failure tests ------------------------------------
+
+    #[test]
+    fn test_record_success_resets_failures() {
+        let mut reg = ResilientProviderRegistry::new(primary());
+        reg.record_failure("primary");
+        reg.record_failure("primary");
+        assert_eq!(reg.failure_count("primary"), 2);
+
+        reg.record_success("primary");
+        assert_eq!(reg.failure_count("primary"), 0);
+    }
+
+    #[test]
+    fn test_record_failure_increments() {
+        let mut reg = ResilientProviderRegistry::new(primary());
+        assert_eq!(reg.failure_count("primary"), 0);
+
+        reg.record_failure("primary");
+        assert_eq!(reg.failure_count("primary"), 1);
+
+        reg.record_failure("primary");
+        assert_eq!(reg.failure_count("primary"), 2);
+
+        reg.record_failure("primary");
+        assert_eq!(reg.failure_count("primary"), 3);
+    }
+
+    // -- Additional coverage tests -----------------------------------------
+
+    #[test]
+    fn test_provider_config_builder() {
+        let cfg = ProviderConfig::new("test", "http://test.local")
+            .with_provider_type("openai")
+            .with_api_key("sk-test-123")
+            .with_priority(5);
+
+        assert_eq!(cfg.name, "test");
+        assert_eq!(cfg.base_url, "http://test.local");
+        assert_eq!(cfg.provider_type, "openai");
+        assert_eq!(cfg.api_key, Some("sk-test-123".to_string()));
+        assert_eq!(cfg.priority, 5);
+    }
+
+    #[test]
+    fn test_resilient_error_display() {
+        let err = ResilientError::AllProvidersFailed {
+            errors: vec![
+                ("a".to_string(), "timeout".to_string()),
+                ("b".to_string(), "refused".to_string()),
+            ],
+        };
+        let msg = format!("{}", err);
+        assert!(msg.contains("a=timeout"));
+        assert!(msg.contains("b=refused"));
+
+        let err2 = ResilientError::NoAvailableProviders;
+        assert_eq!(format!("{}", err2), "No available providers");
+    }
+
+    #[test]
+    fn test_resilient_registry_debug() {
+        let reg = ResilientProviderRegistry::new(primary());
+        let debug = format!("{:?}", reg);
+        assert!(debug.contains("ResilientProviderRegistry"));
+        assert!(debug.contains("primary"));
+    }
+
+    #[test]
+    fn test_resilient_registry_set_pool() {
+        let mut reg = ResilientProviderRegistry::new(primary());
+        assert!(reg.pool.is_none());
+
+        reg.set_pool(ConnectionPoolHandle::new(PoolHandleConfig::default()));
+        assert!(reg.pool.is_some());
+    }
+
+    #[test]
+    fn test_no_available_providers_all_unhealthy() {
+        let mut reg = ResilientProviderRegistry::new(primary());
+        reg.set_health_status("primary", ProviderHealthStatus::Unhealthy);
+
+        let result = reg.generate_with_fallback(|_| -> Result<String, String> {
+            Ok("should not reach".to_string())
+        });
+
+        match result.unwrap_err() {
+            ResilientError::NoAvailableProviders => {}
+            other => panic!("Expected NoAvailableProviders, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_health_status_unknown_provider() {
+        let reg = ResilientProviderRegistry::new(primary());
+        assert_eq!(
+            reg.health_status("nonexistent"),
+            ProviderHealthStatus::Unknown,
+        );
+    }
+
+    #[test]
+    fn test_failure_count_unknown_provider() {
+        let reg = ResilientProviderRegistry::new(primary());
+        assert_eq!(reg.failure_count("nonexistent"), 0);
+    }
+
+    #[test]
+    fn test_circuit_not_open_unknown_provider() {
+        let reg = ResilientProviderRegistry::new(primary());
+        assert!(!reg.is_circuit_open("nonexistent"));
+    }
+
+    #[test]
+    fn test_rate_limit_no_state() {
+        let reg = ResilientProviderRegistry::new(primary());
+        assert!(!reg.is_rate_limited("nonexistent"));
+    }
+
+    // ========================================================================
+    // AuditedProvider tests (Item 4.3)
+    // ========================================================================
+
+    fn sample_entry(provider: &str, model: &str, success: bool) -> AuditEntry {
+        AuditEntry {
+            timestamp: std::time::SystemTime::now(),
+            provider: provider.to_string(),
+            model: model.to_string(),
+            input_tokens: Some(100),
+            output_tokens: Some(50),
+            latency_ms: 200,
+            success,
+            error: if success { None } else { Some("timeout".to_string()) },
+        }
+    }
+
+    #[test]
+    fn test_audited_provider_new() {
+        let ap = AuditedProvider::new(100);
+        assert_eq!(ap.entry_count(), 0);
+    }
+
+    #[test]
+    fn test_audited_provider_record() {
+        let ap = AuditedProvider::new(100);
+        ap.record(sample_entry("openai", "gpt-4", true));
+        assert_eq!(ap.entry_count(), 1);
+        let entries = ap.entries();
+        assert_eq!(entries[0].provider, "openai");
+    }
+
+    #[test]
+    fn test_audited_provider_entries() {
+        let ap = AuditedProvider::new(100);
+        ap.record(sample_entry("openai", "gpt-4", true));
+        ap.record(sample_entry("anthropic", "claude", true));
+        let entries = ap.entries();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].provider, "openai");
+        assert_eq!(entries[1].provider, "anthropic");
+    }
+
+    #[test]
+    fn test_audited_provider_clear() {
+        let ap = AuditedProvider::new(100);
+        ap.record(sample_entry("openai", "gpt-4", true));
+        assert_eq!(ap.entry_count(), 1);
+        ap.clear();
+        assert_eq!(ap.entry_count(), 0);
+    }
+
+    #[test]
+    fn test_audited_provider_max_entries_eviction() {
+        let ap = AuditedProvider::new(3);
+        ap.record(sample_entry("a", "m1", true));
+        ap.record(sample_entry("b", "m2", true));
+        ap.record(sample_entry("c", "m3", true));
+        ap.record(sample_entry("d", "m4", true));
+        assert_eq!(ap.entry_count(), 3);
+        let entries = ap.entries();
+        assert_eq!(entries[0].provider, "b");
+        assert_eq!(entries[2].provider, "d");
+    }
+
+    #[test]
+    fn test_audited_provider_entries_since() {
+        let ap = AuditedProvider::new(100);
+        ap.record(sample_entry("old", "m1", true));
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let cutoff = std::time::SystemTime::now();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        ap.record(sample_entry("new", "m2", true));
+        let recent = ap.entries_since(cutoff);
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].provider, "new");
+    }
+
+    #[test]
+    fn test_audited_provider_summary() {
+        let ap = AuditedProvider::new(100);
+        ap.record(sample_entry("openai", "gpt-4", true));
+        ap.record(sample_entry("openai", "gpt-4", false));
+        ap.record(sample_entry("anthropic", "claude", true));
+        let summary = ap.summary();
+        assert_eq!(summary.total_calls, 3);
+        assert_eq!(summary.successful, 2);
+        assert_eq!(summary.failed, 1);
+        assert_eq!(summary.total_input_tokens, 300);
+        assert_eq!(summary.total_output_tokens, 150);
+        assert_eq!(*summary.by_provider.get("openai").unwrap(), 2);
+        assert_eq!(*summary.by_provider.get("anthropic").unwrap(), 1);
+    }
+
+    #[test]
+    fn test_audited_provider_summary_empty() {
+        let ap = AuditedProvider::new(100);
+        let summary = ap.summary();
+        assert_eq!(summary.total_calls, 0);
+        assert_eq!(summary.avg_latency_ms, 0.0);
+    }
+
+    #[test]
+    fn test_audited_provider_summary_by_model() {
+        let ap = AuditedProvider::new(100);
+        ap.record(sample_entry("openai", "gpt-4", true));
+        ap.record(sample_entry("openai", "gpt-3.5", true));
+        ap.record(sample_entry("openai", "gpt-4", true));
+        let summary = ap.summary();
+        assert_eq!(*summary.by_model.get("gpt-4").unwrap(), 2);
+        assert_eq!(*summary.by_model.get("gpt-3.5").unwrap(), 1);
+    }
+
+    #[test]
+    fn test_audited_provider_thread_safe() {
+        let ap = std::sync::Arc::new(AuditedProvider::new(1000));
+        let mut handles = vec![];
+        for i in 0..10 {
+            let ap_clone = ap.clone();
+            handles.push(std::thread::spawn(move || {
+                for j in 0..10 {
+                    ap_clone.record(sample_entry(
+                        &format!("p{}", i),
+                        &format!("m{}", j),
+                        true,
+                    ));
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+        assert_eq!(ap.entry_count(), 100);
     }
 }

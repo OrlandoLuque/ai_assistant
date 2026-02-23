@@ -133,6 +133,7 @@ pub mod fallback;
 pub mod formatting;
 pub mod http_client;
 pub mod internal_storage;
+pub mod secure_credentials;
 pub mod llm_judge;
 pub mod log_redaction;
 pub mod memory_management;
@@ -162,7 +163,10 @@ pub use models::{ModelCapabilityInfo, ModelInfo, ModelRegistry};
 pub use providers::{
     build_system_prompt, build_system_prompt_with_notes, fetch_model_context_size,
     generate_response, generate_response_streaming, generate_response_streaming_cancellable,
-    ProviderRegistry as LlmProviderRegistry,
+    ConnectionPoolHandle, PoolHandleConfig, ProviderConfig as LlmProviderConfig,
+    ProviderHealthStatus, ProviderRateState, ProviderRegistry as LlmProviderRegistry,
+    RateLimitHeaders, ResilientError, ResilientProviderRegistry,
+    AuditEntry as ProviderAuditEntry, AuditSummary, AuditedProvider,
 };
 pub use session::{
     ChatSession, ChatSessionStore, JournalEntry, JournalEntryType, JournalSession, ResponseStyle,
@@ -186,8 +190,8 @@ pub use events::{
 
 pub use config_file::{
     default_config_path, load_config, save_config, CacheConfig as FileCacheConfig, ConfigFile,
-    ConfigFormat, GenerationConfig, HybridConfig, LoggingConfig, ProviderConfig, RagFileConfig,
-    SecurityConfig, UrlConfig,
+    ConfigFormat, ConfigValidationError, GenerationConfig, HybridConfig, LoggingConfig,
+    ProviderConfig, RagFileConfig, SecurityConfig, UrlConfig,
 };
 
 pub use memory_management::{
@@ -240,14 +244,16 @@ pub use search::{
 };
 
 pub use caching::{
-    CacheConfig, CacheKey, CacheStats as ResponseCacheStats, CachedResponse, ResponseCache,
-    SemanticCache,
+    BudgetCostAlert, CacheConfig, CacheKey, CacheMiddlewareStats, CacheStats as ResponseCacheStats,
+    CachedLlmResponse, CachedResponse, CostTracker as CacheCostTracker, ResponseCache,
+    ResponseCacheMiddleware, SemanticCache, UsageRecord,
 };
 
 pub use structured::{
     extract_json_from_response, EnforcementConfig, EnforcementResult, JsonSchema, SchemaBuilder,
     SchemaProperty, SchemaType, SchemaValidator, StructuredOutputEnforcer,
-    StructuredOutputGenerator, StructuredParseResult, StructuredRequest, ValidationError,
+    StructuredOutputError, StructuredOutputGenerator, StructuredOutputRequest,
+    StructuredOutputStrategy, StructuredParseResult, StructuredRequest, ValidationError,
     ValidationResult,
 };
 
@@ -291,6 +297,11 @@ pub use http_client::{
 };
 
 pub use server::{AiServer, ServerConfig, ServerHandle};
+
+pub use secure_credentials::{
+    CallbackSource, CredentialError, CredentialResolver, CredentialSource, EnvVarSource, FileSource,
+    SecureString, StaticSource,
+};
 
 pub use cloud_providers::{
     fetch_anthropic_cloud_models, fetch_cloud_models, fetch_openai_cloud_models,
@@ -1147,12 +1158,14 @@ pub use model_ensemble::{
 
 #[cfg(feature = "eval")]
 pub use auto_model_selection::{
-    AutoModelSelector, AutoSelectConfig, FallbackChain as SelectorFallbackChain, FallbackStrategy,
-    ModelCapabilities as AutoModelCapabilities, ModelCostEntry as SelectorCostEntry,
-    ModelCostRegistry as SelectorCostRegistry, ModelInvocation, ModelPerformanceStats,
-    ModelProfile as AutoModelProfile, ModelStats, PerformanceTracker as SelectorPerformanceTracker,
-    Requirements as ModelRequirementsAuto, SelectionResult, SmartSelector,
-    TaskType as AutoTaskType,
+    AutoModelSelector, AutoSelectConfig, CacheablePrompt, FallbackChain as SelectorFallbackChain,
+    FallbackStrategy, ModelCapabilities as AutoModelCapabilities,
+    ModelCostEntry as SelectorCostEntry, ModelCostRegistry as SelectorCostRegistry,
+    ModelInvocation, ModelPerformanceStats, ModelProfile as AutoModelProfile, ModelStats,
+    PerformanceTracker as SelectorPerformanceTracker, PipelineRouter,
+    PipelineRoutingDecision, PipelineTaskType, PromptSegment,
+    Requirements as ModelRequirementsAuto, RoutingRule as PipelineRoutingRule,
+    SelectionResult, SmartSelector, TaskType as AutoTaskType,
 };
 
 #[cfg(feature = "eval")]
@@ -1711,10 +1724,11 @@ pub use opentelemetry_integration::{
     create_llm_span, create_rag_span, create_tool_span, semantic_conventions, AgentSpan,
     AgentTracer, AiSpan, BudgetAlert as OtelBudgetAlert,
     BudgetCheckResult as OtelBudgetCheckResult, CostAttributor, CostBreakdownEntry, CostBudget,
-    CostReport, ExportFormat as OtelExportFormat, GenAiAttributes, GenAiEvent, GenAiEventType,
-    GenAiSystem, HistogramStats, MetricsCollector, ModelPricing as OtelModelPricing, OtelConfig,
-    OtelTracer, PricingTable, SpanExporter, SpanStatus, SpanTree, SpanTreeNode,
-    TracingMiddleware,
+    CostReport, ExportFormat as OtelExportFormat, ExportSpanStatus, ExportableSpan,
+    GenAiAttributes, GenAiConventions, GenAiEvent, GenAiEventType, GenAiSpanBuilder, GenAiSystem,
+    HistogramStats, MetricsCollector, ModelPricing as OtelModelPricing, OtelConfig, OtelTracer,
+    OtlpHttpExporter, PricingTable, PrometheusMetrics, SpanAttribute, SpanAttributeValue,
+    SpanExporter, SpanStatus, SpanTree, SpanTreeNode, TracingMiddleware,
 };
 
 // =============================================================================
@@ -1905,10 +1919,12 @@ pub use online_eval::{
 pub mod context_composer;
 
 pub use context_composer::{
-    BudgetAllocation, ComposedContext, ComposedSection, ContextComposer, ContextComposerConfig,
-    ContextOverflowDetector, ContextSection, OverflowAction,
+    BudgetAllocation, CompactableMessage as ComposerMessage, CompactedConversation,
+    ComposedContext, ComposedSection, ContextCompiler, ContextComposer, ContextComposerConfig,
+    ContextOverflowDetector, ContextSection,
+    ConversationCompactor as ContextConversationCompactor, OverflowAction,
     OverflowLevel as ComposerOverflowLevel, OverflowThresholds as ComposerOverflowThresholds,
-    SectionBudget, SectionPriority, TokenBudgetAllocator,
+    SectionBudget, SectionPriority, TokenBudgetAllocator, ToolSearchIndex,
     estimate_tokens as composer_estimate_tokens, generate_mini_summary,
 };
 
@@ -2017,3 +2033,9 @@ pub use agent_devtools::{
     ExecutionReplay, PerformanceProfiler, ProfileSummary, StateDiff, StateInspector, StateSnapshot,
     StepProfile,
 };
+
+// =============================================================================
+// COMPILE-TIME FEATURE FLAG VALIDATION
+// =============================================================================
+
+validate_features!();

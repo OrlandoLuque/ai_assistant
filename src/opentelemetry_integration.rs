@@ -22,10 +22,14 @@ use chrono::{DateTime, Utc};
 pub struct AiSpan {
     /// Unique span identifier
     pub span_id: String,
+    /// Trace identifier (shared across all spans in a trace)
+    pub trace_id: String,
     /// Optional parent span ID for nested operations
     pub parent_id: Option<String>,
     /// Operation name (e.g., "llm.generate", "rag.query", "tool.invoke")
     pub operation: String,
+    /// Span kind (e.g., "client", "server", "internal")
+    pub kind: String,
     /// AI model name if applicable
     pub model: Option<String>,
     /// Provider name
@@ -54,8 +58,10 @@ impl AiSpan {
             .as_millis() as u64;
         Self {
             span_id: generate_span_id(),
+            trace_id: generate_span_id(),
             parent_id: None,
             operation: operation.to_string(),
+            kind: "internal".to_string(),
             model: None,
             provider: None,
             start_time_ms: now,
@@ -1548,6 +1554,379 @@ impl CostAttributor {
 }
 
 // ============================================================================
+// OTLP HTTP Exporter (Item 5.1)
+// ============================================================================
+
+/// Serializable span attribute for OTLP JSON export.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SpanAttribute {
+    pub key: String,
+    pub value: SpanAttributeValue,
+}
+
+/// Attribute value wrapper (string only for simplicity).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SpanAttributeValue {
+    #[serde(rename = "stringValue")]
+    pub string_value: String,
+}
+
+/// Status for exported spans.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ExportSpanStatus {
+    pub code: u32,
+}
+
+/// Serializable span for OTLP JSON export format.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ExportableSpan {
+    #[serde(rename = "traceId")]
+    pub trace_id: String,
+    #[serde(rename = "spanId")]
+    pub span_id: String,
+    #[serde(rename = "parentSpanId", skip_serializing_if = "Option::is_none")]
+    pub parent_span_id: Option<String>,
+    pub name: String,
+    /// Span kind: 1=Internal, 2=Server, 3=Client
+    pub kind: u32,
+    #[serde(rename = "startTimeUnixNano")]
+    pub start_time_unix_nano: u64,
+    #[serde(rename = "endTimeUnixNano")]
+    pub end_time_unix_nano: u64,
+    pub attributes: Vec<SpanAttribute>,
+    pub status: ExportSpanStatus,
+}
+
+/// Exports spans to an OTLP-compatible collector via HTTP POST to `/v1/traces`.
+pub struct OtlpHttpExporter {
+    pub endpoint: String,
+    pub headers: HashMap<String, String>,
+    pub batch: Vec<ExportableSpan>,
+    pub flush_interval_ms: u64,
+    pub max_batch_size: usize,
+}
+
+impl OtlpHttpExporter {
+    pub fn new(endpoint: &str) -> Self {
+        Self {
+            endpoint: endpoint.to_string(),
+            headers: HashMap::new(),
+            batch: Vec::new(),
+            flush_interval_ms: 5_000,
+            max_batch_size: 512,
+        }
+    }
+
+    pub fn with_header(mut self, key: &str, value: &str) -> Self {
+        self.headers.insert(key.to_string(), value.to_string());
+        self
+    }
+
+    pub fn with_flush_interval(mut self, ms: u64) -> Self {
+        self.flush_interval_ms = ms;
+        self
+    }
+
+    /// Convert an AiSpan to ExportableSpan and add to batch.
+    pub fn add_span(&mut self, span: &AiSpan) {
+        let attrs: Vec<SpanAttribute> = span
+            .attributes
+            .iter()
+            .map(|(k, v)| SpanAttribute {
+                key: k.clone(),
+                value: SpanAttributeValue {
+                    string_value: v.clone(),
+                },
+            })
+            .collect();
+
+        let kind = match span.kind.as_str() {
+            "client" => 3,
+            "server" => 2,
+            _ => 1, // internal
+        };
+
+        let status_code = if span.status == "error" { 2 } else { 1 };
+
+        self.batch.push(ExportableSpan {
+            trace_id: span.trace_id.clone(),
+            span_id: span.span_id.clone(),
+            parent_span_id: span.parent_id.clone(),
+            name: span.operation.clone(),
+            kind,
+            start_time_unix_nano: span.start_time_ms * 1_000_000,
+            end_time_unix_nano: span.end_time_ms.unwrap_or(span.start_time_ms) * 1_000_000,
+            attributes: attrs,
+            status: ExportSpanStatus { code: status_code },
+        });
+    }
+
+    /// Returns true if the batch is at or over the max batch size.
+    pub fn should_flush(&self) -> bool {
+        self.batch.len() >= self.max_batch_size
+    }
+
+    /// Build OTLP JSON payload from current batch.
+    pub fn to_otlp_json(&self) -> String {
+        let payload = serde_json::json!({
+            "resourceSpans": [{
+                "scopeSpans": [{
+                    "scope": { "name": "ai_assistant" },
+                    "spans": self.batch.iter().map(|s| serde_json::to_value(s).unwrap_or_default()).collect::<Vec<_>>()
+                }]
+            }]
+        });
+        payload.to_string()
+    }
+
+    /// Flush the current batch to the OTLP endpoint via HTTP POST.
+    /// Returns the number of spans exported. Clears batch on success.
+    pub fn flush(&mut self) -> Result<usize, String> {
+        if self.batch.is_empty() {
+            return Ok(0);
+        }
+
+        let count = self.batch.len();
+        let body = self.to_otlp_json();
+        let url = format!("{}/v1/traces", self.endpoint);
+
+        let mut req = ureq::post(&url)
+            .set("Content-Type", "application/json")
+            .timeout(std::time::Duration::from_secs(10));
+
+        for (k, v) in &self.headers {
+            req = req.set(k, v);
+        }
+
+        match req.send_string(&body) {
+            Ok(_) => {
+                self.batch.clear();
+                Ok(count)
+            }
+            Err(e) => Err(format!("OTLP export failed: {}", e)),
+        }
+    }
+}
+
+// ============================================================================
+// GenAI Semantic Conventions (Item 5.2)
+// ============================================================================
+
+/// OpenTelemetry GenAI semantic convention attribute names.
+pub struct GenAiConventions;
+
+impl GenAiConventions {
+    pub const SYSTEM: &'static str = "gen_ai.system";
+    pub const REQUEST_MODEL: &'static str = "gen_ai.request.model";
+    pub const RESPONSE_MODEL: &'static str = "gen_ai.response.model";
+    pub const REQUEST_MAX_TOKENS: &'static str = "gen_ai.request.max_tokens";
+    pub const USAGE_INPUT_TOKENS: &'static str = "gen_ai.usage.input_tokens";
+    pub const USAGE_OUTPUT_TOKENS: &'static str = "gen_ai.usage.output_tokens";
+    pub const RESPONSE_FINISH_REASON: &'static str = "gen_ai.response.finish_reason";
+    pub const REQUEST_TEMPERATURE: &'static str = "gen_ai.request.temperature";
+}
+
+/// Builder for creating AiSpan with GenAI semantic convention attributes.
+pub struct GenAiSpanBuilder {
+    operation: String,
+    attributes: HashMap<String, String>,
+    input_tokens: Option<u64>,
+    output_tokens: Option<u64>,
+}
+
+impl GenAiSpanBuilder {
+    pub fn new(operation: &str) -> Self {
+        Self {
+            operation: operation.to_string(),
+            attributes: HashMap::new(),
+            input_tokens: None,
+            output_tokens: None,
+        }
+    }
+
+    pub fn system(mut self, s: &str) -> Self {
+        self.attributes.insert(GenAiConventions::SYSTEM.to_string(), s.to_string());
+        self
+    }
+
+    pub fn model(mut self, m: &str) -> Self {
+        self.attributes.insert(GenAiConventions::REQUEST_MODEL.to_string(), m.to_string());
+        self
+    }
+
+    pub fn input_tokens(mut self, n: u64) -> Self {
+        self.input_tokens = Some(n);
+        self.attributes.insert(GenAiConventions::USAGE_INPUT_TOKENS.to_string(), n.to_string());
+        self
+    }
+
+    pub fn output_tokens(mut self, n: u64) -> Self {
+        self.output_tokens = Some(n);
+        self.attributes.insert(GenAiConventions::USAGE_OUTPUT_TOKENS.to_string(), n.to_string());
+        self
+    }
+
+    pub fn temperature(mut self, t: f64) -> Self {
+        self.attributes.insert(GenAiConventions::REQUEST_TEMPERATURE.to_string(), t.to_string());
+        self
+    }
+
+    pub fn finish_reason(mut self, r: &str) -> Self {
+        self.attributes.insert(GenAiConventions::RESPONSE_FINISH_REASON.to_string(), r.to_string());
+        self
+    }
+
+    pub fn max_tokens(mut self, n: u64) -> Self {
+        self.attributes.insert(GenAiConventions::REQUEST_MAX_TOKENS.to_string(), n.to_string());
+        self
+    }
+
+    pub fn build(self) -> AiSpan {
+        let mut span = AiSpan::new(&self.operation);
+        span.kind = "client".to_string();
+        span.input_tokens = self.input_tokens;
+        span.output_tokens = self.output_tokens;
+        span.attributes = self.attributes;
+        if let Some(model) = span.attributes.get(GenAiConventions::REQUEST_MODEL) {
+            span.model = Some(model.clone());
+        }
+        if let Some(system) = span.attributes.get(GenAiConventions::SYSTEM) {
+            span.provider = Some(system.clone());
+        }
+        span
+    }
+}
+
+// ============================================================================
+// Prometheus Metrics Endpoint (Item 5.3)
+// ============================================================================
+
+/// Prometheus-format metrics for AI operations.
+pub struct PrometheusMetrics {
+    /// (provider, model, status) -> count
+    request_counts: HashMap<(String, String, String), u64>,
+    /// (provider, model, direction) -> total tokens
+    token_counts: HashMap<(String, String, String), u64>,
+    /// (provider, error_type) -> count
+    error_counts: HashMap<(String, String), u64>,
+    /// All recorded durations for histogram
+    durations: Vec<f64>,
+}
+
+impl PrometheusMetrics {
+    pub fn new() -> Self {
+        Self {
+            request_counts: HashMap::new(),
+            token_counts: HashMap::new(),
+            error_counts: HashMap::new(),
+            durations: Vec::new(),
+        }
+    }
+
+    pub fn record_request(
+        &mut self,
+        provider: &str,
+        model: &str,
+        status: &str,
+        duration_secs: f64,
+        input_tokens: u64,
+        output_tokens: u64,
+    ) {
+        *self.request_counts
+            .entry((provider.to_string(), model.to_string(), status.to_string()))
+            .or_insert(0) += 1;
+
+        *self.token_counts
+            .entry((provider.to_string(), model.to_string(), "input".to_string()))
+            .or_insert(0) += input_tokens;
+
+        *self.token_counts
+            .entry((provider.to_string(), model.to_string(), "output".to_string()))
+            .or_insert(0) += output_tokens;
+
+        self.durations.push(duration_secs);
+    }
+
+    pub fn record_error(&mut self, provider: &str, error_type: &str) {
+        *self.error_counts
+            .entry((provider.to_string(), error_type.to_string()))
+            .or_insert(0) += 1;
+    }
+
+    pub fn render(&self) -> String {
+        if self.request_counts.is_empty() && self.error_counts.is_empty() {
+            return "# No metrics recorded\n".to_string();
+        }
+
+        let mut out = String::new();
+
+        // ai_requests_total
+        if !self.request_counts.is_empty() {
+            out.push_str("# HELP ai_requests_total Total number of AI requests\n");
+            out.push_str("# TYPE ai_requests_total counter\n");
+            let mut keys: Vec<_> = self.request_counts.keys().collect();
+            keys.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
+            for key in keys {
+                let count = self.request_counts[key];
+                out.push_str(&format!(
+                    "ai_requests_total{{provider=\"{}\",model=\"{}\",status=\"{}\"}} {}\n",
+                    key.0, key.1, key.2, count
+                ));
+            }
+        }
+
+        // ai_tokens_total
+        if !self.token_counts.is_empty() {
+            out.push_str("# HELP ai_tokens_total Total tokens used\n");
+            out.push_str("# TYPE ai_tokens_total counter\n");
+            let mut keys: Vec<_> = self.token_counts.keys().collect();
+            keys.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
+            for key in keys {
+                let count = self.token_counts[key];
+                out.push_str(&format!(
+                    "ai_tokens_total{{provider=\"{}\",model=\"{}\",direction=\"{}\"}} {}\n",
+                    key.0, key.1, key.2, count
+                ));
+            }
+        }
+
+        // ai_errors_total
+        if !self.error_counts.is_empty() {
+            out.push_str("# HELP ai_errors_total Total AI errors\n");
+            out.push_str("# TYPE ai_errors_total counter\n");
+            let mut keys: Vec<_> = self.error_counts.keys().collect();
+            keys.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+            for key in keys {
+                let count = self.error_counts[key];
+                out.push_str(&format!(
+                    "ai_errors_total{{provider=\"{}\",error_type=\"{}\"}} {}\n",
+                    key.0, key.1, count
+                ));
+            }
+        }
+
+        // ai_request_duration_seconds
+        if !self.durations.is_empty() {
+            let sum: f64 = self.durations.iter().sum();
+            let count = self.durations.len();
+            out.push_str("# HELP ai_request_duration_seconds Request duration histogram\n");
+            out.push_str("# TYPE ai_request_duration_seconds summary\n");
+            out.push_str(&format!("ai_request_duration_seconds_sum {:.6}\n", sum));
+            out.push_str(&format!("ai_request_duration_seconds_count {}\n", count));
+        }
+
+        out
+    }
+
+    pub fn reset(&mut self) {
+        self.request_counts.clear();
+        self.token_counts.clear();
+        self.error_counts.clear();
+        self.durations.clear();
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -2690,5 +3069,249 @@ mod tests {
         // Verify session has non-zero duration
         let duration = agent_tracer.get_session_duration(&trace_id);
         assert!(duration.is_some());
+    }
+
+    // ========================================================================
+    // OTLP HTTP Exporter tests (Item 5.1)
+    // ========================================================================
+
+    #[test]
+    fn test_otlp_exporter_new() {
+        let exporter = OtlpHttpExporter::new("http://localhost:4318");
+        assert_eq!(exporter.endpoint, "http://localhost:4318");
+        assert!(exporter.headers.is_empty());
+        assert!(exporter.batch.is_empty());
+        assert_eq!(exporter.max_batch_size, 512);
+    }
+
+    #[test]
+    fn test_otlp_exporter_with_header() {
+        let exporter = OtlpHttpExporter::new("http://localhost:4318")
+            .with_header("Authorization", "Bearer tok123")
+            .with_header("X-Custom", "value");
+        assert_eq!(exporter.headers.len(), 2);
+        assert_eq!(exporter.headers["Authorization"], "Bearer tok123");
+    }
+
+    #[test]
+    fn test_otlp_exporter_with_flush_interval() {
+        let exporter = OtlpHttpExporter::new("http://otel:4318")
+            .with_flush_interval(10_000);
+        assert_eq!(exporter.flush_interval_ms, 10_000);
+    }
+
+    #[test]
+    fn test_otlp_exporter_add_span() {
+        let mut exporter = OtlpHttpExporter::new("http://localhost:4318");
+        let span = AiSpan::new("test.op");
+        exporter.add_span(&span);
+        assert_eq!(exporter.batch.len(), 1);
+        assert_eq!(exporter.batch[0].name, "test.op");
+    }
+
+    #[test]
+    fn test_otlp_exporter_should_flush() {
+        let mut exporter = OtlpHttpExporter::new("http://localhost:4318");
+        exporter.max_batch_size = 2;
+        assert!(!exporter.should_flush());
+        exporter.add_span(&AiSpan::new("a"));
+        assert!(!exporter.should_flush());
+        exporter.add_span(&AiSpan::new("b"));
+        assert!(exporter.should_flush());
+    }
+
+    #[test]
+    fn test_otlp_exporter_flush_empty() {
+        let mut exporter = OtlpHttpExporter::new("http://localhost:4318");
+        let result = exporter.flush();
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0);
+    }
+
+    #[test]
+    fn test_otlp_exporter_to_otlp_json() {
+        let mut exporter = OtlpHttpExporter::new("http://localhost:4318");
+        let mut span = AiSpan::new("llm.generate");
+        span.attributes.insert("gen_ai.system".to_string(), "openai".to_string());
+        exporter.add_span(&span);
+        let json = exporter.to_otlp_json();
+        assert!(json.contains("resourceSpans"));
+        assert!(json.contains("llm.generate"));
+        assert!(json.contains("gen_ai.system"));
+    }
+
+    #[test]
+    fn test_otlp_exporter_flush_with_mock() {
+        use crate::http_client::MockHttpServer;
+
+        let server = MockHttpServer::start();
+        server.enqueue_json(200, serde_json::json!({}));
+
+        let mut exporter = OtlpHttpExporter::new(&server.url());
+        exporter.add_span(&AiSpan::new("test.span"));
+        let result = exporter.flush();
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 1);
+        assert!(exporter.batch.is_empty());
+
+        let (method, path, _) = server.last_request().unwrap();
+        assert_eq!(method, "POST");
+        assert!(path.contains("/v1/traces"));
+    }
+
+    #[test]
+    fn test_exportable_span_serialization() {
+        let span = ExportableSpan {
+            trace_id: "abc123".to_string(),
+            span_id: "def456".to_string(),
+            parent_span_id: None,
+            name: "llm.generate".to_string(),
+            kind: 3,
+            start_time_unix_nano: 1_000_000_000,
+            end_time_unix_nano: 2_000_000_000,
+            attributes: vec![SpanAttribute {
+                key: "gen_ai.system".to_string(),
+                value: SpanAttributeValue {
+                    string_value: "openai".to_string(),
+                },
+            }],
+            status: ExportSpanStatus { code: 1 },
+        };
+        let json = serde_json::to_string(&span).unwrap();
+        assert!(json.contains("abc123"));
+        assert!(json.contains("llm.generate"));
+        assert!(json.contains("gen_ai.system"));
+    }
+
+    // ========================================================================
+    // GenAI Span Builder tests (Item 5.2)
+    // ========================================================================
+
+    #[test]
+    fn test_genai_span_builder_minimal() {
+        let span = GenAiSpanBuilder::new("chat")
+            .system("openai")
+            .model("gpt-4o")
+            .build();
+        assert!(span.operation.contains("chat"));
+        assert_eq!(span.attributes.get(GenAiConventions::SYSTEM), Some(&"openai".to_string()));
+        assert_eq!(span.attributes.get(GenAiConventions::REQUEST_MODEL), Some(&"gpt-4o".to_string()));
+    }
+
+    #[test]
+    fn test_genai_span_builder_all_fields() {
+        let span = GenAiSpanBuilder::new("chat")
+            .system("anthropic")
+            .model("claude-3")
+            .input_tokens(500)
+            .output_tokens(200)
+            .temperature(0.7)
+            .finish_reason("end_turn")
+            .max_tokens(4096)
+            .build();
+        assert_eq!(span.attributes.get(GenAiConventions::SYSTEM), Some(&"anthropic".to_string()));
+        assert_eq!(span.attributes.get(GenAiConventions::USAGE_INPUT_TOKENS), Some(&"500".to_string()));
+        assert_eq!(span.attributes.get(GenAiConventions::USAGE_OUTPUT_TOKENS), Some(&"200".to_string()));
+        assert_eq!(span.attributes.get(GenAiConventions::REQUEST_TEMPERATURE), Some(&"0.7".to_string()));
+        assert_eq!(span.attributes.get(GenAiConventions::RESPONSE_FINISH_REASON), Some(&"end_turn".to_string()));
+        assert_eq!(span.attributes.get(GenAiConventions::REQUEST_MAX_TOKENS), Some(&"4096".to_string()));
+        assert_eq!(span.input_tokens, Some(500));
+        assert_eq!(span.output_tokens, Some(200));
+    }
+
+    #[test]
+    fn test_genai_conventions_constants() {
+        assert_eq!(GenAiConventions::SYSTEM, "gen_ai.system");
+        assert_eq!(GenAiConventions::REQUEST_MODEL, "gen_ai.request.model");
+        assert_eq!(GenAiConventions::RESPONSE_MODEL, "gen_ai.response.model");
+        assert_eq!(GenAiConventions::USAGE_INPUT_TOKENS, "gen_ai.usage.input_tokens");
+        assert_eq!(GenAiConventions::USAGE_OUTPUT_TOKENS, "gen_ai.usage.output_tokens");
+    }
+
+    // ========================================================================
+    // Prometheus Metrics tests (Item 5.3)
+    // ========================================================================
+
+    #[test]
+    fn test_prometheus_new() {
+        let prom = PrometheusMetrics::new();
+        assert!(prom.render().contains("# No metrics recorded"));
+    }
+
+    #[test]
+    fn test_prometheus_record_request() {
+        let mut prom = PrometheusMetrics::new();
+        prom.record_request("openai", "gpt-4o", "ok", 0.5, 100, 50);
+        let rendered = prom.render();
+        assert!(rendered.contains("ai_requests_total"));
+        assert!(rendered.contains("openai"));
+        assert!(rendered.contains("gpt-4o"));
+    }
+
+    #[test]
+    fn test_prometheus_record_error() {
+        let mut prom = PrometheusMetrics::new();
+        prom.record_error("anthropic", "timeout");
+        let rendered = prom.render();
+        assert!(rendered.contains("ai_errors_total"));
+        assert!(rendered.contains("anthropic"));
+        assert!(rendered.contains("timeout"));
+    }
+
+    #[test]
+    fn test_prometheus_render_format() {
+        let mut prom = PrometheusMetrics::new();
+        prom.record_request("openai", "gpt-4", "ok", 1.0, 200, 100);
+        let rendered = prom.render();
+        assert!(rendered.contains("# HELP ai_requests_total"));
+        assert!(rendered.contains("# TYPE ai_requests_total counter"));
+        assert!(rendered.contains("# HELP ai_tokens_total"));
+        assert!(rendered.contains("# TYPE ai_tokens_total counter"));
+    }
+
+    #[test]
+    fn test_prometheus_render_multiple() {
+        let mut prom = PrometheusMetrics::new();
+        prom.record_request("openai", "gpt-4", "ok", 0.5, 100, 50);
+        prom.record_request("openai", "gpt-4", "ok", 0.3, 200, 100);
+        prom.record_request("anthropic", "claude", "error", 1.0, 50, 0);
+        let rendered = prom.render();
+        // Two openai ok + one anthropic error
+        assert!(rendered.contains("openai"));
+        assert!(rendered.contains("anthropic"));
+    }
+
+    #[test]
+    fn test_prometheus_reset() {
+        let mut prom = PrometheusMetrics::new();
+        prom.record_request("openai", "gpt-4", "ok", 0.5, 100, 50);
+        assert!(!prom.render().contains("# No metrics recorded"));
+        prom.reset();
+        assert!(prom.render().contains("# No metrics recorded"));
+    }
+
+    #[test]
+    fn test_prometheus_render_empty() {
+        let prom = PrometheusMetrics::new();
+        let rendered = prom.render();
+        assert!(rendered.contains("# No metrics recorded"));
+    }
+
+    #[test]
+    fn test_prometheus_tokens_direction() {
+        let mut prom = PrometheusMetrics::new();
+        prom.record_request("openai", "gpt-4", "ok", 0.5, 300, 150);
+        let rendered = prom.render();
+        assert!(rendered.contains("direction=\"input\""));
+        assert!(rendered.contains("direction=\"output\""));
+    }
+
+    #[test]
+    fn test_prometheus_duration_histogram() {
+        let mut prom = PrometheusMetrics::new();
+        prom.record_request("openai", "gpt-4", "ok", 0.5, 100, 50);
+        prom.record_request("openai", "gpt-4", "ok", 1.5, 100, 50);
+        let rendered = prom.render();
+        assert!(rendered.contains("ai_request_duration_seconds"));
     }
 }

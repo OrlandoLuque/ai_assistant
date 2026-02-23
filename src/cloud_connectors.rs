@@ -172,6 +172,107 @@ impl S3Client {
     pub fn region(&self) -> &str {
         &self.config.region
     }
+
+    /// Return true if credentials are available (non-empty access key and secret key).
+    fn has_credentials(&self) -> bool {
+        !self.config.access_key_id.is_empty() && !self.config.secret_access_key.is_empty()
+    }
+
+    /// Create a signer from the current config.
+    fn signer(&self) -> AwsSigV4Signer {
+        AwsSigV4Signer::new(
+            &self.config.access_key_id,
+            &self.config.secret_access_key,
+            &self.config.region,
+        )
+    }
+
+    /// Execute a signed GET request.
+    fn signed_get(&self, url: &str) -> Result<ureq::Response> {
+        if self.has_credentials() {
+            let signer = self.signer();
+            let auth_headers = signer.sign_request("GET", url, &[], &[]);
+            let mut req = ureq::get(url)
+                .set("Host", &self.config.host())
+                .timeout(std::time::Duration::from_secs(30));
+            for (k, v) in &auth_headers {
+                req = req.set(k, v);
+            }
+            req.call().context("S3 signed GET failed")
+        } else {
+            ureq::get(url)
+                .set("Host", &self.config.host())
+                .timeout(std::time::Duration::from_secs(30))
+                .call()
+                .context("S3 GET failed")
+        }
+    }
+
+    /// Execute a signed PUT request.
+    fn signed_put(&self, url: &str, data: &[u8], content_type: &str) -> Result<ureq::Response> {
+        if self.has_credentials() {
+            let signer = self.signer();
+            let extra = [("Content-Type", content_type)];
+            let auth_headers = signer.sign_request("PUT", url, &extra, data);
+            let mut req = ureq::put(url)
+                .set("Host", &self.config.host())
+                .set("Content-Type", content_type)
+                .timeout(std::time::Duration::from_secs(60));
+            for (k, v) in &auth_headers {
+                req = req.set(k, v);
+            }
+            req.send_bytes(data).context("S3 signed PUT failed")
+        } else {
+            ureq::put(url)
+                .set("Host", &self.config.host())
+                .set("Content-Type", content_type)
+                .timeout(std::time::Duration::from_secs(60))
+                .send_bytes(data)
+                .context("S3 PUT failed")
+        }
+    }
+
+    /// Execute a signed DELETE request.
+    fn signed_delete(&self, url: &str) -> Result<ureq::Response> {
+        if self.has_credentials() {
+            let signer = self.signer();
+            let auth_headers = signer.sign_request("DELETE", url, &[], &[]);
+            let mut req = ureq::request("DELETE", url)
+                .set("Host", &self.config.host())
+                .timeout(std::time::Duration::from_secs(30));
+            for (k, v) in &auth_headers {
+                req = req.set(k, v);
+            }
+            req.call().context("S3 signed DELETE failed")
+        } else {
+            ureq::request("DELETE", url)
+                .set("Host", &self.config.host())
+                .timeout(std::time::Duration::from_secs(30))
+                .call()
+                .context("S3 DELETE failed")
+        }
+    }
+
+    /// Execute a signed HEAD request.
+    #[allow(clippy::result_large_err)]
+    fn signed_head(&self, url: &str) -> std::result::Result<ureq::Response, ureq::Error> {
+        if self.has_credentials() {
+            let signer = self.signer();
+            let auth_headers = signer.sign_request("HEAD", url, &[], &[]);
+            let mut req = ureq::request("HEAD", url)
+                .set("Host", &self.config.host())
+                .timeout(std::time::Duration::from_secs(10));
+            for (k, v) in &auth_headers {
+                req = req.set(k, v);
+            }
+            req.call()
+        } else {
+            ureq::request("HEAD", url)
+                .set("Host", &self.config.host())
+                .timeout(std::time::Duration::from_secs(10))
+                .call()
+        }
+    }
 }
 
 impl CloudStorage for S3Client {
@@ -187,13 +288,7 @@ impl CloudStorage for S3Client {
             url.push_str(&format!("&continuation-token={}", token));
         }
 
-        // In a real implementation, this would use SigV4 signing from aws_auth module.
-        // For now, we construct the request and attempt to make it.
-        let resp = ureq::get(&url)
-            .set("Host", &self.config.host())
-            .timeout(std::time::Duration::from_secs(30))
-            .call()
-            .context("S3 list failed")?;
+        let resp = self.signed_get(&url)?;
 
         let body = resp
             .into_string()
@@ -211,11 +306,7 @@ impl CloudStorage for S3Client {
 
     fn get(&self, key: &str) -> Result<Vec<u8>> {
         let url = self.object_url(key);
-        let resp = ureq::get(&url)
-            .set("Host", &self.config.host())
-            .timeout(std::time::Duration::from_secs(60))
-            .call()
-            .context("S3 GET failed")?;
+        let resp = self.signed_get(&url)?;
 
         let mut bytes = Vec::new();
         resp.into_reader()
@@ -227,32 +318,19 @@ impl CloudStorage for S3Client {
     fn put(&self, key: &str, data: &[u8], content_type: Option<&str>) -> Result<()> {
         let url = self.object_url(key);
         let ct = content_type.unwrap_or("application/octet-stream");
-        ureq::put(&url)
-            .set("Host", &self.config.host())
-            .set("Content-Type", ct)
-            .timeout(std::time::Duration::from_secs(60))
-            .send_bytes(data)
-            .context("S3 PUT failed")?;
+        self.signed_put(&url, data, ct)?;
         Ok(())
     }
 
     fn delete(&self, key: &str) -> Result<()> {
         let url = self.object_url(key);
-        ureq::request("DELETE", &url)
-            .set("Host", &self.config.host())
-            .timeout(std::time::Duration::from_secs(30))
-            .call()
-            .context("S3 DELETE failed")?;
+        self.signed_delete(&url)?;
         Ok(())
     }
 
     fn exists(&self, key: &str) -> Result<bool> {
         let url = self.object_url(key);
-        match ureq::request("HEAD", &url)
-            .set("Host", &self.config.host())
-            .timeout(std::time::Duration::from_secs(10))
-            .call()
-        {
+        match self.signed_head(&url) {
             Ok(_) => Ok(true),
             Err(ureq::Error::Status(404, _)) => Ok(false),
             Err(e) => Err(anyhow::anyhow!("S3 HEAD failed: {}", e)),
@@ -474,6 +552,389 @@ impl CloudStorage for GoogleDriveClient {
 
     fn provider_name(&self) -> &str {
         "Google Drive"
+    }
+}
+
+// ============================================================================
+// SHA-256 Implementation (FIPS 180-4)
+// ============================================================================
+
+/// SHA-256 round constants (first 32 bits of fractional parts of cube roots of first 64 primes).
+const SHA256_K: [u32; 64] = [
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
+    0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
+    0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
+    0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+    0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
+    0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
+    0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
+    0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
+    0xc67178f2,
+];
+
+/// Initial hash values for SHA-256 (first 32 bits of fractional parts of square roots of first 8 primes).
+const SHA256_H0: [u32; 8] = [
+    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
+    0x5be0cd19,
+];
+
+/// Minimal SHA-256 implementation for AWS SigV4 signing.
+/// Based on FIPS 180-4 specification.
+fn sha256(data: &[u8]) -> [u8; 32] {
+    // Pre-processing: pad the message
+    let bit_len = (data.len() as u64) * 8;
+    let mut msg = data.to_vec();
+
+    // Append bit '1' (byte 0x80)
+    msg.push(0x80);
+
+    // Append zeros until message length is 56 mod 64
+    while msg.len() % 64 != 56 {
+        msg.push(0x00);
+    }
+
+    // Append original length in bits as 64-bit big-endian
+    msg.extend_from_slice(&bit_len.to_be_bytes());
+
+    // Process each 512-bit (64-byte) block
+    let mut h = SHA256_H0;
+
+    for chunk in msg.chunks_exact(64) {
+        // Create message schedule W[0..63]
+        let mut w = [0u32; 64];
+        for i in 0..16 {
+            w[i] = u32::from_be_bytes([
+                chunk[i * 4],
+                chunk[i * 4 + 1],
+                chunk[i * 4 + 2],
+                chunk[i * 4 + 3],
+            ]);
+        }
+        for i in 16..64 {
+            let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
+            let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
+            w[i] = w[i - 16]
+                .wrapping_add(s0)
+                .wrapping_add(w[i - 7])
+                .wrapping_add(s1);
+        }
+
+        // Initialize working variables
+        let mut a = h[0];
+        let mut b = h[1];
+        let mut c = h[2];
+        let mut d = h[3];
+        let mut e = h[4];
+        let mut f = h[5];
+        let mut g = h[6];
+        let mut hh = h[7];
+
+        // Compression function
+        for i in 0..64 {
+            let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+            let ch = (e & f) ^ ((!e) & g);
+            let temp1 = hh
+                .wrapping_add(s1)
+                .wrapping_add(ch)
+                .wrapping_add(SHA256_K[i])
+                .wrapping_add(w[i]);
+            let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+            let maj = (a & b) ^ (a & c) ^ (b & c);
+            let temp2 = s0.wrapping_add(maj);
+
+            hh = g;
+            g = f;
+            f = e;
+            e = d.wrapping_add(temp1);
+            d = c;
+            c = b;
+            b = a;
+            a = temp1.wrapping_add(temp2);
+        }
+
+        // Add the compressed chunk to the current hash value
+        h[0] = h[0].wrapping_add(a);
+        h[1] = h[1].wrapping_add(b);
+        h[2] = h[2].wrapping_add(c);
+        h[3] = h[3].wrapping_add(d);
+        h[4] = h[4].wrapping_add(e);
+        h[5] = h[5].wrapping_add(f);
+        h[6] = h[6].wrapping_add(g);
+        h[7] = h[7].wrapping_add(hh);
+    }
+
+    // Produce the final hash value (big-endian)
+    let mut result = [0u8; 32];
+    for i in 0..8 {
+        result[i * 4..i * 4 + 4].copy_from_slice(&h[i].to_be_bytes());
+    }
+    result
+}
+
+/// SHA-256 hash as lowercase hex string.
+fn sha256_hex(data: &[u8]) -> String {
+    let hash = sha256(data);
+    hash.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+/// HMAC-SHA256 using standard HMAC construction: H((K XOR opad) || H((K XOR ipad) || message))
+fn hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
+    const BLOCK_SIZE: usize = 64;
+
+    // Step 1: If key is longer than block size, hash it
+    let key_block = if key.len() > BLOCK_SIZE {
+        sha256(key).to_vec()
+    } else {
+        key.to_vec()
+    };
+
+    // Step 2: Pad key to block size
+    let mut k_padded = [0u8; BLOCK_SIZE];
+    k_padded[..key_block.len()].copy_from_slice(&key_block);
+
+    // Step 3: Create inner and outer padded keys
+    let mut i_key_pad = vec![0u8; BLOCK_SIZE];
+    let mut o_key_pad = vec![0u8; BLOCK_SIZE];
+    for i in 0..BLOCK_SIZE {
+        i_key_pad[i] = k_padded[i] ^ 0x36;
+        o_key_pad[i] = k_padded[i] ^ 0x5c;
+    }
+
+    // Step 4: Inner hash = SHA-256(i_key_pad || data)
+    let mut inner_msg = i_key_pad;
+    inner_msg.extend_from_slice(data);
+    let inner_hash = sha256(&inner_msg);
+
+    // Step 5: Outer hash = SHA-256(o_key_pad || inner_hash)
+    let mut outer_msg = o_key_pad;
+    outer_msg.extend_from_slice(&inner_hash);
+    sha256(&outer_msg).to_vec()
+}
+
+/// HMAC-SHA256 result as lowercase hex string.
+fn hmac_sha256_hex(key: &[u8], data: &[u8]) -> String {
+    hmac_sha256(key, data)
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect()
+}
+
+// ============================================================================
+// AWS Signature Version 4 Signer
+// ============================================================================
+
+/// AWS Signature Version 4 signer for S3 requests.
+struct AwsSigV4Signer {
+    access_key: String,
+    secret_key: String,
+    region: String,
+    service: String,
+}
+
+impl AwsSigV4Signer {
+    fn new(access_key: &str, secret_key: &str, region: &str) -> Self {
+        Self {
+            access_key: access_key.to_string(),
+            secret_key: secret_key.to_string(),
+            region: region.to_string(),
+            service: "s3".to_string(),
+        }
+    }
+
+    /// Get current UTC time as (date_stamp "YYYYMMDD", amz_date "YYYYMMDDTHHMMSSZ").
+    fn current_time() -> (String, String) {
+        // Use std::time to compute UTC date/time
+        let dur = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        Self::format_time(dur.as_secs())
+    }
+
+    /// Format a Unix timestamp into (date_stamp, amz_date).
+    fn format_time(unix_secs: u64) -> (String, String) {
+        // Convert unix timestamp to calendar date/time (UTC)
+        let secs = unix_secs;
+        let days = secs / 86400;
+        let time_of_day = secs % 86400;
+        let hours = time_of_day / 3600;
+        let minutes = (time_of_day % 3600) / 60;
+        let seconds = time_of_day % 60;
+
+        // Civil date from days since epoch (1970-01-01) using a well-known algorithm
+        let z = days as i64 + 719468;
+        let era = if z >= 0 { z } else { z - 146096 } / 146097;
+        let doe = (z - era * 146097) as u64; // day of era [0, 146096]
+        let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+        let y = yoe as i64 + era * 400;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let d = doy - (153 * mp + 2) / 5 + 1;
+        let m = if mp < 10 { mp + 3 } else { mp - 9 };
+        let y = if m <= 2 { y + 1 } else { y };
+
+        let date_stamp = format!("{:04}{:02}{:02}", y, m, d);
+        let amz_date = format!(
+            "{:04}{:02}{:02}T{:02}{:02}{:02}Z",
+            y, m, d, hours, minutes, seconds
+        );
+        (date_stamp, amz_date)
+    }
+
+    /// Parse URL into (path, canonical_query_string).
+    fn parse_url(url: &str) -> (String, String) {
+        // Strip scheme and host to get path + query
+        let without_scheme = url
+            .strip_prefix("https://")
+            .or_else(|| url.strip_prefix("http://"))
+            .unwrap_or(url);
+
+        let after_host = without_scheme
+            .find('/')
+            .map(|i| &without_scheme[i..])
+            .unwrap_or("/");
+
+        let (path, query) = if let Some(q_idx) = after_host.find('?') {
+            (&after_host[..q_idx], &after_host[q_idx + 1..])
+        } else {
+            (after_host, "")
+        };
+
+        // Sort query parameters for canonical form
+        let canonical_query = if query.is_empty() {
+            String::new()
+        } else {
+            let mut pairs: Vec<&str> = query.split('&').collect();
+            pairs.sort();
+            pairs.join("&")
+        };
+
+        (path.to_string(), canonical_query)
+    }
+
+    /// Extract hostname from URL.
+    fn extract_host(url: &str) -> String {
+        let without_scheme = url
+            .strip_prefix("https://")
+            .or_else(|| url.strip_prefix("http://"))
+            .unwrap_or(url);
+        without_scheme
+            .split('/')
+            .next()
+            .unwrap_or("localhost")
+            .to_string()
+    }
+
+    /// Build canonical headers string (sorted, lowercased, trimmed).
+    fn canonical_headers(&self, extra_headers: &[(&str, &str)], amz_date: &str, url: &str) -> String {
+        let host = Self::extract_host(url);
+        let mut headers: Vec<(String, String)> = Vec::new();
+        headers.push(("host".to_string(), host));
+        headers.push(("x-amz-date".to_string(), amz_date.to_string()));
+        for (k, v) in extra_headers {
+            let lower = k.to_lowercase();
+            if lower != "host" && lower != "x-amz-date" {
+                headers.push((lower, v.trim().to_string()));
+            }
+        }
+        headers.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut result = String::new();
+        for (k, v) in &headers {
+            result.push_str(k);
+            result.push(':');
+            result.push_str(v);
+            result.push('\n');
+        }
+        result
+    }
+
+    /// Build signed headers string (sorted, semicolon-delimited).
+    fn signed_headers(&self, extra_headers: &[(&str, &str)]) -> String {
+        let mut names: Vec<String> = vec!["host".to_string(), "x-amz-date".to_string()];
+        for (k, _) in extra_headers {
+            let lower = k.to_lowercase();
+            if lower != "host" && lower != "x-amz-date" {
+                names.push(lower);
+            }
+        }
+        names.sort();
+        names.dedup();
+        names.join(";")
+    }
+
+    /// Derive the signing key: HMAC chain of date/region/service/aws4_request.
+    fn derive_signing_key(&self, date_stamp: &str) -> Vec<u8> {
+        let k_date = hmac_sha256(
+            format!("AWS4{}", self.secret_key).as_bytes(),
+            date_stamp.as_bytes(),
+        );
+        let k_region = hmac_sha256(&k_date, self.region.as_bytes());
+        let k_service = hmac_sha256(&k_region, self.service.as_bytes());
+        hmac_sha256(&k_service, b"aws4_request")
+    }
+
+    /// Sign a request and return the headers to add.
+    fn sign_request(
+        &self,
+        method: &str,
+        url: &str,
+        headers: &[(&str, &str)],
+        payload: &[u8],
+    ) -> Vec<(String, String)> {
+        let (date_stamp, amz_date) = Self::current_time();
+        self.sign_request_at(method, url, headers, payload, &date_stamp, &amz_date)
+    }
+
+    /// Sign a request at a specific time (for testing determinism).
+    fn sign_request_at(
+        &self,
+        method: &str,
+        url: &str,
+        headers: &[(&str, &str)],
+        payload: &[u8],
+        date_stamp: &str,
+        amz_date: &str,
+    ) -> Vec<(String, String)> {
+        // Step 1: Create canonical request
+        let (path, query) = Self::parse_url(url);
+        let canonical_headers = self.canonical_headers(headers, amz_date, url);
+        let signed_headers = self.signed_headers(headers);
+        let payload_hash = sha256_hex(payload);
+
+        let canonical_request = format!(
+            "{}\n{}\n{}\n{}\n{}\n{}",
+            method, path, query, canonical_headers, signed_headers, payload_hash
+        );
+
+        // Step 2: Create string to sign
+        let scope = format!(
+            "{}/{}/{}/aws4_request",
+            date_stamp, self.region, self.service
+        );
+        let string_to_sign = format!(
+            "AWS4-HMAC-SHA256\n{}\n{}\n{}",
+            amz_date,
+            scope,
+            sha256_hex(canonical_request.as_bytes())
+        );
+
+        // Step 3: Calculate signing key
+        let signing_key = self.derive_signing_key(date_stamp);
+
+        // Step 4: Calculate signature
+        let signature = hmac_sha256_hex(&signing_key, string_to_sign.as_bytes());
+
+        // Step 5: Create Authorization header
+        let auth = format!(
+            "AWS4-HMAC-SHA256 Credential={}/{}, SignedHeaders={}, Signature={}",
+            self.access_key, scope, signed_headers, signature
+        );
+
+        vec![
+            ("Authorization".to_string(), auth),
+            ("x-amz-date".to_string(), amz_date.to_string()),
+            ("x-amz-content-sha256".to_string(), payload_hash),
+        ]
     }
 }
 
@@ -1248,5 +1709,165 @@ mod tests {
         );
         assert_eq!(req.method, "DELETE");
         assert_eq!(req.headers.get("host").unwrap(), "storage.googleapis.com");
+    }
+
+    // ========================================================================
+    // AWS SigV4 Signing Tests
+    // ========================================================================
+
+    #[test]
+    fn test_sigv4_sha256_known_vector() {
+        // SHA-256 of empty string = e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        let hash = sha256_hex(b"");
+        assert_eq!(
+            hash,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+
+        // SHA-256 of "abc" = ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+        let hash2 = sha256_hex(b"abc");
+        assert_eq!(
+            hash2,
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn test_sigv4_hmac_sha256_known_vector() {
+        // HMAC-SHA256 with key "key" and message "The quick brown fox jumps over the lazy dog"
+        // = f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8
+        let result = hmac_sha256_hex(
+            b"key",
+            b"The quick brown fox jumps over the lazy dog",
+        );
+        assert_eq!(
+            result,
+            "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8"
+        );
+    }
+
+    #[test]
+    fn test_sigv4_signing_key_derivation() {
+        // Test the key derivation chain with known values
+        let signer = AwsSigV4Signer::new("AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "us-east-1");
+        let key = signer.derive_signing_key("20150830");
+        // The signing key should be 32 bytes (SHA-256 output)
+        assert_eq!(key.len(), 32);
+        // Verify it's deterministic
+        let key2 = signer.derive_signing_key("20150830");
+        assert_eq!(key, key2);
+        // Different date should produce different key
+        let key3 = signer.derive_signing_key("20150831");
+        assert_ne!(key, key3);
+    }
+
+    #[test]
+    fn test_sigv4_canonical_request_format() {
+        let signer = AwsSigV4Signer::new("AKID", "SECRET", "us-east-1");
+        let url = "https://examplebucket.s3.us-east-1.amazonaws.com/test.txt";
+        let amz_date = "20130524T000000Z";
+
+        let (path, query) = AwsSigV4Signer::parse_url(url);
+        let canonical_headers = signer.canonical_headers(&[], amz_date, url);
+        let signed_headers = signer.signed_headers(&[]);
+        let payload_hash = sha256_hex(b"");
+
+        let canonical_request = format!(
+            "{}\n{}\n{}\n{}\n{}\n{}",
+            "GET", path, query, canonical_headers, signed_headers, payload_hash
+        );
+
+        // Verify the canonical request has the right structure
+        let lines: Vec<&str> = canonical_request.split('\n').collect();
+        assert_eq!(lines[0], "GET"); // Method
+        assert_eq!(lines[1], "/test.txt"); // Path
+        assert_eq!(lines[2], ""); // Empty query string
+        // Headers should contain host and x-amz-date
+        assert!(lines[3].starts_with("host:"));
+        assert!(lines[4].starts_with("x-amz-date:"));
+        // Blank line after headers (the trailing \n in canonical_headers)
+        assert_eq!(lines[5], ""); // blank line
+        assert_eq!(lines[6], "host;x-amz-date"); // signed headers
+    }
+
+    #[test]
+    fn test_sigv4_authorization_header_format() {
+        let signer = AwsSigV4Signer::new("AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "us-east-1");
+        let url = "https://examplebucket.s3.us-east-1.amazonaws.com/test.txt";
+        let date_stamp = "20130524";
+        let amz_date = "20130524T000000Z";
+
+        let headers = signer.sign_request_at("GET", url, &[], b"", date_stamp, amz_date);
+
+        // Should produce 3 headers: Authorization, x-amz-date, x-amz-content-sha256
+        assert_eq!(headers.len(), 3);
+
+        let auth = &headers[0];
+        assert_eq!(auth.0, "Authorization");
+        assert!(auth.1.starts_with("AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/"));
+        assert!(auth.1.contains("20130524/us-east-1/s3/aws4_request"));
+        assert!(auth.1.contains("SignedHeaders=host;x-amz-date"));
+        assert!(auth.1.contains("Signature="));
+
+        let amz_date_header = &headers[1];
+        assert_eq!(amz_date_header.0, "x-amz-date");
+        assert_eq!(amz_date_header.1, "20130524T000000Z");
+
+        let content_hash = &headers[2];
+        assert_eq!(content_hash.0, "x-amz-content-sha256");
+        // Empty payload hash
+        assert_eq!(
+            content_hash.1,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    #[test]
+    fn test_s3_unsigned_fallback() {
+        // When credentials are empty, has_credentials() returns false (unsigned fallback)
+        let config = S3Config::new("bucket", "us-east-1", "", "");
+        let client = S3Client::new(config);
+        assert!(!client.has_credentials());
+
+        // When credentials are present, has_credentials() returns true
+        let config2 = S3Config::new("bucket", "us-east-1", "AKID", "secret");
+        let client2 = S3Client::new(config2);
+        assert!(client2.has_credentials());
+    }
+
+    #[test]
+    fn test_sigv4_parse_url_simple() {
+        let (path, query) = AwsSigV4Signer::parse_url("https://bucket.s3.amazonaws.com/key");
+        assert_eq!(path, "/key");
+        assert_eq!(query, "");
+    }
+
+    #[test]
+    fn test_sigv4_parse_url_with_query() {
+        let (path, query) = AwsSigV4Signer::parse_url(
+            "https://bucket.s3.amazonaws.com/?list-type=2&prefix=docs/",
+        );
+        assert_eq!(path, "/");
+        // Query params should be sorted
+        assert!(query.contains("list-type=2"));
+        assert!(query.contains("prefix=docs/"));
+    }
+
+    #[test]
+    fn test_sigv4_format_time() {
+        // 2023-05-24T12:30:45Z = 1684931445 unix timestamp
+        let (date_stamp, amz_date) = AwsSigV4Signer::format_time(1684931445);
+        assert_eq!(date_stamp, "20230524");
+        assert_eq!(amz_date, "20230524T123045Z");
+    }
+
+    #[test]
+    fn test_sigv4_deterministic_signing() {
+        // Same inputs should produce same output
+        let signer = AwsSigV4Signer::new("AKID", "SECRET", "us-east-1");
+        let url = "https://bucket.s3.us-east-1.amazonaws.com/key";
+        let h1 = signer.sign_request_at("GET", url, &[], b"", "20230524", "20230524T120000Z");
+        let h2 = signer.sign_request_at("GET", url, &[], b"", "20230524", "20230524T120000Z");
+        assert_eq!(h1, h2);
     }
 }

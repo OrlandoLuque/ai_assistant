@@ -12,9 +12,57 @@
 mod inner {
     use std::collections::HashMap;
     use std::fmt;
+    use std::io::Read as IoRead;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use crate::error::{AiError, MediaGenerationError};
+
+    // -- Base64 decode helper (no external crate dependency) -------------------
+
+    /// Decode a base64-encoded string into raw bytes.
+    /// Supports standard base64 alphabet (RFC 4648) with optional padding.
+    fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
+        const TABLE: [u8; 256] = {
+            let mut t = [0xFFu8; 256];
+            let alphabet = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+            let mut i = 0;
+            while i < 64 {
+                t[alphabet[i] as usize] = i as u8;
+                i += 1;
+            }
+            t
+        };
+
+        let bytes: Vec<u8> = input.bytes().filter(|b| *b != b'\n' && *b != b'\r' && *b != b' ').collect();
+        let len = bytes.len();
+        if len == 0 {
+            return Ok(Vec::new());
+        }
+
+        // Strip padding
+        let pad_count = bytes.iter().rev().take_while(|&&b| b == b'=').count();
+        let data_len = len - pad_count;
+
+        let mut output = Vec::with_capacity(data_len * 3 / 4);
+        let mut buf: u32 = 0;
+        let mut bits: u32 = 0;
+
+        for &b in &bytes[..data_len] {
+            let val = TABLE[b as usize];
+            if val == 0xFF {
+                return Err(format!("invalid base64 character: 0x{:02X}", b));
+            }
+            buf = (buf << 6) | val as u32;
+            bits += 6;
+            if bits >= 8 {
+                bits -= 8;
+                output.push((buf >> bits) as u8);
+                buf &= (1 << bits) - 1;
+            }
+        }
+
+        Ok(output)
+    }
 
     // ========================================================================
     // 4.1 — Image Generation Providers
@@ -267,13 +315,152 @@ mod inner {
                 .into());
             }
 
-            // In production this would call the OpenAI API via HTTP.
-            // The actual HTTP call is stubbed here; tests use mock responses.
-            Err(MediaGenerationError::ProviderUnavailable {
-                provider: self.provider_name().to_string(),
-                reason: "HTTP client not available in this build".to_string(),
+            if self.api_key.is_empty() {
+                return Err(MediaGenerationError::ProviderUnavailable {
+                    provider: self.provider_name().to_string(),
+                    reason: "no API key configured".to_string(),
+                }
+                .into());
             }
-            .into())
+
+            let start = std::time::Instant::now();
+
+            let quality_str = match &config.quality {
+                ImageQuality::HD | ImageQuality::UltraHD => "hd",
+                _ => "standard",
+            };
+
+            let body = serde_json::json!({
+                "model": self.model,
+                "prompt": prompt,
+                "n": config.num_images.min(1),
+                "size": format!("{}x{}", config.width, config.height),
+                "quality": quality_str,
+                "response_format": "b64_json"
+            });
+
+            let response = ureq::post(&self.endpoint)
+                .set("Authorization", &format!("Bearer {}", self.api_key))
+                .set("Content-Type", "application/json")
+                .timeout(std::time::Duration::from_secs(120))
+                .send_json(&body);
+
+            match response {
+                Ok(resp) => {
+                    let json: serde_json::Value = resp.into_json().map_err(|e| {
+                        MediaGenerationError::GenerationFailed {
+                            provider: self.provider_name().to_string(),
+                            reason: format!("failed to parse response: {}", e),
+                        }
+                    })?;
+
+                    let data = json["data"]
+                        .as_array()
+                        .and_then(|arr| arr.first())
+                        .ok_or_else(|| MediaGenerationError::GenerationFailed {
+                            provider: self.provider_name().to_string(),
+                            reason: "no images in response".to_string(),
+                        })?;
+
+                    let revised_prompt = data["revised_prompt"].as_str().map(|s| s.to_string());
+
+                    let image_bytes = if let Some(b64) = data["b64_json"].as_str() {
+                        base64_decode(b64).map_err(|e| {
+                            MediaGenerationError::GenerationFailed {
+                                provider: self.provider_name().to_string(),
+                                reason: format!("base64 decode failed: {}", e),
+                            }
+                        })?
+                    } else if let Some(url) = data["url"].as_str() {
+                        // Fetch image from URL
+                        let img_resp = ureq::get(url)
+                            .timeout(std::time::Duration::from_secs(60))
+                            .call()
+                            .map_err(|e| MediaGenerationError::GenerationFailed {
+                                provider: self.provider_name().to_string(),
+                                reason: format!("failed to download image: {}", e),
+                            })?;
+                        let mut bytes = Vec::new();
+                        img_resp
+                            .into_reader()
+                            .read_to_end(&mut bytes)
+                            .map_err(|e| MediaGenerationError::GenerationFailed {
+                                provider: self.provider_name().to_string(),
+                                reason: format!("failed to read image bytes: {}", e),
+                            })?;
+                        bytes
+                    } else {
+                        return Err(MediaGenerationError::GenerationFailed {
+                            provider: self.provider_name().to_string(),
+                            reason: "response contains neither b64_json nor url".to_string(),
+                        }
+                        .into());
+                    };
+
+                    let elapsed_ms = start.elapsed().as_millis() as u64;
+
+                    Ok(GeneratedImage {
+                        bytes: image_bytes,
+                        format: ImageFormat::Png,
+                        width: config.width,
+                        height: config.height,
+                        revised_prompt,
+                        seed: config.seed,
+                        generation_time_ms: elapsed_ms,
+                    })
+                }
+                Err(ureq::Error::Status(code, resp)) => {
+                    let body_text = resp.into_string().unwrap_or_default();
+                    let reason = if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body_text) {
+                        json["error"]["message"]
+                            .as_str()
+                            .unwrap_or(&body_text)
+                            .to_string()
+                    } else {
+                        body_text
+                    };
+                    if code == 429 {
+                        Err(MediaGenerationError::GenerationFailed {
+                            provider: self.provider_name().to_string(),
+                            reason: format!("rate limited (HTTP 429): {}", reason),
+                        }
+                        .into())
+                    } else if code == 401 {
+                        Err(MediaGenerationError::ProviderUnavailable {
+                            provider: self.provider_name().to_string(),
+                            reason: format!("authentication failed (HTTP 401): {}", reason),
+                        }
+                        .into())
+                    } else if code == 400 {
+                        // Check for content policy violations
+                        if reason.to_lowercase().contains("content_policy")
+                            || reason.to_lowercase().contains("safety")
+                        {
+                            Err(MediaGenerationError::ContentPolicyViolation {
+                                reason,
+                            }
+                            .into())
+                        } else {
+                            Err(MediaGenerationError::InvalidParams {
+                                param: "request".to_string(),
+                                reason: format!("bad request (HTTP 400): {}", reason),
+                            }
+                            .into())
+                        }
+                    } else {
+                        Err(MediaGenerationError::GenerationFailed {
+                            provider: self.provider_name().to_string(),
+                            reason: format!("HTTP {}: {}", code, reason),
+                        }
+                        .into())
+                    }
+                }
+                Err(e) => Err(MediaGenerationError::GenerationFailed {
+                    provider: self.provider_name().to_string(),
+                    reason: format!("transport error: {}", e),
+                }
+                .into()),
+            }
         }
 
         fn provider_name(&self) -> &str {
@@ -331,11 +518,155 @@ mod inner {
                 .into());
             }
 
-            Err(MediaGenerationError::ProviderUnavailable {
-                provider: self.provider_name().to_string(),
-                reason: "HTTP client not available in this build".to_string(),
+            if self.api_key.is_empty() {
+                return Err(MediaGenerationError::ProviderUnavailable {
+                    provider: self.provider_name().to_string(),
+                    reason: "no API key configured".to_string(),
+                }
+                .into());
             }
-            .into())
+
+            let start = std::time::Instant::now();
+
+            // Stability AI v2beta API
+            let url = format!(
+                "{}/{}/text-to-image",
+                self.endpoint, self.model
+            );
+
+            let aspect_ratio = if config.width == config.height {
+                "1:1".to_string()
+            } else if config.width > config.height {
+                "16:9".to_string()
+            } else {
+                "9:16".to_string()
+            };
+
+            let mut body = serde_json::json!({
+                "text_prompts": [
+                    {
+                        "text": prompt,
+                        "weight": 1.0
+                    }
+                ],
+                "cfg_scale": config.guidance_scale.unwrap_or(7.0),
+                "width": config.width,
+                "height": config.height,
+                "samples": config.num_images.min(4),
+                "steps": 30
+            });
+
+            if let Some(neg) = &config.negative_prompt {
+                if let Some(arr) = body["text_prompts"].as_array_mut() {
+                    arr.push(serde_json::json!({
+                        "text": neg,
+                        "weight": -1.0
+                    }));
+                }
+            }
+            if let Some(seed) = config.seed {
+                body["seed"] = serde_json::json!(seed);
+            }
+            // Store aspect_ratio in metadata (not sent to API v1 but logged)
+            let _aspect = aspect_ratio;
+
+            let response = ureq::post(&url)
+                .set("Authorization", &format!("Bearer {}", self.api_key))
+                .set("Content-Type", "application/json")
+                .set("Accept", "application/json")
+                .timeout(std::time::Duration::from_secs(120))
+                .send_json(&body);
+
+            match response {
+                Ok(resp) => {
+                    let json: serde_json::Value = resp.into_json().map_err(|e| {
+                        MediaGenerationError::GenerationFailed {
+                            provider: self.provider_name().to_string(),
+                            reason: format!("failed to parse response: {}", e),
+                        }
+                    })?;
+
+                    let artifacts = json["artifacts"]
+                        .as_array()
+                        .and_then(|arr| arr.first())
+                        .ok_or_else(|| MediaGenerationError::GenerationFailed {
+                            provider: self.provider_name().to_string(),
+                            reason: "no artifacts in response".to_string(),
+                        })?;
+
+                    let finish_reason = artifacts["finishReason"]
+                        .as_str()
+                        .unwrap_or("");
+                    if finish_reason == "CONTENT_FILTERED" {
+                        return Err(MediaGenerationError::ContentPolicyViolation {
+                            reason: "content was filtered by Stability AI safety system".to_string(),
+                        }
+                        .into());
+                    }
+
+                    let b64 = artifacts["base64"]
+                        .as_str()
+                        .ok_or_else(|| MediaGenerationError::GenerationFailed {
+                            provider: self.provider_name().to_string(),
+                            reason: "no base64 data in artifact".to_string(),
+                        })?;
+
+                    let image_bytes = base64_decode(b64).map_err(|e| {
+                        MediaGenerationError::GenerationFailed {
+                            provider: self.provider_name().to_string(),
+                            reason: format!("base64 decode failed: {}", e),
+                        }
+                    })?;
+
+                    let seed_used = artifacts["seed"].as_u64();
+                    let elapsed_ms = start.elapsed().as_millis() as u64;
+
+                    Ok(GeneratedImage {
+                        bytes: image_bytes,
+                        format: ImageFormat::Png,
+                        width: config.width,
+                        height: config.height,
+                        revised_prompt: None,
+                        seed: seed_used.or(config.seed),
+                        generation_time_ms: elapsed_ms,
+                    })
+                }
+                Err(ureq::Error::Status(code, resp)) => {
+                    let body_text = resp.into_string().unwrap_or_default();
+                    let reason = if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body_text) {
+                        json["message"]
+                            .as_str()
+                            .unwrap_or(&body_text)
+                            .to_string()
+                    } else {
+                        body_text
+                    };
+                    if code == 401 || code == 403 {
+                        Err(MediaGenerationError::ProviderUnavailable {
+                            provider: self.provider_name().to_string(),
+                            reason: format!("authentication failed (HTTP {}): {}", code, reason),
+                        }
+                        .into())
+                    } else if code == 429 {
+                        Err(MediaGenerationError::GenerationFailed {
+                            provider: self.provider_name().to_string(),
+                            reason: format!("rate limited (HTTP 429): {}", reason),
+                        }
+                        .into())
+                    } else {
+                        Err(MediaGenerationError::GenerationFailed {
+                            provider: self.provider_name().to_string(),
+                            reason: format!("HTTP {}: {}", code, reason),
+                        }
+                        .into())
+                    }
+                }
+                Err(e) => Err(MediaGenerationError::GenerationFailed {
+                    provider: self.provider_name().to_string(),
+                    reason: format!("transport error: {}", e),
+                }
+                .into()),
+            }
         }
 
         fn provider_name(&self) -> &str {
@@ -457,6 +788,283 @@ mod inner {
                 ImageFormat::WebP,
                 ImageFormat::Svg,
             ]
+        }
+    }
+
+    /// Replicate image generation provider (supports any Replicate-hosted model).
+    ///
+    /// Replicate uses an async prediction API:
+    /// 1. POST to create a prediction
+    /// 2. Poll GET until status is "succeeded" or "failed"
+    /// 3. Download the output image from the result URL
+    #[derive(Debug, Clone)]
+    pub struct ReplicateProvider {
+        pub api_token: String,
+        pub model_version: String,
+        pub endpoint: String,
+        /// Maximum number of poll attempts before timing out.
+        pub max_poll_attempts: u32,
+        /// Delay between poll attempts in milliseconds.
+        pub poll_interval_ms: u64,
+    }
+
+    impl ReplicateProvider {
+        /// Create a new Replicate image provider.
+        ///
+        /// `model_version` should be the full version ID, e.g.
+        /// `"stability-ai/sdxl:version_hash"`.
+        pub fn new(
+            api_token: impl Into<String>,
+            model_version: impl Into<String>,
+        ) -> Self {
+            Self {
+                api_token: api_token.into(),
+                model_version: model_version.into(),
+                endpoint: "https://api.replicate.com/v1/predictions".to_string(),
+                max_poll_attempts: 60,
+                poll_interval_ms: 2000,
+            }
+        }
+
+        /// Set the endpoint (builder pattern).
+        pub fn with_endpoint(mut self, endpoint: impl Into<String>) -> Self {
+            self.endpoint = endpoint.into();
+            self
+        }
+
+        /// Set maximum poll attempts (builder pattern).
+        pub fn with_max_poll_attempts(mut self, max: u32) -> Self {
+            self.max_poll_attempts = max;
+            self
+        }
+
+        /// Set poll interval in milliseconds (builder pattern).
+        pub fn with_poll_interval_ms(mut self, ms: u64) -> Self {
+            self.poll_interval_ms = ms;
+            self
+        }
+
+        /// Create a prediction on Replicate. Returns the prediction JSON.
+        fn create_prediction(
+            &self,
+            prompt: &str,
+            config: &ImageGenConfig,
+        ) -> Result<serde_json::Value, AiError> {
+            let mut input = serde_json::json!({
+                "prompt": prompt,
+                "width": config.width,
+                "height": config.height
+            });
+
+            if let Some(neg) = &config.negative_prompt {
+                input["negative_prompt"] = serde_json::json!(neg);
+            }
+            if let Some(gs) = config.guidance_scale {
+                input["guidance_scale"] = serde_json::json!(gs);
+            }
+            if let Some(seed) = config.seed {
+                input["seed"] = serde_json::json!(seed);
+            }
+
+            let body = serde_json::json!({
+                "version": self.model_version,
+                "input": input
+            });
+
+            let response = ureq::post(&self.endpoint)
+                .set("Authorization", &format!("Bearer {}", self.api_token))
+                .set("Content-Type", "application/json")
+                .timeout(std::time::Duration::from_secs(30))
+                .send_json(&body);
+
+            match response {
+                Ok(resp) => {
+                    resp.into_json().map_err(|e| {
+                        MediaGenerationError::GenerationFailed {
+                            provider: self.provider_name().to_string(),
+                            reason: format!("failed to parse prediction response: {}", e),
+                        }
+                        .into()
+                    })
+                }
+                Err(ureq::Error::Status(code, resp)) => {
+                    let body_text = resp.into_string().unwrap_or_default();
+                    if code == 401 || code == 403 {
+                        Err(MediaGenerationError::ProviderUnavailable {
+                            provider: self.provider_name().to_string(),
+                            reason: format!("authentication failed (HTTP {}): {}", code, body_text),
+                        }
+                        .into())
+                    } else {
+                        Err(MediaGenerationError::GenerationFailed {
+                            provider: self.provider_name().to_string(),
+                            reason: format!("HTTP {}: {}", code, body_text),
+                        }
+                        .into())
+                    }
+                }
+                Err(e) => Err(MediaGenerationError::GenerationFailed {
+                    provider: self.provider_name().to_string(),
+                    reason: format!("transport error: {}", e),
+                }
+                .into()),
+            }
+        }
+
+        /// Poll the prediction until it reaches a terminal state.
+        fn poll_prediction(&self, prediction_url: &str) -> Result<serde_json::Value, AiError> {
+            for attempt in 0..self.max_poll_attempts {
+                if attempt > 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(self.poll_interval_ms));
+                }
+
+                let response = ureq::get(prediction_url)
+                    .set("Authorization", &format!("Bearer {}", self.api_token))
+                    .timeout(std::time::Duration::from_secs(30))
+                    .call();
+
+                match response {
+                    Ok(resp) => {
+                        let json: serde_json::Value = resp.into_json().map_err(|e| {
+                            MediaGenerationError::GenerationFailed {
+                                provider: self.provider_name().to_string(),
+                                reason: format!("failed to parse poll response: {}", e),
+                            }
+                        })?;
+
+                        let status = json["status"].as_str().unwrap_or("");
+                        match status {
+                            "succeeded" => return Ok(json),
+                            "failed" | "canceled" => {
+                                let error_msg = json["error"]
+                                    .as_str()
+                                    .unwrap_or("unknown error")
+                                    .to_string();
+                                return Err(MediaGenerationError::GenerationFailed {
+                                    provider: self.provider_name().to_string(),
+                                    reason: format!("prediction {}: {}", status, error_msg),
+                                }
+                                .into());
+                            }
+                            // "starting", "processing" — continue polling
+                            _ => continue,
+                        }
+                    }
+                    Err(e) => {
+                        return Err(MediaGenerationError::GenerationFailed {
+                            provider: self.provider_name().to_string(),
+                            reason: format!("poll request failed: {}", e),
+                        }
+                        .into());
+                    }
+                }
+            }
+
+            Err(MediaGenerationError::JobTimeout {
+                job_id: prediction_url.to_string(),
+                timeout_secs: (self.max_poll_attempts as u64 * self.poll_interval_ms) / 1000,
+            }
+            .into())
+        }
+    }
+
+    impl ImageGenerationProvider for ReplicateProvider {
+        fn generate_image(
+            &self,
+            prompt: &str,
+            config: &ImageGenConfig,
+        ) -> Result<GeneratedImage, AiError> {
+            config.validate()?;
+            if prompt.is_empty() {
+                return Err(MediaGenerationError::InvalidParams {
+                    param: "prompt".to_string(),
+                    reason: "prompt cannot be empty".to_string(),
+                }
+                .into());
+            }
+
+            if self.api_token.is_empty() {
+                return Err(MediaGenerationError::ProviderUnavailable {
+                    provider: self.provider_name().to_string(),
+                    reason: "no API token configured".to_string(),
+                }
+                .into());
+            }
+
+            let start = std::time::Instant::now();
+
+            // Step 1: Create prediction
+            let prediction = self.create_prediction(prompt, config)?;
+
+            // Step 2: Get the polling URL
+            let poll_url = prediction["urls"]["get"]
+                .as_str()
+                .or_else(|| {
+                    prediction["id"].as_str().map(|_| "")
+                })
+                .ok_or_else(|| MediaGenerationError::GenerationFailed {
+                    provider: self.provider_name().to_string(),
+                    reason: "no polling URL in prediction response".to_string(),
+                })?;
+
+            // Build the full poll URL if only an ID was returned
+            let full_poll_url = if poll_url.is_empty() {
+                let id = prediction["id"].as_str().unwrap_or("");
+                format!("{}/{}", self.endpoint, id)
+            } else {
+                poll_url.to_string()
+            };
+
+            // Step 3: Poll until done
+            let result = self.poll_prediction(&full_poll_url)?;
+
+            // Step 4: Download the output image
+            let output_url = result["output"]
+                .as_array()
+                .and_then(|arr| arr.first())
+                .and_then(|v| v.as_str())
+                .or_else(|| result["output"].as_str())
+                .ok_or_else(|| MediaGenerationError::GenerationFailed {
+                    provider: self.provider_name().to_string(),
+                    reason: "no output URL in prediction result".to_string(),
+                })?;
+
+            let img_resp = ureq::get(output_url)
+                .timeout(std::time::Duration::from_secs(60))
+                .call()
+                .map_err(|e| MediaGenerationError::GenerationFailed {
+                    provider: self.provider_name().to_string(),
+                    reason: format!("failed to download output image: {}", e),
+                })?;
+
+            let mut image_bytes = Vec::new();
+            img_resp
+                .into_reader()
+                .read_to_end(&mut image_bytes)
+                .map_err(|e| MediaGenerationError::GenerationFailed {
+                    provider: self.provider_name().to_string(),
+                    reason: format!("failed to read image bytes: {}", e),
+                })?;
+
+            let elapsed_ms = start.elapsed().as_millis() as u64;
+
+            Ok(GeneratedImage {
+                bytes: image_bytes,
+                format: ImageFormat::Png,
+                width: config.width,
+                height: config.height,
+                revised_prompt: None,
+                seed: config.seed,
+                generation_time_ms: elapsed_ms,
+            })
+        }
+
+        fn provider_name(&self) -> &str {
+            "replicate"
+        }
+
+        fn supported_formats(&self) -> Vec<ImageFormat> {
+            vec![ImageFormat::Png, ImageFormat::Jpeg, ImageFormat::WebP]
         }
     }
 

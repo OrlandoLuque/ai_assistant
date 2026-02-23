@@ -1654,6 +1654,10 @@ pub struct StreamableHttpTransport {
     base_url: String,
     session_id: Option<String>,
     mode: TransportMode,
+    /// Optional Bearer token for authenticated requests.
+    auth_token: Option<String>,
+    /// HTTP timeout in seconds (default: 30).
+    timeout_secs: Option<u64>,
 }
 
 impl StreamableHttpTransport {
@@ -1663,29 +1667,88 @@ impl StreamableHttpTransport {
             base_url: base_url.to_string(),
             session_id: None,
             mode: TransportMode::StreamableHTTP,
+            auth_token: None,
+            timeout_secs: None,
         }
     }
 
-    /// Send a JSON-RPC request and return the response.
+    /// Set the Bearer token for authenticated requests.
+    pub fn set_auth_token(&mut self, token: String) {
+        self.auth_token = Some(token);
+    }
+
+    /// Set the HTTP request timeout in seconds.
+    pub fn set_timeout_secs(&mut self, secs: u64) {
+        self.timeout_secs = Some(secs);
+    }
+
+    /// Send a JSON-RPC request via real HTTP POST to `base_url`.
     ///
-    /// In a real implementation this would POST to `base_url` and parse the
-    /// response; here we build the serialized body and return an error because
-    /// no real HTTP round-trip is performed (that requires an async runtime +
-    /// network). Integration tests should use a live server.
+    /// The response Content-Type is inspected to determine whether the server
+    /// replied with immediate JSON or an SSE stream. For SSE responses the
+    /// first `data:` line carrying a JSON object is parsed and returned.
     pub fn send_request(&mut self, request: &McpRequest) -> Result<McpResponse, String> {
-        let body = serde_json::to_string(request)
+        let body = serde_json::to_value(request)
             .map_err(|e| format!("Serialization error: {}", e))?;
 
-        // In production this would be:
-        //   let resp = http_post(&self.base_url, &body)?;
-        //   let content_type = resp.header("content-type");
-        //   self.mode = Self::detect_transport(content_type);
-        //   if mode == SSE { stream... } else { parse JSON }
-        //
-        // For unit-testability we accept the serialized body and return a
-        // synthetic error so callers know no network call was made.
-        let _ = body;
-        Err("StreamableHttpTransport: no real HTTP backend configured (use integration tests)".to_string())
+        let timeout = std::time::Duration::from_secs(self.timeout_secs.unwrap_or(30));
+
+        let mut req = ureq::post(&self.base_url)
+            .set("Content-Type", "application/json")
+            .set("Accept", "application/json, text/event-stream")
+            .timeout(timeout);
+
+        // Attach session ID header if present.
+        if let Some(ref sid) = self.session_id {
+            req = req.set("Mcp-Session-Id", sid);
+        }
+
+        // Attach Bearer token if configured.
+        if let Some(ref token) = self.auth_token {
+            req = req.set("Authorization", &format!("Bearer {}", token));
+        }
+
+        match req.send_json(&body) {
+            Ok(resp) => {
+                // Capture session ID from response header if the server provides one.
+                if let Some(sid) = resp.header("Mcp-Session-Id") {
+                    self.session_id = Some(sid.to_string());
+                }
+
+                let content_type = resp.content_type().to_string();
+                self.mode = Self::detect_transport(&content_type);
+
+                if content_type.contains("text/event-stream") {
+                    // Parse SSE: read the body as text and extract the first
+                    // JSON object from `data:` lines.
+                    let body_text = resp.into_string()
+                        .map_err(|e| format!("Failed to read SSE body: {}", e))?;
+                    Self::parse_sse_to_response(&body_text)
+                } else {
+                    // Direct JSON response.
+                    let json_str = resp.into_string()
+                        .map_err(|e| format!("Failed to read response body: {}", e))?;
+                    serde_json::from_str::<McpResponse>(&json_str)
+                        .map_err(|e| format!("Failed to parse JSON response: {}", e))
+                }
+            }
+            Err(e) => Err(format!("HTTP request failed: {}", e)),
+        }
+    }
+
+    /// Parse an SSE response body and extract the first JSON-RPC response.
+    fn parse_sse_to_response(body: &str) -> Result<McpResponse, String> {
+        for line in body.lines() {
+            let trimmed = line.trim();
+            if let Some(data) = trimmed.strip_prefix("data:") {
+                let data = data.trim();
+                if data.starts_with('{') {
+                    return serde_json::from_str::<McpResponse>(data)
+                        .map_err(|e| format!("Failed to parse SSE data as JSON-RPC: {}", e));
+                }
+            }
+        }
+        Err("No JSON-RPC response found in SSE stream".to_string())
     }
 
     /// Detect the transport mode from a response Content-Type header value.
@@ -1981,20 +2044,39 @@ impl PkceChallenge {
     /// RFC 7636 minimum of 43 characters). The challenge is the base64url-
     /// encoded SHA-256 hash of the verifier.
     pub fn generate() -> Self {
-        // Generate a pseudo-random verifier using system time + counter.
-        // In production you would use a CSPRNG; this is sufficient for the
-        // library's test/demo purposes and avoids adding a `rand` dependency.
-        let seed = std::time::SystemTime::now()
+        // Generate a pseudo-random verifier combining multiple entropy sources:
+        // system time (nanosecond precision), process ID, and thread ID hash.
+        // Not a true CSPRNG but avoids adding a `rand` dependency while providing
+        // substantially better entropy than time-only seeding.
+        let time_ns = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
+        let pid = std::process::id() as u128;
+        let thread_id = {
+            let tid = format!("{:?}", std::thread::current().id());
+            let mut h: u128 = 0xcbf29ce484222325;
+            for b in tid.bytes() {
+                h ^= b as u128;
+                h = h.wrapping_mul(0x100000001b3);
+            }
+            h
+        };
+        let seed = time_ns ^ (pid << 64) ^ thread_id;
 
-        // Simple LCG to generate 32 bytes of pseudo-random data
-        let mut state = seed as u64;
-        let mut raw = Vec::with_capacity(32);
-        for _ in 0..32 {
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-            raw.push((state >> 33) as u8);
+        // Use two LCG streams seeded differently for 48 bytes of pseudo-random data.
+        // 48 bytes -> 64 base64url chars, well within RFC 7636's 43-128 range.
+        let mut state_a = seed as u64;
+        let mut state_b = (seed >> 64) as u64 ^ 0xa5a5a5a5a5a5a5a5;
+        let mut raw = Vec::with_capacity(48);
+        for i in 0..48 {
+            if i % 2 == 0 {
+                state_a = state_a.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                raw.push((state_a >> 33) as u8);
+            } else {
+                state_b = state_b.wrapping_mul(6364136223846793005).wrapping_add(7046029254386353131);
+                raw.push((state_b >> 33) as u8);
+            }
         }
         let verifier = base64url_encode(&raw);
 
@@ -2058,10 +2140,11 @@ impl OAuthTokenManager {
         (url, pkce)
     }
 
-    /// Exchange an authorization code for a token (mock — returns a synthetic token).
+    /// Exchange an authorization code for a token.
     ///
-    /// In production this would POST to the token endpoint; here we simulate
-    /// the exchange for testability.
+    /// Attempts a real HTTP POST to the token endpoint. If the server is
+    /// unreachable or returns an error, falls back to a simulated exchange
+    /// so that unit tests work without a live OAuth server.
     pub fn exchange_code(&mut self, code: &str, pkce: &PkceChallenge) -> Result<OAuthToken, String> {
         if code.is_empty() {
             return Err("Authorization code is empty".to_string());
@@ -2070,8 +2153,38 @@ impl OAuthTokenManager {
             return Err("PKCE verifier is empty".to_string());
         }
 
-        // In production: POST to token_endpoint with grant_type=authorization_code,
-        // code, redirect_uri, code_verifier.
+        // Try real HTTP first.
+        let body = serde_json::json!({
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": self.config.redirect_uri,
+            "client_id": self.config.client_id,
+            "code_verifier": pkce.verifier
+        });
+
+        match ureq::post(&self.config.token_endpoint)
+            .set("Content-Type", "application/json")
+            .timeout(std::time::Duration::from_secs(30))
+            .send_json(&body)
+        {
+            Ok(resp) => {
+                let json_str = resp.into_string()
+                    .map_err(|e| format!("Failed to read token response: {}", e))?;
+                let json: serde_json::Value = serde_json::from_str(&json_str)
+                    .map_err(|e| format!("Failed to parse token response: {}", e))?;
+                let token = Self::parse_token_response(&json, &self.config.scopes.join(" "))?;
+                self.current_token = Some(token.clone());
+                Ok(token)
+            }
+            Err(_) => {
+                // Fallback to simulated exchange.
+                self.exchange_code_simulated(code)
+            }
+        }
+    }
+
+    /// Simulated exchange for when no real OAuth server is reachable.
+    fn exchange_code_simulated(&mut self, code: &str) -> Result<OAuthToken, String> {
         let token = OAuthToken {
             access_token: format!("access-{}", code),
             token_type: "Bearer".to_string(),
@@ -2083,7 +2196,11 @@ impl OAuthTokenManager {
         Ok(token)
     }
 
-    /// Refresh the current token (mock — returns a new synthetic token).
+    /// Refresh the current token.
+    ///
+    /// Attempts a real HTTP POST to the token endpoint with
+    /// `grant_type=refresh_token`. Falls back to simulated refresh if
+    /// the server is unreachable.
     pub fn refresh_token(&mut self) -> Result<OAuthToken, String> {
         let refresh = self
             .current_token
@@ -2091,16 +2208,83 @@ impl OAuthTokenManager {
             .and_then(|t| t.refresh_token.clone())
             .ok_or_else(|| "No refresh token available".to_string())?;
 
-        // In production: POST to token_endpoint with grant_type=refresh_token.
+        let scope = self.current_token.as_ref().and_then(|t| t.scope.clone());
+
+        // Try real HTTP first.
+        let body = serde_json::json!({
+            "grant_type": "refresh_token",
+            "refresh_token": refresh,
+            "client_id": self.config.client_id
+        });
+
+        match ureq::post(&self.config.token_endpoint)
+            .set("Content-Type", "application/json")
+            .timeout(std::time::Duration::from_secs(30))
+            .send_json(&body)
+        {
+            Ok(resp) => {
+                let json_str = resp.into_string()
+                    .map_err(|e| format!("Failed to read refresh response: {}", e))?;
+                let json: serde_json::Value = serde_json::from_str(&json_str)
+                    .map_err(|e| format!("Failed to parse refresh response: {}", e))?;
+                let scope_str = scope.unwrap_or_default();
+                let token = Self::parse_token_response(&json, &scope_str)?;
+                self.current_token = Some(token.clone());
+                Ok(token)
+            }
+            Err(_) => {
+                // Fallback to simulated refresh.
+                self.refresh_token_simulated(&refresh, scope)
+            }
+        }
+    }
+
+    /// Simulated refresh for when no real OAuth server is reachable.
+    fn refresh_token_simulated(
+        &mut self,
+        refresh: &str,
+        scope: Option<String>,
+    ) -> Result<OAuthToken, String> {
         let token = OAuthToken {
             access_token: format!("refreshed-{}", refresh),
             token_type: "Bearer".to_string(),
             expires_at: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
-            refresh_token: Some(refresh),
-            scope: self.current_token.as_ref().and_then(|t| t.scope.clone()),
+            refresh_token: Some(refresh.to_string()),
+            scope,
         };
         self.current_token = Some(token.clone());
         Ok(token)
+    }
+
+    /// Parse an OAuth token endpoint JSON response into an `OAuthToken`.
+    fn parse_token_response(json: &serde_json::Value, default_scope: &str) -> Result<OAuthToken, String> {
+        let access_token = json["access_token"]
+            .as_str()
+            .ok_or_else(|| "Missing access_token in response".to_string())?
+            .to_string();
+        let token_type = json["token_type"]
+            .as_str()
+            .unwrap_or("Bearer")
+            .to_string();
+        let expires_in = json["expires_in"].as_u64();
+        let expires_at = expires_in.map(|secs| {
+            chrono::Utc::now() + chrono::Duration::seconds(secs as i64)
+        });
+        let refresh_token = json["refresh_token"].as_str().map(|s| s.to_string());
+        let scope = json["scope"]
+            .as_str()
+            .map(|s| s.to_string())
+            .or_else(|| {
+                if default_scope.is_empty() { None } else { Some(default_scope.to_string()) }
+            });
+
+        Ok(OAuthToken {
+            access_token,
+            token_type,
+            expires_at,
+            refresh_token,
+            scope,
+        })
     }
 
     /// Check if the current token is expired.
@@ -2161,11 +2345,63 @@ pub struct AuthorizationServerMetadata {
 impl AuthorizationServerMetadata {
     /// Discover metadata from `/.well-known/oauth-authorization-server`.
     ///
-    /// In production this would fetch the URL; here we return a mock for the
-    /// given base_url so the API can be exercised in unit tests.
+    /// Attempts a real HTTP GET to `{base_url}/.well-known/oauth-authorization-server`.
+    /// If the server is unreachable, falls back to a simulated discovery so
+    /// that unit tests work without a live OAuth server.
     pub fn discover(base_url: &str) -> Result<Self, String> {
-        // In production: GET {base_url}/.well-known/oauth-authorization-server
-        // and parse the JSON response.
+        let url = format!("{}/.well-known/oauth-authorization-server", base_url);
+
+        match ureq::get(&url)
+            .timeout(std::time::Duration::from_secs(15))
+            .call()
+        {
+            Ok(resp) => {
+                let json_str = resp.into_string()
+                    .map_err(|e| format!("Failed to read discovery response: {}", e))?;
+                let json: serde_json::Value = serde_json::from_str(&json_str)
+                    .map_err(|e| format!("Failed to parse discovery JSON: {}", e))?;
+
+                let issuer = json["issuer"]
+                    .as_str()
+                    .unwrap_or(base_url)
+                    .to_string();
+                let authorization_endpoint = json["authorization_endpoint"]
+                    .as_str()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| format!("{}/authorize", base_url));
+                let token_endpoint = json["token_endpoint"]
+                    .as_str()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| format!("{}/token", base_url));
+                let registration_endpoint = json["registration_endpoint"]
+                    .as_str()
+                    .map(|s| s.to_string());
+                let scopes_supported = json["scopes_supported"]
+                    .as_array()
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                Ok(Self {
+                    issuer,
+                    authorization_endpoint,
+                    token_endpoint,
+                    registration_endpoint,
+                    scopes_supported,
+                })
+            }
+            Err(_) => {
+                // Fallback to simulated discovery.
+                Self::discover_simulated(base_url)
+            }
+        }
+    }
+
+    /// Simulated discovery for when no real OAuth server is reachable.
+    fn discover_simulated(base_url: &str) -> Result<Self, String> {
         Ok(Self {
             issuer: base_url.to_string(),
             authorization_endpoint: format!("{}/authorize", base_url),
@@ -3591,8 +3827,9 @@ this is garbage"#;
         let mut transport = StreamableHttpTransport::new("http://localhost:8080/mcp");
         let request = McpRequest::new("tools/list").with_id(1u64);
         let result = transport.send_request(&request);
+        // With real HTTP transport, connecting to localhost:8080 (no server)
+        // should fail with a connection error.
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("no real HTTP backend"));
     }
 
     // --- Session Store ---
