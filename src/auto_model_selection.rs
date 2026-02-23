@@ -1038,6 +1038,244 @@ impl SmartSelector {
     }
 }
 
+// ============================================================================
+// PipelineRouter (Item 7.1)
+// ============================================================================
+
+/// Task types for routing decisions.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PipelineTaskType {
+    Chat,
+    Summarization,
+    CodeGeneration,
+    Translation,
+    Classification,
+    Extraction,
+    Creative,
+    Analysis,
+}
+
+/// A routing rule that maps task patterns to preferred providers.
+pub struct RoutingRule {
+    pub task_pattern: String,
+    pub preferred_provider: String,
+    pub preferred_model: String,
+    pub priority: u32,
+    pub max_cost_per_token: Option<f64>,
+}
+
+/// The result of a routing decision.
+pub struct PipelineRoutingDecision {
+    pub provider: String,
+    pub model: String,
+    pub reason: String,
+    pub estimated_cost_per_1k_tokens: f64,
+}
+
+/// Routes requests to the optimal provider/model based on task type, cost, and quality.
+pub struct PipelineRouter {
+    pub rules: Vec<RoutingRule>,
+    pub default_provider: String,
+    pub default_model: String,
+    pub cost_weight: f64,
+    pub quality_weight: f64,
+    pub speed_weight: f64,
+}
+
+impl PipelineRouter {
+    pub fn new(default_provider: &str, default_model: &str) -> Self {
+        Self {
+            rules: Vec::new(),
+            default_provider: default_provider.to_string(),
+            default_model: default_model.to_string(),
+            cost_weight: 0.33,
+            quality_weight: 0.34,
+            speed_weight: 0.33,
+        }
+    }
+
+    pub fn with_weights(mut self, cost: f64, quality: f64, speed: f64) -> Self {
+        self.cost_weight = cost;
+        self.quality_weight = quality;
+        self.speed_weight = speed;
+        self
+    }
+
+    pub fn add_rule(mut self, rule: RoutingRule) -> Self {
+        self.rules.push(rule);
+        self
+    }
+
+    /// Route a request to the best provider/model.
+    pub fn route(&self, task_type: &PipelineTaskType, _prompt: &str) -> PipelineRoutingDecision {
+        let task_keyword = match task_type {
+            PipelineTaskType::Chat => "chat",
+            PipelineTaskType::Summarization => "summar",
+            PipelineTaskType::CodeGeneration => "code",
+            PipelineTaskType::Translation => "translat",
+            PipelineTaskType::Classification => "classif",
+            PipelineTaskType::Extraction => "extract",
+            PipelineTaskType::Creative => "creative",
+            PipelineTaskType::Analysis => "analy",
+        };
+
+        // Find matching rule by task pattern
+        let mut best_rule: Option<&RoutingRule> = None;
+        for rule in &self.rules {
+            if rule.task_pattern.to_lowercase().contains(task_keyword)
+                || task_keyword.contains(&rule.task_pattern.to_lowercase())
+            {
+                match best_rule {
+                    None => best_rule = Some(rule),
+                    Some(current) if rule.priority > current.priority => best_rule = Some(rule),
+                    _ => {}
+                }
+            }
+        }
+
+        match best_rule {
+            Some(rule) => PipelineRoutingDecision {
+                provider: rule.preferred_provider.clone(),
+                model: rule.preferred_model.clone(),
+                reason: format!("Matched rule for task pattern '{}'", rule.task_pattern),
+                estimated_cost_per_1k_tokens: 0.005,
+            },
+            None => PipelineRoutingDecision {
+                provider: self.default_provider.clone(),
+                model: self.default_model.clone(),
+                reason: "Default routing (no matching rule)".to_string(),
+                estimated_cost_per_1k_tokens: 0.003,
+            },
+        }
+    }
+
+    /// Simple heuristic to classify task type from prompt text.
+    pub fn classify_task(prompt: &str) -> PipelineTaskType {
+        let lower = prompt.to_lowercase();
+        if lower.contains("summarize") || lower.contains("summary") || lower.contains("tldr") {
+            PipelineTaskType::Summarization
+        } else if lower.contains("translate") || lower.contains("translation") {
+            PipelineTaskType::Translation
+        } else if lower.contains("code") || lower.contains("function") || lower.contains("implement")
+            || lower.contains("program") || lower.contains("script")
+        {
+            PipelineTaskType::CodeGeneration
+        } else if lower.contains("classify") || lower.contains("categorize") || lower.contains("label") {
+            PipelineTaskType::Classification
+        } else if lower.contains("extract") || lower.contains("parse") || lower.contains("find all") {
+            PipelineTaskType::Extraction
+        } else if lower.contains("write a story") || lower.contains("creative") || lower.contains("poem") {
+            PipelineTaskType::Creative
+        } else if lower.contains("analyze") || lower.contains("analysis") || lower.contains("compare") {
+            PipelineTaskType::Analysis
+        } else {
+            PipelineTaskType::Chat
+        }
+    }
+}
+
+// ============================================================================
+// CacheablePrompt (Item 7.2)
+// ============================================================================
+
+/// A prompt segment that can be marked as static (cacheable) or dynamic.
+pub enum PromptSegment {
+    Static { content: String, cache_key: String },
+    Dynamic { content: String },
+}
+
+/// Marks segments of a prompt as cacheable or dynamic for provider cache optimization.
+pub struct CacheablePrompt {
+    pub segments: Vec<PromptSegment>,
+}
+
+impl CacheablePrompt {
+    pub fn new() -> Self {
+        Self {
+            segments: Vec::new(),
+        }
+    }
+
+    pub fn add_static(mut self, content: &str, cache_key: &str) -> Self {
+        self.segments.push(PromptSegment::Static {
+            content: content.to_string(),
+            cache_key: cache_key.to_string(),
+        });
+        self
+    }
+
+    pub fn add_dynamic(mut self, content: &str) -> Self {
+        self.segments.push(PromptSegment::Dynamic {
+            content: content.to_string(),
+        });
+        self
+    }
+
+    pub fn to_full_prompt(&self) -> String {
+        self.segments
+            .iter()
+            .map(|s| match s {
+                PromptSegment::Static { content, .. } => content.as_str(),
+                PromptSegment::Dynamic { content } => content.as_str(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Hash of static segments only — same static content means same fingerprint.
+    pub fn cache_fingerprint(&self) -> String {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        for seg in &self.segments {
+            if let PromptSegment::Static { content, cache_key } = seg {
+                cache_key.hash(&mut hasher);
+                content.hash(&mut hasher);
+            }
+        }
+        format!("{:016x}", hasher.finish())
+    }
+
+    /// Anthropic cache_control format blocks.
+    pub fn to_anthropic_cache_control(&self) -> Vec<serde_json::Value> {
+        self.segments
+            .iter()
+            .map(|s| match s {
+                PromptSegment::Static { content, .. } => serde_json::json!({
+                    "type": "text",
+                    "text": content,
+                    "cache_control": { "type": "ephemeral" }
+                }),
+                PromptSegment::Dynamic { content } => serde_json::json!({
+                    "type": "text",
+                    "text": content
+                }),
+            })
+            .collect()
+    }
+
+    /// Percentage of tokens that are in static segments.
+    pub fn static_ratio(&self) -> f64 {
+        let mut static_len = 0usize;
+        let mut total_len = 0usize;
+        for seg in &self.segments {
+            let len = match seg {
+                PromptSegment::Static { content, .. } => content.len(),
+                PromptSegment::Dynamic { content } => content.len(),
+            };
+            total_len += len;
+            if matches!(seg, PromptSegment::Static { .. }) {
+                static_len += len;
+            }
+        }
+        if total_len == 0 {
+            0.0
+        } else {
+            static_len as f64 / total_len as f64
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1390,5 +1628,155 @@ mod tests {
 
         selector.adjust_budget(6.5);
         assert!((selector.remaining_budget() - 0.0).abs() < f64::EPSILON);
+    }
+
+    // ========================================================================
+    // PipelineRouter tests (Item 7.1)
+    // ========================================================================
+
+    #[test]
+    fn test_router_new() {
+        let router = PipelineRouter::new("openai", "gpt-4o");
+        assert_eq!(router.default_provider, "openai");
+        assert_eq!(router.default_model, "gpt-4o");
+    }
+
+    #[test]
+    fn test_router_add_rule() {
+        let router = PipelineRouter::new("openai", "gpt-4o")
+            .add_rule(RoutingRule {
+                task_pattern: "code".to_string(),
+                preferred_provider: "anthropic".to_string(),
+                preferred_model: "claude-3.5-sonnet".to_string(),
+                priority: 10,
+                max_cost_per_token: None,
+            });
+        assert_eq!(router.rules.len(), 1);
+    }
+
+    #[test]
+    fn test_router_route_default() {
+        let router = PipelineRouter::new("openai", "gpt-4o");
+        let decision = router.route(&PipelineTaskType::Chat, "hello there");
+        assert_eq!(decision.provider, "openai");
+        assert_eq!(decision.model, "gpt-4o");
+    }
+
+    #[test]
+    fn test_router_route_with_rule() {
+        let router = PipelineRouter::new("openai", "gpt-4o")
+            .add_rule(RoutingRule {
+                task_pattern: "code".to_string(),
+                preferred_provider: "anthropic".to_string(),
+                preferred_model: "claude-3.5-sonnet".to_string(),
+                priority: 10,
+                max_cost_per_token: None,
+            });
+        let decision = router.route(&PipelineTaskType::CodeGeneration, "write code");
+        assert_eq!(decision.provider, "anthropic");
+        assert_eq!(decision.model, "claude-3.5-sonnet");
+    }
+
+    #[test]
+    fn test_router_with_weights() {
+        let router = PipelineRouter::new("openai", "gpt-4o")
+            .with_weights(0.5, 0.3, 0.2);
+        assert!((router.cost_weight - 0.5).abs() < f64::EPSILON);
+        assert!((router.quality_weight - 0.3).abs() < f64::EPSILON);
+        assert!((router.speed_weight - 0.2).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_routing_decision() {
+        let decision = PipelineRoutingDecision {
+            provider: "openai".to_string(),
+            model: "gpt-4o".to_string(),
+            reason: "default".to_string(),
+            estimated_cost_per_1k_tokens: 0.005,
+        };
+        assert_eq!(decision.provider, "openai");
+        assert!(decision.estimated_cost_per_1k_tokens > 0.0);
+    }
+
+    #[test]
+    fn test_classify_task_chat() {
+        let task = PipelineRouter::classify_task("hello, how are you?");
+        assert!(matches!(task, PipelineTaskType::Chat));
+    }
+
+    #[test]
+    fn test_classify_task_code() {
+        let task = PipelineRouter::classify_task("write a function to sort an array");
+        assert!(matches!(task, PipelineTaskType::CodeGeneration));
+    }
+
+    #[test]
+    fn test_classify_task_summarize() {
+        let task = PipelineRouter::classify_task("summarize this article about AI");
+        assert!(matches!(task, PipelineTaskType::Summarization));
+    }
+
+    #[test]
+    fn test_classify_task_translate() {
+        let task = PipelineRouter::classify_task("translate this to Spanish");
+        assert!(matches!(task, PipelineTaskType::Translation));
+    }
+
+    // ========================================================================
+    // CacheablePrompt tests (Item 7.2)
+    // ========================================================================
+
+    #[test]
+    fn test_cacheable_prompt_new() {
+        let prompt = CacheablePrompt::new();
+        assert!(prompt.segments.is_empty());
+    }
+
+    #[test]
+    fn test_cacheable_prompt_add_segments() {
+        let prompt = CacheablePrompt::new()
+            .add_static("System: You are a helpful assistant.", "sys")
+            .add_dynamic("User: What is Rust?");
+        assert_eq!(prompt.segments.len(), 2);
+    }
+
+    #[test]
+    fn test_cacheable_prompt_full_prompt() {
+        let prompt = CacheablePrompt::new()
+            .add_static("System prompt.", "sys")
+            .add_dynamic("User message.");
+        let full = prompt.to_full_prompt();
+        assert!(full.contains("System prompt."));
+        assert!(full.contains("User message."));
+    }
+
+    #[test]
+    fn test_cacheable_prompt_fingerprint() {
+        let p1 = CacheablePrompt::new()
+            .add_static("same system", "sys")
+            .add_dynamic("different user 1");
+        let p2 = CacheablePrompt::new()
+            .add_static("same system", "sys")
+            .add_dynamic("different user 2");
+        // Same static content → same fingerprint
+        assert_eq!(p1.cache_fingerprint(), p2.cache_fingerprint());
+    }
+
+    #[test]
+    fn test_cacheable_prompt_static_ratio() {
+        let prompt = CacheablePrompt::new()
+            .add_static("1234567890", "key")  // 10 chars
+            .add_dynamic("12345");            // 5 chars
+        let ratio = prompt.static_ratio();
+        assert!((ratio - 10.0 / 15.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_cacheable_prompt_anthropic_cache() {
+        let prompt = CacheablePrompt::new()
+            .add_static("System instructions.", "sys")
+            .add_dynamic("User query.");
+        let blocks = prompt.to_anthropic_cache_control();
+        assert_eq!(blocks.len(), 2);
     }
 }

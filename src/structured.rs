@@ -863,6 +863,316 @@ impl SchemaBuilder {
     }
 }
 
+/// Strategy for enforcing structured output based on provider capabilities.
+#[derive(Debug, Clone, PartialEq)]
+pub enum StructuredOutputStrategy {
+    /// Use OpenAI's native response_format with json_schema
+    OpenAiNative,
+    /// Use Anthropic's forced tool use pattern
+    AnthropicToolUse,
+    /// Use prompt engineering + validation + retry
+    PromptEngineering,
+}
+
+/// Errors that can occur during structured output enforcement.
+#[derive(Debug)]
+pub enum StructuredOutputError {
+    /// The LLM generation call itself failed.
+    GenerationFailed(String),
+    /// Could not parse the LLM response as JSON.
+    ParseFailed(String),
+    /// The parsed JSON did not pass schema validation.
+    ValidationFailed(String),
+    /// Could not extract structured data from a provider-specific response format.
+    ExtractionFailed(String),
+}
+
+impl std::fmt::Display for StructuredOutputError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StructuredOutputError::GenerationFailed(msg) => {
+                write!(f, "Generation failed: {}", msg)
+            }
+            StructuredOutputError::ParseFailed(msg) => write!(f, "Parse failed: {}", msg),
+            StructuredOutputError::ValidationFailed(msg) => {
+                write!(f, "Validation failed: {}", msg)
+            }
+            StructuredOutputError::ExtractionFailed(msg) => {
+                write!(f, "Extraction failed: {}", msg)
+            }
+        }
+    }
+}
+
+/// Builder for creating structured output requests with provider-specific optimization.
+pub struct StructuredOutputRequest {
+    schema: JsonSchema,
+    strategy: StructuredOutputStrategy,
+    max_retries: usize,
+    strict: bool,
+}
+
+impl StructuredOutputRequest {
+    /// Create a new structured output request with the given schema.
+    /// Defaults to PromptEngineering strategy, 3 retries, strict mode enabled.
+    pub fn new(schema: JsonSchema) -> Self {
+        Self {
+            schema,
+            strategy: StructuredOutputStrategy::PromptEngineering,
+            max_retries: 3,
+            strict: true,
+        }
+    }
+
+    /// Set the structured output strategy.
+    pub fn with_strategy(mut self, strategy: StructuredOutputStrategy) -> Self {
+        self.strategy = strategy;
+        self
+    }
+
+    /// Set the maximum number of retries for prompt engineering strategy.
+    pub fn with_max_retries(mut self, retries: usize) -> Self {
+        self.max_retries = retries;
+        self
+    }
+
+    /// Set whether to use strict mode for OpenAI response_format.
+    pub fn strict(mut self, strict: bool) -> Self {
+        self.strict = strict;
+        self
+    }
+
+    /// Get a reference to the strategy.
+    pub fn strategy(&self) -> &StructuredOutputStrategy {
+        &self.strategy
+    }
+
+    /// Generate the OpenAI response_format parameter for the API request body.
+    ///
+    /// Produces a JSON value matching the OpenAI `response_format` spec:
+    /// ```json
+    /// {
+    ///   "type": "json_schema",
+    ///   "json_schema": {
+    ///     "name": "<schema_name>",
+    ///     "strict": true|false,
+    ///     "schema": { ... }
+    ///   }
+    /// }
+    /// ```
+    pub fn to_openai_response_format(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "json_schema",
+            "json_schema": {
+                "name": self.schema.name,
+                "strict": self.strict,
+                "schema": self.schema.to_openai_format()
+            }
+        })
+    }
+
+    /// Generate Anthropic tool_use parameters.
+    ///
+    /// Returns a tuple of (tools_array, tool_choice) for inclusion in the API request.
+    /// The tool definition is derived from the schema, and tool_choice forces the model
+    /// to use that specific tool, ensuring structured output.
+    pub fn to_anthropic_tool_params(&self) -> (serde_json::Value, serde_json::Value) {
+        let tool_name = self.schema.name.clone();
+
+        let tool_def = serde_json::json!([{
+            "name": tool_name,
+            "description": self.schema.description.as_deref()
+                .unwrap_or("Generate structured output matching the schema"),
+            "input_schema": self.schema.to_openai_format()
+        }]);
+
+        let tool_choice = serde_json::json!({
+            "type": "tool",
+            "name": tool_name
+        });
+
+        (tool_def, tool_choice)
+    }
+
+    /// Extract structured output from an Anthropic tool_use response.
+    ///
+    /// Expects a response JSON with a `content` array containing at least one block
+    /// of type `tool_use`. Extracts the `input` field from the first matching tool_use
+    /// block and validates it against the schema.
+    pub fn extract_from_anthropic_response(
+        &self,
+        response: &serde_json::Value,
+    ) -> Result<serde_json::Value, StructuredOutputError> {
+        // Look for content array
+        let content = response
+            .get("content")
+            .and_then(|c| c.as_array())
+            .ok_or_else(|| {
+                StructuredOutputError::ExtractionFailed(
+                    "Response missing 'content' array".to_string(),
+                )
+            })?;
+
+        // Find the tool_use block
+        let tool_use_block = content
+            .iter()
+            .find(|block| block.get("type").and_then(|t| t.as_str()) == Some("tool_use"))
+            .ok_or_else(|| {
+                StructuredOutputError::ExtractionFailed(
+                    "No tool_use block found in response content".to_string(),
+                )
+            })?;
+
+        // Extract the input field
+        let input = tool_use_block.get("input").ok_or_else(|| {
+            StructuredOutputError::ExtractionFailed(
+                "tool_use block missing 'input' field".to_string(),
+            )
+        })?;
+
+        // Validate against schema
+        self.validate_output(input)?;
+
+        Ok(input.clone())
+    }
+
+    /// Automatically select the best strategy based on the provider name.
+    ///
+    /// OpenAI-compatible providers (openai, groq, together, fireworks, deepseek,
+    /// mistral, openrouter, perplexity) use native JSON mode. Anthropic uses
+    /// forced tool use. All others fall back to prompt engineering.
+    pub fn auto_strategy(mut self, provider_name: &str) -> Self {
+        self.strategy = match provider_name.to_lowercase().as_str() {
+            "openai" | "groq" | "together" | "fireworks" | "deepseek" | "mistral"
+            | "openrouter" | "perplexity" => StructuredOutputStrategy::OpenAiNative,
+            "anthropic" => StructuredOutputStrategy::AnthropicToolUse,
+            _ => StructuredOutputStrategy::PromptEngineering,
+        };
+        self
+    }
+
+    /// Execute structured output with the selected strategy.
+    ///
+    /// The `generate_fn` closure receives:
+    /// - `Option<&Value>`: OpenAI response_format parameter (for OpenAiNative)
+    /// - `Option<(&Value, &Value)>`: Anthropic (tools, tool_choice) parameters (for AnthropicToolUse)
+    /// - `&str`: the prompt text
+    ///
+    /// It should return the raw response string from the LLM, or an error string.
+    pub fn execute(
+        &self,
+        generate_fn: &dyn Fn(
+            Option<&serde_json::Value>,
+            Option<(&serde_json::Value, &serde_json::Value)>,
+            &str,
+        ) -> Result<String, String>,
+        prompt: &str,
+    ) -> Result<serde_json::Value, StructuredOutputError> {
+        match self.strategy {
+            StructuredOutputStrategy::OpenAiNative => {
+                let response_format = self.to_openai_response_format();
+                let raw = generate_fn(Some(&response_format), None, prompt)
+                    .map_err(|e| StructuredOutputError::GenerationFailed(e))?;
+                let parsed: serde_json::Value = serde_json::from_str(&raw)
+                    .map_err(|e| StructuredOutputError::ParseFailed(e.to_string()))?;
+                self.validate_output(&parsed)?;
+                Ok(parsed)
+            }
+            StructuredOutputStrategy::AnthropicToolUse => {
+                let (tools, tool_choice) = self.to_anthropic_tool_params();
+                let raw = generate_fn(None, Some((&tools, &tool_choice)), prompt)
+                    .map_err(|e| StructuredOutputError::GenerationFailed(e))?;
+                let response: serde_json::Value = serde_json::from_str(&raw)
+                    .map_err(|e| StructuredOutputError::ParseFailed(e.to_string()))?;
+                self.extract_from_anthropic_response(&response)
+            }
+            StructuredOutputStrategy::PromptEngineering => {
+                let schema_json = serde_json::to_string_pretty(
+                    &self.schema.to_openai_format(),
+                )
+                .unwrap_or_default();
+
+                for attempt in 0..=self.max_retries {
+                    let enhanced_prompt = format!(
+                        "{}\n\nRespond with valid JSON matching this schema:\n{}",
+                        prompt, schema_json
+                    );
+                    let raw = generate_fn(None, None, &enhanced_prompt)
+                        .map_err(|e| StructuredOutputError::GenerationFailed(e))?;
+                    // Try to extract JSON from response (may be in markdown code block)
+                    if let Some(json_str) = extract_json_from_text(&raw) {
+                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                            if self.validate_output(&parsed).is_ok() {
+                                return Ok(parsed);
+                            }
+                        }
+                    }
+                    if attempt == self.max_retries {
+                        return Err(StructuredOutputError::ValidationFailed(format!(
+                            "Failed after {} attempts",
+                            self.max_retries + 1
+                        )));
+                    }
+                }
+                unreachable!()
+            }
+        }
+    }
+
+    /// Validate a parsed JSON value against the schema.
+    fn validate_output(&self, value: &serde_json::Value) -> Result<(), StructuredOutputError> {
+        let result = SchemaValidator::validate(value, &self.schema);
+        if result.valid {
+            Ok(())
+        } else {
+            let error_msgs: Vec<String> = result.errors.iter().map(|e| e.to_string()).collect();
+            Err(StructuredOutputError::ValidationFailed(
+                error_msgs.join("; "),
+            ))
+        }
+    }
+}
+
+/// Extract JSON from text that may contain markdown code blocks.
+///
+/// Tries in order:
+/// 1. Direct parse as JSON
+/// 2. ```json ... ``` fenced blocks
+/// 3. Raw `{...}` or `[...]` substrings
+fn extract_json_from_text(text: &str) -> Option<String> {
+    // Try raw parse first
+    let trimmed = text.trim();
+    if serde_json::from_str::<serde_json::Value>(trimmed).is_ok() {
+        return Some(trimmed.to_string());
+    }
+
+    // Then look for ```json ... ``` blocks
+    if let Some(start) = text.find("```json") {
+        let content_start = start + 7;
+        let content_start = if text[content_start..].starts_with('\n') {
+            content_start + 1
+        } else {
+            content_start
+        };
+        if let Some(end_offset) = text[content_start..].find("```") {
+            let json_str = text[content_start..content_start + end_offset].trim();
+            if !json_str.is_empty() {
+                return Some(json_str.to_string());
+            }
+        }
+    }
+
+    // Then look for { ... } or [ ... ]
+    if let Some(result) = find_balanced(text, '{', '}') {
+        return Some(result.to_string());
+    }
+    if let Some(result) = find_balanced(text, '[', ']') {
+        return Some(result.to_string());
+    }
+
+    None
+}
+
 /// Structured output request builder
 pub struct StructuredRequest {
     schema: JsonSchema,

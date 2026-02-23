@@ -740,6 +740,546 @@ impl ContextComposer {
 // Tests
 // ---------------------------------------------------------------------------
 
+
+// ---------------------------------------------------------------------------
+// ContextCompiler - token-budget-aware segment compiler with eviction
+// ---------------------------------------------------------------------------
+
+/// Allocates token budgets per context segment type and enforces limits through
+/// priority-based eviction when the total approaches the model context window.
+pub struct ContextCompiler {
+    total_budget: usize,
+    allocations: HashMap<SegmentType, SegmentAllocation>,
+    segments: Vec<ContextSegment>,
+}
+
+/// Segment type for the context compiler.
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+pub enum SegmentType {
+    System,
+    Tools,
+    Memory,
+    Documents,
+    Conversation,
+    Examples,
+}
+
+/// Budget allocation for a single segment type.
+pub struct SegmentAllocation {
+    /// Fraction of total budget (0.0 - 1.0).
+    pub percentage: f64,
+    /// Higher priority segments are kept longer during eviction.
+    pub priority: u32,
+    /// Maximum tokens computed from percentage * total_budget.
+    pub max_tokens: usize,
+    /// Tokens currently consumed by segments of this type.
+    pub current_tokens: usize,
+}
+
+/// A single context segment with metadata for budget management.
+pub struct ContextSegment {
+    /// The type/category of this segment.
+    pub segment_type: SegmentType,
+    /// The textual content.
+    pub content: String,
+    /// Estimated token count (chars / 4).
+    pub token_estimate: usize,
+    /// Priority score - higher means keep longer.
+    pub priority: u32,
+    /// Timestamp for recency-based eviction (epoch millis or monotonic).
+    pub timestamp: u64,
+}
+
+/// Result of compiling segments within the budget.
+pub struct CompiledContext {
+    /// Segments that survived eviction.
+    pub segments: Vec<ContextSegment>,
+    /// Total tokens across surviving segments.
+    pub total_tokens: usize,
+    /// Number of segments evicted to meet budget.
+    pub evicted_count: usize,
+    /// Fraction of total budget consumed (0.0 - 1.0+).
+    pub utilization: f64,
+}
+
+impl ContextCompiler {
+    /// Create a new compiler with default allocations:
+    /// System 15%, Tools 20%, Memory 15%, Documents 30%, Conversation 20%.
+    pub fn new(total_budget: usize) -> Self {
+        let mut allocations = HashMap::new();
+        let defaults = [
+            (SegmentType::System, 0.15, 5u32),
+            (SegmentType::Tools, 0.20, 4),
+            (SegmentType::Memory, 0.15, 3),
+            (SegmentType::Documents, 0.30, 2),
+            (SegmentType::Conversation, 0.20, 3),
+            (SegmentType::Examples, 0.00, 1),
+        ];
+        for (seg_type, pct, prio) in defaults {
+            allocations.insert(
+                seg_type,
+                SegmentAllocation {
+                    percentage: pct,
+                    priority: prio,
+                    max_tokens: (total_budget as f64 * pct).round() as usize,
+                    current_tokens: 0,
+                },
+            );
+        }
+        Self {
+            total_budget,
+            allocations,
+            segments: Vec::new(),
+        }
+    }
+
+    /// Override the allocation for a specific segment type (builder pattern).
+    pub fn with_allocation(mut self, segment_type: SegmentType, percentage: f64, priority: u32) -> Self {
+        let max_tokens = (self.total_budget as f64 * percentage).round() as usize;
+        self.allocations.insert(
+            segment_type,
+            SegmentAllocation {
+                percentage,
+                priority,
+                max_tokens,
+                current_tokens: 0,
+            },
+        );
+        self
+    }
+
+    /// Add a segment to the compiler.
+    pub fn add_segment(&mut self, segment: ContextSegment) {
+        if let Some(alloc) = self.allocations.get_mut(&segment.segment_type) {
+            alloc.current_tokens += segment.token_estimate;
+        }
+        self.segments.push(segment);
+    }
+
+    /// Compile segments: apply budgets and evict low-priority segments if over budget.
+    pub fn compile(&mut self) -> CompiledContext {
+        let mut evicted_count = 0;
+
+        // Evict while total tokens exceed the total budget
+        while self.total_tokens() > self.total_budget && !self.segments.is_empty() {
+            self.evict_lowest_priority();
+            evicted_count += 1;
+        }
+
+        // Also evict segments that exceed their per-type budget
+        loop {
+            let mut over_budget_type: Option<SegmentType> = None;
+            for (seg_type, alloc) in &self.allocations {
+                if alloc.current_tokens > alloc.max_tokens && alloc.max_tokens > 0 {
+                    over_budget_type = Some(seg_type.clone());
+                    break;
+                }
+            }
+            match over_budget_type {
+                Some(seg_type) => {
+                    if let Some(idx) = self.find_lowest_priority_of_type(&seg_type) {
+                        let removed = self.segments.remove(idx);
+                        if let Some(alloc) = self.allocations.get_mut(&removed.segment_type) {
+                            alloc.current_tokens = alloc.current_tokens.saturating_sub(removed.token_estimate);
+                        }
+                        evicted_count += 1;
+                    } else {
+                        break;
+                    }
+                }
+                None => break,
+            }
+        }
+
+        let total_tokens = self.total_tokens();
+        let utilization = self.utilization();
+
+        let compiled_segments: Vec<ContextSegment> = self.segments.drain(..).collect();
+
+        for alloc in self.allocations.values_mut() {
+            alloc.current_tokens = 0;
+        }
+
+        CompiledContext {
+            segments: compiled_segments,
+            total_tokens,
+            evicted_count,
+            utilization,
+        }
+    }
+
+    /// Total tokens across all current segments.
+    pub fn total_tokens(&self) -> usize {
+        self.segments.iter().map(|s| s.token_estimate).sum()
+    }
+
+    /// Budget utilization as a fraction (total_tokens / total_budget).
+    pub fn utilization(&self) -> f64 {
+        if self.total_budget == 0 {
+            return if self.total_tokens() == 0 { 0.0 } else { 1.0 };
+        }
+        self.total_tokens() as f64 / self.total_budget as f64
+    }
+
+    /// Maximum tokens allocated for a given segment type.
+    pub fn budget_for(&self, segment_type: &SegmentType) -> usize {
+        self.allocations
+            .get(segment_type)
+            .map(|a| a.max_tokens)
+            .unwrap_or(0)
+    }
+
+    /// Evict the segment with the lowest priority * recency score.
+    fn evict_lowest_priority(&mut self) {
+        if self.segments.is_empty() {
+            return;
+        }
+        let mut worst_idx = 0;
+        let mut worst_score = f64::MAX;
+
+        for (i, seg) in self.segments.iter().enumerate() {
+            let recency_factor = 1.0 + (1.0 + seg.timestamp as f64).log2();
+            let score = seg.priority as f64 * recency_factor;
+            if score < worst_score {
+                worst_score = score;
+                worst_idx = i;
+            }
+        }
+
+        let removed = self.segments.remove(worst_idx);
+        if let Some(alloc) = self.allocations.get_mut(&removed.segment_type) {
+            alloc.current_tokens = alloc.current_tokens.saturating_sub(removed.token_estimate);
+        }
+    }
+
+    /// Find the index of the lowest-priority segment of a given type.
+    fn find_lowest_priority_of_type(&self, seg_type: &SegmentType) -> Option<usize> {
+        let mut best_idx: Option<usize> = None;
+        let mut best_score = f64::MAX;
+
+        for (i, seg) in self.segments.iter().enumerate() {
+            if &seg.segment_type == seg_type {
+                let recency_factor = 1.0 + (1.0 + seg.timestamp as f64).log2();
+                let score = seg.priority as f64 * recency_factor;
+                if score < best_score {
+                    best_score = score;
+                    best_idx = Some(i);
+                }
+            }
+        }
+
+        best_idx
+    }
+
+    /// Simple token estimation: characters / 4.
+    #[allow(dead_code)]
+    fn estimate_tokens(text: &str) -> usize {
+        text.len() / 4
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ConversationCompactor - automatic conversation compaction
+// ---------------------------------------------------------------------------
+
+/// Automatically compacts long conversations by summarizing older messages
+/// while preserving the most recent N messages intact.
+pub struct ConversationCompactor {
+    max_messages_before_compact: usize,
+    preserve_recent: usize,
+    #[allow(dead_code)]
+    summary_max_tokens: usize,
+    compaction_count: usize,
+}
+
+/// Result of compacting a conversation.
+pub struct CompactedConversation {
+    /// Summary of the older (compacted) messages.
+    pub summary: String,
+    /// The most recent messages, preserved intact.
+    pub preserved_messages: Vec<CompactableMessage>,
+    /// Number of messages in the original conversation.
+    pub original_count: usize,
+    /// Number of messages that were compacted into the summary.
+    pub compacted_count: usize,
+}
+
+/// A single message that can be compacted.
+#[derive(Debug, Clone)]
+pub struct CompactableMessage {
+    /// Role of the speaker (e.g. user, assistant).
+    pub role: String,
+    /// Message content.
+    pub content: String,
+    /// Estimated token count.
+    pub token_estimate: usize,
+}
+
+impl ConversationCompactor {
+    /// Create a compactor.
+    ///
+    /// - `max_before_compact`: trigger compaction when message count exceeds this.
+    /// - `preserve_recent`: always keep the last N messages unchanged.
+    pub fn new(max_before_compact: usize, preserve_recent: usize) -> Self {
+        Self {
+            max_messages_before_compact: max_before_compact,
+            preserve_recent,
+            summary_max_tokens: 256,
+            compaction_count: 0,
+        }
+    }
+
+    /// Whether the given message count warrants compaction.
+    pub fn needs_compaction(&self, message_count: usize) -> bool {
+        message_count > self.max_messages_before_compact
+    }
+
+    /// Compact a list of messages.
+    ///
+    /// Messages beyond `preserve_recent` from the end are summarised.
+    /// The most recent `preserve_recent` messages are returned intact.
+    pub fn compact(&mut self, messages: &[CompactableMessage]) -> CompactedConversation {
+        let total = messages.len();
+        let preserve = self.preserve_recent.min(total);
+        let compact_end = total.saturating_sub(preserve);
+
+        let to_compact = &messages[..compact_end];
+        let to_preserve = &messages[compact_end..];
+
+        let summary = Self::summarize_messages(to_compact);
+        self.compaction_count += 1;
+
+        CompactedConversation {
+            summary,
+            preserved_messages: to_preserve.to_vec(),
+            original_count: total,
+            compacted_count: compact_end,
+        }
+    }
+
+    /// Number of times compaction has been performed.
+    pub fn compaction_count(&self) -> usize {
+        self.compaction_count
+    }
+
+    /// Simple extractive summary: take the first sentence of each message.
+    fn summarize_messages(messages: &[CompactableMessage]) -> String {
+        if messages.is_empty() {
+            return String::new();
+        }
+
+        let mut summary = String::from("[Conversation Summary] ");
+
+        for msg in messages {
+            let first_sentence = msg
+                .content
+                .split_terminator(|c: char| c == '.' || c == '!' || c == '?')
+                .next()
+                .unwrap_or(&msg.content);
+
+            let trimmed = first_sentence.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            summary.push_str(&msg.role);
+            summary.push_str(": ");
+            summary.push_str(trimmed);
+            summary.push_str(". ");
+        }
+
+        summary.trim_end().to_string()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ToolSearchIndex - TF-IDF based tool selection
+// ---------------------------------------------------------------------------
+
+/// Uses TF-IDF to select the top-K most relevant tools for a given query,
+/// avoiding injecting all tool definitions into the context window.
+pub struct ToolSearchIndex {
+    tools: Vec<IndexedTool>,
+    idf_cache: HashMap<String, f64>,
+    vocab_size: usize,
+}
+
+/// A tool indexed for search with pre-computed TF vector.
+pub struct IndexedTool {
+    /// Tool name.
+    pub name: String,
+    /// Tool description.
+    pub description: String,
+    /// Pre-computed term-frequency vector.
+    pub tf_vector: HashMap<String, f64>,
+}
+
+/// A single search result with relevance score.
+pub struct ToolSearchResult {
+    /// Name of the matching tool.
+    pub tool_name: String,
+    /// Cosine similarity score (0.0 - 1.0).
+    pub relevance_score: f64,
+}
+
+/// Common English stop words to filter out during tokenization.
+const STOP_WORDS: &[&str] = &[
+    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "do", "does", "did", "will", "would", "could",
+    "should", "may", "might", "shall", "can", "need", "dare", "ought",
+    "used", "to", "of", "in", "for", "on", "with", "at", "by", "from",
+    "as", "into", "through", "during", "before", "after", "above", "below",
+    "between", "out", "off", "over", "under", "again", "further", "then",
+    "once", "and", "but", "or", "nor", "not", "so", "yet", "both",
+    "either", "neither", "each", "every", "all", "any", "few", "more",
+    "most", "other", "some", "such", "no", "only", "own", "same", "than",
+    "too", "very", "just", "because", "if", "when", "where", "how",
+    "what", "which", "who", "whom", "this", "that", "these", "those",
+    "it", "its", "i", "me", "my", "we", "our", "you", "your", "he",
+    "him", "his", "she", "her", "they", "them", "their",
+];
+
+impl ToolSearchIndex {
+    /// Create an empty search index.
+    pub fn new() -> Self {
+        Self {
+            tools: Vec::new(),
+            idf_cache: HashMap::new(),
+            vocab_size: 0,
+        }
+    }
+
+    /// Add a tool to the index.
+    pub fn add_tool(&mut self, name: &str, description: &str) {
+        let combined = format!("{} {}", name, description);
+        let tokens = Self::tokenize(&combined);
+        let tf = Self::compute_tf(&tokens);
+
+        self.tools.push(IndexedTool {
+            name: name.to_string(),
+            description: description.to_string(),
+            tf_vector: tf,
+        });
+
+        self.rebuild_idf();
+    }
+
+    /// Recalculate IDF (inverse document frequency) for all terms across all tools.
+    pub fn rebuild_idf(&mut self) {
+        self.idf_cache.clear();
+        let n = self.tools.len() as f64;
+        if n == 0.0 {
+            self.vocab_size = 0;
+            return;
+        }
+
+        let mut all_terms: HashMap<String, usize> = HashMap::new();
+        for tool in &self.tools {
+            for term in tool.tf_vector.keys() {
+                *all_terms.entry(term.clone()).or_insert(0) += 1;
+            }
+        }
+
+        for (term, doc_count) in &all_terms {
+            let idf = (n / (*doc_count as f64)).ln();
+            self.idf_cache.insert(term.clone(), idf);
+        }
+
+        self.vocab_size = all_terms.len();
+    }
+
+    /// Search for the top-K tools most relevant to the query.
+    pub fn search(&self, query: &str, top_k: usize) -> Vec<ToolSearchResult> {
+        if self.tools.is_empty() {
+            return Vec::new();
+        }
+
+        let query_tokens = Self::tokenize(query);
+        let query_tf = Self::compute_tf(&query_tokens);
+
+        let query_tfidf: HashMap<String, f64> = query_tf
+            .iter()
+            .map(|(term, tf)| {
+                let idf = self.idf_cache.get(term).copied().unwrap_or(0.0);
+                (term.clone(), tf * idf)
+            })
+            .collect();
+
+        let mut results: Vec<ToolSearchResult> = self
+            .tools
+            .iter()
+            .map(|tool| {
+                let tool_tfidf: HashMap<String, f64> = tool
+                    .tf_vector
+                    .iter()
+                    .map(|(term, tf)| {
+                        let idf = self.idf_cache.get(term).copied().unwrap_or(0.0);
+                        (term.clone(), tf * idf)
+                    })
+                    .collect();
+
+                let score = Self::cosine_similarity(&query_tfidf, &tool_tfidf);
+                ToolSearchResult {
+                    tool_name: tool.name.clone(),
+                    relevance_score: score,
+                }
+            })
+            .collect();
+
+        results.sort_by(|a, b| b.relevance_score.partial_cmp(&a.relevance_score).unwrap_or(std::cmp::Ordering::Equal));
+        results.truncate(top_k);
+        results
+    }
+
+    /// Number of tools in the index.
+    pub fn tool_count(&self) -> usize {
+        self.tools.len()
+    }
+
+    /// Tokenize text: lowercase, split on whitespace/punctuation, filter stop words.
+    fn tokenize(text: &str) -> Vec<String> {
+        let lower = text.to_lowercase();
+        lower
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|s| !s.is_empty())
+            .filter(|s| s.len() > 1)
+            .filter(|s| !STOP_WORDS.contains(s))
+            .map(|s| s.to_string())
+            .collect()
+    }
+
+    /// Compute term frequency for a list of tokens.
+    fn compute_tf(tokens: &[String]) -> HashMap<String, f64> {
+        if tokens.is_empty() {
+            return HashMap::new();
+        }
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        for token in tokens {
+            *counts.entry(token.clone()).or_insert(0) += 1;
+        }
+        let total = tokens.len() as f64;
+        counts.into_iter().map(|(k, v)| (k, v as f64 / total)).collect()
+    }
+
+    /// Cosine similarity between two sparse TF-IDF vectors.
+    fn cosine_similarity(a: &HashMap<String, f64>, b: &HashMap<String, f64>) -> f64 {
+        let dot: f64 = a
+            .iter()
+            .map(|(k, v)| v * b.get(k).unwrap_or(&0.0))
+            .sum();
+
+        let mag_a: f64 = a.values().map(|v| v * v).sum::<f64>().sqrt();
+        let mag_b: f64 = b.values().map(|v| v * v).sum::<f64>().sqrt();
+
+        if mag_a == 0.0 || mag_b == 0.0 {
+            return 0.0;
+        }
+
+        dot / (mag_a * mag_b)
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1445,4 +1985,290 @@ mod tests {
         // With such a tight budget, should get some overflow action
         assert!(!matches!(action, OverflowAction::None));
     }
+
+    // -- ContextCompiler tests ---------------------------------------------
+
+    #[test]
+    fn test_context_compiler_new() {
+        let compiler = ContextCompiler::new(4000);
+        assert_eq!(compiler.total_budget, 4000);
+        assert_eq!(compiler.total_tokens(), 0);
+        assert!(compiler.segments.is_empty());
+    }
+
+    #[test]
+    fn test_compiler_default_allocations() {
+        let compiler = ContextCompiler::new(10000);
+        assert_eq!(compiler.budget_for(&SegmentType::System), 1500);
+        assert_eq!(compiler.budget_for(&SegmentType::Tools), 2000);
+        assert_eq!(compiler.budget_for(&SegmentType::Memory), 1500);
+        assert_eq!(compiler.budget_for(&SegmentType::Documents), 3000);
+        assert_eq!(compiler.budget_for(&SegmentType::Conversation), 2000);
+        assert_eq!(compiler.budget_for(&SegmentType::Examples), 0);
+    }
+
+    #[test]
+    fn test_compiler_add_segment() {
+        let mut compiler = ContextCompiler::new(4000);
+        compiler.add_segment(ContextSegment {
+            segment_type: SegmentType::System,
+            content: "You are a helpful assistant.".to_string(),
+            token_estimate: 7,
+            priority: 5,
+            timestamp: 100,
+        });
+        assert_eq!(compiler.segments.len(), 1);
+        assert_eq!(compiler.total_tokens(), 7);
+    }
+
+    #[test]
+    fn test_compiler_compile() {
+        let mut compiler = ContextCompiler::new(4000);
+        compiler.add_segment(ContextSegment {
+            segment_type: SegmentType::System,
+            content: "System prompt".to_string(),
+            token_estimate: 50,
+            priority: 5,
+            timestamp: 100,
+        });
+        compiler.add_segment(ContextSegment {
+            segment_type: SegmentType::Conversation,
+            content: "User message".to_string(),
+            token_estimate: 30,
+            priority: 3,
+            timestamp: 200,
+        });
+
+        let compiled = compiler.compile();
+        assert_eq!(compiled.total_tokens, 80);
+        assert_eq!(compiled.evicted_count, 0);
+        assert_eq!(compiled.segments.len(), 2);
+        assert!(compiled.utilization < 1.0);
+    }
+
+    #[test]
+    fn test_compiler_utilization() {
+        let mut compiler = ContextCompiler::new(100);
+        compiler.add_segment(ContextSegment {
+            segment_type: SegmentType::System,
+            content: "test".to_string(),
+            token_estimate: 50,
+            priority: 5,
+            timestamp: 1,
+        });
+        let util = compiler.utilization();
+        assert!((util - 0.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_compiler_eviction() {
+        let mut compiler = ContextCompiler::new(100);
+        compiler.add_segment(ContextSegment {
+            segment_type: SegmentType::System,
+            content: "high priority".to_string(),
+            token_estimate: 60,
+            priority: 10,
+            timestamp: 100,
+        });
+        compiler.add_segment(ContextSegment {
+            segment_type: SegmentType::Documents,
+            content: "low priority".to_string(),
+            token_estimate: 60,
+            priority: 1,
+            timestamp: 1,
+        });
+        let compiled = compiler.compile();
+        assert!(compiled.evicted_count > 0);
+        assert!(compiled.total_tokens <= 100);
+    }
+
+    #[test]
+    fn test_compiler_custom_allocation() {
+        let compiler = ContextCompiler::new(1000)
+            .with_allocation(SegmentType::Examples, 0.25, 2);
+        assert_eq!(compiler.budget_for(&SegmentType::Examples), 250);
+    }
+
+    #[test]
+    fn test_compiler_budget_for() {
+        let compiler = ContextCompiler::new(2000);
+        assert_eq!(compiler.budget_for(&SegmentType::System), 300);
+        assert_eq!(compiler.budget_for(&SegmentType::Tools), 400);
+        let custom_compiler = ContextCompiler::new(1000);
+        assert_eq!(custom_compiler.budget_for(&SegmentType::Examples), 0);
+    }
+
+    // -- ConversationCompactor tests ---------------------------------------
+
+    #[test]
+    fn test_compactor_new() {
+        let compactor = ConversationCompactor::new(20, 5);
+        assert_eq!(compactor.max_messages_before_compact, 20);
+        assert_eq!(compactor.preserve_recent, 5);
+        assert_eq!(compactor.compaction_count(), 0);
+    }
+
+    #[test]
+    fn test_compactor_needs_compaction() {
+        let compactor = ConversationCompactor::new(10, 3);
+        assert!(!compactor.needs_compaction(5));
+        assert!(!compactor.needs_compaction(10));
+        assert!(compactor.needs_compaction(11));
+        assert!(compactor.needs_compaction(100));
+    }
+
+    #[test]
+    fn test_compactor_compact() {
+        let mut compactor = ConversationCompactor::new(5, 2);
+        let messages = vec![
+            CompactableMessage { role: "user".to_string(), content: "Hello there.".to_string(), token_estimate: 3 },
+            CompactableMessage { role: "assistant".to_string(), content: "Hi! How can I help?".to_string(), token_estimate: 5 },
+            CompactableMessage { role: "user".to_string(), content: "Tell me about Rust.".to_string(), token_estimate: 5 },
+            CompactableMessage { role: "assistant".to_string(), content: "Rust is a systems language.".to_string(), token_estimate: 6 },
+            CompactableMessage { role: "user".to_string(), content: "Thanks!".to_string(), token_estimate: 2 },
+        ];
+
+        let result = compactor.compact(&messages);
+        assert_eq!(result.original_count, 5);
+        assert_eq!(result.compacted_count, 3);
+        assert_eq!(result.preserved_messages.len(), 2);
+        assert!(!result.summary.is_empty());
+    }
+
+    #[test]
+    fn test_compactor_preserve_recent() {
+        let mut compactor = ConversationCompactor::new(3, 2);
+        let messages = vec![
+            CompactableMessage { role: "user".to_string(), content: "First message.".to_string(), token_estimate: 3 },
+            CompactableMessage { role: "assistant".to_string(), content: "Second message.".to_string(), token_estimate: 3 },
+            CompactableMessage { role: "user".to_string(), content: "Third message.".to_string(), token_estimate: 3 },
+            CompactableMessage { role: "assistant".to_string(), content: "Fourth message.".to_string(), token_estimate: 3 },
+        ];
+
+        let result = compactor.compact(&messages);
+        assert_eq!(result.preserved_messages.len(), 2);
+        assert_eq!(result.preserved_messages[0].content, "Third message.");
+        assert_eq!(result.preserved_messages[1].content, "Fourth message.");
+    }
+
+    #[test]
+    fn test_compactor_summary() {
+        let mut compactor = ConversationCompactor::new(2, 1);
+        let messages = vec![
+            CompactableMessage { role: "user".to_string(), content: "What is machine learning? It is cool.".to_string(), token_estimate: 8 },
+            CompactableMessage { role: "assistant".to_string(), content: "ML is a subset of AI. It uses data.".to_string(), token_estimate: 9 },
+            CompactableMessage { role: "user".to_string(), content: "Thanks!".to_string(), token_estimate: 2 },
+        ];
+
+        let result = compactor.compact(&messages);
+        assert!(result.summary.contains("user:"));
+        assert!(result.summary.contains("assistant:"));
+        assert!(result.summary.contains("[Conversation Summary]"));
+    }
+
+    #[test]
+    fn test_compactor_count() {
+        let mut compactor = ConversationCompactor::new(2, 1);
+        let messages = vec![
+            CompactableMessage { role: "user".to_string(), content: "Hello.".to_string(), token_estimate: 2 },
+            CompactableMessage { role: "assistant".to_string(), content: "Hi.".to_string(), token_estimate: 1 },
+            CompactableMessage { role: "user".to_string(), content: "Bye.".to_string(), token_estimate: 1 },
+        ];
+        assert_eq!(compactor.compaction_count(), 0);
+        compactor.compact(&messages);
+        assert_eq!(compactor.compaction_count(), 1);
+        compactor.compact(&messages);
+        assert_eq!(compactor.compaction_count(), 2);
+    }
+
+    // -- ToolSearchIndex tests ---------------------------------------------
+
+    #[test]
+    fn test_tool_index_new() {
+        let index = ToolSearchIndex::new();
+        assert_eq!(index.tool_count(), 0);
+        assert!(index.idf_cache.is_empty());
+    }
+
+    #[test]
+    fn test_tool_index_add_tool() {
+        let mut index = ToolSearchIndex::new();
+        index.add_tool("calculator", "Performs arithmetic calculations and math operations");
+        assert_eq!(index.tool_count(), 1);
+        assert!(!index.idf_cache.is_empty());
+    }
+
+    #[test]
+    fn test_tool_index_search() {
+        let mut index = ToolSearchIndex::new();
+        index.add_tool("calculator", "Performs arithmetic calculations and math");
+        index.add_tool("weather", "Gets current weather forecast for a location");
+        index.add_tool("search", "Searches the web for information");
+
+        let results = index.search("calculate math addition", 3);
+        assert!(!results.is_empty());
+        assert_eq!(results[0].tool_name, "calculator");
+    }
+
+    #[test]
+    fn test_tool_index_search_relevance() {
+        let mut index = ToolSearchIndex::new();
+        index.add_tool("file_reader", "Reads files from disk and returns content");
+        index.add_tool("file_writer", "Writes content to files on disk");
+        index.add_tool("calculator", "Performs math calculations");
+
+        let results = index.search("read file content", 3);
+        assert!(!results.is_empty());
+        let reader_score = results.iter().find(|r| r.tool_name == "file_reader").map(|r| r.relevance_score).unwrap_or(0.0);
+        let calc_score = results.iter().find(|r| r.tool_name == "calculator").map(|r| r.relevance_score).unwrap_or(0.0);
+        assert!(reader_score > calc_score);
+    }
+
+    #[test]
+    fn test_tool_index_top_k() {
+        let mut index = ToolSearchIndex::new();
+        index.add_tool("tool1", "alpha beta gamma");
+        index.add_tool("tool2", "delta epsilon zeta");
+        index.add_tool("tool3", "eta theta iota");
+        index.add_tool("tool4", "kappa lambda mu");
+
+        let results = index.search("alpha beta", 2);
+        assert!(results.len() <= 2);
+    }
+
+    #[test]
+    fn test_tool_index_empty() {
+        let index = ToolSearchIndex::new();
+        let results = index.search("anything", 5);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_tool_index_tokenize() {
+        let tokens = ToolSearchIndex::tokenize("Hello, World! This is a TEST.");
+        assert!(tokens.contains(&"hello".to_string()));
+        assert!(tokens.contains(&"world".to_string()));
+        assert!(tokens.contains(&"test".to_string()));
+        assert!(!tokens.contains(&"this".to_string()));
+        assert!(!tokens.contains(&"is".to_string()));
+        assert!(!tokens.contains(&"a".to_string()));
+    }
+
+    #[test]
+    fn test_cosine_similarity() {
+        let mut a = HashMap::new();
+        a.insert("hello".to_string(), 1.0);
+        a.insert("world".to_string(), 1.0);
+
+        let b = a.clone();
+        let sim = ToolSearchIndex::cosine_similarity(&a, &b);
+        assert!((sim - 1.0).abs() < 1e-10);
+
+        let mut c = HashMap::new();
+        c.insert("foo".to_string(), 1.0);
+        c.insert("bar".to_string(), 1.0);
+        let sim2 = ToolSearchIndex::cosine_similarity(&a, &c);
+        assert!((sim2 - 0.0).abs() < 1e-10);
+    }
+
 }

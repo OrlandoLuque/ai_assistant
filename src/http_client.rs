@@ -192,6 +192,217 @@ pub fn fetch_kobold_models_with(client: &dyn HttpClient, base_url: &str) -> Resu
 }
 
 // ============================================================================
+// Feature flag validation macro
+// ============================================================================
+
+/// Macro that validates feature flag combinations at compile time.
+/// Produces a clear compilation error if invalid combinations are used.
+///
+/// Usage in lib.rs (added during wiring):
+/// ```rust,ignore
+/// validate_features!();
+/// ```
+#[macro_export]
+macro_rules! validate_features {
+    () => {
+        // webrtc requires voice-agent
+        #[cfg(all(feature = "webrtc", not(feature = "voice-agent")))]
+        compile_error!(
+            "Feature 'webrtc' requires 'voice-agent'. Add voice-agent to your Cargo.toml features."
+        );
+
+        // browser requires autonomous
+        #[cfg(all(feature = "browser", not(feature = "autonomous")))]
+        compile_error!(
+            "Feature 'browser' requires 'autonomous'. Add autonomous to your Cargo.toml features."
+        );
+
+        // scheduler requires autonomous
+        #[cfg(all(feature = "scheduler", not(feature = "autonomous")))]
+        compile_error!(
+            "Feature 'scheduler' requires 'autonomous'. Add autonomous to your Cargo.toml features."
+        );
+
+        // butler requires autonomous
+        #[cfg(all(feature = "butler", not(feature = "autonomous")))]
+        compile_error!(
+            "Feature 'butler' requires 'autonomous'. Add autonomous to your Cargo.toml features."
+        );
+
+        // distributed-agents requires autonomous + distributed-network
+        #[cfg(all(feature = "distributed-agents", not(feature = "autonomous")))]
+        compile_error!("Feature 'distributed-agents' requires 'autonomous'.");
+
+        #[cfg(all(feature = "distributed-agents", not(feature = "distributed-network")))]
+        compile_error!("Feature 'distributed-agents' requires 'distributed-network'.");
+
+        // whisper-local requires audio
+        #[cfg(all(feature = "whisper-local", not(feature = "audio")))]
+        compile_error!("Feature 'whisper-local' requires 'audio'.");
+    };
+}
+
+// ============================================================================
+// Mock HTTP Server (test-only)
+// ============================================================================
+
+/// A mock HTTP server that listens on localhost and serves queued responses.
+/// Used for testing modules that make real HTTP calls (mcp_client, media_generation, etc.)
+///
+/// # Example
+/// ```rust,no_run
+/// let mut server = MockHttpServer::start();
+/// server.enqueue_json(200, serde_json::json!({"result": "ok"}));
+/// // Use server.url() as the base URL for the module under test
+/// let url = server.url();
+/// // ... make HTTP call to url ...
+/// let received = server.last_request();
+/// ```
+#[cfg(test)]
+pub struct MockHttpServer {
+    addr: std::net::SocketAddr,
+    /// Queued responses: (status_code, content_type, body)
+    responses: std::sync::Arc<std::sync::Mutex<Vec<(u16, String, String)>>>,
+    /// Received requests: (method, path, body)
+    requests: std::sync::Arc<std::sync::Mutex<Vec<(String, String, String)>>>,
+    /// Background thread handle
+    _handle: Option<std::thread::JoinHandle<()>>,
+}
+
+#[cfg(test)]
+impl MockHttpServer {
+    /// Start a new mock server on a random port.
+    pub fn start() -> Self {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let responses = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        let resp_clone = responses.clone();
+        let req_clone = requests.clone();
+
+        let handle = std::thread::spawn(move || {
+            // Set non-blocking with short timeout so the thread can exit
+            listener.set_nonblocking(false).ok();
+
+            // Accept connections in a loop
+            for stream in listener.incoming() {
+                match stream {
+                    Ok(mut stream) => {
+                        stream
+                            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                            .ok();
+
+                        // Read HTTP request
+                        let mut buf = vec![0u8; 8192];
+                        let n = match std::io::Read::read(&mut stream, &mut buf) {
+                            Ok(n) => n,
+                            Err(_) => continue,
+                        };
+                        let request_str = String::from_utf8_lossy(&buf[..n]).to_string();
+
+                        // Parse method, path, body
+                        let lines: Vec<&str> = request_str.split("\r\n").collect();
+                        let first_line = lines.first().unwrap_or(&"");
+                        let parts: Vec<&str> = first_line.split(' ').collect();
+                        let method = parts.first().unwrap_or(&"GET").to_string();
+                        let path = parts.get(1).unwrap_or(&"/").to_string();
+
+                        // Body is after the empty line
+                        let body = if let Some(pos) = request_str.find("\r\n\r\n") {
+                            request_str[pos + 4..].to_string()
+                        } else {
+                            String::new()
+                        };
+
+                        req_clone.lock().unwrap().push((method, path, body));
+
+                        // Get next response from queue
+                        let (status, content_type, resp_body) = {
+                            let mut q = resp_clone.lock().unwrap();
+                            if q.is_empty() {
+                                (
+                                    404,
+                                    "text/plain".to_string(),
+                                    "No responses queued".to_string(),
+                                )
+                            } else {
+                                q.remove(0)
+                            }
+                        };
+
+                        // Map status code to reason phrase
+                        let reason = match status {
+                            200 => "OK",
+                            201 => "Created",
+                            204 => "No Content",
+                            400 => "Bad Request",
+                            404 => "Not Found",
+                            500 => "Internal Server Error",
+                            _ => "Unknown",
+                        };
+
+                        // Write HTTP response
+                        let response = format!(
+                            "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                            status, reason, content_type, resp_body.len(), resp_body
+                        );
+                        std::io::Write::write_all(&mut stream, response.as_bytes()).ok();
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        Self {
+            addr,
+            responses,
+            requests,
+            _handle: Some(handle),
+        }
+    }
+
+    /// Get the server's base URL (e.g., "http://127.0.0.1:12345")
+    pub fn url(&self) -> String {
+        format!("http://{}", self.addr)
+    }
+
+    /// Enqueue a JSON response
+    pub fn enqueue_json(&self, status: u16, body: serde_json::Value) {
+        self.responses.lock().unwrap().push((
+            status,
+            "application/json".to_string(),
+            body.to_string(),
+        ));
+    }
+
+    /// Enqueue a plain text response
+    pub fn enqueue_text(&self, status: u16, body: &str) {
+        self.responses.lock().unwrap().push((
+            status,
+            "text/plain".to_string(),
+            body.to_string(),
+        ));
+    }
+
+    /// Get the last received request (method, path, body)
+    pub fn last_request(&self) -> Option<(String, String, String)> {
+        self.requests.lock().unwrap().last().cloned()
+    }
+
+    /// Get all received requests
+    pub fn all_requests(&self) -> Vec<(String, String, String)> {
+        self.requests.lock().unwrap().clone()
+    }
+
+    /// Get the number of requests received
+    pub fn request_count(&self) -> usize {
+        self.requests.lock().unwrap().len()
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -388,5 +599,189 @@ mod tests {
 
         // Missing "result" key
         assert!(parse_kobold_models(&body).is_empty());
+    }
+
+    // ========================================================================
+    // MockHttpServer tests (Item 10.1 + 10.2)
+    // ========================================================================
+
+    #[test]
+    fn test_mock_server_start() {
+        let server = MockHttpServer::start();
+        let url = server.url();
+        assert!(url.starts_with("http://127.0.0.1:"));
+        // Port should be > 0
+        let port_str = url.rsplit(':').next().unwrap();
+        let port: u16 = port_str.parse().unwrap();
+        assert!(port > 0);
+    }
+
+    #[test]
+    fn test_mock_server_basic_json_response() {
+        let server = MockHttpServer::start();
+        server.enqueue_json(200, serde_json::json!({"status": "ok"}));
+
+        let client = UreqClient;
+        let result = client.get_json(&format!("{}/health", server.url()), 5);
+        assert!(result.is_ok());
+        let body = result.unwrap();
+        assert_eq!(body["status"], "ok");
+    }
+
+    #[test]
+    fn test_mock_server_post_json() {
+        let server = MockHttpServer::start();
+        server.enqueue_json(200, serde_json::json!({"id": 1}));
+
+        let client = UreqClient;
+        let result = client.post_json(
+            &format!("{}/api/chat", server.url()),
+            &serde_json::json!({"message": "hello"}),
+            5,
+        );
+        assert!(result.is_ok());
+
+        let (method, path, _body) = server.last_request().unwrap();
+        assert_eq!(method, "POST");
+        assert!(path.contains("/api/chat"));
+    }
+
+    #[test]
+    fn test_mock_server_error_response() {
+        let server = MockHttpServer::start();
+        server.enqueue_json(500, serde_json::json!({"error": "internal"}));
+
+        let client = UreqClient;
+        let result = client.get_json(&format!("{}/fail", server.url()), 5);
+        // ureq treats 500 as an error
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_mock_server_multiple_requests() {
+        let server = MockHttpServer::start();
+        server.enqueue_json(200, serde_json::json!({"n": 1}));
+        server.enqueue_json(200, serde_json::json!({"n": 2}));
+
+        let client = UreqClient;
+        let r1 = client
+            .get_json(&format!("{}/a", server.url()), 5)
+            .unwrap();
+        let r2 = client
+            .get_json(&format!("{}/b", server.url()), 5)
+            .unwrap();
+
+        assert_eq!(r1["n"], 1);
+        assert_eq!(r2["n"], 2);
+        assert_eq!(server.request_count(), 2);
+    }
+
+    #[test]
+    fn test_mock_server_no_response_queued() {
+        let server = MockHttpServer::start();
+        // Don't enqueue anything — server returns 404
+        let client = UreqClient;
+        let result = client.get_json(&format!("{}/empty", server.url()), 5);
+        // Should get 404 or error
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_mock_server_text_response() {
+        let server = MockHttpServer::start();
+        server.enqueue_text(200, "Hello, world!");
+
+        // Use a raw TCP connection to verify the text response
+        let mut stream =
+            std::net::TcpStream::connect(server.addr).unwrap();
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .ok();
+        let request = "GET /text HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+        std::io::Write::write_all(&mut stream, request.as_bytes()).unwrap();
+
+        let mut response = String::new();
+        std::io::Read::read_to_string(&mut stream, &mut response).unwrap();
+        assert!(response.contains("Hello, world!"));
+        assert!(response.contains("text/plain"));
+    }
+
+    #[test]
+    fn test_mock_server_request_count() {
+        let server = MockHttpServer::start();
+        assert_eq!(server.request_count(), 0);
+
+        server.enqueue_json(200, serde_json::json!({}));
+        server.enqueue_json(200, serde_json::json!({}));
+        server.enqueue_json(200, serde_json::json!({}));
+
+        let client = UreqClient;
+        let _ = client.get_json(&format!("{}/1", server.url()), 5);
+        assert_eq!(server.request_count(), 1);
+
+        let _ = client.get_json(&format!("{}/2", server.url()), 5);
+        assert_eq!(server.request_count(), 2);
+
+        let _ = client.get_json(&format!("{}/3", server.url()), 5);
+        assert_eq!(server.request_count(), 3);
+    }
+
+    #[test]
+    fn test_mock_server_all_requests() {
+        let server = MockHttpServer::start();
+        server.enqueue_json(200, serde_json::json!({}));
+        server.enqueue_json(200, serde_json::json!({}));
+
+        let client = UreqClient;
+        let _ = client.get_json(&format!("{}/first", server.url()), 5);
+        let _ = client.post_json(
+            &format!("{}/second", server.url()),
+            &serde_json::json!({"key": "value"}),
+            5,
+        );
+
+        let requests = server.all_requests();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].0, "GET");
+        assert!(requests[0].1.contains("/first"));
+        assert_eq!(requests[1].0, "POST");
+        assert!(requests[1].1.contains("/second"));
+    }
+
+    #[test]
+    fn test_mock_server_post_streaming() {
+        let server = MockHttpServer::start();
+        server.enqueue_json(
+            200,
+            serde_json::json!({"message": {"content": "streamed"}, "done": false}),
+        );
+
+        let client = UreqClient;
+        let reader = client
+            .post_streaming(
+                &format!("{}/api/chat", server.url()),
+                &serde_json::json!({"model": "test", "stream": true}),
+                5,
+            )
+            .unwrap();
+
+        let mut content = String::new();
+        std::io::Read::read_to_string(&mut { reader }, &mut content).unwrap();
+        assert!(content.contains("streamed"));
+
+        let (method, path, _) = server.last_request().unwrap();
+        assert_eq!(method, "POST");
+        assert!(path.contains("/api/chat"));
+    }
+
+    // ========================================================================
+    // Feature flag validation macro test (Item 10.3)
+    // ========================================================================
+
+    #[test]
+    fn test_validate_features_macro_exists() {
+        // This test verifies the macro compiles.
+        // Invalid feature combinations would cause compile errors.
+        validate_features!();
     }
 }

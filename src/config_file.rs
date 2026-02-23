@@ -961,6 +961,113 @@ mod platform_dirs {
     }
 }
 
+// ============================================================================
+// Configuration Validation (Item 4.4)
+// ============================================================================
+
+/// A validation error for a specific configuration field.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConfigValidationError {
+    pub field: String,
+    pub message: String,
+    pub suggestion: Option<String>,
+}
+
+impl std::fmt::Display for ConfigValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.field, self.message)?;
+        if let Some(ref suggestion) = self.suggestion {
+            write!(f, " (suggestion: {})", suggestion)?;
+        }
+        Ok(())
+    }
+}
+
+impl ConfigFile {
+    /// Validate all configuration fields with detailed error reporting.
+    /// Unlike `validate()` which returns on the first error, this returns
+    /// ALL validation errors found so they can be displayed at once.
+    pub fn validate_detailed(&self) -> Result<(), Vec<ConfigValidationError>> {
+        let mut errors = Vec::new();
+
+        // Temperature range
+        if self.generation.temperature < 0.0 || self.generation.temperature > 2.0 {
+            errors.push(ConfigValidationError {
+                field: "generation.temperature".to_string(),
+                message: format!(
+                    "temperature {} is out of range [0.0, 2.0]",
+                    self.generation.temperature
+                ),
+                suggestion: Some("Use a value between 0.0 and 2.0".to_string()),
+            });
+        }
+
+        // max_tokens > 0 if set
+        if let Some(max_tokens) = self.generation.max_tokens {
+            if max_tokens == 0 {
+                errors.push(ConfigValidationError {
+                    field: "generation.max_tokens".to_string(),
+                    message: "max_tokens must be > 0".to_string(),
+                    suggestion: Some("Set to at least 1, or remove to use default".to_string()),
+                });
+            }
+        }
+
+        // max_history > 0
+        if self.generation.max_history == 0 {
+            errors.push(ConfigValidationError {
+                field: "generation.max_history".to_string(),
+                message: "max_history must be > 0".to_string(),
+                suggestion: Some("Set to at least 1".to_string()),
+            });
+        }
+
+        // URL validation helper
+        let url_fields = [
+            ("urls.ollama", &self.urls.ollama),
+            ("urls.lm_studio", &self.urls.lm_studio),
+            ("urls.text_gen_webui", &self.urls.text_gen_webui),
+            ("urls.kobold", &self.urls.kobold),
+            ("urls.local_ai", &self.urls.local_ai),
+        ];
+        for (field_name, url) in &url_fields {
+            if !url.starts_with("http://") && !url.starts_with("https://") {
+                errors.push(ConfigValidationError {
+                    field: field_name.to_string(),
+                    message: format!("URL '{}' must start with http:// or https://", url),
+                    suggestion: Some("Prefix with http:// or https://".to_string()),
+                });
+            }
+        }
+
+        // Custom URL validation
+        if let Some(ref custom_url) = self.provider.custom_url {
+            if !custom_url.starts_with("http://") && !custom_url.starts_with("https://") {
+                errors.push(ConfigValidationError {
+                    field: "provider.custom_url".to_string(),
+                    message: format!("Custom URL '{}' must start with http:// or https://", custom_url),
+                    suggestion: Some("Prefix with http:// or https://".to_string()),
+                });
+            }
+        }
+
+        // Cache TTL > 0 when caching is enabled
+        if self.cache.enabled && self.cache.ttl_seconds == 0 {
+            errors.push(ConfigValidationError {
+                field: "cache.ttl_seconds".to_string(),
+                message: "TTL must be > 0 when caching is enabled".to_string(),
+                suggestion: Some("Set to at least 1 second, or disable caching".to_string()),
+            });
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1037,5 +1144,108 @@ knowledge_enabled = true
             ConfigFormat::from_content("[section]\nkey = \"value\""),
             ConfigFormat::Toml
         );
+    }
+
+    // ========================================================================
+    // ConfigFile::validate() tests (Item 4.4)
+    // ========================================================================
+
+    #[test]
+    fn test_valid_config() {
+        let config = ConfigFile::default();
+        assert!(config.validate_detailed().is_ok());
+    }
+
+    #[test]
+    fn test_invalid_temperature_high() {
+        let mut config = ConfigFile::default();
+        config.generation.temperature = 3.0;
+        let errors = config.validate_detailed().unwrap_err();
+        assert!(errors.iter().any(|e| e.field == "generation.temperature"));
+    }
+
+    #[test]
+    fn test_invalid_temperature_negative() {
+        let mut config = ConfigFile::default();
+        config.generation.temperature = -0.5;
+        let errors = config.validate_detailed().unwrap_err();
+        assert!(errors.iter().any(|e| e.field == "generation.temperature"));
+    }
+
+    #[test]
+    fn test_invalid_url() {
+        let mut config = ConfigFile::default();
+        config.urls.ollama = "not-a-url".to_string();
+        let errors = config.validate_detailed().unwrap_err();
+        assert!(errors.iter().any(|e| e.field.contains("urls.")));
+    }
+
+    #[test]
+    fn test_multiple_errors() {
+        let mut config = ConfigFile::default();
+        config.generation.temperature = 5.0;
+        config.urls.ollama = "bad".to_string();
+        config.urls.lm_studio = "also bad".to_string();
+        let errors = config.validate_detailed().unwrap_err();
+        assert!(errors.len() >= 3);
+    }
+
+    #[test]
+    fn test_validate_max_tokens_zero() {
+        let mut config = ConfigFile::default();
+        config.generation.max_tokens = Some(0);
+        let errors = config.validate_detailed().unwrap_err();
+        assert!(errors.iter().any(|e| e.field == "generation.max_tokens"));
+    }
+
+    #[test]
+    fn test_validate_defaults() {
+        let config = ConfigFile::default();
+        assert!(config.validate_detailed().is_ok());
+    }
+
+    #[test]
+    fn test_validation_error_display() {
+        let err = ConfigValidationError {
+            field: "temperature".to_string(),
+            message: "out of range".to_string(),
+            suggestion: Some("use 0.0 to 2.0".to_string()),
+        };
+        let s = format!("{}", err);
+        assert!(s.contains("temperature"));
+        assert!(s.contains("out of range"));
+    }
+
+    #[test]
+    fn test_validation_suggestions() {
+        let mut config = ConfigFile::default();
+        config.generation.temperature = 10.0;
+        let errors = config.validate_detailed().unwrap_err();
+        let temp_err = errors.iter().find(|e| e.field == "generation.temperature").unwrap();
+        assert!(temp_err.suggestion.is_some());
+    }
+
+    #[test]
+    fn test_validate_cache_config() {
+        let mut config = ConfigFile::default();
+        config.cache.enabled = true;
+        config.cache.ttl_seconds = 0;
+        let errors = config.validate_detailed().unwrap_err();
+        assert!(errors.iter().any(|e| e.field == "cache.ttl_seconds"));
+    }
+
+    #[test]
+    fn test_validate_max_history_zero() {
+        let mut config = ConfigFile::default();
+        config.generation.max_history = 0;
+        let errors = config.validate_detailed().unwrap_err();
+        assert!(errors.iter().any(|e| e.field == "generation.max_history"));
+    }
+
+    #[test]
+    fn test_validate_custom_url_valid() {
+        let mut config = ConfigFile::default();
+        config.provider.custom_url = Some("http://custom.server:9999".to_string());
+        assert!(config.validate_detailed().is_ok());
     }
 }
