@@ -21,8 +21,6 @@
     - feature_matrix.html                                 (v11: v3 — ContainerExecutor, ContainerSandbox, SharedFolder, DocumentPipeline, Speech STT/TTS (6 providers), Butler speech detection, CI/CD maturity, 2766 tests, 221 source files)
     - feature_matrix_2026-02-22_2100_pre-v4.html          (v11 snapshot before v4 additions)
     - feature_matrix.html                                 (v12: v4 — EventWorkflow, PromptSignature, A2A Protocol, AdvancedMemory, OnlineEval, ContextComposer, MultiLayerGraph, GuardrailPipeline streaming, DistributedNetwork P2P, MCP sessions, ContextWindow overflow, Providers registry, Assistant kpkg bridge, 3401 tests)
-    - feature_matrix_2026-02-23_1200_pre-v5.html          (v12 snapshot before v5 additions)
-    - feature_matrix.html                                 (v13: v5 — VoiceAgent, MediaGeneration, Distillation, ConstrainedDecoding, PromptSignature GEPA/MIPROv2, MCP v2 Streamable HTTP/OAuth, OTel GenAI conventions, multi-agent handoffs, workflows durable execution, advanced-memory semantic facts, streaming guardrails. 3907 tests)
 -->
 <html lang="es">
 <head>
@@ -726,7 +724,7 @@
 <body>
 
 <h1>AI Assistant &mdash; Matriz Casos de Uso vs Tecnolog&iacute;as</h1>
-<p class="subtitle">v13 (2026-02-23) &mdash; 3907 tests | 6 benchmarks | 20 examples | 225 source files | 0 warnings &mdash; Haz clic en cualquier celda para editarla.</p>
+<p class="subtitle">v12 (2026-02-22) &mdash; 3401 tests | 6 benchmarks | 20 examples | 221 source files | 0 warnings &mdash; Haz clic en cualquier celda para editarla.</p>
 
 <div class="legend">
   <div class="legend-item"><div class="legend-dot" style="background:var(--core)"></div>Core (siempre activo)</div>
@@ -943,8 +941,7 @@
     <li><code>feature_matrix_2026-02-21_1100_pre-v2phase3-4-completion.html</code> &mdash; v10: v2 Phases 3-4 — Ollama tool calling nativo, PromptToolFallback, GuardrailPipeline (6 guards), CI/CD (GitHub Actions), 2510 tests, 215 source files, 0 warnings</li>
     <li><code>feature_matrix_2026-02-21_2300_pre-v3-speech-containers.html</code> &mdash; v10 snapshot antes de v3 containers/speech/audio</li>
     <li><code>feature_matrix_2026-02-22_2100_pre-v4.html</code> &mdash; v11 snapshot antes de v4</li>
-    <li><code>feature_matrix_2026-02-23_1200_pre-v5.html</code> &mdash; v12 snapshot antes de v5</li>
-    <li><code>feature_matrix.html</code> &mdash; v13 (actual): v5 — VoiceAgent (70 tests), MediaGeneration (62 tests), Distillation (53 tests), ConstrainedDecoding (36 tests), PromptSignature GEPA/MIPROv2 (157 tests), MCP v2 Streamable HTTP/OAuth (104 tests), OTel GenAI conventions (68 tests), multi-agent handoffs (84 tests), workflows durable execution (93 tests), advanced-memory semantic facts (122 tests), streaming guardrails updated. 3907 tests, 225 source files, 0 warnings</li>
+    <li><code>feature_matrix.html</code> &mdash; v12 (actual): v4 — EventWorkflow (~65 tests), PromptSignature (~50 tests), A2A Protocol (~45 tests), AdvancedMemory (~55 tests), OnlineEval (~30 tests), ContextComposer (~35 tests), MultiLayerGraph ext (~70 tests), GuardrailPipeline streaming (~18 tests), DistributedNetwork P2P (~35 tests), MCP sessions (~18 tests), ContextWindow overflow (~12 tests), Providers registry (~16 tests), Assistant kpkg bridge (~15 tests). 3401 tests, 221 source files, 0 warnings</li>
   </ul>
   <p><strong>Pol&iacute;tica de backups:</strong> antes de cambios significativos, crear copia con formato <code>feature_matrix_YYYY-MM-DD_HHMM_descripcion.html</code>.</p>
 
@@ -1196,10 +1193,10 @@ const GROUPS = [
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['agent_tools','autonomous','multi_agent'],
         notes: 'Feature flag tools. Loop de agente con multi-format parser y response generator callback (Arc&lt;dyn Fn&gt;). Async select() con race de futuros. Configurable en cualquier caso.' },
-      { tech: 'MCP Protocol v2 (Streamable HTTP, OAuth 2.1)', flag: 'tools',
+      { tech: 'MCP Protocol (2025-03-26)', flag: 'tools',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['agent_tools','autonomous','multi_agent','http_server','distributed','p2p'],
-        notes: 'Feature flag tools. Spec 2025-03-26 + v2: Streamable HTTP transport, OAuth 2.1 authentication, Tool Annotations (read-only, destructive, idempotent), cursor-based pagination. Server y Client MCP completos (JSON-RPC, tools, resources, prompts). 104 tests. v4+v5.' },
+        notes: 'Feature flag tools. Spec 2025-03-26: tool annotations, cursor-based pagination, Streamable HTTP transport. Server y Client MCP completos (JSON-RPC, tools, resources, prompts).' },
       { tech: 'Prompt Chaining', flag: 'tools',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['agent_tools','autonomous','multi_agent'],
@@ -1270,10 +1267,10 @@ const GROUPS = [
   {
     name: 'Multi-Agent & Orchestration',
     rows: [
-      { tech: 'Agent Orchestrator (handoffs, conversation patterns)', flag: 'multi-agent',
+      { tech: 'Agent Orchestrator', flag: 'multi-agent',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['multi_agent'],
-        notes: 'Feature flag multi-agent. Orquestaci&oacute;n de agentes activable en cualquier contexto. v5: conversation patterns (round-robin, hierarchical, debate), agent handoffs con context transfer, handoff policies. 84 tests. v4+v5.' },
+        notes: 'Feature flag multi-agent. Orquestación de agentes activable en cualquier contexto.' },
       { tech: 'Agent Memory (shared)', flag: 'multi-agent',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['multi_agent'],
@@ -1550,10 +1547,10 @@ const GROUPS = [
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['basic_chat','rag_chat','agent_tools'],
         notes: 'Feature flag adapters. Adaptadores de providers externos.' },
-      { tech: 'OpenTelemetry (GenAI conventions, agent tracing)', flag: 'otel',
+      { tech: 'OpenTelemetry (OTel)', flag: 'otel',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['http_server','autonomous','multi_agent','distributed','multi_user'],
-        notes: 'Feature flag otel. Tracing OTel-compatible para operaciones AI: spans, m&eacute;tricas, propagaci&oacute;n de contexto distribuido. v5: GenAI semantic conventions, agent tracing spans, cost attribution per-request y per-model. 68 tests. v4+v5.' },
+        notes: 'Feature flag otel. Tracing OTel-compatible para operaciones AI: spans, métricas, propagación de contexto distribuido.' },
       { tech: 'Cloud Connectors (S3, Google Drive)', flag: 'cloud-connectors',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['rag_chat','kpkg','autonomous','http_server'],
@@ -1601,22 +1598,22 @@ const GROUPS = [
   {
     name: 'v4 Features',
     rows: [
-      { tech: 'EventWorkflow (durable execution, recovery)', flag: 'workflows',
+      { tech: 'EventWorkflow (event-driven pipelines)', flag: 'workflows',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['autonomous','multi_agent','agent_tools','http_server'],
-        notes: 'Feature flag workflows. Event-driven workflow engine con pipeline orchestration, event routing, conditional branching, retry logic. v5: durable execution con checkpoints y journal, recovery manager para crash recovery, compensating transactions. 93 tests. v4+v5.' },
-      { tech: 'PromptSignature (GEPA, MIPROv2, assertions)', flag: 'prompt-signatures',
+        notes: 'Feature flag workflows. Event-driven workflow engine con pipeline orchestration, event routing, conditional branching y retry logic. ~65 tests. v4.' },
+      { tech: 'PromptSignature (typed prompt contracts)', flag: 'prompt-signatures',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['basic_chat','rag_chat','agent_tools','autonomous','multi_agent'],
-        notes: 'Feature flag prompt-signatures. Typed prompt contracts con input/output schemas, validation, type-safe prompt composition, signature verification. v5: GEPA (Gradient-free Efficient Prompt Adaptation), MIPROv2 optimizer, assertions framework, LM adapters para optimizaci&oacute;n autom&aacute;tica de prompts. 157 tests. v4+v5.' },
+        notes: 'Feature flag prompt-signatures. Typed prompt contracts con input/output schemas, validation, type-safe prompt composition y signature verification. ~50 tests. v4.' },
       { tech: 'A2A Protocol (Agent-to-Agent)', flag: 'a2a',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['multi_agent','autonomous','distributed','http_server'],
         notes: 'Feature flag a2a. Google A2A (Agent-to-Agent) protocol implementation: agent cards, task lifecycle, message exchange, capability discovery. ~45 tests. v4.' },
-      { tech: 'AdvancedMemory (semantic facts, temporal graphs)', flag: 'advanced-memory',
+      { tech: 'AdvancedMemory (episodic + semantic)', flag: 'advanced-memory',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['basic_chat','rag_chat','autonomous','multi_agent'],
-        notes: 'Feature flag advanced-memory. Episodic + semantic memory layers, memory consolidation, temporal decay, importance scoring, cross-session recall. v5: semantic facts extraction, temporal knowledge graphs, procedure evolution tracking, memory compaction strategies. 122 tests. v4+v5.' },
+        notes: 'Feature flag advanced-memory. Episodic + semantic memory layers, memory consolidation, temporal decay, importance scoring, cross-session recall. ~55 tests. v4.' },
       { tech: 'OnlineEval (live quality monitoring)', flag: 'eval',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['autonomous','multi_agent','http_server'],
@@ -1629,10 +1626,10 @@ const GROUPS = [
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['multi_agent','autonomous','distributed'],
         notes: 'Feature flag multi-agent. Multi-layer agent graph: hierarchical orchestration, sub-graph composition, cross-layer communication, dynamic graph restructuring. ~70 tests. v4.' },
-      { tech: 'GuardrailPipeline (streaming guardrails)', flag: 'security',
+      { tech: 'GuardrailPipeline (streaming mode)', flag: 'security',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['basic_chat','rag_chat','autonomous','multi_agent','http_server'],
-        notes: 'Feature flag security. Streaming guardrail pipeline: real-time content filtering during token generation, partial response validation, early termination on violation. v5: streaming guardrails con sliding window analysis, buffered pattern matching, configurable flush policies. ~22 tests. v4+v5.' },
+        notes: 'Feature flag security. Streaming guardrail pipeline: real-time content filtering during token generation, partial response validation, early termination on violation. ~18 tests. v4.' },
       { tech: 'DistributedNetwork (P2P discovery)', flag: 'distributed-network',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['distributed','p2p'],
@@ -1653,31 +1650,6 @@ const GROUPS = [
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['rag_chat','kpkg','multi_agent'],
         notes: 'Feature flags rag + multi-agent. KPKG bridge: knowledge package integration with multi-agent orchestration, cross-agent knowledge sharing, package-aware routing. ~15 tests. v4.' },
-    ]
-  },
-  {
-    name: 'v5 Features',
-    rows: [
-      { tech: 'VoiceAgent (real-time voice agents)', flag: 'voice-agent',
-        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'na', p2p:'na' },
-        typical: ['basic_chat','autonomous','multi_agent','http_server'],
-        na_reasons: {
-          distributed: 'Voice processing es local o v&iacute;a WebSocket; no tiene sentido distribuir audio streams a trav&eacute;s de QUIC/CRDT.',
-          p2p: 'Voice agents procesan audio localmente o v&iacute;a API cloud; no se transmite entre peers P2P.',
-        },
-        notes: 'Feature flag voice-agent. VoiceAgent, VoiceSession, VadDetector, TurnManager, AudioChunk. Bidirectional audio streaming, VAD (Voice Activity Detection), turn management, interruption handling. voice_agent.rs. 70 tests. v5.' },
-      { tech: 'MediaGeneration (image &amp; video)', flag: 'media-generation',
-        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
-        typical: ['basic_chat','agent_tools','autonomous','multi_agent','http_server'],
-        notes: 'Feature flag media-generation. ImageProviderRouter, VideoProviderRouter, DallEProvider, StableDiffusionProvider, RunwayProvider, SoraProvider. Multi-provider image/video generation con routing inteligente. media_generation.rs. 62 tests. v5.' },
-      { tech: 'Distillation (trace-to-dataset pipeline)', flag: 'distillation',
-        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
-        typical: ['autonomous','multi_agent','http_server'],
-        notes: 'Feature flag distillation. TrajectoryCollector, DatasetBuilder, DataFlywheel, TrajectoryScorer. Trajectory collection, scoring, dataset building, data flywheel para fine-tuning de modelos peque&ntilde;os a partir de trazas de modelos grandes. distillation.rs. 53 tests. v5.' },
-      { tech: 'ConstrainedDecoding (grammar-guided generation)', flag: 'constrained-decoding',
-        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
-        typical: ['basic_chat','rag_chat','agent_tools','autonomous','multi_agent'],
-        notes: 'Feature flag constrained-decoding. Grammar, GrammarBuilder, SchemaToGrammar, StreamingValidator. GBNF grammars, JSON Schema compiler, streaming validation para generaci&oacute;n guiada por gram&aacute;tica. constrained_decoding.rs. 36 tests. v5.' },
     ]
   },
 ];

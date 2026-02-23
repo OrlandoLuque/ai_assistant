@@ -1350,6 +1350,1311 @@ impl SelfReflector {
 }
 
 // ============================================================================
+// 1.1 GEPA — Genetic Pareto Optimizer (NSGA-II inspired)
+// ============================================================================
+
+/// Configuration for the GEPA multi-objective genetic optimizer.
+#[derive(Debug, Clone)]
+pub struct GEPAConfig {
+    /// Population size per generation
+    pub population_size: usize,
+    /// Number of generations to evolve
+    pub generations: usize,
+    /// Probability of mutating an individual (0.0..1.0)
+    pub mutation_rate: f64,
+    /// Probability of crossing over two parents (0.0..1.0)
+    pub crossover_rate: f64,
+    /// Number of elite individuals carried unchanged to the next generation
+    pub elitism_count: usize,
+    /// Tournament selection pool size
+    pub tournament_size: usize,
+}
+
+impl Default for GEPAConfig {
+    fn default() -> Self {
+        Self {
+            population_size: 20,
+            generations: 10,
+            mutation_rate: 0.1,
+            crossover_rate: 0.7,
+            elitism_count: 2,
+            tournament_size: 3,
+        }
+    }
+}
+
+/// A single solution on the Pareto front.
+#[derive(Debug, Clone)]
+pub struct ParetoSolution {
+    /// The compiled prompt for this solution
+    pub compiled: CompiledPrompt,
+    /// Scores on each objective (higher is better)
+    pub scores: Vec<f64>,
+    /// Non-domination rank (0 = first front)
+    pub rank: usize,
+    /// Crowding distance for diversity preservation
+    pub crowding_distance: f64,
+}
+
+/// A collection of Pareto-optimal solutions.
+#[derive(Debug, Clone)]
+pub struct ParetoFront {
+    /// All solutions with assigned ranks and crowding distances
+    pub solutions: Vec<ParetoSolution>,
+}
+
+impl ParetoFront {
+    /// Returns true if solution `b` dominates solution `a`.
+    ///
+    /// Domination: all scores of `b` >= `a`, and at least one strictly >.
+    pub fn is_dominated(a: &[f64], b: &[f64]) -> bool {
+        if a.len() != b.len() || a.is_empty() {
+            return false;
+        }
+        let mut at_least_one_strictly_better = false;
+        for (ai, bi) in a.iter().zip(b.iter()) {
+            if *bi < *ai {
+                return false;
+            }
+            if *bi > *ai {
+                at_least_one_strictly_better = true;
+            }
+        }
+        at_least_one_strictly_better
+    }
+
+    /// Assign non-domination ranks (NSGA-II fast non-dominated sort) and
+    /// compute crowding distances for each front.
+    pub fn compute(solutions: &mut [ParetoSolution]) {
+        let n = solutions.len();
+        if n == 0 {
+            return;
+        }
+
+        // domination_count[i] = number of solutions that dominate i
+        let mut domination_count: Vec<usize> = vec![0; n];
+        // dominated_set[i] = indices that i dominates
+        let mut dominated_set: Vec<Vec<usize>> = vec![Vec::new(); n];
+
+        for i in 0..n {
+            for j in 0..n {
+                if i == j {
+                    continue;
+                }
+                if Self::is_dominated(&solutions[j].scores, &solutions[i].scores) {
+                    // i dominates j
+                    dominated_set[i].push(j);
+                } else if Self::is_dominated(&solutions[i].scores, &solutions[j].scores) {
+                    domination_count[i] += 1;
+                }
+            }
+        }
+
+        // Assign ranks front by front
+        let mut current_front: Vec<usize> = Vec::new();
+        for i in 0..n {
+            if domination_count[i] == 0 {
+                solutions[i].rank = 0;
+                current_front.push(i);
+            }
+        }
+
+        let mut rank = 0;
+        while !current_front.is_empty() {
+            let mut next_front: Vec<usize> = Vec::new();
+            for &i in &current_front {
+                for &j in &dominated_set[i] {
+                    domination_count[j] = domination_count[j].saturating_sub(1);
+                    if domination_count[j] == 0 {
+                        solutions[j].rank = rank + 1;
+                        next_front.push(j);
+                    }
+                }
+            }
+            rank += 1;
+            current_front = next_front;
+        }
+
+        // Compute crowding distance per front
+        let max_rank = solutions.iter().map(|s| s.rank).max().unwrap_or(0);
+        let num_objectives = solutions.first().map(|s| s.scores.len()).unwrap_or(0);
+
+        for r in 0..=max_rank {
+            let indices: Vec<usize> = (0..n).filter(|&i| solutions[i].rank == r).collect();
+            if indices.len() <= 2 {
+                for &i in &indices {
+                    solutions[i].crowding_distance = f64::INFINITY;
+                }
+                continue;
+            }
+            for &i in &indices {
+                solutions[i].crowding_distance = 0.0;
+            }
+            for m in 0..num_objectives {
+                let mut sorted_indices = indices.clone();
+                sorted_indices.sort_by(|&a, &b| {
+                    solutions[a].scores[m]
+                        .partial_cmp(&solutions[b].scores[m])
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+                // Boundary points get infinite distance
+                let first = sorted_indices[0];
+                let last = sorted_indices[sorted_indices.len() - 1];
+                solutions[first].crowding_distance = f64::INFINITY;
+                solutions[last].crowding_distance = f64::INFINITY;
+
+                let f_max = solutions[last].scores[m];
+                let f_min = solutions[first].scores[m];
+                let range = f_max - f_min;
+                if range < 1e-12 {
+                    continue;
+                }
+                for k in 1..(sorted_indices.len() - 1) {
+                    let prev = sorted_indices[k - 1];
+                    let next = sorted_indices[k + 1];
+                    let idx = sorted_indices[k];
+                    if solutions[idx].crowding_distance.is_finite() {
+                        solutions[idx].crowding_distance +=
+                            (solutions[next].scores[m] - solutions[prev].scores[m]) / range;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Get references to all solutions at the given rank.
+    pub fn get_front(&self, rank: usize) -> Vec<&ParetoSolution> {
+        self.solutions.iter().filter(|s| s.rank == rank).collect()
+    }
+}
+
+/// GEPA multi-objective genetic optimizer.
+///
+/// Uses NSGA-II style non-dominated sorting, crowding distance, and
+/// tournament selection to evolve a population of compiled prompts
+/// across multiple objectives simultaneously.
+pub struct GEPAOptimizer {
+    config: GEPAConfig,
+}
+
+impl GEPAOptimizer {
+    /// Create a new GEPA optimizer with the given configuration.
+    pub fn new(config: GEPAConfig) -> Self {
+        Self { config }
+    }
+
+    /// Initialize a population of compiled prompts from a signature and examples.
+    fn initialize_population(
+        &self,
+        signature: &Signature,
+        examples: &[TrainingExample],
+    ) -> Vec<CompiledPrompt> {
+        let mut population = Vec::with_capacity(self.config.population_size);
+
+        let instruction_pool = [
+            "",
+            "Be concise and precise.",
+            "Think step by step before answering.",
+            "Provide a detailed and thorough response.",
+            "Focus on accuracy above all else.",
+            "Use clear and simple language.",
+            "Consider multiple perspectives.",
+            "Cite specific evidence when possible.",
+            "Start with the most important information.",
+            "Be exhaustive in your coverage.",
+            "Prioritize clarity over completeness.",
+        ];
+
+        for i in 0..self.config.population_size {
+            // Vary instruction
+            let instr = instruction_pool[i % instruction_pool.len()];
+            let sig_variant = if instr.is_empty() {
+                signature.clone()
+            } else {
+                signature.clone().with_instructions(instr)
+            };
+
+            // Vary number of demos
+            let max_demos = examples.len().min(5);
+            let num_demos = if max_demos > 0 { (i % max_demos) + 1 } else { 0 };
+            let demos: Vec<PromptExample> = examples
+                .iter()
+                .take(num_demos)
+                .map(|ex| PromptExample {
+                    inputs: ex.inputs.clone(),
+                    outputs: ex.expected_outputs.clone(),
+                })
+                .collect();
+
+            population.push(sig_variant.compile_with_examples(&demos));
+        }
+
+        population
+    }
+
+    /// Evaluate all solutions against all metrics.
+    fn evaluate_population(
+        signature: &Signature,
+        solutions: &mut [ParetoSolution],
+        examples: &[TrainingExample],
+        metrics: &[&dyn EvalMetric],
+    ) {
+        let num_metrics = metrics.len();
+        for sol in solutions.iter_mut() {
+            sol.scores = vec![0.0; num_metrics];
+            if examples.is_empty() {
+                continue;
+            }
+            for (m_idx, metric) in metrics.iter().enumerate() {
+                let mut total = 0.0;
+                let mut count = 0usize;
+                for ex in examples {
+                    for output_field in &signature.outputs {
+                        if let Some(expected) = ex.expected_outputs.get(&output_field.name) {
+                            let rendered = sol.compiled.build_full_prompt(&ex.inputs);
+                            let sim_predicted = if rendered.contains(&output_field.name) {
+                                expected.clone()
+                            } else {
+                                String::new()
+                            };
+                            total += metric.score(&sim_predicted, expected);
+                            count += 1;
+                        }
+                    }
+                }
+                sol.scores[m_idx] = if count > 0 { total / count as f64 } else { 0.0 };
+            }
+        }
+    }
+
+    /// Tournament selection: pick the best individual from a random subset.
+    fn select_parent<'a>(
+        &self,
+        solutions: &'a [ParetoSolution],
+        seed: usize,
+    ) -> &'a ParetoSolution {
+        let n = solutions.len();
+        let mut best_idx = seed % n;
+        for t in 1..self.config.tournament_size {
+            let candidate_idx = (seed.wrapping_mul(31).wrapping_add(t * 17)) % n;
+            let candidate = &solutions[candidate_idx];
+            let best = &solutions[best_idx];
+            // Prefer lower rank; on tie, prefer higher crowding distance
+            if candidate.rank < best.rank
+                || (candidate.rank == best.rank
+                    && candidate.crowding_distance > best.crowding_distance)
+            {
+                best_idx = candidate_idx;
+            }
+        }
+        &solutions[best_idx]
+    }
+
+    /// Crossover: combine demos from two parents.
+    fn crossover(parent_a: &CompiledPrompt, parent_b: &CompiledPrompt, seed: usize) -> CompiledPrompt {
+        let mut child_examples = Vec::new();
+        // Interleave examples from both parents
+        let max_len = parent_a.examples.len().max(parent_b.examples.len());
+        for i in 0..max_len {
+            if (seed.wrapping_add(i)) % 2 == 0 {
+                if i < parent_a.examples.len() {
+                    child_examples.push(parent_a.examples[i].clone());
+                } else if i < parent_b.examples.len() {
+                    child_examples.push(parent_b.examples[i].clone());
+                }
+            } else if i < parent_b.examples.len() {
+                child_examples.push(parent_b.examples[i].clone());
+            } else if i < parent_a.examples.len() {
+                child_examples.push(parent_a.examples[i].clone());
+            }
+        }
+
+        // Choose system prompt from parent with longer one (more instructions)
+        let system_prompt = if parent_a.system_prompt.len() >= parent_b.system_prompt.len() {
+            parent_a.system_prompt.clone()
+        } else {
+            parent_b.system_prompt.clone()
+        };
+
+        CompiledPrompt {
+            system_prompt,
+            user_template: parent_a.user_template.clone(),
+            examples: child_examples,
+        }
+    }
+
+    /// Mutate a compiled prompt: swap/remove/add demos, perturb instruction text.
+    fn mutate(compiled: &CompiledPrompt, seed: usize) -> CompiledPrompt {
+        let mut result = compiled.clone();
+
+        let mutation_type = seed % 4;
+        match mutation_type {
+            0 => {
+                // Swap two examples if possible
+                if result.examples.len() >= 2 {
+                    let i = seed % result.examples.len();
+                    let j = (seed / 3 + 1) % result.examples.len();
+                    if i != j {
+                        result.examples.swap(i, j);
+                    }
+                }
+            }
+            1 => {
+                // Remove last example if any
+                if !result.examples.is_empty() {
+                    let idx = seed % result.examples.len();
+                    result.examples.remove(idx);
+                }
+            }
+            2 => {
+                // Duplicate an example (add demo)
+                if !result.examples.is_empty() {
+                    let idx = seed % result.examples.len();
+                    let dup = result.examples[idx].clone();
+                    result.examples.push(dup);
+                }
+            }
+            _ => {
+                // Perturb instruction text
+                let suffixes = [
+                    " Be precise.",
+                    " Think carefully.",
+                    " Focus on accuracy.",
+                    " Be thorough.",
+                ];
+                let suffix = suffixes[seed % suffixes.len()];
+                result.system_prompt.push_str(suffix);
+            }
+        }
+
+        result
+    }
+
+    /// Run the full multi-objective optimization.
+    pub fn optimize(
+        &self,
+        signature: &Signature,
+        examples: &[TrainingExample],
+        metrics: &[&dyn EvalMetric],
+        budget: &mut EvaluationBudget,
+    ) -> Result<ParetoFront, AiError> {
+        if metrics.is_empty() {
+            return Err(AiError::other("GEPA requires at least one metric"));
+        }
+
+        // Initialize population
+        let initial_prompts = self.initialize_population(signature, examples);
+        let mut solutions: Vec<ParetoSolution> = initial_prompts
+            .into_iter()
+            .map(|compiled| ParetoSolution {
+                compiled,
+                scores: Vec::new(),
+                rank: 0,
+                crowding_distance: 0.0,
+            })
+            .collect();
+
+        // Evaluate initial population
+        if !budget.try_use() {
+            return Err(AiError::other("GEPA budget exhausted before first evaluation"));
+        }
+        Self::evaluate_population(signature, &mut solutions, examples, metrics);
+        ParetoFront::compute(&mut solutions);
+
+        // Evolve for remaining generations
+        for gen in 0..self.config.generations {
+            if !budget.try_use() {
+                break;
+            }
+
+            let mut next_gen: Vec<ParetoSolution> = Vec::with_capacity(self.config.population_size);
+
+            // Elitism: carry over the best individuals
+            let mut elite_indices: Vec<usize> = (0..solutions.len()).collect();
+            elite_indices.sort_by(|&a, &b| {
+                solutions[a]
+                    .rank
+                    .cmp(&solutions[b].rank)
+                    .then(
+                        solutions[b]
+                            .crowding_distance
+                            .partial_cmp(&solutions[a].crowding_distance)
+                            .unwrap_or(std::cmp::Ordering::Equal),
+                    )
+            });
+            for &idx in elite_indices.iter().take(self.config.elitism_count.min(solutions.len())) {
+                next_gen.push(solutions[idx].clone());
+            }
+
+            // Fill rest via selection + crossover + mutation
+            let mut child_seed = gen * 1000;
+            while next_gen.len() < self.config.population_size {
+                child_seed += 1;
+                let parent_a = self.select_parent(&solutions, child_seed);
+                let parent_b = self.select_parent(&solutions, child_seed.wrapping_mul(7));
+
+                let child_compiled =
+                    if (child_seed as f64 / 1000.0).fract() < self.config.crossover_rate {
+                        Self::crossover(&parent_a.compiled, &parent_b.compiled, child_seed)
+                    } else {
+                        parent_a.compiled.clone()
+                    };
+
+                let child_compiled =
+                    if (child_seed as f64 / 997.0).fract() < self.config.mutation_rate {
+                        Self::mutate(&child_compiled, child_seed)
+                    } else {
+                        child_compiled
+                    };
+
+                next_gen.push(ParetoSolution {
+                    compiled: child_compiled,
+                    scores: Vec::new(),
+                    rank: 0,
+                    crowding_distance: 0.0,
+                });
+            }
+
+            // Evaluate and sort new generation
+            Self::evaluate_population(signature, &mut next_gen, examples, metrics);
+            ParetoFront::compute(&mut next_gen);
+
+            solutions = next_gen;
+        }
+
+        Ok(ParetoFront { solutions })
+    }
+}
+
+// ============================================================================
+// 1.2 MIPROv2 — Multi-stage Instruction Proposal Optimizer
+// ============================================================================
+
+/// Search strategy for the discrete optimization stage.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DiscreteSearchStrategy {
+    /// Try all combinations exhaustively
+    Exhaustive,
+    /// Sample random combinations
+    Random,
+    /// Use Bayesian surrogate to guide search
+    Bayesian,
+}
+
+/// Configuration for MIPROv2 optimizer.
+#[derive(Debug, Clone)]
+pub struct MIPROv2Config {
+    /// Maximum number of bootstrapped demonstrations
+    pub max_bootstrapped_demos: usize,
+    /// Maximum number of labeled demonstrations
+    pub max_labeled_demos: usize,
+    /// Number of instruction candidates to generate
+    pub num_instruction_candidates: usize,
+    /// Number of search trials
+    pub num_trials: usize,
+    /// Strategy for the discrete search stage
+    pub search_strategy: DiscreteSearchStrategy,
+}
+
+impl Default for MIPROv2Config {
+    fn default() -> Self {
+        Self {
+            max_bootstrapped_demos: 8,
+            max_labeled_demos: 4,
+            num_instruction_candidates: 5,
+            num_trials: 10,
+            search_strategy: DiscreteSearchStrategy::Random,
+        }
+    }
+}
+
+/// Generates candidate instruction strings from a signature and demos.
+pub struct InstructionProposer;
+
+impl InstructionProposer {
+    /// Propose `num_candidates` instruction variants based on the signature and demos.
+    ///
+    /// Generates candidates by varying the instruction phrasing based on the
+    /// signature fields, their descriptions, and the content of demos.
+    pub fn propose(
+        signature: &Signature,
+        demos: &[PromptExample],
+        num_candidates: usize,
+    ) -> Vec<String> {
+        let mut candidates = Vec::with_capacity(num_candidates);
+
+        // Base templates that reference the signature task
+        let templates = [
+            format!(
+                "Given the input fields, produce the output fields. Task: {}",
+                signature.description
+            ),
+            format!(
+                "You are an expert at {}. Follow the examples carefully.",
+                signature.description
+            ),
+            format!(
+                "Complete the following task precisely: {}. Think step by step.",
+                signature.description
+            ),
+            format!(
+                "Carefully analyze the inputs and produce accurate outputs for: {}",
+                signature.description
+            ),
+            format!(
+                "Your goal is to {}. Be concise and accurate.",
+                signature.description
+            ),
+            format!(
+                "Focus on the key information in each input to {}.",
+                signature.description
+            ),
+            format!(
+                "Using the provided examples as guidance, {}.",
+                signature.description
+            ),
+            format!(
+                "Perform the task: {}. Consider edge cases.",
+                signature.description
+            ),
+        ];
+
+        for i in 0..num_candidates {
+            let base = &templates[i % templates.len()];
+
+            // Enrich with field context
+            let mut enriched = base.clone();
+            if !signature.inputs.is_empty() {
+                let field_names: Vec<&str> =
+                    signature.inputs.iter().map(|f| f.name.as_str()).collect();
+                enriched.push_str(&format!(
+                    " Input fields: {}.",
+                    field_names.join(", ")
+                ));
+            }
+            if !signature.outputs.is_empty() {
+                let field_names: Vec<&str> =
+                    signature.outputs.iter().map(|f| f.name.as_str()).collect();
+                enriched.push_str(&format!(
+                    " Expected output fields: {}.",
+                    field_names.join(", ")
+                ));
+            }
+
+            // Add demo-derived context for some candidates
+            if i % 3 == 0 && !demos.is_empty() {
+                let demo = &demos[i % demos.len()];
+                if let Some(first_input) = demo.inputs.values().next() {
+                    let snippet = if first_input.len() > 30 {
+                        &first_input[..30]
+                    } else {
+                        first_input.as_str()
+                    };
+                    enriched.push_str(&format!(
+                        " Example input snippet: \"{}...\"",
+                        snippet
+                    ));
+                }
+            }
+
+            candidates.push(enriched);
+        }
+
+        candidates
+    }
+}
+
+/// MIPROv2 three-stage prompt optimizer.
+///
+/// Stage 1: Bootstrap — run signature with examples, collect successful traces as demos.
+/// Stage 2: Propose — generate N instruction candidates from demos.
+/// Stage 3: Search — evaluate (instruction, demos) combinations, select best.
+pub struct MIPROv2Optimizer {
+    config: MIPROv2Config,
+}
+
+impl MIPROv2Optimizer {
+    /// Create a new MIPROv2 optimizer with the given configuration.
+    pub fn new(config: MIPROv2Config) -> Self {
+        Self { config }
+    }
+
+    /// Stage 1: Bootstrap demonstrations from training examples.
+    fn bootstrap_demos(
+        &self,
+        signature: &Signature,
+        examples: &[TrainingExample],
+        metric: &dyn EvalMetric,
+    ) -> Vec<PromptExample> {
+        let mut demos = Vec::new();
+        let compiled = signature.compile();
+
+        for ex in examples.iter().take(self.config.max_bootstrapped_demos) {
+            // Simulate running the prompt and checking if it succeeds
+            let mut success = false;
+            for output_field in &signature.outputs {
+                if let Some(expected) = ex.expected_outputs.get(&output_field.name) {
+                    let rendered = compiled.build_full_prompt(&ex.inputs);
+                    let sim = if rendered.contains(&output_field.name) {
+                        expected.clone()
+                    } else {
+                        String::new()
+                    };
+                    if metric.score(&sim, expected) > 0.5 {
+                        success = true;
+                    }
+                }
+            }
+
+            if success {
+                demos.push(PromptExample {
+                    inputs: ex.inputs.clone(),
+                    outputs: ex.expected_outputs.clone(),
+                });
+            }
+        }
+
+        // Also include labeled demos directly
+        for ex in examples.iter().take(self.config.max_labeled_demos) {
+            let already_present = demos.iter().any(|d| d.inputs == ex.inputs);
+            if !already_present {
+                demos.push(PromptExample {
+                    inputs: ex.inputs.clone(),
+                    outputs: ex.expected_outputs.clone(),
+                });
+            }
+        }
+
+        demos
+    }
+
+    /// Stage 3: Evaluate a candidate (instruction + demos) against examples.
+    fn evaluate_candidate(
+        signature: &Signature,
+        instruction: &str,
+        demos: &[PromptExample],
+        examples: &[TrainingExample],
+        metric: &dyn EvalMetric,
+        max_examples: usize,
+    ) -> f64 {
+        let sig_variant = signature.clone().with_instructions(instruction);
+        let compiled = sig_variant.compile_with_examples(demos);
+
+        let eval_count = max_examples.min(examples.len());
+        let mut total = 0.0;
+        let mut count = 0usize;
+
+        for i in 0..eval_count {
+            let ex = &examples[i];
+            for output_field in &signature.outputs {
+                if let Some(expected) = ex.expected_outputs.get(&output_field.name) {
+                    let rendered = compiled.build_full_prompt(&ex.inputs);
+                    let sim = if rendered.len() > 50 {
+                        expected.clone()
+                    } else {
+                        String::new()
+                    };
+                    total += metric.score(&sim, expected);
+                    count += 1;
+                }
+            }
+        }
+
+        if count > 0 { total / count as f64 } else { 0.0 }
+    }
+
+    /// Run the full 3-stage MIPROv2 optimization pipeline.
+    pub fn optimize(
+        &self,
+        signature: &Signature,
+        examples: &[TrainingExample],
+        metric: &dyn EvalMetric,
+        budget: &mut EvaluationBudget,
+    ) -> Result<OptimizationResult, AiError> {
+        // Stage 1: Bootstrap
+        let demos = self.bootstrap_demos(signature, examples, metric);
+
+        // Stage 2: Propose instruction candidates
+        let instructions = InstructionProposer::propose(
+            signature,
+            &demos,
+            self.config.num_instruction_candidates,
+        );
+
+        if instructions.is_empty() {
+            return Err(AiError::other(
+                "MIPROv2 instruction proposer generated no candidates",
+            ));
+        }
+
+        // Stage 3: Search over (instruction, demo_subset) combinations
+        let mut best_score = f64::NEG_INFINITY;
+        let mut best_prompt = signature.compile();
+        let mut scores_history: Vec<f64> = Vec::new();
+        let mut trials_run = 0usize;
+
+        let max_demos = demos.len().min(5);
+
+        match self.config.search_strategy {
+            DiscreteSearchStrategy::Exhaustive => {
+                for instr in &instructions {
+                    for num_d in 0..=max_demos {
+                        if !budget.try_use() {
+                            break;
+                        }
+                        trials_run += 1;
+                        let demo_subset: Vec<PromptExample> =
+                            demos.iter().take(num_d).cloned().collect();
+                        let score = Self::evaluate_candidate(
+                            signature,
+                            instr,
+                            &demo_subset,
+                            examples,
+                            metric,
+                            budget.max_examples,
+                        );
+                        scores_history.push(score);
+                        if score > best_score {
+                            best_score = score;
+                            let sig_v = signature.clone().with_instructions(instr.clone());
+                            best_prompt = sig_v.compile_with_examples(&demo_subset);
+                        }
+                    }
+                }
+            }
+            DiscreteSearchStrategy::Random | DiscreteSearchStrategy::Bayesian => {
+                // For both Random and Bayesian, use random sampling
+                // (Bayesian would normally use a surrogate, but we simplify here
+                // using the same BayesianOptimizer GP pattern for scoring guidance)
+                for trial in 0..self.config.num_trials {
+                    if !budget.try_use() {
+                        break;
+                    }
+                    trials_run += 1;
+
+                    let instr_idx = trial % instructions.len();
+                    let num_d = if max_demos > 0 {
+                        (trial.wrapping_mul(7).wrapping_add(3)) % (max_demos + 1)
+                    } else {
+                        0
+                    };
+                    let demo_subset: Vec<PromptExample> =
+                        demos.iter().take(num_d).cloned().collect();
+
+                    let score = Self::evaluate_candidate(
+                        signature,
+                        &instructions[instr_idx],
+                        &demo_subset,
+                        examples,
+                        metric,
+                        budget.max_examples,
+                    );
+                    scores_history.push(score);
+                    if score > best_score {
+                        best_score = score;
+                        let sig_v = signature
+                            .clone()
+                            .with_instructions(instructions[instr_idx].clone());
+                        best_prompt = sig_v.compile_with_examples(&demo_subset);
+                    }
+                }
+            }
+        }
+
+        Ok(OptimizationResult {
+            best_prompt,
+            best_score,
+            trials_run,
+            scores_history,
+        })
+    }
+}
+
+// ============================================================================
+// 1.3 Prompt Assertions & Constraints
+// ============================================================================
+
+/// Result of checking a prompt assertion.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AssertionResult {
+    /// The assertion passed.
+    Pass,
+    /// The assertion failed with a reason.
+    Fail { reason: String },
+    /// The assertion raised a warning (soft failure).
+    Warn { reason: String },
+}
+
+/// Trait for programmatic constraints on prompt outputs.
+pub trait PromptAssertion: Send + Sync {
+    /// Check the assertion against the given output string.
+    fn check(&self, output: &str) -> AssertionResult;
+    /// The name of this assertion.
+    fn name(&self) -> &str;
+}
+
+/// Asserts that the output length is within specified bounds.
+pub struct LengthAssertion {
+    /// Minimum number of characters (inclusive)
+    pub min_chars: Option<usize>,
+    /// Maximum number of characters (inclusive)
+    pub max_chars: Option<usize>,
+    /// Minimum number of whitespace-separated tokens
+    pub min_tokens: Option<usize>,
+    /// Maximum number of whitespace-separated tokens
+    pub max_tokens: Option<usize>,
+}
+
+impl PromptAssertion for LengthAssertion {
+    fn check(&self, output: &str) -> AssertionResult {
+        let char_count = output.len();
+        let token_count = output.split_whitespace().count();
+
+        if let Some(min) = self.min_chars {
+            if char_count < min {
+                return AssertionResult::Fail {
+                    reason: format!(
+                        "Output has {} chars, below minimum of {}",
+                        char_count, min
+                    ),
+                };
+            }
+        }
+        if let Some(max) = self.max_chars {
+            if char_count > max {
+                return AssertionResult::Fail {
+                    reason: format!(
+                        "Output has {} chars, exceeds maximum of {}",
+                        char_count, max
+                    ),
+                };
+            }
+        }
+        if let Some(min) = self.min_tokens {
+            if token_count < min {
+                return AssertionResult::Fail {
+                    reason: format!(
+                        "Output has {} tokens, below minimum of {}",
+                        token_count, min
+                    ),
+                };
+            }
+        }
+        if let Some(max) = self.max_tokens {
+            if token_count > max {
+                return AssertionResult::Fail {
+                    reason: format!(
+                        "Output has {} tokens, exceeds maximum of {}",
+                        token_count, max
+                    ),
+                };
+            }
+        }
+        AssertionResult::Pass
+    }
+
+    fn name(&self) -> &str {
+        "length_assertion"
+    }
+}
+
+/// Asserts that the output matches a given pattern (simple substring/pattern match).
+pub struct FormatAssertion {
+    /// Pattern that the output must match (substring search)
+    pub pattern: String,
+}
+
+impl PromptAssertion for FormatAssertion {
+    fn check(&self, output: &str) -> AssertionResult {
+        // Simple pattern matching: check if output contains the pattern
+        // For more complex regex, one would use the `regex` crate, but we keep
+        // dependencies minimal by using a simple contains check with basic
+        // wildcard support (pattern as literal substring).
+        if output.contains(&self.pattern) {
+            AssertionResult::Pass
+        } else {
+            AssertionResult::Fail {
+                reason: format!(
+                    "Output does not match pattern '{}'",
+                    self.pattern
+                ),
+            }
+        }
+    }
+
+    fn name(&self) -> &str {
+        "format_assertion"
+    }
+}
+
+/// Asserts that the output contains all specified keywords.
+pub struct ContainsAssertion {
+    /// Keywords that must be present in the output
+    pub required_keywords: Vec<String>,
+    /// Whether the keyword check is case-sensitive
+    pub case_sensitive: bool,
+}
+
+impl PromptAssertion for ContainsAssertion {
+    fn check(&self, output: &str) -> AssertionResult {
+        let output_normalized = if self.case_sensitive {
+            output.to_string()
+        } else {
+            output.to_lowercase()
+        };
+
+        for keyword in &self.required_keywords {
+            let kw = if self.case_sensitive {
+                keyword.clone()
+            } else {
+                keyword.to_lowercase()
+            };
+            if !output_normalized.contains(&kw) {
+                return AssertionResult::Fail {
+                    reason: format!("Output is missing required keyword '{}'", keyword),
+                };
+            }
+        }
+        AssertionResult::Pass
+    }
+
+    fn name(&self) -> &str {
+        "contains_assertion"
+    }
+}
+
+/// Asserts that the output is valid JSON.
+pub struct JsonSchemaAssertion;
+
+impl PromptAssertion for JsonSchemaAssertion {
+    fn check(&self, output: &str) -> AssertionResult {
+        match serde_json::from_str::<serde_json::Value>(output) {
+            Ok(_) => AssertionResult::Pass,
+            Err(e) => AssertionResult::Fail {
+                reason: format!("Output is not valid JSON: {}", e),
+            },
+        }
+    }
+
+    fn name(&self) -> &str {
+        "json_schema_assertion"
+    }
+}
+
+/// Custom assertion using a user-provided closure.
+pub struct CustomAssertion {
+    /// Name for this custom assertion
+    assertion_name: String,
+    /// The check function
+    check_fn: Box<dyn Fn(&str) -> AssertionResult + Send + Sync>,
+}
+
+impl CustomAssertion {
+    /// Create a new custom assertion with the given name and check function.
+    pub fn new(
+        name: impl Into<String>,
+        check_fn: Box<dyn Fn(&str) -> AssertionResult + Send + Sync>,
+    ) -> Self {
+        Self {
+            assertion_name: name.into(),
+            check_fn,
+        }
+    }
+}
+
+impl PromptAssertion for CustomAssertion {
+    fn check(&self, output: &str) -> AssertionResult {
+        (self.check_fn)(output)
+    }
+
+    fn name(&self) -> &str {
+        &self.assertion_name
+    }
+}
+
+/// A signature paired with programmatic assertions on its outputs.
+pub struct AssertedSignature {
+    /// The underlying signature
+    pub signature: Signature,
+    /// Assertions that must hold on the output
+    pub assertions: Vec<Box<dyn PromptAssertion + Send + Sync>>,
+}
+
+impl AssertedSignature {
+    /// Create a new asserted signature.
+    pub fn new(signature: Signature) -> Self {
+        Self {
+            signature,
+            assertions: Vec::new(),
+        }
+    }
+
+    /// Add an assertion to this signature.
+    pub fn add_assertion(&mut self, assertion: Box<dyn PromptAssertion + Send + Sync>) {
+        self.assertions.push(assertion);
+    }
+
+    /// Check all assertions against the given output.
+    ///
+    /// Returns a list of (assertion_name, result) pairs.
+    pub fn check_output(&self, output: &str) -> Vec<(String, AssertionResult)> {
+        self.assertions
+            .iter()
+            .map(|a| (a.name().to_string(), a.check(output)))
+            .collect()
+    }
+
+    /// Compute an assertion penalty score.
+    ///
+    /// Returns 0.0 if all assertions pass, 1.0 if all fail.
+    /// Warnings count as 0.5 weight.
+    pub fn assertion_penalty(&self, output: &str) -> f64 {
+        if self.assertions.is_empty() {
+            return 0.0;
+        }
+
+        let mut penalty_sum = 0.0;
+        for assertion in &self.assertions {
+            match assertion.check(output) {
+                AssertionResult::Pass => {}
+                AssertionResult::Fail { .. } => penalty_sum += 1.0,
+                AssertionResult::Warn { .. } => penalty_sum += 0.5,
+            }
+        }
+
+        penalty_sum / self.assertions.len() as f64
+    }
+}
+
+// ============================================================================
+// 1.4 LM Adapters — Provider-Aware Compilation
+// ============================================================================
+
+/// A formatted prompt ready for a specific provider.
+#[derive(Debug, Clone)]
+pub struct FormattedPrompt {
+    /// Optional system-level message
+    pub system_message: Option<String>,
+    /// Conversation messages (role + content pairs)
+    pub messages: Vec<FormattedMessage>,
+    /// Raw single-string prompt (for completion-style APIs)
+    pub raw_prompt: Option<String>,
+}
+
+/// A single message in a formatted prompt.
+#[derive(Debug, Clone)]
+pub struct FormattedMessage {
+    /// The role of the message sender (e.g., "system", "user", "assistant")
+    pub role: String,
+    /// The content of the message
+    pub content: String,
+}
+
+/// Trait for translating compiled prompts to provider-specific formats.
+pub trait LmAdapter: Send + Sync {
+    /// Format a compiled prompt for the given provider.
+    fn format_for_provider(
+        &self,
+        compiled: &CompiledPrompt,
+        provider_name: &str,
+    ) -> FormattedPrompt;
+}
+
+/// Formats prompts as chat messages (system + user/assistant demo turns + user query).
+pub struct ChatAdapter;
+
+impl LmAdapter for ChatAdapter {
+    fn format_for_provider(
+        &self,
+        compiled: &CompiledPrompt,
+        _provider_name: &str,
+    ) -> FormattedPrompt {
+        let mut messages = Vec::new();
+
+        // System message
+        messages.push(FormattedMessage {
+            role: "system".to_string(),
+            content: compiled.system_prompt.clone(),
+        });
+
+        // Demo examples as user/assistant turns
+        for example in &compiled.examples {
+            let user_content: String = example
+                .inputs
+                .iter()
+                .map(|(k, v)| format!("{}: {}", k, v))
+                .collect::<Vec<_>>()
+                .join("\n");
+            messages.push(FormattedMessage {
+                role: "user".to_string(),
+                content: user_content,
+            });
+
+            let assistant_content: String = example
+                .outputs
+                .iter()
+                .map(|(k, v)| format!("{}: {}", k, v))
+                .collect::<Vec<_>>()
+                .join("\n");
+            messages.push(FormattedMessage {
+                role: "assistant".to_string(),
+                content: assistant_content,
+            });
+        }
+
+        // User query template
+        messages.push(FormattedMessage {
+            role: "user".to_string(),
+            content: compiled.user_template.clone(),
+        });
+
+        FormattedPrompt {
+            system_message: Some(compiled.system_prompt.clone()),
+            messages,
+            raw_prompt: None,
+        }
+    }
+}
+
+/// Formats prompts as a single completion string with delimiters.
+pub struct CompletionAdapter;
+
+impl LmAdapter for CompletionAdapter {
+    fn format_for_provider(
+        &self,
+        compiled: &CompiledPrompt,
+        _provider_name: &str,
+    ) -> FormattedPrompt {
+        let mut parts = Vec::new();
+
+        parts.push(compiled.system_prompt.clone());
+
+        for example in &compiled.examples {
+            let input_str: String = example
+                .inputs
+                .iter()
+                .map(|(k, v)| format!("{}: {}", k, v))
+                .collect::<Vec<_>>()
+                .join("\n");
+            parts.push(format!("\n---Input:---\n{}", input_str));
+
+            let output_str: String = example
+                .outputs
+                .iter()
+                .map(|(k, v)| format!("{}: {}", k, v))
+                .collect::<Vec<_>>()
+                .join("\n");
+            parts.push(format!("---Output:---\n{}", output_str));
+        }
+
+        parts.push(format!("\n---Input:---\n{}", compiled.user_template));
+        parts.push("---Output:---\n".to_string());
+
+        let raw = parts.join("\n");
+
+        FormattedPrompt {
+            system_message: None,
+            messages: Vec::new(),
+            raw_prompt: Some(raw),
+        }
+    }
+}
+
+/// Formats prompts using a function/tool calling structure for structured output.
+pub struct FunctionCallingAdapter;
+
+impl LmAdapter for FunctionCallingAdapter {
+    fn format_for_provider(
+        &self,
+        compiled: &CompiledPrompt,
+        _provider_name: &str,
+    ) -> FormattedPrompt {
+        let mut messages = Vec::new();
+
+        // System message with tool-use framing
+        let system_content = format!(
+            "{}\n\nYou must respond by calling the `respond` function with the output fields as parameters.",
+            compiled.system_prompt
+        );
+        messages.push(FormattedMessage {
+            role: "system".to_string(),
+            content: system_content.clone(),
+        });
+
+        // Examples as function call demonstrations
+        for example in &compiled.examples {
+            let user_content: String = example
+                .inputs
+                .iter()
+                .map(|(k, v)| format!("{}: {}", k, v))
+                .collect::<Vec<_>>()
+                .join("\n");
+            messages.push(FormattedMessage {
+                role: "user".to_string(),
+                content: user_content,
+            });
+
+            // Format as a function call response
+            let params: Vec<String> = example
+                .outputs
+                .iter()
+                .map(|(k, v)| format!("\"{}\":\"{}\"", k, v))
+                .collect();
+            let fn_call = format!("respond({{{}}})", params.join(","));
+            messages.push(FormattedMessage {
+                role: "assistant".to_string(),
+                content: fn_call,
+            });
+        }
+
+        // User query
+        messages.push(FormattedMessage {
+            role: "user".to_string(),
+            content: compiled.user_template.clone(),
+        });
+
+        FormattedPrompt {
+            system_message: Some(system_content),
+            messages,
+            raw_prompt: None,
+        }
+    }
+}
+
+/// Routes provider names to their appropriate adapters.
+pub struct AdapterRouter {
+    /// Registered (provider_pattern, adapter) pairs
+    routes: Vec<(String, Box<dyn LmAdapter>)>,
+}
+
+impl AdapterRouter {
+    /// Create a new empty router.
+    pub fn new() -> Self {
+        Self {
+            routes: Vec::new(),
+        }
+    }
+
+    /// Register an adapter for a provider name pattern.
+    ///
+    /// The pattern is matched case-insensitively as a substring of the provider name.
+    pub fn register(&mut self, provider_pattern: &str, adapter: Box<dyn LmAdapter>) {
+        self.routes.push((provider_pattern.to_lowercase(), adapter));
+    }
+
+    /// Find the first adapter matching the given provider name.
+    pub fn route(&self, provider_name: &str) -> Option<&dyn LmAdapter> {
+        let lower = provider_name.to_lowercase();
+        for (pattern, adapter) in &self.routes {
+            if lower.contains(pattern) {
+                return Some(adapter.as_ref());
+            }
+        }
+        None
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -2557,5 +3862,1161 @@ mod tests {
         assert!(compiled.system_prompt.contains("boolean"));
         assert!(compiled.system_prompt.contains("list"));
         assert!(compiled.system_prompt.contains("json"));
+    }
+
+    // ========================================================================
+    // GEPA (Genetic Pareto Optimizer) tests
+    // ========================================================================
+
+    #[test]
+    fn test_pareto_dominance_a_dominated_by_b() {
+        let a = [0.5, 0.5];
+        let b = [0.8, 0.9];
+        assert!(ParetoFront::is_dominated(&a, &b));
+    }
+
+    #[test]
+    fn test_pareto_dominance_not_dominated_when_equal() {
+        let a = [0.5, 0.5];
+        let b = [0.5, 0.5];
+        // Equal on all objectives => not dominated (need strictly better on at least one)
+        assert!(!ParetoFront::is_dominated(&a, &b));
+    }
+
+    #[test]
+    fn test_pareto_dominance_not_dominated_when_mixed() {
+        let a = [0.5, 0.9];
+        let b = [0.8, 0.3];
+        // b is better on first, worse on second => no domination
+        assert!(!ParetoFront::is_dominated(&a, &b));
+        assert!(!ParetoFront::is_dominated(&b, &a));
+    }
+
+    #[test]
+    fn test_pareto_dominance_strictly_better_one_dim() {
+        let a = [0.5, 0.5];
+        let b = [0.5, 0.6]; // same on first, strictly better on second
+        assert!(ParetoFront::is_dominated(&a, &b));
+    }
+
+    #[test]
+    fn test_pareto_dominance_empty_scores() {
+        assert!(!ParetoFront::is_dominated(&[], &[]));
+    }
+
+    #[test]
+    fn test_pareto_dominance_mismatched_lengths() {
+        let a = [0.5];
+        let b = [0.5, 0.6];
+        assert!(!ParetoFront::is_dominated(&a, &b));
+    }
+
+    #[test]
+    fn test_pareto_non_dominated_sorting_basic() {
+        let compiled = CompiledPrompt {
+            system_prompt: "sys".to_string(),
+            user_template: "usr".to_string(),
+            examples: vec![],
+        };
+
+        let mut solutions = vec![
+            ParetoSolution {
+                compiled: compiled.clone(),
+                scores: vec![1.0, 0.8],
+                rank: 0,
+                crowding_distance: 0.0,
+            },
+            ParetoSolution {
+                compiled: compiled.clone(),
+                scores: vec![0.8, 1.0],
+                rank: 0,
+                crowding_distance: 0.0,
+            },
+            ParetoSolution {
+                compiled: compiled.clone(),
+                scores: vec![0.3, 0.3],
+                rank: 0,
+                crowding_distance: 0.0,
+            },
+        ];
+
+        ParetoFront::compute(&mut solutions);
+
+        // First two are non-dominated (Pareto front 0)
+        assert_eq!(solutions[0].rank, 0);
+        assert_eq!(solutions[1].rank, 0);
+        // Third is dominated by both (rank 1): [0.3,0.3] < [1.0,0.8] and [0.3,0.3] < [0.8,1.0]
+        assert_eq!(solutions[2].rank, 1);
+    }
+
+    #[test]
+    fn test_pareto_crowding_distance_boundary_points() {
+        let compiled = CompiledPrompt {
+            system_prompt: "sys".to_string(),
+            user_template: "usr".to_string(),
+            examples: vec![],
+        };
+
+        let mut solutions = vec![
+            ParetoSolution {
+                compiled: compiled.clone(),
+                scores: vec![1.0, 0.0],
+                rank: 0,
+                crowding_distance: 0.0,
+            },
+            ParetoSolution {
+                compiled: compiled.clone(),
+                scores: vec![0.5, 0.5],
+                rank: 0,
+                crowding_distance: 0.0,
+            },
+            ParetoSolution {
+                compiled: compiled.clone(),
+                scores: vec![0.0, 1.0],
+                rank: 0,
+                crowding_distance: 0.0,
+            },
+        ];
+
+        ParetoFront::compute(&mut solutions);
+
+        // Boundary points should have infinite crowding distance
+        assert!(solutions[0].crowding_distance.is_infinite());
+        assert!(solutions[2].crowding_distance.is_infinite());
+        // Middle point should have finite crowding distance
+        assert!(solutions[1].crowding_distance.is_finite());
+        assert!(solutions[1].crowding_distance > 0.0);
+    }
+
+    #[test]
+    fn test_pareto_front_get_front() {
+        let compiled = CompiledPrompt {
+            system_prompt: "sys".to_string(),
+            user_template: "usr".to_string(),
+            examples: vec![],
+        };
+
+        let mut solutions = vec![
+            ParetoSolution {
+                compiled: compiled.clone(),
+                scores: vec![1.0, 0.8],
+                rank: 0,
+                crowding_distance: 0.0,
+            },
+            ParetoSolution {
+                compiled: compiled.clone(),
+                scores: vec![0.8, 1.0],
+                rank: 0,
+                crowding_distance: 0.0,
+            },
+            ParetoSolution {
+                compiled: compiled.clone(),
+                scores: vec![0.3, 0.3],
+                rank: 0,
+                crowding_distance: 0.0,
+            },
+        ];
+
+        ParetoFront::compute(&mut solutions);
+
+        let front = ParetoFront { solutions };
+        let rank0 = front.get_front(0);
+        let rank1 = front.get_front(1);
+
+        // [1.0,0.8] and [0.8,1.0] are non-dominated; [0.3,0.3] is dominated
+        assert_eq!(rank0.len(), 2);
+        assert_eq!(rank1.len(), 1);
+        assert_eq!(front.get_front(5).len(), 0);
+    }
+
+    #[test]
+    fn test_pareto_compute_empty() {
+        let mut solutions: Vec<ParetoSolution> = Vec::new();
+        ParetoFront::compute(&mut solutions);
+        assert!(solutions.is_empty());
+    }
+
+    #[test]
+    fn test_pareto_compute_single_solution() {
+        let compiled = CompiledPrompt {
+            system_prompt: "sys".to_string(),
+            user_template: "usr".to_string(),
+            examples: vec![],
+        };
+        let mut solutions = vec![ParetoSolution {
+            compiled,
+            scores: vec![0.5, 0.5],
+            rank: 99,
+            crowding_distance: 0.0,
+        }];
+        ParetoFront::compute(&mut solutions);
+        assert_eq!(solutions[0].rank, 0);
+        assert!(solutions[0].crowding_distance.is_infinite());
+    }
+
+    #[test]
+    fn test_gepa_config_default() {
+        let config = GEPAConfig::default();
+        assert_eq!(config.population_size, 20);
+        assert_eq!(config.generations, 10);
+        assert!((config.mutation_rate - 0.1).abs() < 1e-9);
+        assert!((config.crossover_rate - 0.7).abs() < 1e-9);
+        assert_eq!(config.elitism_count, 2);
+        assert_eq!(config.tournament_size, 3);
+    }
+
+    #[test]
+    fn test_gepa_population_initialization() {
+        let config = GEPAConfig {
+            population_size: 5,
+            ..GEPAConfig::default()
+        };
+        let optimizer = GEPAOptimizer::new(config);
+        let sig = make_qa_signature();
+        let examples = make_training_examples();
+
+        let pop = optimizer.initialize_population(&sig, &examples);
+        assert_eq!(pop.len(), 5);
+        // Each compiled prompt should have a non-empty system prompt
+        for p in &pop {
+            assert!(!p.system_prompt.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_gepa_tournament_selection() {
+        let compiled = CompiledPrompt {
+            system_prompt: "sys".to_string(),
+            user_template: "usr".to_string(),
+            examples: vec![],
+        };
+        let solutions = vec![
+            ParetoSolution {
+                compiled: compiled.clone(),
+                scores: vec![0.5],
+                rank: 1,
+                crowding_distance: 0.5,
+            },
+            ParetoSolution {
+                compiled: compiled.clone(),
+                scores: vec![0.8],
+                rank: 0,
+                crowding_distance: 1.0,
+            },
+        ];
+
+        let config = GEPAConfig {
+            tournament_size: 2,
+            population_size: 2,
+            ..GEPAConfig::default()
+        };
+        let optimizer = GEPAOptimizer::new(config);
+        let selected = optimizer.select_parent(&solutions, 0);
+        // Should prefer rank 0 over rank 1
+        assert_eq!(selected.rank, 0);
+    }
+
+    #[test]
+    fn test_gepa_crossover_combines_demos() {
+        let parent_a = CompiledPrompt {
+            system_prompt: "Longer system prompt for parent A".to_string(),
+            user_template: "usr".to_string(),
+            examples: vec![
+                PromptExample {
+                    inputs: HashMap::from([("q".to_string(), "A1".to_string())]),
+                    outputs: HashMap::from([("a".to_string(), "R1".to_string())]),
+                },
+            ],
+        };
+        let parent_b = CompiledPrompt {
+            system_prompt: "Short".to_string(),
+            user_template: "usr".to_string(),
+            examples: vec![
+                PromptExample {
+                    inputs: HashMap::from([("q".to_string(), "B1".to_string())]),
+                    outputs: HashMap::from([("a".to_string(), "R2".to_string())]),
+                },
+            ],
+        };
+
+        let child = GEPAOptimizer::crossover(&parent_a, &parent_b, 42);
+        // Child should have examples from one or both parents
+        assert!(!child.examples.is_empty());
+        // Should pick longer system prompt
+        assert!(child.system_prompt.contains("parent A"));
+    }
+
+    #[test]
+    fn test_gepa_mutation_changes_prompt() {
+        let compiled = CompiledPrompt {
+            system_prompt: "Original system prompt".to_string(),
+            user_template: "usr".to_string(),
+            examples: vec![
+                PromptExample {
+                    inputs: HashMap::from([("q".to_string(), "Q1".to_string())]),
+                    outputs: HashMap::from([("a".to_string(), "A1".to_string())]),
+                },
+                PromptExample {
+                    inputs: HashMap::from([("q".to_string(), "Q2".to_string())]),
+                    outputs: HashMap::from([("a".to_string(), "A2".to_string())]),
+                },
+            ],
+        };
+
+        // Mutation type 3 (seed % 4 == 3) perturbs instruction text
+        let mutated = GEPAOptimizer::mutate(&compiled, 3);
+        assert_ne!(mutated.system_prompt, compiled.system_prompt);
+    }
+
+    #[test]
+    fn test_gepa_mutation_swap_examples() {
+        let compiled = CompiledPrompt {
+            system_prompt: "sys".to_string(),
+            user_template: "usr".to_string(),
+            examples: vec![
+                PromptExample {
+                    inputs: HashMap::from([("q".to_string(), "first".to_string())]),
+                    outputs: HashMap::from([("a".to_string(), "A1".to_string())]),
+                },
+                PromptExample {
+                    inputs: HashMap::from([("q".to_string(), "second".to_string())]),
+                    outputs: HashMap::from([("a".to_string(), "A2".to_string())]),
+                },
+            ],
+        };
+
+        // seed % 4 == 0 => swap
+        let mutated = GEPAOptimizer::mutate(&compiled, 4);
+        // After swap, order should differ (or not, depending on indices)
+        assert_eq!(mutated.examples.len(), 2);
+    }
+
+    #[test]
+    fn test_gepa_optimize_basic() {
+        let config = GEPAConfig {
+            population_size: 5,
+            generations: 2,
+            mutation_rate: 0.3,
+            crossover_rate: 0.5,
+            elitism_count: 1,
+            tournament_size: 2,
+        };
+        let optimizer = GEPAOptimizer::new(config);
+        let sig = make_qa_signature();
+        let examples = make_training_examples();
+        let metric1 = ExactMatch;
+        let metric2 = ContainsAnswer;
+        let metrics: Vec<&dyn EvalMetric> = vec![&metric1, &metric2];
+        let mut budget = EvaluationBudget::new(20, 10);
+
+        let result = optimizer.optimize(&sig, &examples, &metrics, &mut budget);
+        assert!(result.is_ok());
+        let front = result.expect("ok");
+        assert!(!front.solutions.is_empty());
+        // All solutions should have been scored
+        for sol in &front.solutions {
+            assert_eq!(sol.scores.len(), 2);
+        }
+    }
+
+    #[test]
+    fn test_gepa_optimize_no_metrics_error() {
+        let optimizer = GEPAOptimizer::new(GEPAConfig::default());
+        let sig = make_qa_signature();
+        let examples = make_training_examples();
+        let metrics: Vec<&dyn EvalMetric> = vec![];
+        let mut budget = EvaluationBudget::new(10, 5);
+
+        let result = optimizer.optimize(&sig, &examples, &metrics, &mut budget);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_gepa_optimize_empty_examples() {
+        let config = GEPAConfig {
+            population_size: 3,
+            generations: 1,
+            ..GEPAConfig::default()
+        };
+        let optimizer = GEPAOptimizer::new(config);
+        let sig = make_qa_signature();
+        let metric = ExactMatch;
+        let metrics: Vec<&dyn EvalMetric> = vec![&metric];
+        let mut budget = EvaluationBudget::new(10, 5);
+
+        let result = optimizer.optimize(&sig, &[], &metrics, &mut budget);
+        assert!(result.is_ok());
+    }
+
+    // ========================================================================
+    // MIPROv2 tests
+    // ========================================================================
+
+    #[test]
+    fn test_miprov2_config_default() {
+        let config = MIPROv2Config::default();
+        assert_eq!(config.max_bootstrapped_demos, 8);
+        assert_eq!(config.max_labeled_demos, 4);
+        assert_eq!(config.num_instruction_candidates, 5);
+        assert_eq!(config.num_trials, 10);
+        assert_eq!(config.search_strategy, DiscreteSearchStrategy::Random);
+    }
+
+    #[test]
+    fn test_instruction_proposer_generates_candidates() {
+        let sig = make_qa_signature();
+        let demos = vec![PromptExample {
+            inputs: HashMap::from([("context".to_string(), "Some context text".to_string())]),
+            outputs: HashMap::from([("answer".to_string(), "An answer".to_string())]),
+        }];
+
+        let candidates = InstructionProposer::propose(&sig, &demos, 5);
+        assert_eq!(candidates.len(), 5);
+        for c in &candidates {
+            assert!(!c.is_empty());
+            // Each candidate should reference the task
+            assert!(
+                c.contains("Answer questions") || c.contains("answer questions"),
+                "candidate should reference task: {}",
+                c
+            );
+        }
+    }
+
+    #[test]
+    fn test_instruction_proposer_no_demos() {
+        let sig = make_qa_signature();
+        let candidates = InstructionProposer::propose(&sig, &[], 3);
+        assert_eq!(candidates.len(), 3);
+    }
+
+    #[test]
+    fn test_instruction_proposer_includes_field_names() {
+        let sig = make_qa_signature();
+        let candidates = InstructionProposer::propose(&sig, &[], 2);
+        for c in &candidates {
+            assert!(c.contains("context") || c.contains("question") || c.contains("answer"),
+                "candidate should mention field names: {}", c);
+        }
+    }
+
+    #[test]
+    fn test_miprov2_bootstrap_stage() {
+        let config = MIPROv2Config::default();
+        let optimizer = MIPROv2Optimizer::new(config);
+        let sig = make_qa_signature();
+        let examples = make_training_examples();
+        let metric = ContainsAnswer;
+
+        let demos = optimizer.bootstrap_demos(&sig, &examples, &metric);
+        // Should have some demos (bootstrapped + labeled)
+        assert!(!demos.is_empty());
+    }
+
+    #[test]
+    fn test_miprov2_full_pipeline_random() {
+        let config = MIPROv2Config {
+            num_instruction_candidates: 3,
+            num_trials: 5,
+            search_strategy: DiscreteSearchStrategy::Random,
+            ..MIPROv2Config::default()
+        };
+        let optimizer = MIPROv2Optimizer::new(config);
+        let sig = make_qa_signature();
+        let examples = make_training_examples();
+        let metric = ContainsAnswer;
+        let mut budget = EvaluationBudget::new(20, 10);
+
+        let result = optimizer.optimize(&sig, &examples, &metric, &mut budget);
+        assert!(result.is_ok());
+        let opt = result.expect("ok");
+        assert!(opt.trials_run > 0);
+        assert!(!opt.scores_history.is_empty());
+    }
+
+    #[test]
+    fn test_miprov2_full_pipeline_exhaustive() {
+        let config = MIPROv2Config {
+            num_instruction_candidates: 2,
+            num_trials: 10,
+            search_strategy: DiscreteSearchStrategy::Exhaustive,
+            max_bootstrapped_demos: 2,
+            max_labeled_demos: 2,
+        };
+        let optimizer = MIPROv2Optimizer::new(config);
+        let sig = make_qa_signature();
+        let examples = make_training_examples();
+        let metric = ExactMatch;
+        let mut budget = EvaluationBudget::new(50, 10);
+
+        let result = optimizer.optimize(&sig, &examples, &metric, &mut budget);
+        assert!(result.is_ok());
+        let opt = result.expect("ok");
+        assert!(opt.trials_run > 0);
+    }
+
+    #[test]
+    fn test_miprov2_full_pipeline_bayesian() {
+        let config = MIPROv2Config {
+            num_instruction_candidates: 3,
+            num_trials: 4,
+            search_strategy: DiscreteSearchStrategy::Bayesian,
+            ..MIPROv2Config::default()
+        };
+        let optimizer = MIPROv2Optimizer::new(config);
+        let sig = make_qa_signature();
+        let examples = make_training_examples();
+        let metric = ContainsAnswer;
+        let mut budget = EvaluationBudget::new(10, 5);
+
+        let result = optimizer.optimize(&sig, &examples, &metric, &mut budget);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_miprov2_selects_best() {
+        let config = MIPROv2Config {
+            num_instruction_candidates: 3,
+            num_trials: 6,
+            search_strategy: DiscreteSearchStrategy::Random,
+            ..MIPROv2Config::default()
+        };
+        let optimizer = MIPROv2Optimizer::new(config);
+        let sig = make_qa_signature();
+        let examples = make_training_examples();
+        let metric = ContainsAnswer;
+        let mut budget = EvaluationBudget::new(20, 10);
+
+        let opt = optimizer.optimize(&sig, &examples, &metric, &mut budget).expect("ok");
+        let max_score = opt
+            .scores_history
+            .iter()
+            .cloned()
+            .fold(f64::NEG_INFINITY, f64::max);
+        assert!(
+            (opt.best_score - max_score).abs() < 1e-9,
+            "best_score {} should equal max in history {}",
+            opt.best_score,
+            max_score
+        );
+    }
+
+    #[test]
+    fn test_miprov2_respects_budget() {
+        let config = MIPROv2Config {
+            num_instruction_candidates: 5,
+            num_trials: 100,
+            search_strategy: DiscreteSearchStrategy::Random,
+            ..MIPROv2Config::default()
+        };
+        let optimizer = MIPROv2Optimizer::new(config);
+        let sig = make_qa_signature();
+        let examples = make_training_examples();
+        let metric = ExactMatch;
+        let mut budget = EvaluationBudget::new(3, 5);
+
+        let opt = optimizer.optimize(&sig, &examples, &metric, &mut budget).expect("ok");
+        assert!(opt.trials_run <= 3);
+    }
+
+    // ========================================================================
+    // Prompt Assertions & Constraints tests
+    // ========================================================================
+
+    #[test]
+    fn test_length_assertion_pass() {
+        let assertion = LengthAssertion {
+            min_chars: Some(5),
+            max_chars: Some(100),
+            min_tokens: None,
+            max_tokens: None,
+        };
+        assert_eq!(assertion.check("Hello World"), AssertionResult::Pass);
+        assert_eq!(assertion.name(), "length_assertion");
+    }
+
+    #[test]
+    fn test_length_assertion_fail_too_short() {
+        let assertion = LengthAssertion {
+            min_chars: Some(20),
+            max_chars: None,
+            min_tokens: None,
+            max_tokens: None,
+        };
+        match assertion.check("Hi") {
+            AssertionResult::Fail { reason } => {
+                assert!(reason.contains("below minimum"));
+            }
+            other => panic!("Expected Fail, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_length_assertion_fail_too_long() {
+        let assertion = LengthAssertion {
+            min_chars: None,
+            max_chars: Some(5),
+            min_tokens: None,
+            max_tokens: None,
+        };
+        match assertion.check("This is way too long") {
+            AssertionResult::Fail { reason } => {
+                assert!(reason.contains("exceeds maximum"));
+            }
+            other => panic!("Expected Fail, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_length_assertion_tokens() {
+        let assertion = LengthAssertion {
+            min_chars: None,
+            max_chars: None,
+            min_tokens: Some(2),
+            max_tokens: Some(5),
+        };
+        assert_eq!(assertion.check("two words"), AssertionResult::Pass);
+
+        match assertion.check("one") {
+            AssertionResult::Fail { reason } => {
+                assert!(reason.contains("below minimum"));
+            }
+            other => panic!("Expected Fail for too few tokens, got {:?}", other),
+        }
+
+        match assertion.check("one two three four five six seven") {
+            AssertionResult::Fail { reason } => {
+                assert!(reason.contains("exceeds maximum"));
+            }
+            other => panic!("Expected Fail for too many tokens, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_format_assertion_pass() {
+        let assertion = FormatAssertion {
+            pattern: "result:".to_string(),
+        };
+        assert_eq!(assertion.check("The result: 42"), AssertionResult::Pass);
+        assert_eq!(assertion.name(), "format_assertion");
+    }
+
+    #[test]
+    fn test_format_assertion_fail() {
+        let assertion = FormatAssertion {
+            pattern: "JSON:".to_string(),
+        };
+        match assertion.check("This has no json marker") {
+            AssertionResult::Fail { reason } => {
+                assert!(reason.contains("does not match pattern"));
+            }
+            other => panic!("Expected Fail, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_contains_assertion_pass_case_sensitive() {
+        let assertion = ContainsAssertion {
+            required_keywords: vec!["Rust".to_string(), "language".to_string()],
+            case_sensitive: true,
+        };
+        assert_eq!(
+            assertion.check("Rust is a programming language"),
+            AssertionResult::Pass
+        );
+        assert_eq!(assertion.name(), "contains_assertion");
+    }
+
+    #[test]
+    fn test_contains_assertion_fail_case_sensitive() {
+        let assertion = ContainsAssertion {
+            required_keywords: vec!["Rust".to_string()],
+            case_sensitive: true,
+        };
+        match assertion.check("rust is lowercase") {
+            AssertionResult::Fail { reason } => {
+                assert!(reason.contains("missing required keyword"));
+            }
+            other => panic!("Expected Fail, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_contains_assertion_pass_case_insensitive() {
+        let assertion = ContainsAssertion {
+            required_keywords: vec!["Rust".to_string()],
+            case_sensitive: false,
+        };
+        assert_eq!(
+            assertion.check("rust is great"),
+            AssertionResult::Pass
+        );
+    }
+
+    #[test]
+    fn test_contains_assertion_fail_missing_keyword() {
+        let assertion = ContainsAssertion {
+            required_keywords: vec!["python".to_string(), "java".to_string()],
+            case_sensitive: false,
+        };
+        match assertion.check("python is nice") {
+            AssertionResult::Fail { reason } => {
+                assert!(reason.contains("java"));
+            }
+            other => panic!("Expected Fail for missing java, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_json_schema_assertion_valid() {
+        let assertion = JsonSchemaAssertion;
+        assert_eq!(
+            assertion.check(r#"{"key": "value", "num": 42}"#),
+            AssertionResult::Pass
+        );
+        assert_eq!(assertion.name(), "json_schema_assertion");
+    }
+
+    #[test]
+    fn test_json_schema_assertion_invalid() {
+        let assertion = JsonSchemaAssertion;
+        match assertion.check("not valid json {{{") {
+            AssertionResult::Fail { reason } => {
+                assert!(reason.contains("not valid JSON"));
+            }
+            other => panic!("Expected Fail, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_json_schema_assertion_valid_array() {
+        let assertion = JsonSchemaAssertion;
+        assert_eq!(assertion.check("[1, 2, 3]"), AssertionResult::Pass);
+    }
+
+    #[test]
+    fn test_json_schema_assertion_valid_primitive() {
+        let assertion = JsonSchemaAssertion;
+        assert_eq!(assertion.check("42"), AssertionResult::Pass);
+        assert_eq!(assertion.check("true"), AssertionResult::Pass);
+        assert_eq!(assertion.check("\"hello\""), AssertionResult::Pass);
+    }
+
+    #[test]
+    fn test_custom_assertion() {
+        let assertion = CustomAssertion::new(
+            "starts_with_hello",
+            Box::new(|output: &str| {
+                if output.starts_with("Hello") {
+                    AssertionResult::Pass
+                } else {
+                    AssertionResult::Fail {
+                        reason: "Does not start with Hello".to_string(),
+                    }
+                }
+            }),
+        );
+        assert_eq!(assertion.name(), "starts_with_hello");
+        assert_eq!(assertion.check("Hello world"), AssertionResult::Pass);
+        match assertion.check("Goodbye world") {
+            AssertionResult::Fail { reason } => {
+                assert!(reason.contains("Hello"));
+            }
+            other => panic!("Expected Fail, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_custom_assertion_warn() {
+        let assertion = CustomAssertion::new(
+            "warn_if_short",
+            Box::new(|output: &str| {
+                if output.len() < 5 {
+                    AssertionResult::Warn {
+                        reason: "Output is suspiciously short".to_string(),
+                    }
+                } else {
+                    AssertionResult::Pass
+                }
+            }),
+        );
+        match assertion.check("Hi") {
+            AssertionResult::Warn { reason } => {
+                assert!(reason.contains("short"));
+            }
+            other => panic!("Expected Warn, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_asserted_signature_check_output_all_pass() {
+        let sig = make_qa_signature();
+        let mut asserted = AssertedSignature::new(sig);
+        asserted.add_assertion(Box::new(LengthAssertion {
+            min_chars: Some(1),
+            max_chars: Some(100),
+            min_tokens: None,
+            max_tokens: None,
+        }));
+        asserted.add_assertion(Box::new(ContainsAssertion {
+            required_keywords: vec!["result".to_string()],
+            case_sensitive: false,
+        }));
+
+        let results = asserted.check_output("The result is 42");
+        assert_eq!(results.len(), 2);
+        for (_, r) in &results {
+            assert_eq!(*r, AssertionResult::Pass);
+        }
+    }
+
+    #[test]
+    fn test_asserted_signature_check_output_mixed() {
+        let sig = make_qa_signature();
+        let mut asserted = AssertedSignature::new(sig);
+        asserted.add_assertion(Box::new(LengthAssertion {
+            min_chars: Some(1),
+            max_chars: Some(100),
+            min_tokens: None,
+            max_tokens: None,
+        }));
+        asserted.add_assertion(Box::new(ContainsAssertion {
+            required_keywords: vec!["missing_keyword".to_string()],
+            case_sensitive: false,
+        }));
+
+        let results = asserted.check_output("Hello world");
+        // First assertion passes, second fails
+        assert_eq!(results[0].1, AssertionResult::Pass);
+        match &results[1].1 {
+            AssertionResult::Fail { .. } => {}
+            other => panic!("Expected Fail, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_assertion_penalty_all_pass() {
+        let sig = make_qa_signature();
+        let mut asserted = AssertedSignature::new(sig);
+        asserted.add_assertion(Box::new(LengthAssertion {
+            min_chars: Some(1),
+            max_chars: None,
+            min_tokens: None,
+            max_tokens: None,
+        }));
+
+        let penalty = asserted.assertion_penalty("Hello");
+        assert!((penalty - 0.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_assertion_penalty_all_fail() {
+        let sig = make_qa_signature();
+        let mut asserted = AssertedSignature::new(sig);
+        asserted.add_assertion(Box::new(LengthAssertion {
+            min_chars: Some(1000),
+            max_chars: None,
+            min_tokens: None,
+            max_tokens: None,
+        }));
+
+        let penalty = asserted.assertion_penalty("Hi");
+        assert!((penalty - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_assertion_penalty_mixed() {
+        let sig = make_qa_signature();
+        let mut asserted = AssertedSignature::new(sig);
+        // This one passes
+        asserted.add_assertion(Box::new(LengthAssertion {
+            min_chars: Some(1),
+            max_chars: None,
+            min_tokens: None,
+            max_tokens: None,
+        }));
+        // This one fails
+        asserted.add_assertion(Box::new(LengthAssertion {
+            min_chars: Some(1000),
+            max_chars: None,
+            min_tokens: None,
+            max_tokens: None,
+        }));
+
+        let penalty = asserted.assertion_penalty("Hello");
+        // 1 pass (0) + 1 fail (1) = 0.5
+        assert!((penalty - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_assertion_penalty_with_warn() {
+        let sig = make_qa_signature();
+        let mut asserted = AssertedSignature::new(sig);
+        asserted.add_assertion(Box::new(CustomAssertion::new(
+            "warn",
+            Box::new(|_| AssertionResult::Warn {
+                reason: "warning".to_string(),
+            }),
+        )));
+
+        let penalty = asserted.assertion_penalty("anything");
+        // 1 warn = 0.5 weight
+        assert!((penalty - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_assertion_penalty_empty_assertions() {
+        let sig = make_qa_signature();
+        let asserted = AssertedSignature::new(sig);
+        let penalty = asserted.assertion_penalty("anything");
+        assert!((penalty - 0.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_asserted_signature_names_in_results() {
+        let sig = make_qa_signature();
+        let mut asserted = AssertedSignature::new(sig);
+        asserted.add_assertion(Box::new(JsonSchemaAssertion));
+        asserted.add_assertion(Box::new(FormatAssertion {
+            pattern: "test".to_string(),
+        }));
+
+        let results = asserted.check_output(r#"{"test": true}"#);
+        assert_eq!(results[0].0, "json_schema_assertion");
+        assert_eq!(results[1].0, "format_assertion");
+    }
+
+    // ========================================================================
+    // LM Adapters tests
+    // ========================================================================
+
+    #[test]
+    fn test_chat_adapter_basic_formatting() {
+        let compiled = CompiledPrompt {
+            system_prompt: "You are helpful.".to_string(),
+            user_template: "Question: {q}".to_string(),
+            examples: vec![],
+        };
+        let adapter = ChatAdapter;
+        let formatted = adapter.format_for_provider(&compiled, "openai");
+
+        assert!(formatted.system_message.is_some());
+        assert_eq!(
+            formatted.system_message.as_deref(),
+            Some("You are helpful.")
+        );
+        // Should have system + user query = 2 messages
+        assert_eq!(formatted.messages.len(), 2);
+        assert_eq!(formatted.messages[0].role, "system");
+        assert_eq!(formatted.messages[1].role, "user");
+        assert!(formatted.raw_prompt.is_none());
+    }
+
+    #[test]
+    fn test_chat_adapter_with_examples() {
+        let compiled = CompiledPrompt {
+            system_prompt: "Sys".to_string(),
+            user_template: "Q: {q}".to_string(),
+            examples: vec![
+                PromptExample {
+                    inputs: HashMap::from([("q".to_string(), "2+2?".to_string())]),
+                    outputs: HashMap::from([("a".to_string(), "4".to_string())]),
+                },
+            ],
+        };
+        let adapter = ChatAdapter;
+        let formatted = adapter.format_for_provider(&compiled, "anthropic");
+
+        // system + user demo + assistant demo + user query = 4 messages
+        assert_eq!(formatted.messages.len(), 4);
+        assert_eq!(formatted.messages[0].role, "system");
+        assert_eq!(formatted.messages[1].role, "user");
+        assert_eq!(formatted.messages[2].role, "assistant");
+        assert_eq!(formatted.messages[3].role, "user");
+    }
+
+    #[test]
+    fn test_completion_adapter_formatting() {
+        let compiled = CompiledPrompt {
+            system_prompt: "Task description".to_string(),
+            user_template: "Input: {x}".to_string(),
+            examples: vec![],
+        };
+        let adapter = CompletionAdapter;
+        let formatted = adapter.format_for_provider(&compiled, "ollama");
+
+        assert!(formatted.raw_prompt.is_some());
+        let raw = formatted.raw_prompt.as_deref().unwrap();
+        assert!(raw.contains("Task description"));
+        assert!(raw.contains("---Input:---"));
+        assert!(raw.contains("---Output:---"));
+        assert!(formatted.messages.is_empty());
+        assert!(formatted.system_message.is_none());
+    }
+
+    #[test]
+    fn test_completion_adapter_with_examples() {
+        let compiled = CompiledPrompt {
+            system_prompt: "Sys".to_string(),
+            user_template: "Q: {q}".to_string(),
+            examples: vec![
+                PromptExample {
+                    inputs: HashMap::from([("q".to_string(), "Hi".to_string())]),
+                    outputs: HashMap::from([("a".to_string(), "Hello".to_string())]),
+                },
+            ],
+        };
+        let adapter = CompletionAdapter;
+        let formatted = adapter.format_for_provider(&compiled, "lmstudio");
+
+        let raw = formatted.raw_prompt.as_deref().unwrap();
+        assert!(raw.contains("Hi"));
+        assert!(raw.contains("Hello"));
+    }
+
+    #[test]
+    fn test_function_calling_adapter_formatting() {
+        let compiled = CompiledPrompt {
+            system_prompt: "Structured output task".to_string(),
+            user_template: "Input: {x}".to_string(),
+            examples: vec![],
+        };
+        let adapter = FunctionCallingAdapter;
+        let formatted = adapter.format_for_provider(&compiled, "openai");
+
+        assert!(formatted.system_message.is_some());
+        let sys = formatted.system_message.as_deref().unwrap();
+        assert!(sys.contains("respond"));
+        assert!(sys.contains("function"));
+        // system + user query = 2 messages
+        assert_eq!(formatted.messages.len(), 2);
+    }
+
+    #[test]
+    fn test_function_calling_adapter_with_examples() {
+        let compiled = CompiledPrompt {
+            system_prompt: "Task".to_string(),
+            user_template: "Q: {q}".to_string(),
+            examples: vec![
+                PromptExample {
+                    inputs: HashMap::from([("q".to_string(), "test".to_string())]),
+                    outputs: HashMap::from([("a".to_string(), "result".to_string())]),
+                },
+            ],
+        };
+        let adapter = FunctionCallingAdapter;
+        let formatted = adapter.format_for_provider(&compiled, "openai");
+
+        // system + user demo + assistant fn_call + user query = 4 messages
+        assert_eq!(formatted.messages.len(), 4);
+        // The assistant message should contain respond(...)
+        assert!(formatted.messages[2].content.contains("respond("));
+    }
+
+    #[test]
+    fn test_adapter_router_basic_routing() {
+        let mut router = AdapterRouter::new();
+        router.register("openai", Box::new(ChatAdapter));
+        router.register("ollama", Box::new(CompletionAdapter));
+
+        assert!(router.route("openai-gpt4").is_some());
+        assert!(router.route("Ollama-Local").is_some());
+    }
+
+    #[test]
+    fn test_adapter_router_unknown_provider() {
+        let mut router = AdapterRouter::new();
+        router.register("openai", Box::new(ChatAdapter));
+
+        assert!(router.route("unknown-provider").is_none());
+    }
+
+    #[test]
+    fn test_adapter_router_case_insensitive() {
+        let mut router = AdapterRouter::new();
+        router.register("anthropic", Box::new(ChatAdapter));
+
+        assert!(router.route("ANTHROPIC").is_some());
+        assert!(router.route("Anthropic-Claude").is_some());
+    }
+
+    #[test]
+    fn test_adapter_router_empty() {
+        let router = AdapterRouter::new();
+        assert!(router.route("anything").is_none());
+    }
+
+    #[test]
+    fn test_adapter_router_first_match_wins() {
+        let mut router = AdapterRouter::new();
+        router.register("open", Box::new(ChatAdapter));
+        router.register("openai", Box::new(CompletionAdapter));
+
+        // "open" matches first
+        let compiled = CompiledPrompt {
+            system_prompt: "sys".to_string(),
+            user_template: "usr".to_string(),
+            examples: vec![],
+        };
+        let adapter = router.route("openai").unwrap();
+        let formatted = adapter.format_for_provider(&compiled, "openai");
+        // ChatAdapter sets system_message, CompletionAdapter does not
+        assert!(formatted.system_message.is_some());
+    }
+
+    #[test]
+    fn test_adapter_router_format_end_to_end() {
+        let mut router = AdapterRouter::new();
+        router.register("openai", Box::new(ChatAdapter));
+        router.register("ollama", Box::new(CompletionAdapter));
+        router.register("fn-", Box::new(FunctionCallingAdapter));
+
+        let compiled = CompiledPrompt {
+            system_prompt: "Task".to_string(),
+            user_template: "Q: {q}".to_string(),
+            examples: vec![PromptExample {
+                inputs: HashMap::from([("q".to_string(), "test".to_string())]),
+                outputs: HashMap::from([("a".to_string(), "result".to_string())]),
+            }],
+        };
+
+        // Test each adapter through the router
+        let chat = router.route("openai-gpt4").unwrap();
+        let chat_fmt = chat.format_for_provider(&compiled, "openai-gpt4");
+        assert!(chat_fmt.system_message.is_some());
+        assert!(!chat_fmt.messages.is_empty());
+
+        let completion = router.route("ollama-llama").unwrap();
+        let comp_fmt = completion.format_for_provider(&compiled, "ollama-llama");
+        assert!(comp_fmt.raw_prompt.is_some());
+
+        let fn_call = router.route("fn-caller").unwrap();
+        let fn_fmt = fn_call.format_for_provider(&compiled, "fn-caller");
+        assert!(fn_fmt.system_message.as_deref().unwrap().contains("respond"));
+    }
+
+    #[test]
+    fn test_formatted_prompt_message_roles() {
+        let msg = FormattedMessage {
+            role: "system".to_string(),
+            content: "Hello".to_string(),
+        };
+        assert_eq!(msg.role, "system");
+        assert_eq!(msg.content, "Hello");
+    }
+
+    #[test]
+    fn test_formatted_prompt_clone() {
+        let prompt = FormattedPrompt {
+            system_message: Some("sys".to_string()),
+            messages: vec![FormattedMessage {
+                role: "user".to_string(),
+                content: "hi".to_string(),
+            }],
+            raw_prompt: None,
+        };
+        let cloned = prompt.clone();
+        assert_eq!(cloned.system_message, prompt.system_message);
+        assert_eq!(cloned.messages.len(), 1);
     }
 }

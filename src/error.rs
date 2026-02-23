@@ -33,6 +33,14 @@ pub enum AiError {
     AdvancedMemory(AdvancedMemoryError),
     /// Agent-to-Agent protocol errors
     A2A(A2AError),
+    /// Voice agent errors
+    VoiceAgent(VoiceAgentError),
+    /// Media generation errors
+    MediaGeneration(MediaGenerationError),
+    /// Distillation pipeline errors
+    Distillation(DistillationError),
+    /// Constrained decoding errors
+    ConstrainedDecoding(ConstrainedDecodingError),
     /// Generic error with message
     Other(String),
 }
@@ -51,6 +59,10 @@ impl std::error::Error for AiError {
             AiError::Workflow(e) => Some(e),
             AiError::AdvancedMemory(e) => Some(e),
             AiError::A2A(e) => Some(e),
+            AiError::VoiceAgent(e) => Some(e),
+            AiError::MediaGeneration(e) => Some(e),
+            AiError::Distillation(e) => Some(e),
+            AiError::ConstrainedDecoding(e) => Some(e),
             AiError::Other(_) => None,
         }
     }
@@ -70,6 +82,10 @@ impl fmt::Display for AiError {
             AiError::Workflow(e) => write!(f, "Workflow error: {}", e),
             AiError::AdvancedMemory(e) => write!(f, "Memory error: {}", e),
             AiError::A2A(e) => write!(f, "A2A error: {}", e),
+            AiError::VoiceAgent(e) => write!(f, "Voice agent error: {}", e),
+            AiError::MediaGeneration(e) => write!(f, "Media generation error: {}", e),
+            AiError::Distillation(e) => write!(f, "Distillation error: {}", e),
+            AiError::ConstrainedDecoding(e) => write!(f, "Constrained decoding error: {}", e),
             AiError::Other(msg) => write!(f, "{}", msg),
         }
     }
@@ -95,6 +111,10 @@ impl AiError {
             AiError::Workflow(e) => e.suggestion(),
             AiError::AdvancedMemory(e) => e.suggestion(),
             AiError::A2A(e) => e.suggestion(),
+            AiError::VoiceAgent(e) => e.suggestion(),
+            AiError::MediaGeneration(e) => e.suggestion(),
+            AiError::Distillation(e) => e.suggestion(),
+            AiError::ConstrainedDecoding(e) => e.suggestion(),
             AiError::Other(_) => None,
         }
     }
@@ -107,6 +127,10 @@ impl AiError {
             AiError::ResourceLimit(e) => e.is_recoverable(),
             AiError::Workflow(e) => e.is_recoverable(),
             AiError::A2A(e) => e.is_recoverable(),
+            AiError::VoiceAgent(e) => e.is_recoverable(),
+            AiError::MediaGeneration(e) => e.is_recoverable(),
+            AiError::Distillation(_) => false,
+            AiError::ConstrainedDecoding(_) => false,
             _ => false,
         }
     }
@@ -125,6 +149,10 @@ impl AiError {
             AiError::Workflow(_) => "WORKFLOW",
             AiError::AdvancedMemory(_) => "MEMORY",
             AiError::A2A(_) => "A2A",
+            AiError::VoiceAgent(_) => "VOICE_AGENT",
+            AiError::MediaGeneration(_) => "MEDIA_GENERATION",
+            AiError::Distillation(_) => "DISTILLATION",
+            AiError::ConstrainedDecoding(_) => "CONSTRAINED_DECODING",
             AiError::Other(_) => "OTHER",
         }
     }
@@ -1145,6 +1173,277 @@ impl From<A2AError> for AiError {
     }
 }
 
+// === Voice Agent Errors ===
+
+/// Errors related to real-time voice agent operations
+#[derive(Debug)]
+pub enum VoiceAgentError {
+    /// Audio stream connection failed
+    StreamFailed { reason: String },
+    /// Voice activity detection error
+    VadError { reason: String },
+    /// STT transcription failed
+    TranscriptionFailed { reason: String },
+    /// TTS synthesis failed
+    SynthesisFailed { reason: String },
+    /// Session state is invalid for the requested operation
+    InvalidSessionState { current: String, attempted: String },
+    /// Audio format not supported
+    UnsupportedFormat { format: String },
+}
+
+impl std::error::Error for VoiceAgentError {}
+
+impl fmt::Display for VoiceAgentError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            VoiceAgentError::StreamFailed { reason } => {
+                write!(f, "Audio stream failed: {}", reason)
+            }
+            VoiceAgentError::VadError { reason } => {
+                write!(f, "Voice activity detection error: {}", reason)
+            }
+            VoiceAgentError::TranscriptionFailed { reason } => {
+                write!(f, "Transcription failed: {}", reason)
+            }
+            VoiceAgentError::SynthesisFailed { reason } => {
+                write!(f, "Speech synthesis failed: {}", reason)
+            }
+            VoiceAgentError::InvalidSessionState { current, attempted } => {
+                write!(f, "Voice session in state '{}', cannot perform '{}'", current, attempted)
+            }
+            VoiceAgentError::UnsupportedFormat { format } => {
+                write!(f, "Unsupported audio format: {}", format)
+            }
+        }
+    }
+}
+
+impl VoiceAgentError {
+    pub fn suggestion(&self) -> Option<&'static str> {
+        match self {
+            VoiceAgentError::StreamFailed { .. } => Some("Check audio device and network connection"),
+            VoiceAgentError::VadError { .. } => Some("Adjust VAD sensitivity thresholds"),
+            VoiceAgentError::TranscriptionFailed { .. } => Some("Check STT provider availability"),
+            VoiceAgentError::SynthesisFailed { .. } => Some("Check TTS provider availability"),
+            VoiceAgentError::InvalidSessionState { .. } => Some("Check voice session lifecycle state"),
+            VoiceAgentError::UnsupportedFormat { .. } => Some("Use PCM 16-bit 16kHz or WAV format"),
+        }
+    }
+
+    pub fn is_recoverable(&self) -> bool {
+        matches!(
+            self,
+            VoiceAgentError::StreamFailed { .. }
+                | VoiceAgentError::TranscriptionFailed { .. }
+                | VoiceAgentError::SynthesisFailed { .. }
+        )
+    }
+}
+
+impl From<VoiceAgentError> for AiError {
+    fn from(e: VoiceAgentError) -> Self {
+        AiError::VoiceAgent(e)
+    }
+}
+
+// === Media Generation Errors ===
+
+/// Errors related to image and video generation
+#[derive(Debug)]
+pub enum MediaGenerationError {
+    /// Provider not available
+    ProviderUnavailable { provider: String, reason: String },
+    /// Generation job failed
+    GenerationFailed { provider: String, reason: String },
+    /// Job timed out
+    JobTimeout { job_id: String, timeout_secs: u64 },
+    /// Invalid generation parameters
+    InvalidParams { param: String, reason: String },
+    /// Unsupported output format
+    UnsupportedFormat { format: String },
+    /// Content policy violation (NSFW, etc.)
+    ContentPolicyViolation { reason: String },
+}
+
+impl std::error::Error for MediaGenerationError {}
+
+impl fmt::Display for MediaGenerationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            MediaGenerationError::ProviderUnavailable { provider, reason } => {
+                write!(f, "Media provider '{}' unavailable: {}", provider, reason)
+            }
+            MediaGenerationError::GenerationFailed { provider, reason } => {
+                write!(f, "Generation failed on '{}': {}", provider, reason)
+            }
+            MediaGenerationError::JobTimeout { job_id, timeout_secs } => {
+                write!(f, "Generation job '{}' timed out after {}s", job_id, timeout_secs)
+            }
+            MediaGenerationError::InvalidParams { param, reason } => {
+                write!(f, "Invalid generation parameter '{}': {}", param, reason)
+            }
+            MediaGenerationError::UnsupportedFormat { format } => {
+                write!(f, "Unsupported media format: {}", format)
+            }
+            MediaGenerationError::ContentPolicyViolation { reason } => {
+                write!(f, "Content policy violation: {}", reason)
+            }
+        }
+    }
+}
+
+impl MediaGenerationError {
+    pub fn suggestion(&self) -> Option<&'static str> {
+        match self {
+            MediaGenerationError::ProviderUnavailable { .. } => Some("Check API key and provider status"),
+            MediaGenerationError::GenerationFailed { .. } => Some("Try a different prompt or parameters"),
+            MediaGenerationError::JobTimeout { .. } => Some("Increase timeout or try a simpler prompt"),
+            MediaGenerationError::InvalidParams { .. } => Some("Check parameter ranges and valid values"),
+            MediaGenerationError::UnsupportedFormat { .. } => Some("Use PNG, JPEG, WebP, MP4, or WebM"),
+            MediaGenerationError::ContentPolicyViolation { .. } => Some("Modify the prompt to comply with content policies"),
+        }
+    }
+
+    pub fn is_recoverable(&self) -> bool {
+        matches!(
+            self,
+            MediaGenerationError::ProviderUnavailable { .. }
+                | MediaGenerationError::JobTimeout { .. }
+        )
+    }
+}
+
+impl From<MediaGenerationError> for AiError {
+    fn from(e: MediaGenerationError) -> Self {
+        AiError::MediaGeneration(e)
+    }
+}
+
+// === Distillation Errors ===
+
+/// Errors related to the trace-to-distillation pipeline
+#[derive(Debug)]
+pub enum DistillationError {
+    /// Trajectory collection failed
+    CollectionFailed { reason: String },
+    /// Trajectory scoring failed
+    ScoringFailed { reason: String },
+    /// Dataset build failed
+    DatasetBuildFailed { format: String, reason: String },
+    /// No valid trajectories found after filtering
+    NoValidTrajectories { min_score: f64, total_checked: usize },
+    /// Flywheel cycle failed
+    FlywheelFailed { cycle_id: String, reason: String },
+    /// Storage backend error
+    StorageError { operation: String, reason: String },
+}
+
+impl std::error::Error for DistillationError {}
+
+impl fmt::Display for DistillationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DistillationError::CollectionFailed { reason } => {
+                write!(f, "Trajectory collection failed: {}", reason)
+            }
+            DistillationError::ScoringFailed { reason } => {
+                write!(f, "Trajectory scoring failed: {}", reason)
+            }
+            DistillationError::DatasetBuildFailed { format, reason } => {
+                write!(f, "Dataset build failed for format '{}': {}", format, reason)
+            }
+            DistillationError::NoValidTrajectories { min_score, total_checked } => {
+                write!(f, "No trajectories met score threshold {:.2} (checked {})", min_score, total_checked)
+            }
+            DistillationError::FlywheelFailed { cycle_id, reason } => {
+                write!(f, "Flywheel cycle '{}' failed: {}", cycle_id, reason)
+            }
+            DistillationError::StorageError { operation, reason } => {
+                write!(f, "Distillation storage error during '{}': {}", operation, reason)
+            }
+        }
+    }
+}
+
+impl DistillationError {
+    pub fn suggestion(&self) -> Option<&'static str> {
+        match self {
+            DistillationError::CollectionFailed { .. } => Some("Check that trajectory hooks are properly registered"),
+            DistillationError::ScoringFailed { .. } => Some("Verify scorer configuration and trajectory format"),
+            DistillationError::DatasetBuildFailed { .. } => Some("Check output path permissions and format config"),
+            DistillationError::NoValidTrajectories { .. } => Some("Lower the score threshold or collect more trajectories"),
+            DistillationError::FlywheelFailed { .. } => Some("Check flywheel trigger configuration"),
+            DistillationError::StorageError { .. } => Some("Check storage backend availability and permissions"),
+        }
+    }
+}
+
+impl From<DistillationError> for AiError {
+    fn from(e: DistillationError) -> Self {
+        AiError::Distillation(e)
+    }
+}
+
+// === Constrained Decoding Errors ===
+
+/// Errors related to grammar-guided constrained decoding
+#[derive(Debug)]
+pub enum ConstrainedDecodingError {
+    /// Grammar compilation failed
+    GrammarCompilationFailed { reason: String },
+    /// JSON Schema conversion failed
+    SchemaConversionFailed { path: String, reason: String },
+    /// Streaming validation detected invalid output
+    ValidationFailed { position: usize, expected: String, got: String },
+    /// Provider does not support grammar-guided generation
+    ProviderUnsupported { provider: String },
+    /// Grammar syntax error
+    GrammarSyntaxError { line: usize, message: String },
+}
+
+impl std::error::Error for ConstrainedDecodingError {}
+
+impl fmt::Display for ConstrainedDecodingError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ConstrainedDecodingError::GrammarCompilationFailed { reason } => {
+                write!(f, "Grammar compilation failed: {}", reason)
+            }
+            ConstrainedDecodingError::SchemaConversionFailed { path, reason } => {
+                write!(f, "Schema conversion failed at '{}': {}", path, reason)
+            }
+            ConstrainedDecodingError::ValidationFailed { position, expected, got } => {
+                write!(f, "Validation failed at position {}: expected {}, got '{}'", position, expected, got)
+            }
+            ConstrainedDecodingError::ProviderUnsupported { provider } => {
+                write!(f, "Provider '{}' does not support constrained decoding", provider)
+            }
+            ConstrainedDecodingError::GrammarSyntaxError { line, message } => {
+                write!(f, "Grammar syntax error at line {}: {}", line, message)
+            }
+        }
+    }
+}
+
+impl ConstrainedDecodingError {
+    pub fn suggestion(&self) -> Option<&'static str> {
+        match self {
+            ConstrainedDecodingError::GrammarCompilationFailed { .. } => Some("Check grammar syntax and rule definitions"),
+            ConstrainedDecodingError::SchemaConversionFailed { .. } => Some("Verify JSON Schema is valid and supported"),
+            ConstrainedDecodingError::ValidationFailed { .. } => Some("Check that the model output matches the expected schema"),
+            ConstrainedDecodingError::ProviderUnsupported { .. } => Some("Use Ollama, LM Studio, or vLLM for grammar support"),
+            ConstrainedDecodingError::GrammarSyntaxError { .. } => Some("Fix the grammar syntax at the indicated line"),
+        }
+    }
+}
+
+impl From<ConstrainedDecodingError> for AiError {
+    fn from(e: ConstrainedDecodingError) -> Self {
+        AiError::ConstrainedDecoding(e)
+    }
+}
+
 // === Conversions from anyhow ===
 
 impl From<anyhow::Error> for AiError {
@@ -1263,6 +1562,10 @@ mod tests {
             AiError::Workflow(WorkflowError::BreakpointHit { node_id: "n".into() }),
             AiError::AdvancedMemory(AdvancedMemoryError::ConsolidationFailed { reason: "r".into() }),
             AiError::A2A(A2AError::TaskCancelled { task_id: "t".into() }),
+            AiError::VoiceAgent(VoiceAgentError::StreamFailed { reason: "disconnected".into() }),
+            AiError::MediaGeneration(MediaGenerationError::GenerationFailed { provider: "dalle".into(), reason: "timeout".into() }),
+            AiError::Distillation(DistillationError::NoValidTrajectories { min_score: 0.8, total_checked: 100 }),
+            AiError::ConstrainedDecoding(ConstrainedDecodingError::ProviderUnsupported { provider: "openai".into() }),
             AiError::Other("something went wrong".into()),
         ];
 
@@ -1508,6 +1811,104 @@ mod tests {
     }
 
     #[test]
+    fn test_voice_agent_error_display_and_suggestion() {
+        let errors: Vec<VoiceAgentError> = vec![
+            VoiceAgentError::StreamFailed { reason: "disconnected".into() },
+            VoiceAgentError::VadError { reason: "threshold".into() },
+            VoiceAgentError::TranscriptionFailed { reason: "timeout".into() },
+            VoiceAgentError::SynthesisFailed { reason: "no voice".into() },
+            VoiceAgentError::InvalidSessionState { current: "idle".into(), attempted: "resume".into() },
+            VoiceAgentError::UnsupportedFormat { format: "aac".into() },
+        ];
+        for err in &errors {
+            assert!(!err.to_string().is_empty());
+            assert!(err.suggestion().is_some());
+        }
+    }
+
+    #[test]
+    fn test_voice_agent_error_recoverable() {
+        assert!(VoiceAgentError::StreamFailed { reason: "r".into() }.is_recoverable());
+        assert!(VoiceAgentError::TranscriptionFailed { reason: "r".into() }.is_recoverable());
+        assert!(!VoiceAgentError::InvalidSessionState { current: "a".into(), attempted: "b".into() }.is_recoverable());
+        assert!(!VoiceAgentError::UnsupportedFormat { format: "f".into() }.is_recoverable());
+    }
+
+    #[test]
+    fn test_media_generation_error_display_and_suggestion() {
+        let errors: Vec<MediaGenerationError> = vec![
+            MediaGenerationError::ProviderUnavailable { provider: "dalle".into(), reason: "timeout".into() },
+            MediaGenerationError::GenerationFailed { provider: "sd".into(), reason: "oom".into() },
+            MediaGenerationError::JobTimeout { job_id: "j-1".into(), timeout_secs: 300 },
+            MediaGenerationError::InvalidParams { param: "width".into(), reason: "too large".into() },
+            MediaGenerationError::UnsupportedFormat { format: "bmp".into() },
+            MediaGenerationError::ContentPolicyViolation { reason: "nsfw".into() },
+        ];
+        for err in &errors {
+            assert!(!err.to_string().is_empty());
+            assert!(err.suggestion().is_some());
+        }
+    }
+
+    #[test]
+    fn test_media_generation_error_recoverable() {
+        assert!(MediaGenerationError::ProviderUnavailable { provider: "p".into(), reason: "r".into() }.is_recoverable());
+        assert!(MediaGenerationError::JobTimeout { job_id: "j".into(), timeout_secs: 60 }.is_recoverable());
+        assert!(!MediaGenerationError::GenerationFailed { provider: "p".into(), reason: "r".into() }.is_recoverable());
+        assert!(!MediaGenerationError::ContentPolicyViolation { reason: "r".into() }.is_recoverable());
+    }
+
+    #[test]
+    fn test_distillation_error_display_and_suggestion() {
+        let errors: Vec<DistillationError> = vec![
+            DistillationError::CollectionFailed { reason: "no hooks".into() },
+            DistillationError::ScoringFailed { reason: "nan".into() },
+            DistillationError::DatasetBuildFailed { format: "openai".into(), reason: "io".into() },
+            DistillationError::NoValidTrajectories { min_score: 0.9, total_checked: 50 },
+            DistillationError::FlywheelFailed { cycle_id: "c-1".into(), reason: "trigger".into() },
+            DistillationError::StorageError { operation: "write".into(), reason: "full".into() },
+        ];
+        for err in &errors {
+            assert!(!err.to_string().is_empty());
+            assert!(err.suggestion().is_some());
+        }
+    }
+
+    #[test]
+    fn test_constrained_decoding_error_display_and_suggestion() {
+        let errors: Vec<ConstrainedDecodingError> = vec![
+            ConstrainedDecodingError::GrammarCompilationFailed { reason: "bad rule".into() },
+            ConstrainedDecodingError::SchemaConversionFailed { path: "$.items".into(), reason: "unsupported".into() },
+            ConstrainedDecodingError::ValidationFailed { position: 42, expected: "string".into(), got: "123".into() },
+            ConstrainedDecodingError::ProviderUnsupported { provider: "openai".into() },
+            ConstrainedDecodingError::GrammarSyntaxError { line: 5, message: "unexpected token".into() },
+        ];
+        for err in &errors {
+            assert!(!err.to_string().is_empty());
+            assert!(err.suggestion().is_some());
+        }
+    }
+
+    #[test]
+    fn test_new_v5_error_from_conversions() {
+        let va_err = VoiceAgentError::StreamFailed { reason: "test".into() };
+        let ai_err: AiError = va_err.into();
+        assert_eq!(ai_err.code(), "VOICE_AGENT");
+
+        let mg_err = MediaGenerationError::GenerationFailed { provider: "p".into(), reason: "r".into() };
+        let ai_err: AiError = mg_err.into();
+        assert_eq!(ai_err.code(), "MEDIA_GENERATION");
+
+        let d_err = DistillationError::CollectionFailed { reason: "r".into() };
+        let ai_err: AiError = d_err.into();
+        assert_eq!(ai_err.code(), "DISTILLATION");
+
+        let cd_err = ConstrainedDecodingError::ProviderUnsupported { provider: "p".into() };
+        let ai_err: AiError = cd_err.into();
+        assert_eq!(ai_err.code(), "CONSTRAINED_DECODING");
+    }
+
+    #[test]
     fn test_error_code_all_variants() {
         let cases: Vec<(AiError, &str)> = vec![
             (
@@ -1544,6 +1945,22 @@ mod tests {
             (
                 AiError::A2A(A2AError::TaskNotFound { task_id: "x".into() }),
                 "A2A",
+            ),
+            (
+                AiError::VoiceAgent(VoiceAgentError::StreamFailed { reason: "x".into() }),
+                "VOICE_AGENT",
+            ),
+            (
+                AiError::MediaGeneration(MediaGenerationError::GenerationFailed { provider: "x".into(), reason: "x".into() }),
+                "MEDIA_GENERATION",
+            ),
+            (
+                AiError::Distillation(DistillationError::CollectionFailed { reason: "x".into() }),
+                "DISTILLATION",
+            ),
+            (
+                AiError::ConstrainedDecoding(ConstrainedDecodingError::ProviderUnsupported { provider: "x".into() }),
+                "CONSTRAINED_DECODING",
             ),
             (AiError::Other("misc".into()), "OTHER"),
         ];

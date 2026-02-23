@@ -1223,6 +1223,708 @@ impl Default for CollaborationSession {
     }
 }
 
+// =============================================================================
+// 7.2 Named Conversation Patterns
+// =============================================================================
+
+/// Pre-built multi-agent conversation patterns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConversationPattern {
+    /// Each agent picks a task from a shared queue. First-come first-served.
+    Swarm,
+    /// Agents argue positions in turns. A judge synthesizes after max_rounds.
+    Debate,
+    /// Each agent speaks in order, round after round. Output of one feeds as input to next.
+    RoundRobin,
+    /// Linear pipeline: Agent 1 output -> Agent 2 input -> ... -> Agent N output.
+    Sequential,
+    /// One master agent; when it "calls" a sub-agent, a sub-conversation is triggered.
+    NestedChat,
+    /// Input sent to ALL agents simultaneously, all responses collected.
+    Broadcast,
+}
+
+/// Termination conditions for conversation patterns.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TerminationCondition {
+    /// Stop after a fixed number of rounds.
+    MaxRounds(usize),
+    /// Stop when all agents agree (consensus detected).
+    Consensus,
+    /// Stop when the judge agent makes a decision.
+    JudgeDecision,
+    /// Stop based on a custom condition description.
+    Custom(String),
+}
+
+/// Configuration for a conversation pattern execution.
+#[derive(Debug, Clone)]
+pub struct PatternConfig {
+    /// Maximum number of rounds before termination.
+    pub max_rounds: usize,
+    /// Optional termination condition (overrides max_rounds when met earlier).
+    pub termination_condition: Option<TerminationCondition>,
+    /// Agent id of the judge (used for Debate pattern).
+    pub judge_agent_id: Option<String>,
+    /// Task queue (used for Swarm pattern).
+    pub task_queue: Vec<String>,
+}
+
+impl Default for PatternConfig {
+    fn default() -> Self {
+        Self {
+            max_rounds: 10,
+            termination_condition: None,
+            judge_agent_id: None,
+            task_queue: Vec::new(),
+        }
+    }
+}
+
+impl PatternConfig {
+    /// Create a new config with default values.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set maximum rounds.
+    pub fn with_max_rounds(mut self, rounds: usize) -> Self {
+        self.max_rounds = rounds;
+        self
+    }
+
+    /// Set termination condition.
+    pub fn with_termination(mut self, condition: TerminationCondition) -> Self {
+        self.termination_condition = Some(condition);
+        self
+    }
+
+    /// Set judge agent id.
+    pub fn with_judge(mut self, judge_id: &str) -> Self {
+        self.judge_agent_id = Some(judge_id.to_string());
+        self
+    }
+
+    /// Set task queue.
+    pub fn with_task_queue(mut self, tasks: Vec<String>) -> Self {
+        self.task_queue = tasks;
+        self
+    }
+}
+
+/// An agent participating in a conversation pattern.
+#[derive(Debug, Clone)]
+pub struct PatternAgent {
+    /// Unique identifier.
+    pub id: String,
+    /// Display name.
+    pub name: String,
+    /// Role description (e.g. "debater", "summarizer", "coder").
+    pub role: String,
+    /// System prompt that defines this agent's behavior.
+    pub system_prompt: String,
+}
+
+impl PatternAgent {
+    /// Create a new pattern agent.
+    pub fn new(id: &str, name: &str, role: &str, system_prompt: &str) -> Self {
+        Self {
+            id: id.to_string(),
+            name: name.to_string(),
+            role: role.to_string(),
+            system_prompt: system_prompt.to_string(),
+        }
+    }
+}
+
+/// A message produced during pattern execution.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PatternMessage {
+    /// Id of the agent that produced this message.
+    pub agent_id: String,
+    /// The content of the message.
+    pub content: String,
+    /// The round number (0-indexed) in which this message was produced.
+    pub round: usize,
+    /// Timestamp of when the message was created.
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+}
+
+impl PatternMessage {
+    /// Create a new pattern message.
+    pub fn new(agent_id: &str, content: &str, round: usize) -> Self {
+        Self {
+            agent_id: agent_id.to_string(),
+            content: content.to_string(),
+            round,
+            timestamp: chrono::Utc::now(),
+        }
+    }
+}
+
+/// Result of running a conversation pattern.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PatternResult {
+    /// All messages produced during the conversation.
+    pub messages: Vec<PatternMessage>,
+    /// Number of rounds completed.
+    pub rounds_completed: usize,
+    /// The final synthesized output (if any).
+    pub final_output: Option<String>,
+    /// Description of what caused termination.
+    pub terminated_by: String,
+}
+
+/// Executes a conversation pattern with N agents.
+pub struct PatternRunner {
+    /// The agents participating in this pattern.
+    agents: Vec<PatternAgent>,
+    /// The conversation pattern to run.
+    pattern: ConversationPattern,
+    /// Configuration for the pattern.
+    config: PatternConfig,
+    /// Transcript of the conversation so far.
+    transcript: Vec<PatternMessage>,
+}
+
+impl PatternRunner {
+    /// Create a new runner for the given pattern and config.
+    pub fn new(pattern: ConversationPattern, config: PatternConfig) -> Self {
+        Self {
+            agents: Vec::new(),
+            pattern,
+            config,
+            transcript: Vec::new(),
+        }
+    }
+
+    /// Add an agent to the runner.
+    pub fn add_agent(&mut self, agent: PatternAgent) -> &mut Self {
+        self.agents.push(agent);
+        self
+    }
+
+    /// Get the current pattern.
+    pub fn pattern(&self) -> ConversationPattern {
+        self.pattern
+    }
+
+    /// Get the current config.
+    pub fn config(&self) -> &PatternConfig {
+        &self.config
+    }
+
+    /// Get the agents.
+    pub fn agents(&self) -> &[PatternAgent] {
+        &self.agents
+    }
+
+    /// Get the transcript.
+    pub fn transcript(&self) -> &[PatternMessage] {
+        &self.transcript
+    }
+
+    /// Run the conversation pattern with the given input.
+    ///
+    /// Since this crate does not call an LLM directly in the pattern runner
+    /// (that would require an async provider), each agent's "response" is
+    /// simulated by combining its system_prompt context with the input/previous
+    /// output. In production, callers would replace this with actual LLM calls.
+    pub fn run(&mut self, input: &str) -> Result<PatternResult, OrchestrationError> {
+        if self.agents.is_empty() {
+            return Err(OrchestrationError::AgentNotFound);
+        }
+
+        self.transcript.clear();
+
+        match self.pattern {
+            ConversationPattern::Swarm => self.run_swarm(input),
+            ConversationPattern::Debate => self.run_debate(input),
+            ConversationPattern::RoundRobin => self.run_round_robin(input),
+            ConversationPattern::Sequential => self.run_sequential(input),
+            ConversationPattern::NestedChat => self.run_nested_chat(input),
+            ConversationPattern::Broadcast => self.run_broadcast(input),
+        }
+    }
+
+    /// Swarm: each agent picks a task from the task_queue.
+    fn run_swarm(&mut self, input: &str) -> Result<PatternResult, OrchestrationError> {
+        let tasks = if self.config.task_queue.is_empty() {
+            vec![input.to_string()]
+        } else {
+            self.config.task_queue.clone()
+        };
+
+        let mut round = 0usize;
+        let mut task_idx = 0usize;
+        let agent_count = self.agents.len();
+
+        while task_idx < tasks.len() && round < self.config.max_rounds {
+            let agent_idx = task_idx % agent_count;
+            let agent = &self.agents[agent_idx];
+            let task = &tasks[task_idx];
+
+            let response = format!(
+                "[{}] processed task: {}",
+                agent.name, task
+            );
+            self.transcript.push(PatternMessage::new(&agent.id, &response, round));
+
+            task_idx += 1;
+            if task_idx % agent_count == 0 || task_idx >= tasks.len() {
+                round += 1;
+            }
+
+            if self.check_termination(round) {
+                break;
+            }
+        }
+
+        let final_output = self.transcript.last().map(|m| m.content.clone());
+        let terminated_by = if round >= self.config.max_rounds {
+            "max_rounds".to_string()
+        } else if task_idx >= tasks.len() {
+            "all_tasks_completed".to_string()
+        } else {
+            "termination_condition".to_string()
+        };
+
+        Ok(PatternResult {
+            messages: self.transcript.clone(),
+            rounds_completed: round,
+            final_output,
+            terminated_by,
+        })
+    }
+
+    /// Debate: agents take turns arguing. Judge synthesizes at the end.
+    fn run_debate(&mut self, input: &str) -> Result<PatternResult, OrchestrationError> {
+        let mut current_input = input.to_string();
+        let mut round = 0usize;
+        let agent_count = self.agents.len();
+
+        while round < self.config.max_rounds {
+            for i in 0..agent_count {
+                let agent = &self.agents[i];
+                let response = format!(
+                    "[{}] argues (round {}): re '{}' -- from perspective of {}",
+                    agent.name, round, current_input, agent.role
+                );
+                self.transcript.push(PatternMessage::new(&agent.id, &response, round));
+                current_input = response;
+            }
+
+            round += 1;
+
+            if self.check_termination(round) {
+                break;
+            }
+        }
+
+        // Judge synthesizes if configured
+        let final_output = if let Some(ref judge_id) = self.config.judge_agent_id {
+            let judge_name = self
+                .agents
+                .iter()
+                .find(|a| a.id == *judge_id)
+                .map(|a| a.name.clone())
+                .unwrap_or_else(|| judge_id.clone());
+
+            let synthesis = format!(
+                "[Judge {}] synthesis after {} rounds of debate on: {}",
+                judge_name, round, input
+            );
+            self.transcript.push(PatternMessage::new(judge_id, &synthesis, round));
+            Some(synthesis)
+        } else {
+            // No judge: use last message as final output
+            self.transcript.last().map(|m| m.content.clone())
+        };
+
+        let terminated_by = if round >= self.config.max_rounds {
+            "max_rounds".to_string()
+        } else {
+            "termination_condition".to_string()
+        };
+
+        Ok(PatternResult {
+            messages: self.transcript.clone(),
+            rounds_completed: round,
+            final_output,
+            terminated_by,
+        })
+    }
+
+    /// RoundRobin: each agent speaks in order, round after round.
+    fn run_round_robin(&mut self, input: &str) -> Result<PatternResult, OrchestrationError> {
+        let mut current_input = input.to_string();
+        let mut round = 0usize;
+        let agent_count = self.agents.len();
+
+        while round < self.config.max_rounds {
+            for i in 0..agent_count {
+                let agent = &self.agents[i];
+                let response = format!(
+                    "[{}] (round {}) responds to: {}",
+                    agent.name, round, current_input
+                );
+                self.transcript.push(PatternMessage::new(&agent.id, &response, round));
+                current_input = response;
+            }
+
+            round += 1;
+
+            if self.check_termination(round) {
+                break;
+            }
+        }
+
+        let final_output = self.transcript.last().map(|m| m.content.clone());
+        let terminated_by = if round >= self.config.max_rounds {
+            "max_rounds".to_string()
+        } else {
+            "termination_condition".to_string()
+        };
+
+        Ok(PatternResult {
+            messages: self.transcript.clone(),
+            rounds_completed: round,
+            final_output,
+            terminated_by,
+        })
+    }
+
+    /// Sequential: linear pipeline. Agent 1 -> Agent 2 -> ... -> Agent N.
+    fn run_sequential(&mut self, input: &str) -> Result<PatternResult, OrchestrationError> {
+        let mut current_input = input.to_string();
+        let agent_count = self.agents.len();
+
+        for (i, agent) in self.agents.iter().enumerate() {
+            let response = format!(
+                "[{}] pipeline step {}: processed '{}'",
+                agent.name, i, current_input
+            );
+            self.transcript.push(PatternMessage::new(&agent.id, &response, 0));
+            current_input = response;
+        }
+
+        let final_output = self.transcript.last().map(|m| m.content.clone());
+
+        Ok(PatternResult {
+            messages: self.transcript.clone(),
+            rounds_completed: 1,
+            final_output,
+            terminated_by: format!("pipeline_complete ({} stages)", agent_count),
+        })
+    }
+
+    /// NestedChat: master agent (first) can trigger sub-conversations with other agents.
+    fn run_nested_chat(&mut self, input: &str) -> Result<PatternResult, OrchestrationError> {
+        let agent_count = self.agents.len();
+        if agent_count < 2 {
+            // With only one agent, it just responds directly
+            let agent = &self.agents[0];
+            let response = format!("[{}] responds: {}", agent.name, input);
+            self.transcript.push(PatternMessage::new(&agent.id, &response, 0));
+            return Ok(PatternResult {
+                messages: self.transcript.clone(),
+                rounds_completed: 1,
+                final_output: Some(response),
+                terminated_by: "single_agent".to_string(),
+            });
+        }
+
+        let master = self.agents[0].clone();
+        let mut round = 0usize;
+        let mut current_input = input.to_string();
+
+        while round < self.config.max_rounds {
+            // Master agent processes and delegates to sub-agents
+            let master_response = format!(
+                "[{}] master delegates (round {}): '{}'",
+                master.name, round, current_input
+            );
+            self.transcript.push(PatternMessage::new(&master.id, &master_response, round));
+
+            // Each sub-agent processes the delegated task
+            for i in 1..agent_count {
+                let sub_agent = &self.agents[i];
+                let sub_response = format!(
+                    "[{}] sub-response to master (round {}): handling '{}'",
+                    sub_agent.name, round, current_input
+                );
+                self.transcript.push(PatternMessage::new(&sub_agent.id, &sub_response, round));
+                current_input = sub_response;
+            }
+
+            // Master synthesizes sub-agent responses
+            let synthesis = format!(
+                "[{}] master synthesis (round {}): combined sub-agent results",
+                master.name, round
+            );
+            self.transcript.push(PatternMessage::new(&master.id, &synthesis, round));
+            current_input = synthesis;
+
+            round += 1;
+
+            if self.check_termination(round) {
+                break;
+            }
+        }
+
+        let final_output = self.transcript.last().map(|m| m.content.clone());
+        let terminated_by = if round >= self.config.max_rounds {
+            "max_rounds".to_string()
+        } else {
+            "termination_condition".to_string()
+        };
+
+        Ok(PatternResult {
+            messages: self.transcript.clone(),
+            rounds_completed: round,
+            final_output,
+            terminated_by,
+        })
+    }
+
+    /// Broadcast: input sent to ALL agents simultaneously, all responses collected.
+    fn run_broadcast(&mut self, input: &str) -> Result<PatternResult, OrchestrationError> {
+        let mut responses = Vec::new();
+
+        for agent in &self.agents {
+            let response = format!(
+                "[{}] broadcast response: {}",
+                agent.name, input
+            );
+            self.transcript.push(PatternMessage::new(&agent.id, &response, 0));
+            responses.push(response);
+        }
+
+        let final_output = Some(format!(
+            "Broadcast complete: {} agents responded",
+            responses.len()
+        ));
+
+        Ok(PatternResult {
+            messages: self.transcript.clone(),
+            rounds_completed: 1,
+            final_output,
+            terminated_by: "broadcast_complete".to_string(),
+        })
+    }
+
+    /// Check if a termination condition is met.
+    fn check_termination(&self, current_round: usize) -> bool {
+        match &self.config.termination_condition {
+            Some(TerminationCondition::MaxRounds(max)) => current_round >= *max,
+            Some(TerminationCondition::Consensus) => {
+                // Check if the last N messages (one per agent) all contain the same content.
+                // In a real system this would do semantic comparison; here we check exact match.
+                let agent_count = self.agents.len();
+                if self.transcript.len() < agent_count {
+                    return false;
+                }
+                let last_messages: Vec<&str> = self
+                    .transcript
+                    .iter()
+                    .rev()
+                    .take(agent_count)
+                    .map(|m| m.content.as_str())
+                    .collect();
+                // If all last messages are identical, consensus is reached
+                last_messages.windows(2).all(|w| w[0] == w[1])
+            }
+            Some(TerminationCondition::JudgeDecision) => {
+                // Check if the judge has spoken in the current round
+                if let Some(ref judge_id) = self.config.judge_agent_id {
+                    self.transcript.iter().any(|m| {
+                        m.agent_id == *judge_id && m.content.contains("synthesis")
+                    })
+                } else {
+                    false
+                }
+            }
+            Some(TerminationCondition::Custom(_)) => {
+                // Custom conditions are evaluated externally; never auto-triggers
+                false
+            }
+            None => false,
+        }
+    }
+}
+
+// =============================================================================
+// 7.4 Agent Handoffs
+// =============================================================================
+
+/// Policy for how much context to transfer during a handoff.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContextTransferPolicy {
+    /// Transfer entire conversation history.
+    Full,
+    /// Transfer a summary of the conversation.
+    Summary,
+    /// Transfer the last N messages.
+    LastN(usize),
+    /// No context transfer.
+    None,
+}
+
+/// A request for one agent to hand off a conversation to another.
+#[derive(Debug, Clone)]
+pub struct HandoffRequest {
+    /// The agent initiating the handoff.
+    pub from_agent_id: String,
+    /// The target agent to hand off to.
+    pub to_agent_id: String,
+    /// Reason for the handoff.
+    pub reason: String,
+    /// How much context to transfer.
+    pub context_policy: ContextTransferPolicy,
+    /// Arbitrary metadata for the handoff.
+    pub metadata: HashMap<String, String>,
+}
+
+impl HandoffRequest {
+    /// Create a new handoff request.
+    pub fn new(from: &str, to: &str, reason: &str, policy: ContextTransferPolicy) -> Self {
+        Self {
+            from_agent_id: from.to_string(),
+            to_agent_id: to.to_string(),
+            reason: reason.to_string(),
+            context_policy: policy,
+            metadata: HashMap::new(),
+        }
+    }
+
+    /// Add metadata to the request.
+    pub fn with_metadata(mut self, key: &str, value: &str) -> Self {
+        self.metadata.insert(key.to_string(), value.to_string());
+        self
+    }
+}
+
+/// Result of an agent handoff.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HandoffResult {
+    /// Whether the handoff succeeded.
+    pub success: bool,
+    /// Number of messages transferred.
+    pub transferred_messages: usize,
+    /// The agent that initiated the handoff.
+    pub from_agent: String,
+    /// The agent that received the handoff.
+    pub to_agent: String,
+    /// Reason for the handoff.
+    pub reason: String,
+}
+
+/// Manages agent registrations and handoff execution.
+pub struct HandoffManager {
+    /// Registered agents keyed by id.
+    agents: HashMap<String, PatternAgent>,
+    /// History of completed handoffs.
+    handoff_history: Vec<HandoffResult>,
+}
+
+impl HandoffManager {
+    /// Create a new, empty handoff manager.
+    pub fn new() -> Self {
+        Self {
+            agents: HashMap::new(),
+            handoff_history: Vec::new(),
+        }
+    }
+
+    /// Register an agent.
+    pub fn register_agent(&mut self, agent: PatternAgent) {
+        self.agents.insert(agent.id.clone(), agent);
+    }
+
+    /// Get a registered agent by id.
+    pub fn get_agent(&self, id: &str) -> Option<&PatternAgent> {
+        self.agents.get(id)
+    }
+
+    /// List all registered agents.
+    pub fn list_agents(&self) -> Vec<&PatternAgent> {
+        self.agents.values().collect()
+    }
+
+    /// Get the handoff history.
+    pub fn get_handoff_history(&self) -> &[HandoffResult] {
+        &self.handoff_history
+    }
+
+    /// Detect if a handoff from -> to would create a circular loop in recent history.
+    ///
+    /// Checks if there is a recent handoff from `to` -> `from` (i.e., A->B->A loop).
+    pub fn detect_circular_handoff(&self, from: &str, to: &str) -> bool {
+        // Look through the recent handoff history for a to->from transfer
+        // which would indicate an A->B->A loop if we now do from->to
+        self.handoff_history.iter().rev().take(10).any(|h| {
+            h.success && h.from_agent == to && h.to_agent == from
+        })
+    }
+
+    /// Execute a handoff request.
+    ///
+    /// Validates that both agents exist, checks for circular handoffs, computes
+    /// the number of messages that would be transferred based on the policy,
+    /// and records the result.
+    pub fn request_handoff(
+        &mut self,
+        request: HandoffRequest,
+    ) -> Result<HandoffResult, OrchestrationError> {
+        // Validate source agent
+        if !self.agents.contains_key(&request.from_agent_id) {
+            return Err(OrchestrationError::AgentNotFound);
+        }
+
+        // Validate target agent
+        if !self.agents.contains_key(&request.to_agent_id) {
+            return Err(OrchestrationError::AgentNotFound);
+        }
+
+        // Check for self-handoff
+        if request.from_agent_id == request.to_agent_id {
+            return Err(OrchestrationError::InvalidState);
+        }
+
+        // Compute transferred message count based on policy
+        let transferred_messages = match &request.context_policy {
+            ContextTransferPolicy::Full => {
+                // Simulated: in a real system this would count actual messages.
+                // We use a sentinel value representing "all messages".
+                usize::MAX
+            }
+            ContextTransferPolicy::Summary => {
+                // A summary is a single condensed message.
+                1
+            }
+            ContextTransferPolicy::LastN(n) => *n,
+            ContextTransferPolicy::None => 0,
+        };
+
+        let result = HandoffResult {
+            success: true,
+            transferred_messages,
+            from_agent: request.from_agent_id,
+            to_agent: request.to_agent_id,
+            reason: request.reason,
+        };
+
+        self.handoff_history.push(result.clone());
+        Ok(result)
+    }
+}
+
+impl Default for HandoffManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1954,6 +2656,571 @@ mod tests {
         // agent-a should no longer receive anything (including old messages)
         let polled_after = bus.poll("agent-a");
         assert_eq!(polled_after.len(), 0);
+    }
+
+    // =========================================================================
+    // 7.2 Named Conversation Patterns tests
+    // =========================================================================
+
+    #[test]
+    fn test_conversation_pattern_swarm_basic() {
+        let config = PatternConfig::new()
+            .with_max_rounds(5)
+            .with_task_queue(vec!["task-a".into(), "task-b".into(), "task-c".into()]);
+        let mut runner = PatternRunner::new(ConversationPattern::Swarm, config);
+        runner.add_agent(PatternAgent::new("a1", "Alice", "worker", "You process tasks."));
+        runner.add_agent(PatternAgent::new("a2", "Bob", "worker", "You process tasks."));
+
+        let result = runner.run("go").unwrap();
+        assert!(result.rounds_completed >= 1);
+        assert_eq!(result.messages.len(), 3); // 3 tasks processed
+        assert!(result.terminated_by.contains("all_tasks_completed"));
+        assert!(result.final_output.is_some());
+    }
+
+    #[test]
+    fn test_conversation_pattern_debate_basic() {
+        let config = PatternConfig::new().with_max_rounds(2);
+        let mut runner = PatternRunner::new(ConversationPattern::Debate, config);
+        runner.add_agent(PatternAgent::new("d1", "Pro", "debater", "Argue in favor."));
+        runner.add_agent(PatternAgent::new("d2", "Con", "debater", "Argue against."));
+
+        let result = runner.run("Is Rust the best language?").unwrap();
+        assert_eq!(result.rounds_completed, 2);
+        // 2 rounds * 2 agents = 4 messages
+        assert_eq!(result.messages.len(), 4);
+        assert!(result.final_output.is_some());
+    }
+
+    #[test]
+    fn test_conversation_pattern_round_robin_basic() {
+        let config = PatternConfig::new().with_max_rounds(3);
+        let mut runner = PatternRunner::new(ConversationPattern::RoundRobin, config);
+        runner.add_agent(PatternAgent::new("r1", "First", "speaker", "Go first."));
+        runner.add_agent(PatternAgent::new("r2", "Second", "speaker", "Go second."));
+
+        let result = runner.run("Start discussion").unwrap();
+        assert_eq!(result.rounds_completed, 3);
+        // 3 rounds * 2 agents = 6 messages
+        assert_eq!(result.messages.len(), 6);
+    }
+
+    #[test]
+    fn test_conversation_pattern_sequential_basic() {
+        let config = PatternConfig::new();
+        let mut runner = PatternRunner::new(ConversationPattern::Sequential, config);
+        runner.add_agent(PatternAgent::new("s1", "Step1", "processor", "First step."));
+        runner.add_agent(PatternAgent::new("s2", "Step2", "processor", "Second step."));
+        runner.add_agent(PatternAgent::new("s3", "Step3", "processor", "Third step."));
+
+        let result = runner.run("initial input").unwrap();
+        assert_eq!(result.rounds_completed, 1);
+        assert_eq!(result.messages.len(), 3);
+        assert!(result.terminated_by.contains("pipeline_complete"));
+        // Final output should be from the last agent
+        let final_out = result.final_output.unwrap();
+        assert!(final_out.contains("Step3"));
+    }
+
+    #[test]
+    fn test_conversation_pattern_nested_chat_basic() {
+        let config = PatternConfig::new().with_max_rounds(2);
+        let mut runner = PatternRunner::new(ConversationPattern::NestedChat, config);
+        runner.add_agent(PatternAgent::new("master", "Master", "coordinator", "Delegate."));
+        runner.add_agent(PatternAgent::new("sub1", "Sub1", "worker", "Handle sub-task."));
+
+        let result = runner.run("complex task").unwrap();
+        assert_eq!(result.rounds_completed, 2);
+        // Each round: master delegates (1) + sub-agent responds (1) + master synthesizes (1) = 3 per round
+        assert_eq!(result.messages.len(), 6);
+    }
+
+    #[test]
+    fn test_conversation_pattern_broadcast_basic() {
+        let config = PatternConfig::new();
+        let mut runner = PatternRunner::new(ConversationPattern::Broadcast, config);
+        runner.add_agent(PatternAgent::new("b1", "Agent1", "responder", "Respond."));
+        runner.add_agent(PatternAgent::new("b2", "Agent2", "responder", "Respond."));
+        runner.add_agent(PatternAgent::new("b3", "Agent3", "responder", "Respond."));
+
+        let result = runner.run("What do you think?").unwrap();
+        assert_eq!(result.rounds_completed, 1);
+        assert_eq!(result.messages.len(), 3);
+        assert_eq!(result.terminated_by, "broadcast_complete");
+        let final_out = result.final_output.unwrap();
+        assert!(final_out.contains("3 agents responded"));
+    }
+
+    #[test]
+    fn test_pattern_runner_zero_agents_error() {
+        let config = PatternConfig::new();
+        let mut runner = PatternRunner::new(ConversationPattern::Broadcast, config);
+
+        let result = runner.run("hello");
+        assert_eq!(result, Err(OrchestrationError::AgentNotFound));
+    }
+
+    #[test]
+    fn test_pattern_runner_add_agents() {
+        let config = PatternConfig::new();
+        let mut runner = PatternRunner::new(ConversationPattern::Sequential, config);
+        assert_eq!(runner.agents().len(), 0);
+
+        runner.add_agent(PatternAgent::new("a1", "A1", "role", "prompt"));
+        assert_eq!(runner.agents().len(), 1);
+
+        runner.add_agent(PatternAgent::new("a2", "A2", "role", "prompt"));
+        assert_eq!(runner.agents().len(), 2);
+    }
+
+    #[test]
+    fn test_pattern_runner_max_rounds_termination() {
+        let config = PatternConfig::new().with_max_rounds(1);
+        let mut runner = PatternRunner::new(ConversationPattern::RoundRobin, config);
+        runner.add_agent(PatternAgent::new("a1", "A", "role", "prompt"));
+
+        let result = runner.run("test").unwrap();
+        assert_eq!(result.rounds_completed, 1);
+        assert_eq!(result.terminated_by, "max_rounds");
+    }
+
+    #[test]
+    fn test_pattern_runner_empty_input() {
+        let config = PatternConfig::new().with_max_rounds(1);
+        let mut runner = PatternRunner::new(ConversationPattern::Sequential, config);
+        runner.add_agent(PatternAgent::new("a1", "A", "role", "prompt"));
+
+        let result = runner.run("").unwrap();
+        assert_eq!(result.messages.len(), 1);
+        assert!(result.final_output.is_some());
+    }
+
+    #[test]
+    fn test_pattern_config_defaults() {
+        let config = PatternConfig::default();
+        assert_eq!(config.max_rounds, 10);
+        assert!(config.termination_condition.is_none());
+        assert!(config.judge_agent_id.is_none());
+        assert!(config.task_queue.is_empty());
+    }
+
+    #[test]
+    fn test_pattern_config_custom() {
+        let config = PatternConfig::new()
+            .with_max_rounds(5)
+            .with_termination(TerminationCondition::MaxRounds(3))
+            .with_judge("judge-1")
+            .with_task_queue(vec!["t1".into(), "t2".into()]);
+
+        assert_eq!(config.max_rounds, 5);
+        assert_eq!(
+            config.termination_condition,
+            Some(TerminationCondition::MaxRounds(3))
+        );
+        assert_eq!(config.judge_agent_id, Some("judge-1".to_string()));
+        assert_eq!(config.task_queue.len(), 2);
+    }
+
+    #[test]
+    fn test_debate_with_judge() {
+        let config = PatternConfig::new()
+            .with_max_rounds(2)
+            .with_judge("judge");
+        let mut runner = PatternRunner::new(ConversationPattern::Debate, config);
+        runner.add_agent(PatternAgent::new("d1", "Pro", "debater", "Argue for."));
+        runner.add_agent(PatternAgent::new("d2", "Con", "debater", "Argue against."));
+        runner.add_agent(PatternAgent::new("judge", "Judge", "judge", "Synthesize."));
+
+        let result = runner.run("Debate topic").unwrap();
+        // Should have the judge's synthesis as final output
+        let final_out = result.final_output.unwrap();
+        assert!(final_out.contains("Judge"));
+        assert!(final_out.contains("synthesis"));
+    }
+
+    #[test]
+    fn test_debate_without_judge() {
+        let config = PatternConfig::new().with_max_rounds(1);
+        let mut runner = PatternRunner::new(ConversationPattern::Debate, config);
+        runner.add_agent(PatternAgent::new("d1", "Pro", "debater", "Argue for."));
+        runner.add_agent(PatternAgent::new("d2", "Con", "debater", "Argue against."));
+
+        let result = runner.run("Topic").unwrap();
+        // Without judge, final output is last message
+        let final_out = result.final_output.unwrap();
+        assert!(final_out.contains("Con")); // last agent in the round
+    }
+
+    #[test]
+    fn test_swarm_task_distribution() {
+        let config = PatternConfig::new()
+            .with_max_rounds(10)
+            .with_task_queue(vec![
+                "task-1".into(),
+                "task-2".into(),
+                "task-3".into(),
+                "task-4".into(),
+            ]);
+        let mut runner = PatternRunner::new(ConversationPattern::Swarm, config);
+        runner.add_agent(PatternAgent::new("a1", "Alice", "worker", "Process."));
+        runner.add_agent(PatternAgent::new("a2", "Bob", "worker", "Process."));
+
+        let result = runner.run("go").unwrap();
+        assert_eq!(result.messages.len(), 4);
+        // Tasks alternate between agents: Alice, Bob, Alice, Bob
+        assert!(result.messages[0].content.contains("Alice"));
+        assert!(result.messages[1].content.contains("Bob"));
+        assert!(result.messages[2].content.contains("Alice"));
+        assert!(result.messages[3].content.contains("Bob"));
+    }
+
+    #[test]
+    fn test_swarm_empty_task_queue() {
+        // With empty task queue, the input is used as a single task
+        let config = PatternConfig::new().with_max_rounds(5);
+        let mut runner = PatternRunner::new(ConversationPattern::Swarm, config);
+        runner.add_agent(PatternAgent::new("a1", "Alice", "worker", "Process."));
+
+        let result = runner.run("do this one thing").unwrap();
+        assert_eq!(result.messages.len(), 1);
+        assert!(result.messages[0].content.contains("do this one thing"));
+    }
+
+    #[test]
+    fn test_sequential_single_agent_passthrough() {
+        let config = PatternConfig::new();
+        let mut runner = PatternRunner::new(ConversationPattern::Sequential, config);
+        runner.add_agent(PatternAgent::new("solo", "Solo", "processor", "Process."));
+
+        let result = runner.run("input data").unwrap();
+        assert_eq!(result.messages.len(), 1);
+        assert!(result.messages[0].content.contains("Solo"));
+        assert!(result.messages[0].content.contains("input data"));
+    }
+
+    #[test]
+    fn test_sequential_multi_agent_pipeline() {
+        let config = PatternConfig::new();
+        let mut runner = PatternRunner::new(ConversationPattern::Sequential, config);
+        runner.add_agent(PatternAgent::new("s1", "Parser", "parser", "Parse."));
+        runner.add_agent(PatternAgent::new("s2", "Analyzer", "analyzer", "Analyze."));
+        runner.add_agent(PatternAgent::new("s3", "Reporter", "reporter", "Report."));
+
+        let result = runner.run("raw data").unwrap();
+        assert_eq!(result.messages.len(), 3);
+        // Each agent should see the output of the previous
+        assert!(result.messages[0].content.contains("raw data"));
+        assert!(result.messages[1].content.contains("Parser"));
+        assert!(result.messages[2].content.contains("Analyzer"));
+    }
+
+    #[test]
+    fn test_broadcast_all_agents_respond() {
+        let config = PatternConfig::new();
+        let mut runner = PatternRunner::new(ConversationPattern::Broadcast, config);
+        runner.add_agent(PatternAgent::new("b1", "Agent1", "r", "Respond."));
+        runner.add_agent(PatternAgent::new("b2", "Agent2", "r", "Respond."));
+
+        let result = runner.run("query").unwrap();
+        assert_eq!(result.messages.len(), 2);
+
+        let agent_ids: Vec<&str> = result.messages.iter().map(|m| m.agent_id.as_str()).collect();
+        assert!(agent_ids.contains(&"b1"));
+        assert!(agent_ids.contains(&"b2"));
+    }
+
+    #[test]
+    fn test_broadcast_collect_all_responses() {
+        let config = PatternConfig::new();
+        let mut runner = PatternRunner::new(ConversationPattern::Broadcast, config);
+        for i in 0..5 {
+            runner.add_agent(PatternAgent::new(
+                &format!("a{}", i),
+                &format!("Agent{}", i),
+                "responder",
+                "Respond.",
+            ));
+        }
+
+        let result = runner.run("mass query").unwrap();
+        assert_eq!(result.messages.len(), 5);
+        let final_out = result.final_output.unwrap();
+        assert!(final_out.contains("5 agents responded"));
+    }
+
+    #[test]
+    fn test_round_robin_correct_ordering() {
+        let config = PatternConfig::new().with_max_rounds(2);
+        let mut runner = PatternRunner::new(ConversationPattern::RoundRobin, config);
+        runner.add_agent(PatternAgent::new("a1", "First", "s", "Prompt."));
+        runner.add_agent(PatternAgent::new("a2", "Second", "s", "Prompt."));
+        runner.add_agent(PatternAgent::new("a3", "Third", "s", "Prompt."));
+
+        let result = runner.run("start").unwrap();
+        // 2 rounds * 3 agents = 6 messages
+        assert_eq!(result.messages.len(), 6);
+
+        // Check ordering: a1, a2, a3, a1, a2, a3
+        assert_eq!(result.messages[0].agent_id, "a1");
+        assert_eq!(result.messages[1].agent_id, "a2");
+        assert_eq!(result.messages[2].agent_id, "a3");
+        assert_eq!(result.messages[3].agent_id, "a1");
+        assert_eq!(result.messages[4].agent_id, "a2");
+        assert_eq!(result.messages[5].agent_id, "a3");
+    }
+
+    #[test]
+    fn test_round_robin_correct_round_tracking() {
+        let config = PatternConfig::new().with_max_rounds(3);
+        let mut runner = PatternRunner::new(ConversationPattern::RoundRobin, config);
+        runner.add_agent(PatternAgent::new("a1", "A", "s", "P."));
+        runner.add_agent(PatternAgent::new("a2", "B", "s", "P."));
+
+        let result = runner.run("x").unwrap();
+        // Round 0: a1, a2. Round 1: a1, a2. Round 2: a1, a2.
+        assert_eq!(result.messages[0].round, 0);
+        assert_eq!(result.messages[1].round, 0);
+        assert_eq!(result.messages[2].round, 1);
+        assert_eq!(result.messages[3].round, 1);
+        assert_eq!(result.messages[4].round, 2);
+        assert_eq!(result.messages[5].round, 2);
+    }
+
+    #[test]
+    fn test_pattern_runner_getters() {
+        let config = PatternConfig::new().with_max_rounds(7);
+        let runner = PatternRunner::new(ConversationPattern::Debate, config);
+        assert_eq!(runner.pattern(), ConversationPattern::Debate);
+        assert_eq!(runner.config().max_rounds, 7);
+        assert!(runner.transcript().is_empty());
+    }
+
+    #[test]
+    fn test_pattern_agent_creation() {
+        let agent = PatternAgent::new("id1", "Name1", "role1", "You are a test agent.");
+        assert_eq!(agent.id, "id1");
+        assert_eq!(agent.name, "Name1");
+        assert_eq!(agent.role, "role1");
+        assert_eq!(agent.system_prompt, "You are a test agent.");
+    }
+
+    #[test]
+    fn test_pattern_message_creation() {
+        let msg = PatternMessage::new("agent-1", "Hello world", 3);
+        assert_eq!(msg.agent_id, "agent-1");
+        assert_eq!(msg.content, "Hello world");
+        assert_eq!(msg.round, 3);
+    }
+
+    #[test]
+    fn test_termination_condition_max_rounds() {
+        let config = PatternConfig::new()
+            .with_max_rounds(100)
+            .with_termination(TerminationCondition::MaxRounds(2));
+        let mut runner = PatternRunner::new(ConversationPattern::RoundRobin, config);
+        runner.add_agent(PatternAgent::new("a1", "A", "s", "P."));
+
+        let result = runner.run("test").unwrap();
+        // Termination condition MaxRounds(2) should stop at 2 even though max_rounds is 100
+        assert_eq!(result.rounds_completed, 2);
+    }
+
+    // =========================================================================
+    // 7.4 Agent Handoffs tests
+    // =========================================================================
+
+    #[test]
+    fn test_handoff_manager_register_agent() {
+        let mut mgr = HandoffManager::new();
+        mgr.register_agent(PatternAgent::new("a1", "Agent1", "worker", "Prompt."));
+        assert!(mgr.get_agent("a1").is_some());
+        assert_eq!(mgr.get_agent("a1").unwrap().name, "Agent1");
+    }
+
+    #[test]
+    fn test_handoff_manager_list_agents() {
+        let mut mgr = HandoffManager::new();
+        mgr.register_agent(PatternAgent::new("a1", "Agent1", "worker", "P."));
+        mgr.register_agent(PatternAgent::new("a2", "Agent2", "worker", "P."));
+
+        let agents = mgr.list_agents();
+        assert_eq!(agents.len(), 2);
+    }
+
+    #[test]
+    fn test_handoff_request_full_policy() {
+        let mut mgr = HandoffManager::new();
+        mgr.register_agent(PatternAgent::new("a1", "Agent1", "worker", "P."));
+        mgr.register_agent(PatternAgent::new("a2", "Agent2", "worker", "P."));
+
+        let request = HandoffRequest::new("a1", "a2", "escalation", ContextTransferPolicy::Full);
+        let result = mgr.request_handoff(request).unwrap();
+        assert!(result.success);
+        assert_eq!(result.transferred_messages, usize::MAX);
+        assert_eq!(result.from_agent, "a1");
+        assert_eq!(result.to_agent, "a2");
+        assert_eq!(result.reason, "escalation");
+    }
+
+    #[test]
+    fn test_handoff_request_summary_policy() {
+        let mut mgr = HandoffManager::new();
+        mgr.register_agent(PatternAgent::new("a1", "A1", "w", "P."));
+        mgr.register_agent(PatternAgent::new("a2", "A2", "w", "P."));
+
+        let request =
+            HandoffRequest::new("a1", "a2", "summarize", ContextTransferPolicy::Summary);
+        let result = mgr.request_handoff(request).unwrap();
+        assert!(result.success);
+        assert_eq!(result.transferred_messages, 1);
+    }
+
+    #[test]
+    fn test_handoff_request_last_n_policy() {
+        let mut mgr = HandoffManager::new();
+        mgr.register_agent(PatternAgent::new("a1", "A1", "w", "P."));
+        mgr.register_agent(PatternAgent::new("a2", "A2", "w", "P."));
+
+        let request =
+            HandoffRequest::new("a1", "a2", "recent context", ContextTransferPolicy::LastN(5));
+        let result = mgr.request_handoff(request).unwrap();
+        assert!(result.success);
+        assert_eq!(result.transferred_messages, 5);
+    }
+
+    #[test]
+    fn test_handoff_request_none_policy() {
+        let mut mgr = HandoffManager::new();
+        mgr.register_agent(PatternAgent::new("a1", "A1", "w", "P."));
+        mgr.register_agent(PatternAgent::new("a2", "A2", "w", "P."));
+
+        let request =
+            HandoffRequest::new("a1", "a2", "clean start", ContextTransferPolicy::None);
+        let result = mgr.request_handoff(request).unwrap();
+        assert!(result.success);
+        assert_eq!(result.transferred_messages, 0);
+    }
+
+    #[test]
+    fn test_handoff_to_unknown_agent() {
+        let mut mgr = HandoffManager::new();
+        mgr.register_agent(PatternAgent::new("a1", "A1", "w", "P."));
+
+        let request =
+            HandoffRequest::new("a1", "unknown", "reason", ContextTransferPolicy::Full);
+        let result = mgr.request_handoff(request);
+        assert_eq!(result, Err(OrchestrationError::AgentNotFound));
+    }
+
+    #[test]
+    fn test_handoff_from_unknown_agent() {
+        let mut mgr = HandoffManager::new();
+        mgr.register_agent(PatternAgent::new("a2", "A2", "w", "P."));
+
+        let request =
+            HandoffRequest::new("unknown", "a2", "reason", ContextTransferPolicy::Full);
+        let result = mgr.request_handoff(request);
+        assert_eq!(result, Err(OrchestrationError::AgentNotFound));
+    }
+
+    #[test]
+    fn test_handoff_self_handoff_error() {
+        let mut mgr = HandoffManager::new();
+        mgr.register_agent(PatternAgent::new("a1", "A1", "w", "P."));
+
+        let request = HandoffRequest::new("a1", "a1", "self", ContextTransferPolicy::Full);
+        let result = mgr.request_handoff(request);
+        assert_eq!(result, Err(OrchestrationError::InvalidState));
+    }
+
+    #[test]
+    fn test_handoff_get_history() {
+        let mut mgr = HandoffManager::new();
+        mgr.register_agent(PatternAgent::new("a1", "A1", "w", "P."));
+        mgr.register_agent(PatternAgent::new("a2", "A2", "w", "P."));
+
+        assert!(mgr.get_handoff_history().is_empty());
+
+        let request = HandoffRequest::new("a1", "a2", "test", ContextTransferPolicy::Full);
+        mgr.request_handoff(request).unwrap();
+
+        assert_eq!(mgr.get_handoff_history().len(), 1);
+        assert_eq!(mgr.get_handoff_history()[0].from_agent, "a1");
+    }
+
+    #[test]
+    fn test_handoff_detect_circular() {
+        let mut mgr = HandoffManager::new();
+        mgr.register_agent(PatternAgent::new("a1", "A1", "w", "P."));
+        mgr.register_agent(PatternAgent::new("a2", "A2", "w", "P."));
+
+        // No history yet -- not circular
+        assert!(!mgr.detect_circular_handoff("a1", "a2"));
+
+        // Handoff a1 -> a2
+        let request = HandoffRequest::new("a1", "a2", "first", ContextTransferPolicy::Full);
+        mgr.request_handoff(request).unwrap();
+
+        // Now a2 -> a1 would be circular (A->B->A)
+        assert!(mgr.detect_circular_handoff("a2", "a1"));
+
+        // a1 -> a2 again is not circular (no recent a2->a1 handoff)
+        assert!(!mgr.detect_circular_handoff("a1", "a2"));
+    }
+
+    #[test]
+    fn test_handoff_result_success_state() {
+        let result = HandoffResult {
+            success: true,
+            transferred_messages: 10,
+            from_agent: "a1".to_string(),
+            to_agent: "a2".to_string(),
+            reason: "done".to_string(),
+        };
+        assert!(result.success);
+        assert_eq!(result.transferred_messages, 10);
+    }
+
+    #[test]
+    fn test_handoff_result_failure_state() {
+        let result = HandoffResult {
+            success: false,
+            transferred_messages: 0,
+            from_agent: "a1".to_string(),
+            to_agent: "a2".to_string(),
+            reason: "agent unavailable".to_string(),
+        };
+        assert!(!result.success);
+        assert_eq!(result.transferred_messages, 0);
+        assert_eq!(result.reason, "agent unavailable");
+    }
+
+    #[test]
+    fn test_handoff_request_with_metadata() {
+        let request = HandoffRequest::new("a1", "a2", "test", ContextTransferPolicy::Full)
+            .with_metadata("priority", "high")
+            .with_metadata("session_id", "sess-42");
+
+        assert_eq!(request.metadata.get("priority").unwrap(), "high");
+        assert_eq!(request.metadata.get("session_id").unwrap(), "sess-42");
+    }
+
+    #[test]
+    fn test_handoff_manager_default() {
+        let mgr = HandoffManager::default();
+        assert!(mgr.list_agents().is_empty());
+        assert!(mgr.get_handoff_history().is_empty());
+    }
+
+    #[test]
+    fn test_nested_chat_single_agent() {
+        let config = PatternConfig::new().with_max_rounds(2);
+        let mut runner = PatternRunner::new(ConversationPattern::NestedChat, config);
+        runner.add_agent(PatternAgent::new("solo", "Solo", "master", "Handle alone."));
+
+        let result = runner.run("single agent task").unwrap();
+        assert_eq!(result.messages.len(), 1);
+        assert_eq!(result.terminated_by, "single_agent");
     }
 
     // =========================================================================

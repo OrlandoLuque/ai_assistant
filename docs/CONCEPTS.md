@@ -79,6 +79,29 @@ Read this for understanding, inspiration, and to demystify the magic.
 69. [Provider Registry](#69-provider-registry)
 70. [Graph Conflict Resolution](#70-graph-conflict-resolution)
 71. [Quorum Enforcement](#71-quorum-enforcement)
+72. [Voice Activity Detection (VAD)](#72-voice-activity-detection-vad)
+73. [Media Generation Pipeline](#73-media-generation-pipeline)
+74. [Trace-to-Distillation](#74-trace-to-distillation)
+75. [GEPA (Genetic Pareto Optimizer)](#75-gepa-genetic-pareto-optimizer)
+76. [MIPROv2](#76-miprov2)
+77. [Prompt Assertions](#77-prompt-assertions)
+78. [LM Adapters](#78-lm-adapters)
+79. [MCP v2 Streamable HTTP Transport](#79-mcp-v2-streamable-http-transport)
+80. [OAuth 2.1 with PKCE](#80-oauth-21-with-pkce)
+81. [Tool Annotations](#81-tool-annotations)
+82. [OTel GenAI Semantic Conventions](#82-otel-genai-semantic-conventions)
+83. [Hierarchical Agent Tracing](#83-hierarchical-agent-tracing)
+84. [Cost Attribution](#84-cost-attribution)
+85. [Conversation Patterns](#85-conversation-patterns)
+86. [Agent Handoffs](#86-agent-handoffs)
+87. [Durable Execution](#87-durable-execution)
+88. [Declarative Agent Definitions](#88-declarative-agent-definitions)
+89. [Grammar-Guided Generation (GBNF)](#89-grammar-guided-generation-gbnf)
+90. [Streaming Validation](#90-streaming-validation)
+91. [Semantic Fact Extraction](#91-semantic-fact-extraction)
+92. [Temporal Memory Graphs](#92-temporal-memory-graphs)
+93. [Self-Evolving Procedures (MemRL)](#93-self-evolving-procedures-memrl)
+94. [Streaming Guardrails (v2)](#94-streaming-guardrails-v2)
 
 ---
 
@@ -2562,3 +2585,205 @@ The same zoom-in/zoom-out principle applies to knowledge graph entities. A clust
 **Hinted handoff**: When a write cannot reach its target node (the node is temporarily down), the write is stored as a "hint" on another node. When the target node recovers, the hint is forwarded to it. This prevents data loss during transient failures without blocking the write or lowering the quorum — the write still counts toward quorum on the substitute node, and durability is maintained through the handoff mechanism.
 
 **Feature flag**: `distributed`
+
+---
+
+## 72. Voice Activity Detection (VAD)
+
+**The fundamental idea**: In a voice conversation, you need to know when the user is speaking and when they are silent — this is the problem of Voice Activity Detection. VAD works by analyzing the energy level of incoming audio frames and comparing it against a configurable threshold. When the energy exceeds the threshold for a minimum duration (e.g., 100ms), it signals speech onset; when it drops below the threshold for another minimum duration (e.g., 300ms), it signals speech offset. This enables turn-taking: the system knows when to listen and when to respond.
+
+**Energy-based approach**: The simplest and most robust approach computes the root-mean-square energy of each audio frame. High-energy frames correspond to speech, low-energy frames to silence or background noise. The threshold is configurable to accommodate different microphone sensitivities and noise environments. Minimum speech and silence durations prevent false triggers from brief noise spikes or mid-word pauses.
+
+**Feature flag**: `audio`
+
+---
+
+## 73. Media Generation Pipeline
+
+**The fundamental idea**: Image and video generation models expose wildly different APIs — DALL-E uses synchronous HTTP, Stable Diffusion uses local inference, Runway returns a job ID that you poll for completion. The media generation pipeline abstracts these differences behind a unified interface: submit a prompt, get back generated media. The pipeline routes requests to the appropriate provider based on configuration, handles polling for asynchronous providers, and normalizes the output format.
+
+**Provider routing**: For images, the pipeline supports providers like DALL-E, Stable Diffusion, and Flux. For video, it supports Runway, Sora, and Replicate. Each provider has different capabilities (resolution ranges, aspect ratios, generation speed), and the pipeline can route based on requested parameters or cost constraints. The polling mechanism for video generation handles the inherent asynchrony — video jobs can take minutes to complete, so the pipeline submits the job and checks status at configurable intervals until the output is ready or a timeout is reached.
+
+**Feature flag**: `core`
+
+---
+
+## 74. Trace-to-Distillation
+
+**The fundamental idea**: Every agent execution produces a trace — a sequence of decisions, tool calls, and outcomes. Trace-to-distillation converts these execution traces into structured training datasets, creating a data flywheel where the agent's experience improves future model fine-tuning. The pipeline has four stages: collection (capturing full execution trajectories), scoring (evaluating each trace on outcome quality, step efficiency, and diversity), filtering (keeping only traces above quality thresholds), and dataset building (formatting into standard training formats like ChatML, Alpaca, or ShareGPT).
+
+**The data flywheel**: The power of this approach is that it automates continuous improvement. As the agent handles real tasks, high-quality traces accumulate. These traces become training data for the next model iteration, which produces better traces, which become better training data. Each cycle through the flywheel improves model quality without manual data curation. The scoring stage is critical — without it, you would train on failures as readily as successes.
+
+**Feature flag**: `eval`
+
+---
+
+## 75. GEPA (Genetic Pareto Optimizer)
+
+**The fundamental idea**: Optimizing a prompt for a single metric (e.g., accuracy) is straightforward — try variations, keep the best. But real-world optimization involves multiple competing objectives: you want high accuracy AND low latency AND concise output. GEPA (Genetic Pareto Optimizer) applies multi-objective genetic algorithms, inspired by NSGA-II, to find the Pareto frontier — the set of prompts where no single metric can be improved without worsening another.
+
+**Genetic operations**: GEPA maintains a population of prompt candidates. Each generation, it evaluates candidates on all objective metrics, ranks them using Pareto dominance (a prompt dominates another if it is better on at least one metric and no worse on all others), and selects parents via tournament selection. Crossover combines elements of two parent prompts, and mutation introduces random variation. Over successive generations, the population converges toward the Pareto frontier, giving the user a set of optimal tradeoff points rather than a single "best" solution.
+
+**Feature flag**: `eval`
+
+---
+
+## 76. MIPROv2
+
+**The fundamental idea**: MIPROv2 (Multi-stage Instruction Proposal Optimizer) is a systematic approach to finding the best combination of system instructions and few-shot demonstrations for a prompt. It operates in three phases. The bootstrap phase runs the prompt against a dataset and collects successful execution traces to use as candidate demonstrations. The proposal phase uses an LLM to generate diverse instruction candidates based on the task description and bootstrapped examples. The search phase evaluates combinations of instructions and demonstrations using exhaustive enumeration (small spaces), random sampling (medium spaces), or Bayesian optimization (large spaces) to find the highest-performing configuration.
+
+**Why three phases**: Each phase builds on the previous one. Bootstrap ensures demonstrations are relevant and correct — they come from actual successful executions, not hand-crafted examples. Proposal ensures instructions are diverse — the LLM generates variations that a human might not think of. Search ensures the final combination is optimal — it explores the combinatorial space of instruction-plus-demo pairings systematically rather than relying on intuition.
+
+**Feature flag**: `eval`
+
+---
+
+## 77. Prompt Assertions
+
+**The fundamental idea**: After an LLM generates a response, you often need to verify that it meets certain quality constraints before accepting it. Prompt assertions are declarative constraints applied to LLM outputs: the response must be between 100 and 500 characters, must match a regex pattern, must contain certain keywords, must be valid JSON, or must pass a custom closure. When integrated with prompt signatures, assertions are checked automatically after each invocation, and failing assertions trigger retries or error reporting.
+
+**Assertion types**: Length bounds constrain output size (minimum and maximum character counts). Format patterns use regex to enforce structural requirements (e.g., the output must start with a bullet list). Keyword requirements ensure specific terms appear in the response. JSON validity checks that the output parses as valid JSON. Custom closures allow arbitrary validation logic — anything you can express as a function from string to boolean.
+
+**Feature flag**: `core`
+
+---
+
+## 78. LM Adapters
+
+**The fundamental idea**: Different LLM providers expect prompts in different formats. A chat model wants a list of messages with roles (system, user, assistant). A completion model wants a single text block with delimiters. A function-calling model wants tool definitions in a specific schema. LM adapters bridge this gap by compiling an abstract prompt signature into the format expected by the target provider. The adapter inspects the provider name (e.g., "openai", "ollama", "anthropic") and applies the appropriate formatting: chat mode (system+user/assistant message turns), completion mode (delimited text blocks), or function-calling mode (tool-use framing with parameter schemas).
+
+**Why pattern matching on provider names**: Rather than requiring each provider to implement a formatting interface (which would couple the signature system to every provider), adapters use simple string pattern matching on the provider name. This keeps the provider abstraction clean while allowing the signature system to emit correctly formatted prompts. Adding a new provider format is a single match arm, not a new trait implementation.
+
+**Feature flag**: `core`
+
+---
+
+## 79. MCP v2 Streamable HTTP Transport
+
+**The fundamental idea**: MCP (Model Context Protocol) v1 used Server-Sent Events (SSE) for server-to-client communication, which is inherently unidirectional — the server pushes events, but the client cannot send messages on the same connection. MCP v2 introduces Streamable HTTP Transport, where both client and server communicate over standard HTTP requests with optional streaming responses. A single HTTP endpoint handles all messages, with session IDs tracking conversation state. This simplifies deployment (no separate SSE endpoint), works through HTTP proxies and load balancers, and supports bidirectional communication patterns.
+
+**Session management**: Each MCP v2 connection is associated with a session, identified by a unique session ID returned in response headers. The session store persists state across requests — tool registrations, context, and pending operations. Sessions can be resumed after network interruptions by including the session ID in subsequent requests, avoiding the need to re-establish the full protocol handshake.
+
+**Feature flag**: `core`
+
+---
+
+## 80. OAuth 2.1 with PKCE
+
+**The fundamental idea**: When an MCP client connects to a remote MCP server, it needs to authenticate. OAuth 2.1 with PKCE (Proof Key for Code Exchange) provides secure authentication without exposing client secrets. The flow works as follows: the client generates a random code verifier, computes its SHA-256 hash (the code challenge), and sends the challenge with the authorization request. When exchanging the authorization code for tokens, the client sends the original verifier, and the server checks that its hash matches the stored challenge. This prevents authorization code interception attacks because the attacker does not have the original verifier.
+
+**Supporting infrastructure**: Beyond the core PKCE flow, the implementation includes token refresh (obtaining new access tokens without re-authentication), dynamic client registration (allowing new clients to register programmatically rather than requiring pre-configuration), and authorization server metadata discovery (finding the token and authorization endpoints automatically via a well-known URL). Together, these mechanisms make MCP server authentication both secure and ergonomic.
+
+**Feature flag**: `core`
+
+---
+
+## 81. Tool Annotations
+
+**The fundamental idea**: In MCP v2, tools can carry metadata annotations that describe their behavior without revealing their implementation. Four boolean annotations capture the essential safety characteristics: **read_only** (the tool only reads data and produces no side effects), **destructive** (the tool makes irreversible changes, such as deleting a file), **idempotent** (calling the tool multiple times with the same input produces the same result, making retries safe), and **open_world** (the tool's scope is unbounded — it can access arbitrary external resources rather than a fixed set). Agents use these annotations to make safety decisions: a read-only tool can be called without user confirmation, a destructive tool should require explicit approval, and an idempotent tool can be safely retried on failure.
+
+**Feature flag**: `core`
+
+---
+
+## 82. OTel GenAI Semantic Conventions
+
+**The fundamental idea**: OpenTelemetry provides a standard for distributed tracing and metrics, but its generic span attributes (http.method, db.system) do not capture the specifics of LLM operations. The GenAI semantic conventions define standardized attribute names for AI workloads: `gen_ai.system` (the provider — "openai", "anthropic"), `gen_ai.request.model` (the model name), `gen_ai.usage.input_tokens` and `gen_ai.usage.output_tokens` (token consumption), `gen_ai.request.temperature`, and `gen_ai.operation.name` (e.g., "chat", "embedding"). Using these conventions means that traces from different providers and different applications are comparable and can be analyzed with the same dashboards and queries.
+
+**Feature flag**: `analytics`
+
+---
+
+## 83. Hierarchical Agent Tracing
+
+**The fundamental idea**: When an agent processes a request, it may invoke tools, call sub-agents, retrieve documents, and make multiple LLM calls. A flat list of trace events loses the structure — you cannot see that tool call B happened inside agent step 3, which was a sub-task of the original request. Hierarchical agent tracing uses tree-structured spans: a parent span for the overall operation contains child spans for each step, which in turn contain child spans for tool calls, LLM invocations, and sub-agent delegations. This tree structure enables visualization (flame charts, waterfall diagrams) and debugging (drill into the slow step, see exactly which LLM call took 3 seconds).
+
+**Feature flag**: `analytics`
+
+---
+
+## 84. Cost Attribution
+
+**The fundamental idea**: Every LLM call has a cost determined by the model's pricing and the number of input/output tokens consumed. In a multi-agent system with multiple models, understanding where money is being spent requires explicit tracking. Cost attribution records the token usage of every LLM call, looks up the per-token price from a pricing table (with separate rates for input and output tokens per model), and attributes the cost to the agent, session, or operation that initiated it. Budget limits can be configured with alert thresholds — for example, warn at 80% of the hourly budget and hard-stop at 100%.
+
+**Feature flag**: `analytics`
+
+---
+
+## 85. Conversation Patterns
+
+**The fundamental idea**: Multi-agent systems need structured ways for agents to interact. Conversation patterns are named topologies that define how messages flow between agents. **Swarm**: agents dynamically delegate to whichever peer is best suited for the current subtask. **Debate**: agents take opposing positions and argue, with a judge agent synthesizing the conclusion. **RoundRobin**: agents take sequential turns, each building on the previous agent's output. **Sequential**: agents form a pipeline where each agent's output becomes the next agent's input. **NestedChat**: an agent can spawn a sub-conversation with a subset of agents to resolve a subtask before returning to the main conversation. **Broadcast**: a message is sent to all agents simultaneously, and their responses are collected in parallel.
+
+**Feature flag**: `multi-agent`
+
+---
+
+## 86. Agent Handoffs
+
+**The fundamental idea**: When a specialized agent needs to delegate work to another specialized agent, it performs a handoff — transferring control along with the relevant context. The critical design decision is how much context to transfer. Four policies address different scenarios: **Full** transfers the entire conversation history (maximum context, maximum token cost), **Summary** sends a compressed summary of the conversation so far (good balance of context and efficiency), **Selective** transfers only messages matching specific criteria such as role or recency (fine-grained control), and **None** starts the receiving agent with a clean slate (isolation, minimum token cost). Handoffs enable composable agent architectures where each agent focuses on its specialty and delegates everything else.
+
+**Feature flag**: `multi-agent`
+
+---
+
+## 87. Durable Execution
+
+**The fundamental idea**: Long-running workflows — data pipelines, multi-step agent tasks, approval chains — are vulnerable to crashes, restarts, and network failures. Durable execution solves this by automatically persisting state at every workflow step. Each step's input and output are written to a checkpoint store before the next step begins. If the process crashes and restarts, the execution engine replays the workflow from the last checkpoint, skipping already-completed steps. The result is exactly-once semantics for workflow steps, even across process boundaries. Configurable retention policies control how long checkpoints are kept, balancing storage cost against the ability to replay or debug old executions.
+
+**Feature flag**: `workflows`
+
+---
+
+## 88. Declarative Agent Definitions
+
+**The fundamental idea**: Defining agents in code — constructing structs, setting fields, calling builder methods — requires recompilation for every change. Declarative agent definitions allow agents to be configured in JSON or TOML files and loaded at runtime. A definition file specifies the agent's name, model, system prompt, available tools, memory settings, guardrails, and other parameters. The runtime loads the definition, validates it (checking for missing required fields, unknown tool names, or conflicting settings), and constructs the agent. Validation produces severity-graded warnings (info, warning, error) rather than hard failures, so that minor issues like a deprecated field name do not prevent the agent from loading.
+
+**Feature flag**: `multi-agent`
+
+---
+
+## 89. Grammar-Guided Generation (GBNF)
+
+**The fundamental idea**: Asking an LLM to produce structured output (JSON, SQL, code) with a prompt alone is unreliable — the model might produce syntactically invalid output. Grammar-guided generation constrains the model's output to match a formal grammar specified in GBNF format (GGML BNF, a BNF variant used by llama.cpp and compatible runtimes). At each token generation step, only tokens that are valid continuations according to the grammar are allowed. This guarantees syntactic correctness by construction rather than by hope. The implementation includes a fluent builder API for constructing grammars programmatically and a compiler that converts JSON Schema definitions into equivalent GBNF grammars.
+
+**Feature flag**: `core`
+
+---
+
+## 90. Streaming Validation
+
+**The fundamental idea**: Grammar-guided generation (Section 89) constrains output at generation time, but what about output that arrives from an external API as a stream of tokens? Streaming validation checks each character or token against a grammar or schema as it arrives, maintaining a validation state machine that tracks the current position in the expected structure. If the stream diverges from the expected grammar, the violation is reported immediately — the consumer learns about the problem as it happens, not after receiving the entire response. This is especially useful for validating JSON objects that arrive token by token: the validator tracks nesting depth, expected keys, and value types in real time.
+
+**Feature flag**: `core`
+
+---
+
+## 91. Semantic Fact Extraction
+
+**The fundamental idea**: Given a passage of natural language text, semantic fact extraction derives structured facts in the form of subject-predicate-object triples — for example, from "Paris is the capital of France" it extracts (Paris, is_capital_of, France) with a confidence score. Two extraction strategies are supported: pattern-based extraction uses linguistic rules and regex patterns to identify common relational structures, while LLM-based extraction prompts a language model to extract triples from arbitrary text. Extracted facts are deduplicated — if two extractors produce the same triple, their confidence scores are merged rather than creating duplicate entries.
+
+**Feature flag**: `rag`
+
+---
+
+## 92. Temporal Memory Graphs
+
+**The fundamental idea**: Standard memory stores facts without temporal structure — "meeting happened" is stored the same regardless of when it occurred. Temporal memory graphs add time as a first-class dimension by connecting memory episodes with temporal edges (before, after, during, overlaps) and causal edges (caused_by, led_to). When a new episode is added, the system automatically computes temporal relationships to existing episodes based on timestamps. This enables temporal queries — "what happened before the deployment failed?" or "what events occurred during the outage window?" — and causal chain detection, which traces sequences of causally linked events.
+
+**Feature flag**: `multi-agent`
+
+---
+
+## 93. Self-Evolving Procedures (MemRL)
+
+**The fundamental idea**: Memory Reinforcement Learning (MemRL) creates procedures — reusable action sequences — that improve based on execution feedback. When an agent executes a procedure and the outcome is successful, the procedure's confidence score increases; when the outcome is a failure, the confidence decreases and the procedure may be revised. If a procedure's confidence drops below a configurable retirement threshold, it is marked as deprecated and no longer suggested. If it rises above a promotion threshold, it is prioritized in future similar situations. This creates a self-improving repertoire of behaviors without explicit retraining — the agent's procedural memory evolves through experience.
+
+**Feature flag**: `multi-agent`
+
+---
+
+## 94. Streaming Guardrails (v2)
+
+**The fundamental idea**: Building on the original streaming guardrails concept (Section 67), v2 streaming guardrails extend the model with richer guard types and more granular control. Guards evaluate content chunks in real time during LLM streaming with four configurable actions: **Pass** (content is clean, forward immediately), **Flag** (content is suspicious — forward it but emit an alert for monitoring), **Pause** (content may be harmful — buffer it and wait for additional context or human review before releasing), and **Block** (content is clearly harmful — terminate the stream and return a safe fallback). V2 adds specialized guard implementations for PII detection (identifying personal information patterns like emails, phone numbers, and social security numbers), toxicity scoring (evaluating content against toxicity thresholds), and custom pattern-based guards (user-defined regex patterns for domain-specific content policies). Guards are composable — multiple guards evaluate the same stream independently, and the most restrictive action wins.
+
+**Feature flag**: `security`

@@ -1606,6 +1606,710 @@ impl Default for SessionMcpManager {
     }
 }
 
+// =============================================================================
+// MCP v2 PROTOCOL — Phase 2 (v5 roadmap: items 2.1, 2.2, 2.3)
+// =============================================================================
+
+// ---------------------------------------------------------------------------
+// 2.1 — Streamable HTTP Transport
+// ---------------------------------------------------------------------------
+
+/// Transport mode for MCP v2: StdIO, SSE (legacy), or Streamable HTTP (v2 default).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TransportMode {
+    /// Standard I/O (stdin/stdout).
+    #[serde(rename = "std_io")]
+    StdIO,
+    /// Legacy Server-Sent Events transport.
+    #[serde(rename = "sse")]
+    SSE,
+    /// Streamable HTTP: server may respond with JSON or SSE depending on the operation.
+    #[serde(rename = "streamable_http")]
+    StreamableHTTP,
+}
+
+/// Streamable HTTP transport client (MCP v2).
+///
+/// Sends POST to a single endpoint and auto-detects whether the response
+/// is immediate JSON or an SSE stream based on the Content-Type header.
+pub struct StreamableHttpTransport {
+    base_url: String,
+    session_id: Option<String>,
+    mode: TransportMode,
+}
+
+impl StreamableHttpTransport {
+    /// Create a new Streamable HTTP transport pointing at `base_url`.
+    pub fn new(base_url: &str) -> Self {
+        Self {
+            base_url: base_url.to_string(),
+            session_id: None,
+            mode: TransportMode::StreamableHTTP,
+        }
+    }
+
+    /// Send a JSON-RPC request and return the response.
+    ///
+    /// In a real implementation this would POST to `base_url` and parse the
+    /// response; here we build the serialized body and return an error because
+    /// no real HTTP round-trip is performed (that requires an async runtime +
+    /// network). Integration tests should use a live server.
+    pub fn send_request(&mut self, request: &McpRequest) -> Result<McpResponse, String> {
+        let body = serde_json::to_string(request)
+            .map_err(|e| format!("Serialization error: {}", e))?;
+
+        // In production this would be:
+        //   let resp = http_post(&self.base_url, &body)?;
+        //   let content_type = resp.header("content-type");
+        //   self.mode = Self::detect_transport(content_type);
+        //   if mode == SSE { stream... } else { parse JSON }
+        //
+        // For unit-testability we accept the serialized body and return a
+        // synthetic error so callers know no network call was made.
+        let _ = body;
+        Err("StreamableHttpTransport: no real HTTP backend configured (use integration tests)".to_string())
+    }
+
+    /// Detect the transport mode from a response Content-Type header value.
+    pub fn detect_transport(response_content_type: &str) -> TransportMode {
+        let ct = response_content_type.to_lowercase();
+        if ct.contains("text/event-stream") {
+            TransportMode::SSE
+        } else if ct.contains("application/json") {
+            TransportMode::StreamableHTTP
+        } else {
+            // Unknown content type — default to StreamableHTTP (JSON mode)
+            TransportMode::StreamableHTTP
+        }
+    }
+
+    /// Get the current session ID, if any.
+    pub fn get_session_id(&self) -> Option<&str> {
+        self.session_id.as_deref()
+    }
+
+    /// Set the session ID (typically received from an `Mcp-Session-Id` header).
+    pub fn set_session_id(&mut self, id: String) {
+        self.session_id = Some(id);
+    }
+
+    /// Get the current transport mode.
+    pub fn mode(&self) -> TransportMode {
+        self.mode
+    }
+
+    /// Get the base URL.
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+}
+
+/// An MCP session with timestamps and metadata (MCP v2).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpSession {
+    pub session_id: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub last_active: chrono::DateTime<chrono::Utc>,
+    pub metadata: HashMap<String, String>,
+}
+
+/// Trait for managing MCP sessions.
+pub trait McpSessionStore {
+    /// Create a new session and return it.
+    fn create_session(&mut self) -> McpSession;
+    /// Retrieve a session by ID.
+    fn get_session(&self, id: &str) -> Option<&McpSession>;
+    /// Update the `last_active` timestamp of a session.
+    fn touch_session(&mut self, id: &str);
+    /// Delete a session by ID.
+    fn delete_session(&mut self, id: &str);
+    /// List all sessions.
+    fn list_sessions(&self) -> Vec<&McpSession>;
+    /// Remove sessions older than `max_age_secs` seconds.
+    fn cleanup_expired(&mut self, max_age_secs: u64);
+}
+
+/// In-memory implementation of `McpSessionStore`.
+pub struct InMemorySessionStore {
+    sessions: HashMap<String, McpSession>,
+    next_id: u64,
+}
+
+impl InMemorySessionStore {
+    pub fn new() -> Self {
+        Self {
+            sessions: HashMap::new(),
+            next_id: 1,
+        }
+    }
+}
+
+impl Default for InMemorySessionStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl McpSessionStore for InMemorySessionStore {
+    fn create_session(&mut self) -> McpSession {
+        let id = format!("mcp-session-{}", self.next_id);
+        self.next_id += 1;
+        let now = chrono::Utc::now();
+        let session = McpSession {
+            session_id: id.clone(),
+            created_at: now,
+            last_active: now,
+            metadata: HashMap::new(),
+        };
+        self.sessions.insert(id, session.clone());
+        session
+    }
+
+    fn get_session(&self, id: &str) -> Option<&McpSession> {
+        self.sessions.get(id)
+    }
+
+    fn touch_session(&mut self, id: &str) {
+        if let Some(session) = self.sessions.get_mut(id) {
+            session.last_active = chrono::Utc::now();
+        }
+    }
+
+    fn delete_session(&mut self, id: &str) {
+        self.sessions.remove(id);
+    }
+
+    fn list_sessions(&self) -> Vec<&McpSession> {
+        self.sessions.values().collect()
+    }
+
+    fn cleanup_expired(&mut self, max_age_secs: u64) {
+        let now = chrono::Utc::now();
+        self.sessions.retain(|_, session| {
+            let age = now
+                .signed_duration_since(session.last_active)
+                .num_seconds();
+            age >= 0 && (age as u64) < max_age_secs
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 2.2 — OAuth 2.1 + PKCE + Dynamic Client Registration
+// ---------------------------------------------------------------------------
+
+/// SHA-256 hash (FIPS 180-4). Returns 32-byte digest.
+///
+/// Pure-Rust implementation so we do not require the `sha2` crate (which is
+/// only available behind the `distributed-network` feature flag).
+fn sha256_hash(data: &[u8]) -> [u8; 32] {
+    // Initial hash values (first 32 bits of the fractional parts of the
+    // square roots of the first 8 primes 2..19).
+    let mut h: [u32; 8] = [
+        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+        0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+    ];
+
+    // Round constants (first 32 bits of the fractional parts of the cube
+    // roots of the first 64 primes 2..311).
+    const K: [u32; 64] = [
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5,
+        0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+        0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
+        0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+        0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc,
+        0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+        0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
+        0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+        0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3,
+        0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5,
+        0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
+        0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+    ];
+
+    // Pre-processing: pad message to a multiple of 512 bits (64 bytes).
+    let bit_len = (data.len() as u64) * 8;
+    let mut msg = data.to_vec();
+    msg.push(0x80);
+    while (msg.len() % 64) != 56 {
+        msg.push(0x00);
+    }
+    msg.extend_from_slice(&bit_len.to_be_bytes());
+
+    // Process each 512-bit (64-byte) block.
+    for block in msg.chunks_exact(64) {
+        let mut w = [0u32; 64];
+        for i in 0..16 {
+            w[i] = u32::from_be_bytes([
+                block[i * 4],
+                block[i * 4 + 1],
+                block[i * 4 + 2],
+                block[i * 4 + 3],
+            ]);
+        }
+        for i in 16..64 {
+            let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
+            let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
+            w[i] = w[i - 16]
+                .wrapping_add(s0)
+                .wrapping_add(w[i - 7])
+                .wrapping_add(s1);
+        }
+
+        let (mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut hh) =
+            (h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7]);
+
+        for i in 0..64 {
+            let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+            let ch = (e & f) ^ ((!e) & g);
+            let temp1 = hh
+                .wrapping_add(s1)
+                .wrapping_add(ch)
+                .wrapping_add(K[i])
+                .wrapping_add(w[i]);
+            let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+            let maj = (a & b) ^ (a & c) ^ (b & c);
+            let temp2 = s0.wrapping_add(maj);
+
+            hh = g;
+            g = f;
+            f = e;
+            e = d.wrapping_add(temp1);
+            d = c;
+            c = b;
+            b = a;
+            a = temp1.wrapping_add(temp2);
+        }
+
+        h[0] = h[0].wrapping_add(a);
+        h[1] = h[1].wrapping_add(b);
+        h[2] = h[2].wrapping_add(c);
+        h[3] = h[3].wrapping_add(d);
+        h[4] = h[4].wrapping_add(e);
+        h[5] = h[5].wrapping_add(f);
+        h[6] = h[6].wrapping_add(g);
+        h[7] = h[7].wrapping_add(hh);
+    }
+
+    let mut result = [0u8; 32];
+    for i in 0..8 {
+        result[i * 4..(i + 1) * 4].copy_from_slice(&h[i].to_be_bytes());
+    }
+    result
+}
+
+/// Base64url-encode (RFC 4648 section 5) without padding.
+fn base64url_encode(data: &[u8]) -> String {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
+        let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+
+        out.push(ALPHABET[((triple >> 18) & 0x3F) as usize] as char);
+        out.push(ALPHABET[((triple >> 12) & 0x3F) as usize] as char);
+        if chunk.len() > 1 {
+            out.push(ALPHABET[((triple >> 6) & 0x3F) as usize] as char);
+        }
+        if chunk.len() > 2 {
+            out.push(ALPHABET[(triple & 0x3F) as usize] as char);
+        }
+    }
+    out
+}
+
+/// MCP v2 OAuth configuration (simplified for the v2 flow with PKCE).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpV2OAuthConfig {
+    pub authorization_endpoint: String,
+    pub token_endpoint: String,
+    pub client_id: Option<String>,
+    pub client_secret: Option<String>,
+    pub scopes: Vec<String>,
+    pub redirect_uri: String,
+}
+
+/// OAuth 2.1 token with expiry tracking.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OAuthToken {
+    pub access_token: String,
+    pub token_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refresh_token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+}
+
+/// PKCE challenge (RFC 7636) with S256 method.
+#[derive(Debug, Clone)]
+pub struct PkceChallenge {
+    pub verifier: String,
+    pub challenge: String,
+    pub method: String,
+}
+
+impl PkceChallenge {
+    /// Generate a PKCE challenge pair.
+    ///
+    /// The verifier is a 43-character random base64url string (matching the
+    /// RFC 7636 minimum of 43 characters). The challenge is the base64url-
+    /// encoded SHA-256 hash of the verifier.
+    pub fn generate() -> Self {
+        // Generate a pseudo-random verifier using system time + counter.
+        // In production you would use a CSPRNG; this is sufficient for the
+        // library's test/demo purposes and avoids adding a `rand` dependency.
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+
+        // Simple LCG to generate 32 bytes of pseudo-random data
+        let mut state = seed as u64;
+        let mut raw = Vec::with_capacity(32);
+        for _ in 0..32 {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            raw.push((state >> 33) as u8);
+        }
+        let verifier = base64url_encode(&raw);
+
+        // S256: challenge = BASE64URL(SHA256(ASCII(verifier)))
+        let hash = sha256_hash(verifier.as_bytes());
+        let challenge = base64url_encode(&hash);
+
+        Self {
+            verifier,
+            challenge,
+            method: "S256".to_string(),
+        }
+    }
+
+    /// Create a PKCE challenge from a known verifier (useful for testing).
+    pub fn from_verifier(verifier: &str) -> Self {
+        let hash = sha256_hash(verifier.as_bytes());
+        let challenge = base64url_encode(&hash);
+        Self {
+            verifier: verifier.to_string(),
+            challenge,
+            method: "S256".to_string(),
+        }
+    }
+}
+
+/// OAuth 2.1 token manager for MCP v2.
+pub struct OAuthTokenManager {
+    config: McpV2OAuthConfig,
+    current_token: Option<OAuthToken>,
+}
+
+impl OAuthTokenManager {
+    pub fn new(config: McpV2OAuthConfig) -> Self {
+        Self {
+            config,
+            current_token: None,
+        }
+    }
+
+    /// Build the authorization URL with PKCE parameters.
+    ///
+    /// Returns `(url, pkce_challenge)`.
+    pub fn get_authorization_url(&self) -> (String, PkceChallenge) {
+        let pkce = PkceChallenge::generate();
+        let scope_str = self.config.scopes.join(" ");
+
+        let mut url = format!(
+            "{}?response_type=code&redirect_uri={}&scope={}&code_challenge={}&code_challenge_method={}",
+            self.config.authorization_endpoint,
+            urlencoding::encode(&self.config.redirect_uri),
+            urlencoding::encode(&scope_str),
+            urlencoding::encode(&pkce.challenge),
+            urlencoding::encode(&pkce.method),
+        );
+
+        if let Some(ref client_id) = self.config.client_id {
+            url.push_str(&format!("&client_id={}", urlencoding::encode(client_id)));
+        }
+
+        (url, pkce)
+    }
+
+    /// Exchange an authorization code for a token (mock — returns a synthetic token).
+    ///
+    /// In production this would POST to the token endpoint; here we simulate
+    /// the exchange for testability.
+    pub fn exchange_code(&mut self, code: &str, pkce: &PkceChallenge) -> Result<OAuthToken, String> {
+        if code.is_empty() {
+            return Err("Authorization code is empty".to_string());
+        }
+        if pkce.verifier.is_empty() {
+            return Err("PKCE verifier is empty".to_string());
+        }
+
+        // In production: POST to token_endpoint with grant_type=authorization_code,
+        // code, redirect_uri, code_verifier.
+        let token = OAuthToken {
+            access_token: format!("access-{}", code),
+            token_type: "Bearer".to_string(),
+            expires_at: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
+            refresh_token: Some(format!("refresh-{}", code)),
+            scope: Some(self.config.scopes.join(" ")),
+        };
+        self.current_token = Some(token.clone());
+        Ok(token)
+    }
+
+    /// Refresh the current token (mock — returns a new synthetic token).
+    pub fn refresh_token(&mut self) -> Result<OAuthToken, String> {
+        let refresh = self
+            .current_token
+            .as_ref()
+            .and_then(|t| t.refresh_token.clone())
+            .ok_or_else(|| "No refresh token available".to_string())?;
+
+        // In production: POST to token_endpoint with grant_type=refresh_token.
+        let token = OAuthToken {
+            access_token: format!("refreshed-{}", refresh),
+            token_type: "Bearer".to_string(),
+            expires_at: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
+            refresh_token: Some(refresh),
+            scope: self.current_token.as_ref().and_then(|t| t.scope.clone()),
+        };
+        self.current_token = Some(token.clone());
+        Ok(token)
+    }
+
+    /// Check if the current token is expired.
+    pub fn is_token_expired(&self) -> bool {
+        match &self.current_token {
+            None => true,
+            Some(token) => match token.expires_at {
+                Some(expires) => chrono::Utc::now() >= expires,
+                None => false, // No expiry = never expires
+            },
+        }
+    }
+
+    /// Get the current token if valid, or try to refresh if expired.
+    pub fn get_valid_token(&mut self) -> Result<&OAuthToken, String> {
+        if self.current_token.is_none() {
+            return Err("No token available — authorization required".to_string());
+        }
+
+        if self.is_token_expired() {
+            // Try to refresh
+            self.refresh_token()?;
+        }
+
+        self.current_token
+            .as_ref()
+            .ok_or_else(|| "Token unavailable after refresh".to_string())
+    }
+
+    /// Get a reference to the config.
+    pub fn config(&self) -> &McpV2OAuthConfig {
+        &self.config
+    }
+
+    /// Get the current token without refresh.
+    pub fn current_token(&self) -> Option<&OAuthToken> {
+        self.current_token.as_ref()
+    }
+
+    /// Manually set a token (e.g. after external exchange).
+    pub fn set_token(&mut self, token: OAuthToken) {
+        self.current_token = Some(token);
+    }
+}
+
+/// OAuth 2.1 Authorization Server Metadata (RFC 8414).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthorizationServerMetadata {
+    pub issuer: String,
+    pub authorization_endpoint: String,
+    pub token_endpoint: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub registration_endpoint: Option<String>,
+    #[serde(default)]
+    pub scopes_supported: Vec<String>,
+}
+
+impl AuthorizationServerMetadata {
+    /// Discover metadata from `/.well-known/oauth-authorization-server`.
+    ///
+    /// In production this would fetch the URL; here we return a mock for the
+    /// given base_url so the API can be exercised in unit tests.
+    pub fn discover(base_url: &str) -> Result<Self, String> {
+        // In production: GET {base_url}/.well-known/oauth-authorization-server
+        // and parse the JSON response.
+        Ok(Self {
+            issuer: base_url.to_string(),
+            authorization_endpoint: format!("{}/authorize", base_url),
+            token_endpoint: format!("{}/token", base_url),
+            registration_endpoint: Some(format!("{}/register", base_url)),
+            scopes_supported: vec![
+                "mcp:tools".to_string(),
+                "mcp:resources".to_string(),
+                "mcp:prompts".to_string(),
+            ],
+        })
+    }
+}
+
+/// Dynamic Client Registration (RFC 7591).
+pub struct DynamicClientRegistration;
+
+impl DynamicClientRegistration {
+    /// Register a client dynamically at the given registration endpoint.
+    ///
+    /// Returns `(client_id, Option<client_secret>)`.
+    /// In production this would POST JSON to the endpoint; here we return a
+    /// mock response.
+    pub fn register(
+        registration_endpoint: &str,
+        client_name: &str,
+        redirect_uris: &[String],
+    ) -> Result<(String, Option<String>), String> {
+        if registration_endpoint.is_empty() {
+            return Err("Registration endpoint is empty".to_string());
+        }
+        if client_name.is_empty() {
+            return Err("Client name is empty".to_string());
+        }
+        if redirect_uris.is_empty() {
+            return Err("At least one redirect URI is required".to_string());
+        }
+
+        // In production: POST to registration_endpoint with
+        // { client_name, redirect_uris, grant_types, ... }
+        let client_id = format!("dyn-client-{}", client_name);
+        let client_secret = Some(format!("dyn-secret-{}", client_name));
+        Ok((client_id, client_secret))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 2.3 — Tool Annotations
+// ---------------------------------------------------------------------------
+
+/// Tool annotations indicating behavior characteristics (MCP v2).
+///
+/// These complement the existing `McpToolAnnotation` (hint-based, v4 spec) with
+/// a more structured, boolean-based model suited for programmatic policy checks.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolAnnotations {
+    /// If true, the tool only reads data and does not modify any state.
+    #[serde(default)]
+    pub read_only: bool,
+    /// If true, the tool may cause destructive / irreversible side effects.
+    #[serde(default = "default_true")]
+    pub destructive: bool,
+    /// If true, calling with the same arguments always produces the same result.
+    #[serde(default)]
+    pub idempotent: bool,
+    /// If true, the tool may interact with external systems not described in its schema.
+    #[serde(default = "default_true")]
+    pub open_world: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for ToolAnnotations {
+    fn default() -> Self {
+        Self {
+            read_only: false,
+            destructive: true,
+            idempotent: false,
+            open_world: true,
+        }
+    }
+}
+
+impl ToolAnnotations {
+    /// A tool is considered "safe" if it is read-only and not destructive.
+    pub fn is_safe(&self) -> bool {
+        self.read_only && !self.destructive
+    }
+
+    /// A tool "needs confirmation" if it is destructive or interacts with the open world.
+    pub fn needs_confirmation(&self) -> bool {
+        self.destructive || self.open_world
+    }
+}
+
+/// Wrapper that pairs an `McpTool` with `ToolAnnotations`.
+///
+/// This avoids modifying the existing `McpTool` struct while still allowing
+/// annotation data to travel alongside tool definitions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnnotatedTool {
+    pub tool: McpTool,
+    pub annotations: ToolAnnotations,
+}
+
+impl AnnotatedTool {
+    /// Create an `AnnotatedTool` with default annotations.
+    pub fn from_tool(tool: McpTool) -> Self {
+        Self {
+            tool,
+            annotations: ToolAnnotations::default(),
+        }
+    }
+
+    /// Create an `AnnotatedTool` with explicit annotations.
+    pub fn with_annotations(tool: McpTool, annotations: ToolAnnotations) -> Self {
+        Self { tool, annotations }
+    }
+}
+
+/// Registry that maps tool names to their `ToolAnnotations`.
+pub struct ToolAnnotationRegistry {
+    annotations: HashMap<String, ToolAnnotations>,
+}
+
+impl ToolAnnotationRegistry {
+    pub fn new() -> Self {
+        Self {
+            annotations: HashMap::new(),
+        }
+    }
+
+    /// Register annotations for a tool by name.
+    pub fn register(&mut self, tool_name: &str, annotations: ToolAnnotations) {
+        self.annotations.insert(tool_name.to_string(), annotations);
+    }
+
+    /// Get the annotations for a tool by name.
+    pub fn get(&self, tool_name: &str) -> Option<&ToolAnnotations> {
+        self.annotations.get(tool_name)
+    }
+
+    /// Check if a tool needs human approval based on its annotations.
+    ///
+    /// Returns `true` if annotations exist and `needs_confirmation()` is true,
+    /// or if no annotations are registered (conservative default).
+    pub fn needs_approval(&self, tool_name: &str) -> bool {
+        match self.annotations.get(tool_name) {
+            Some(ann) => ann.needs_confirmation(),
+            None => true, // Unknown tool — require approval by default
+        }
+    }
+}
+
+impl Default for ToolAnnotationRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2338,5 +3042,750 @@ this is garbage"#;
         let back: SessionRepairResult = serde_json::from_str(&json).unwrap();
         assert_eq!(back.messages_recovered, 10);
         assert_eq!(back.messages_lost, 2);
+    }
+
+    // =========================================================================
+    // MCP v2 Phase 2 tests (v5 roadmap: items 2.1, 2.2, 2.3)
+    // =========================================================================
+
+    // --- 2.1 Streamable HTTP Transport ---
+
+    #[test]
+    fn test_transport_mode_detect_json() {
+        let mode = StreamableHttpTransport::detect_transport("application/json");
+        assert_eq!(mode, TransportMode::StreamableHTTP);
+    }
+
+    #[test]
+    fn test_transport_mode_detect_json_charset() {
+        let mode = StreamableHttpTransport::detect_transport("application/json; charset=utf-8");
+        assert_eq!(mode, TransportMode::StreamableHTTP);
+    }
+
+    #[test]
+    fn test_transport_mode_detect_sse() {
+        let mode = StreamableHttpTransport::detect_transport("text/event-stream");
+        assert_eq!(mode, TransportMode::SSE);
+    }
+
+    #[test]
+    fn test_transport_mode_detect_unknown() {
+        let mode = StreamableHttpTransport::detect_transport("text/html");
+        assert_eq!(mode, TransportMode::StreamableHTTP);
+    }
+
+    #[test]
+    fn test_transport_mode_detect_case_insensitive() {
+        let mode = StreamableHttpTransport::detect_transport("TEXT/EVENT-STREAM");
+        assert_eq!(mode, TransportMode::SSE);
+    }
+
+    #[test]
+    fn test_transport_mode_serde() {
+        let json = serde_json::to_value(TransportMode::StreamableHTTP).unwrap();
+        assert_eq!(json, "streamable_http");
+        let json2 = serde_json::to_value(TransportMode::SSE).unwrap();
+        assert_eq!(json2, "sse");
+        let json3 = serde_json::to_value(TransportMode::StdIO).unwrap();
+        assert_eq!(json3, "std_io");
+    }
+
+    #[test]
+    fn test_streamable_http_transport_new() {
+        let transport = StreamableHttpTransport::new("http://localhost:8080/mcp");
+        assert_eq!(transport.base_url(), "http://localhost:8080/mcp");
+        assert_eq!(transport.mode(), TransportMode::StreamableHTTP);
+        assert!(transport.get_session_id().is_none());
+    }
+
+    #[test]
+    fn test_streamable_http_transport_session_id() {
+        let mut transport = StreamableHttpTransport::new("http://localhost:8080/mcp");
+        assert!(transport.get_session_id().is_none());
+
+        transport.set_session_id("sess-abc-123".to_string());
+        assert_eq!(transport.get_session_id(), Some("sess-abc-123"));
+    }
+
+    #[test]
+    fn test_streamable_http_transport_send_request_returns_error() {
+        let mut transport = StreamableHttpTransport::new("http://localhost:8080/mcp");
+        let request = McpRequest::new("tools/list").with_id(1u64);
+        let result = transport.send_request(&request);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("no real HTTP backend"));
+    }
+
+    // --- Session Store ---
+
+    #[test]
+    fn test_in_memory_session_store_create() {
+        let mut store = InMemorySessionStore::new();
+        let session = store.create_session();
+        assert!(session.session_id.starts_with("mcp-session-"));
+        assert!(!session.session_id.is_empty());
+    }
+
+    #[test]
+    fn test_in_memory_session_store_create_multiple() {
+        let mut store = InMemorySessionStore::new();
+        let s1 = store.create_session();
+        let s2 = store.create_session();
+        let s3 = store.create_session();
+        assert_ne!(s1.session_id, s2.session_id);
+        assert_ne!(s2.session_id, s3.session_id);
+        assert_eq!(store.list_sessions().len(), 3);
+    }
+
+    #[test]
+    fn test_in_memory_session_store_get() {
+        let mut store = InMemorySessionStore::new();
+        let session = store.create_session();
+        let id = session.session_id.clone();
+
+        let retrieved = store.get_session(&id);
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().session_id, id);
+
+        assert!(store.get_session("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_in_memory_session_store_touch() {
+        let mut store = InMemorySessionStore::new();
+        let session = store.create_session();
+        let id = session.session_id.clone();
+        let original_last_active = session.last_active;
+
+        // Small sleep to ensure timestamp difference
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        store.touch_session(&id);
+        let touched = store.get_session(&id).unwrap();
+        assert!(touched.last_active >= original_last_active);
+    }
+
+    #[test]
+    fn test_in_memory_session_store_delete() {
+        let mut store = InMemorySessionStore::new();
+        let s1 = store.create_session();
+        let s2 = store.create_session();
+        let id1 = s1.session_id.clone();
+
+        assert_eq!(store.list_sessions().len(), 2);
+        store.delete_session(&id1);
+        assert_eq!(store.list_sessions().len(), 1);
+        assert!(store.get_session(&id1).is_none());
+        assert!(store.get_session(&s2.session_id).is_some());
+    }
+
+    #[test]
+    fn test_in_memory_session_store_list() {
+        let mut store = InMemorySessionStore::new();
+        assert!(store.list_sessions().is_empty());
+
+        store.create_session();
+        store.create_session();
+        assert_eq!(store.list_sessions().len(), 2);
+    }
+
+    #[test]
+    fn test_in_memory_session_store_cleanup_expired() {
+        let mut store = InMemorySessionStore::new();
+        let s1 = store.create_session();
+        let id1 = s1.session_id.clone();
+
+        // Manually backdate the session to make it "expired"
+        if let Some(session) = store.sessions.get_mut(&id1) {
+            session.last_active = chrono::Utc::now() - chrono::Duration::seconds(120);
+        }
+
+        // Create a fresh session
+        let _s2 = store.create_session();
+        assert_eq!(store.list_sessions().len(), 2);
+
+        // Cleanup sessions older than 60 seconds
+        store.cleanup_expired(60);
+        assert_eq!(store.list_sessions().len(), 1);
+        assert!(store.get_session(&id1).is_none());
+    }
+
+    #[test]
+    fn test_mcp_session_serde() {
+        let session = McpSession {
+            session_id: "s-test".to_string(),
+            created_at: chrono::Utc::now(),
+            last_active: chrono::Utc::now(),
+            metadata: {
+                let mut m = HashMap::new();
+                m.insert("key".to_string(), "value".to_string());
+                m
+            },
+        };
+        let json = serde_json::to_string(&session).unwrap();
+        let back: McpSession = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.session_id, "s-test");
+        assert_eq!(back.metadata.get("key").map(|v| v.as_str()), Some("value"));
+    }
+
+    // --- 2.2 OAuth 2.1 + PKCE ---
+
+    #[test]
+    fn test_sha256_known_vectors() {
+        // SHA-256("abc") = ba7816bf 8f01cfea 414140de 5dae2223 b00361a3 96177a9c b410ff61 f20015ad
+        let hash = sha256_hash(b"abc");
+        let hex: String = hash.iter().map(|b| format!("{:02x}", b)).collect();
+        assert_eq!(
+            hex,
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn test_sha256_empty_string() {
+        // SHA-256("") = e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+        let hash = sha256_hash(b"");
+        let hex: String = hash.iter().map(|b| format!("{:02x}", b)).collect();
+        assert_eq!(
+            hex,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    #[test]
+    fn test_sha256_longer_input() {
+        // SHA-256("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq")
+        let hash = sha256_hash(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq");
+        let hex: String = hash.iter().map(|b| format!("{:02x}", b)).collect();
+        assert_eq!(
+            hex,
+            "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
+        );
+    }
+
+    #[test]
+    fn test_base64url_encode_basic() {
+        // Known value: base64url of [0, 1, 2, 3] should produce "AAECAT"
+        // Standard base64: AAECAw== → base64url without padding: AAECAw
+        let encoded = base64url_encode(&[0, 1, 2, 3]);
+        assert_eq!(encoded, "AAECAw");
+    }
+
+    #[test]
+    fn test_base64url_no_plus_or_slash() {
+        // base64url must not contain + or / (unlike standard base64)
+        let data: Vec<u8> = (0..=255).collect();
+        let encoded = base64url_encode(&data);
+        assert!(!encoded.contains('+'));
+        assert!(!encoded.contains('/'));
+        assert!(!encoded.contains('='));
+    }
+
+    #[test]
+    fn test_pkce_challenge_generate() {
+        let pkce = PkceChallenge::generate();
+        assert!(!pkce.verifier.is_empty());
+        assert!(!pkce.challenge.is_empty());
+        assert_eq!(pkce.method, "S256");
+        // Verifier should be at least 43 chars per RFC 7636
+        assert!(pkce.verifier.len() >= 43);
+    }
+
+    #[test]
+    fn test_pkce_from_verifier_deterministic() {
+        let pkce1 = PkceChallenge::from_verifier("test-verifier-12345678901234567890123456789");
+        let pkce2 = PkceChallenge::from_verifier("test-verifier-12345678901234567890123456789");
+        assert_eq!(pkce1.challenge, pkce2.challenge);
+        assert_eq!(pkce1.verifier, pkce2.verifier);
+        assert_eq!(pkce1.method, "S256");
+    }
+
+    #[test]
+    fn test_pkce_different_verifiers_different_challenges() {
+        let pkce1 = PkceChallenge::from_verifier("verifier-aaa");
+        let pkce2 = PkceChallenge::from_verifier("verifier-bbb");
+        assert_ne!(pkce1.challenge, pkce2.challenge);
+    }
+
+    #[test]
+    fn test_pkce_challenge_is_base64url() {
+        let pkce = PkceChallenge::from_verifier("my-test-verifier");
+        // base64url characters only: A-Z a-z 0-9 - _
+        assert!(pkce
+            .challenge
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
+    }
+
+    fn make_test_v2_oauth_config() -> McpV2OAuthConfig {
+        McpV2OAuthConfig {
+            authorization_endpoint: "https://auth.example.com/authorize".to_string(),
+            token_endpoint: "https://auth.example.com/token".to_string(),
+            client_id: Some("test-client-v2".to_string()),
+            client_secret: Some("test-secret-v2".to_string()),
+            scopes: vec!["mcp:tools".to_string(), "mcp:resources".to_string()],
+            redirect_uri: "http://localhost:9090/callback".to_string(),
+        }
+    }
+
+    #[test]
+    fn test_oauth_token_manager_new() {
+        let config = make_test_v2_oauth_config();
+        let manager = OAuthTokenManager::new(config);
+        assert!(manager.current_token().is_none());
+        assert!(manager.is_token_expired());
+    }
+
+    #[test]
+    fn test_get_authorization_url() {
+        let config = make_test_v2_oauth_config();
+        let manager = OAuthTokenManager::new(config);
+        let (url, pkce) = manager.get_authorization_url();
+
+        assert!(url.starts_with("https://auth.example.com/authorize?"));
+        assert!(url.contains("response_type=code"));
+        assert!(url.contains("code_challenge="));
+        assert!(url.contains("code_challenge_method=S256"));
+        assert!(url.contains("client_id=test-client-v2"));
+        assert!(!pkce.verifier.is_empty());
+        assert!(!pkce.challenge.is_empty());
+    }
+
+    #[test]
+    fn test_exchange_code() {
+        let config = make_test_v2_oauth_config();
+        let mut manager = OAuthTokenManager::new(config);
+        let pkce = PkceChallenge::from_verifier("test-verifier");
+
+        let token = manager.exchange_code("auth-code-xyz", &pkce).unwrap();
+        assert_eq!(token.access_token, "access-auth-code-xyz");
+        assert_eq!(token.token_type, "Bearer");
+        assert!(token.expires_at.is_some());
+        assert!(token.refresh_token.is_some());
+        assert!(!manager.is_token_expired());
+    }
+
+    #[test]
+    fn test_exchange_code_empty_code() {
+        let config = make_test_v2_oauth_config();
+        let mut manager = OAuthTokenManager::new(config);
+        let pkce = PkceChallenge::from_verifier("test-verifier");
+        let result = manager.exchange_code("", &pkce);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("empty"));
+    }
+
+    #[test]
+    fn test_exchange_code_empty_verifier() {
+        let config = make_test_v2_oauth_config();
+        let mut manager = OAuthTokenManager::new(config);
+        let pkce = PkceChallenge {
+            verifier: String::new(),
+            challenge: "abc".to_string(),
+            method: "S256".to_string(),
+        };
+        let result = manager.exchange_code("code", &pkce);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("verifier"));
+    }
+
+    #[test]
+    fn test_refresh_token_flow() {
+        let config = make_test_v2_oauth_config();
+        let mut manager = OAuthTokenManager::new(config);
+        let pkce = PkceChallenge::from_verifier("test-verifier");
+
+        // First get a token
+        manager.exchange_code("code-1", &pkce).unwrap();
+
+        // Now refresh
+        let refreshed = manager.refresh_token().unwrap();
+        assert!(refreshed.access_token.starts_with("refreshed-"));
+        assert!(!manager.is_token_expired());
+    }
+
+    #[test]
+    fn test_refresh_token_no_token() {
+        let config = make_test_v2_oauth_config();
+        let mut manager = OAuthTokenManager::new(config);
+        let result = manager.refresh_token();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("No refresh token"));
+    }
+
+    #[test]
+    fn test_is_token_expired_no_token() {
+        let config = make_test_v2_oauth_config();
+        let manager = OAuthTokenManager::new(config);
+        assert!(manager.is_token_expired());
+    }
+
+    #[test]
+    fn test_is_token_expired_valid_token() {
+        let config = make_test_v2_oauth_config();
+        let mut manager = OAuthTokenManager::new(config);
+        manager.set_token(OAuthToken {
+            access_token: "valid".to_string(),
+            token_type: "Bearer".to_string(),
+            expires_at: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
+            refresh_token: None,
+            scope: None,
+        });
+        assert!(!manager.is_token_expired());
+    }
+
+    #[test]
+    fn test_is_token_expired_no_expiry() {
+        let config = make_test_v2_oauth_config();
+        let mut manager = OAuthTokenManager::new(config);
+        manager.set_token(OAuthToken {
+            access_token: "permanent".to_string(),
+            token_type: "Bearer".to_string(),
+            expires_at: None,
+            refresh_token: None,
+            scope: None,
+        });
+        assert!(!manager.is_token_expired());
+    }
+
+    #[test]
+    fn test_get_valid_token_no_token() {
+        let config = make_test_v2_oauth_config();
+        let mut manager = OAuthTokenManager::new(config);
+        let result = manager.get_valid_token();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get_valid_token_with_valid() {
+        let config = make_test_v2_oauth_config();
+        let mut manager = OAuthTokenManager::new(config);
+        manager.set_token(OAuthToken {
+            access_token: "good-token".to_string(),
+            token_type: "Bearer".to_string(),
+            expires_at: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
+            refresh_token: Some("refresh-1".to_string()),
+            scope: None,
+        });
+        let token = manager.get_valid_token().unwrap();
+        assert_eq!(token.access_token, "good-token");
+    }
+
+    #[test]
+    fn test_oauth_token_serde() {
+        let token = OAuthToken {
+            access_token: "tok-abc".to_string(),
+            token_type: "Bearer".to_string(),
+            expires_at: Some(chrono::Utc::now()),
+            refresh_token: Some("ref-def".to_string()),
+            scope: Some("mcp:tools".to_string()),
+        };
+        let json = serde_json::to_string(&token).unwrap();
+        let back: OAuthToken = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.access_token, "tok-abc");
+        assert_eq!(back.token_type, "Bearer");
+        assert!(back.expires_at.is_some());
+        assert_eq!(back.refresh_token.as_deref(), Some("ref-def"));
+        assert_eq!(back.scope.as_deref(), Some("mcp:tools"));
+    }
+
+    // --- Authorization Server Metadata ---
+
+    #[test]
+    fn test_authorization_server_metadata_discover() {
+        let metadata = AuthorizationServerMetadata::discover("https://auth.example.com").unwrap();
+        assert_eq!(metadata.issuer, "https://auth.example.com");
+        assert_eq!(
+            metadata.authorization_endpoint,
+            "https://auth.example.com/authorize"
+        );
+        assert_eq!(
+            metadata.token_endpoint,
+            "https://auth.example.com/token"
+        );
+        assert!(metadata.registration_endpoint.is_some());
+        assert!(!metadata.scopes_supported.is_empty());
+    }
+
+    #[test]
+    fn test_authorization_server_metadata_serde() {
+        let metadata = AuthorizationServerMetadata {
+            issuer: "https://example.com".to_string(),
+            authorization_endpoint: "https://example.com/auth".to_string(),
+            token_endpoint: "https://example.com/token".to_string(),
+            registration_endpoint: None,
+            scopes_supported: vec!["scope1".to_string()],
+        };
+        let json = serde_json::to_string(&metadata).unwrap();
+        let back: AuthorizationServerMetadata = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.issuer, "https://example.com");
+        assert!(back.registration_endpoint.is_none());
+        assert_eq!(back.scopes_supported.len(), 1);
+    }
+
+    // --- Dynamic Client Registration ---
+
+    #[test]
+    fn test_dynamic_client_registration() {
+        let (client_id, client_secret) = DynamicClientRegistration::register(
+            "https://auth.example.com/register",
+            "my-app",
+            &["http://localhost:8080/callback".to_string()],
+        )
+        .unwrap();
+        assert!(client_id.contains("my-app"));
+        assert!(client_secret.is_some());
+    }
+
+    #[test]
+    fn test_dynamic_client_registration_empty_endpoint() {
+        let result = DynamicClientRegistration::register(
+            "",
+            "my-app",
+            &["http://localhost/cb".to_string()],
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_dynamic_client_registration_empty_name() {
+        let result = DynamicClientRegistration::register(
+            "https://auth.example.com/register",
+            "",
+            &["http://localhost/cb".to_string()],
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_dynamic_client_registration_no_redirects() {
+        let result = DynamicClientRegistration::register(
+            "https://auth.example.com/register",
+            "my-app",
+            &[],
+        );
+        assert!(result.is_err());
+    }
+
+    // --- 2.3 Tool Annotations ---
+
+    #[test]
+    fn test_tool_annotations_v2_defaults() {
+        let ann = ToolAnnotations::default();
+        assert!(!ann.read_only);
+        assert!(ann.destructive);
+        assert!(!ann.idempotent);
+        assert!(ann.open_world);
+    }
+
+    #[test]
+    fn test_tool_annotations_is_safe() {
+        let safe = ToolAnnotations {
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        };
+        assert!(safe.is_safe());
+
+        let not_safe = ToolAnnotations {
+            read_only: true,
+            destructive: true,
+            ..Default::default()
+        };
+        assert!(!not_safe.is_safe());
+
+        let not_readonly = ToolAnnotations {
+            read_only: false,
+            destructive: false,
+            ..Default::default()
+        };
+        assert!(!not_readonly.is_safe());
+    }
+
+    #[test]
+    fn test_tool_annotations_needs_confirmation() {
+        // Default: destructive=true, open_world=true => needs confirmation
+        let default_ann = ToolAnnotations::default();
+        assert!(default_ann.needs_confirmation());
+
+        // Only destructive
+        let destructive_only = ToolAnnotations {
+            read_only: false,
+            destructive: true,
+            idempotent: false,
+            open_world: false,
+        };
+        assert!(destructive_only.needs_confirmation());
+
+        // Only open_world
+        let open_only = ToolAnnotations {
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: true,
+        };
+        assert!(open_only.needs_confirmation());
+
+        // Neither destructive nor open_world
+        let no_confirmation = ToolAnnotations {
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        };
+        assert!(!no_confirmation.needs_confirmation());
+    }
+
+    #[test]
+    fn test_tool_annotations_serde_v2() {
+        let ann = ToolAnnotations {
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        };
+        let json = serde_json::to_string(&ann).unwrap();
+        let back: ToolAnnotations = serde_json::from_str(&json).unwrap();
+        assert!(back.read_only);
+        assert!(!back.destructive);
+        assert!(back.idempotent);
+        assert!(!back.open_world);
+    }
+
+    #[test]
+    fn test_tool_annotations_serde_defaults_on_missing_fields() {
+        // When fields are missing, defaults should apply
+        let json = r#"{"read_only": true}"#;
+        let ann: ToolAnnotations = serde_json::from_str(json).unwrap();
+        assert!(ann.read_only);
+        assert!(ann.destructive); // default true
+        assert!(!ann.idempotent); // default false
+        assert!(ann.open_world); // default true
+    }
+
+    #[test]
+    fn test_annotated_tool_from_tool() {
+        let tool = McpTool::new("search", "Search the web");
+        let annotated = AnnotatedTool::from_tool(tool);
+        assert_eq!(annotated.tool.name, "search");
+        // Default annotations
+        assert!(!annotated.annotations.read_only);
+        assert!(annotated.annotations.destructive);
+    }
+
+    #[test]
+    fn test_annotated_tool_with_annotations() {
+        let tool = McpTool::new("read_file", "Read a file");
+        let ann = ToolAnnotations {
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        };
+        let annotated = AnnotatedTool::with_annotations(tool, ann);
+        assert_eq!(annotated.tool.name, "read_file");
+        assert!(annotated.annotations.is_safe());
+        assert!(!annotated.annotations.needs_confirmation());
+    }
+
+    #[test]
+    fn test_annotated_tool_serde() {
+        let tool = McpTool::new("deploy", "Deploy to production");
+        let ann = ToolAnnotations {
+            read_only: false,
+            destructive: true,
+            idempotent: false,
+            open_world: true,
+        };
+        let annotated = AnnotatedTool::with_annotations(tool, ann);
+        let json = serde_json::to_string(&annotated).unwrap();
+        let back: AnnotatedTool = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.tool.name, "deploy");
+        assert!(back.annotations.destructive);
+        assert!(back.annotations.open_world);
+    }
+
+    #[test]
+    fn test_tool_annotation_registry_register_and_get() {
+        let mut registry = ToolAnnotationRegistry::new();
+        registry.register(
+            "search",
+            ToolAnnotations {
+                read_only: true,
+                destructive: false,
+                idempotent: true,
+                open_world: false,
+            },
+        );
+
+        let ann = registry.get("search");
+        assert!(ann.is_some());
+        let ann = ann.unwrap();
+        assert!(ann.read_only);
+        assert!(!ann.destructive);
+
+        assert!(registry.get("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_tool_annotation_registry_needs_approval() {
+        let mut registry = ToolAnnotationRegistry::new();
+
+        // Safe tool — no approval needed
+        registry.register(
+            "read_file",
+            ToolAnnotations {
+                read_only: true,
+                destructive: false,
+                idempotent: true,
+                open_world: false,
+            },
+        );
+        assert!(!registry.needs_approval("read_file"));
+
+        // Destructive tool — approval needed
+        registry.register(
+            "delete_file",
+            ToolAnnotations {
+                read_only: false,
+                destructive: true,
+                idempotent: false,
+                open_world: false,
+            },
+        );
+        assert!(registry.needs_approval("delete_file"));
+
+        // Unknown tool — approval needed (conservative default)
+        assert!(registry.needs_approval("unknown_tool"));
+    }
+
+    #[test]
+    fn test_tool_annotation_registry_overwrite() {
+        let mut registry = ToolAnnotationRegistry::new();
+        registry.register("tool1", ToolAnnotations::default());
+        assert!(registry.get("tool1").unwrap().destructive);
+
+        // Overwrite with safe annotations
+        registry.register(
+            "tool1",
+            ToolAnnotations {
+                read_only: true,
+                destructive: false,
+                idempotent: true,
+                open_world: false,
+            },
+        );
+        assert!(!registry.get("tool1").unwrap().destructive);
+    }
+
+    #[test]
+    fn test_mcpv2_oauth_config_serde() {
+        let config = make_test_v2_oauth_config();
+        let json = serde_json::to_string(&config).unwrap();
+        let back: McpV2OAuthConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.client_id.as_deref(), Some("test-client-v2"));
+        assert_eq!(back.scopes.len(), 2);
+        assert_eq!(back.redirect_uri, "http://localhost:9090/callback");
     }
 }
