@@ -128,6 +128,14 @@ This guide covers every feature in the `ai_assistant` crate. Each section explai
 120. [MCTS Planning & Reasoning](#120-mcts-planning--reasoning)
 121. [Voice & Multimodal v2](#121-voice--multimodal-v2)
 122. [Platform & Infrastructure](#122-platform--infrastructure)
+123. [SSE Streaming](#123-sse-streaming)
+124. [Response Compression](#124-response-compression)
+125. [Rate Limiting](#125-rate-limiting)
+126. [AiAssistant Feature Integration](#126-aiassistant-feature-integration)
+127. [Audit Logging](#127-audit-logging)
+128. [API Versioning](#128-api-versioning)
+129. [Structured Error Responses](#129-structured-error-responses)
+130. [Compressed Memory Snapshots](#130-compressed-memory-snapshots)
 
 ---
 
@@ -6826,3 +6834,356 @@ println!("Retrieval: {:?}, LLM: {:?}, Total: {:?}",
 **Key types**: `SandboxBackend` (trait), `PodmanBackend`, `WasmSandbox`, `ProcessSandbox`, `SandboxConfig`, `ExecutionResult`, `DeploymentProfile`, `AgentDebugger`, `Breakpoint`, `BreakpointType`, `ExecutionRecorder`, `RecordedExecution`, `PerformanceProfiler`, `PipelineStage`
 
 **Feature flags**: `containers`, `devtools`
+
+---
+
+## 123. SSE Streaming
+
+**What**: The embedded HTTP server exposes a `POST /chat/stream` endpoint that returns Server-Sent Events (SSE). Each generated token is sent as an individual SSE frame (`data: {"token":"word"}\n\n`), and the stream terminates with a sentinel `data: [DONE]\n\n` frame. The response uses the standard SSE headers: `Content-Type: text/event-stream`, `Cache-Control: no-cache`, and `Connection: keep-alive`.
+
+**Why**: Token-by-token streaming gives users immediate visual feedback while the model is still generating, dramatically reducing perceived latency. SSE is a simple, well-supported protocol that works over standard HTTP/1.1 without requiring WebSocket upgrades, making it compatible with proxies, load balancers, and `curl`.
+
+```rust
+use ai_assistant::http_server::{ServerConfig, start_server};
+
+// Start the server with streaming enabled
+let config = ServerConfig {
+    host: "127.0.0.1".to_string(),
+    port: 8080,
+    ..ServerConfig::default()
+};
+// start_server(config, assistant).await?;
+
+// --- Client-side: curl ---
+// curl -N -X POST http://127.0.0.1:8080/chat/stream \
+//   -H "Content-Type: application/json" \
+//   -d '{"prompt": "Explain Rust ownership"}'
+//
+// Output:
+//   data: {"token":"Rust"}
+//
+//   data: {"token":" ownership"}
+//
+//   data: {"token":" ensures"}
+//
+//   data: [DONE]
+
+// --- Client-side: Rust with reqwest ---
+// let response = reqwest::Client::new()
+//     .post("http://127.0.0.1:8080/chat/stream")
+//     .json(&serde_json::json!({"prompt": "Explain Rust ownership"}))
+//     .send()
+//     .await?;
+//
+// let mut stream = response.bytes_stream();
+// while let Some(chunk) = stream.next().await {
+//     let text = String::from_utf8_lossy(&chunk?);
+//     for line in text.lines() {
+//         if let Some(data) = line.strip_prefix("data: ") {
+//             if data == "[DONE]" {
+//                 break;
+//             }
+//             // Parse {"token": "..."} and display
+//         }
+//     }
+// }
+```
+
+**Key types**: `ServerConfig`, `SseEvent`
+
+**Feature flags**: `core`
+
+---
+
+## 124. Response Compression
+
+**What**: The HTTP server automatically compresses responses with gzip when the client includes an `Accept-Encoding: gzip` header. Compression is performed using `flate2` and the server adds the `Content-Encoding: gzip` header to compressed responses. Clients that do not request compression receive uncompressed responses as before.
+
+**Why**: LLM responses can be lengthy (thousands of tokens). Gzip compression typically reduces JSON payload sizes by 60-80%, saving bandwidth and improving transfer times, especially on slower connections. The overhead of compression is negligible compared to LLM inference time.
+
+```rust
+use ai_assistant::http_client::{compress_gzip, decompress_gzip};
+
+// Server-side: compress a response body when client accepts gzip
+let body = b"A long response from the LLM...";
+let compressed = compress_gzip(body).expect("compression failed");
+// Set header: Content-Encoding: gzip
+
+// Client-side: decompress received body
+let decompressed = decompress_gzip(&compressed).expect("decompression failed");
+assert_eq!(decompressed, body);
+
+// The server handles this automatically:
+// 1. Client sends: Accept-Encoding: gzip
+// 2. Server compresses response with flate2
+// 3. Server adds: Content-Encoding: gzip
+// 4. Client decompresses transparently
+```
+
+**Key types**: `compress_gzip`, `decompress_gzip`
+
+**Feature flags**: `core`
+
+---
+
+## 125. Rate Limiting
+
+**What**: `ServerRateLimiter` limits the number of requests a client can make per minute to the embedded HTTP server. When the limit is exceeded, the server returns `429 Too Many Requests` with a `Retry-After` header indicating how many seconds the client should wait. The limiter is thread-safe, using `AtomicU32` for the counter and `Mutex` for the timestamp window. It is configured via `ServerConfig`.
+
+**Why**: LLM inference is expensive (GPU time, memory, energy). Without rate limiting, a single client can monopolize the server, starving other users. Rate limiting ensures fair resource sharing, protects against accidental loops, and provides a foundation for usage-based billing.
+
+```rust
+use ai_assistant::http_server::{ServerConfig, ServerRateLimiter};
+
+// Configure rate limiting in the server
+let config = ServerConfig {
+    host: "127.0.0.1".to_string(),
+    port: 8080,
+    rate_limit_rpm: Some(60), // 60 requests per minute
+    ..ServerConfig::default()
+};
+
+// Or use the rate limiter directly
+let limiter = ServerRateLimiter::new(60); // 60 requests per minute
+
+// Check if a request is allowed
+if limiter.check_rate_limit() {
+    // Process the request
+} else {
+    // Return 429 Too Many Requests
+    // Header: Retry-After: <seconds until window resets>
+}
+
+// The server applies this automatically:
+// - Each request increments the counter
+// - Counter resets every 60 seconds
+// - If counter > limit, respond with 429 + Retry-After header
+```
+
+**Key types**: `ServerRateLimiter`, `ServerConfig`
+
+**Feature flags**: `core`
+
+---
+
+## 126. AiAssistant Feature Integration
+
+**What**: Convenience methods on `AiAssistant` that wire together advanced subsystems (constrained decoding, HITL, MCP client, distillation) through a single, ergonomic API. These methods handle internal plumbing so callers do not need to instantiate low-level structs.
+
+**Why**: The crate has many powerful subsystems, but using them directly requires understanding internal types and wiring. These convenience methods provide a high-level "batteries-included" API that covers the most common use cases with minimal boilerplate.
+
+```rust
+use ai_assistant::AiAssistant;
+
+let mut assistant = AiAssistant::default();
+
+// --- Constrained decoding via GBNF grammar ---
+// Force the LLM to output valid JSON matching a schema
+let grammar = r#"root ::= "{" '"name"' ":" string "," '"age"' ":" number "}"
+string ::= '"' [a-zA-Z ]+ '"'
+number ::= [0-9]+"#;
+let result = assistant.generate_with_grammar(grammar, "Generate a person record");
+// Output is guaranteed to match the grammar
+
+// --- HITL approval gate ---
+// Require human approval before executing tool calls
+let response = assistant.send_message_with_approval(
+    "Delete all files in /tmp",
+    false, // auto_approve = false -> requires manual approval
+);
+// The assistant pauses and waits for human review of the proposed action
+
+// --- MCP client integration ---
+// Connect to a remote MCP server and discover its tools
+assistant.connect_mcp_server("http://localhost:3000/mcp");
+let tools = assistant.list_mcp_tools("http://localhost:3000/mcp");
+// tools: Vec<ToolInfo> — name, description, input schema for each
+
+// --- Distillation pipeline ---
+// Collect teacher model trajectories for student model training
+let trajectory = assistant.collect_trajectory();
+// trajectory: sequence of (input, reasoning, output) triples
+
+let training_data = assistant.export_training_data();
+// training_data: JSONL-formatted string ready for fine-tuning
+```
+
+**Key types**: `AiAssistant`
+
+**Feature flags**: `core`, `constrained-decoding`, `hitl`, `distillation`
+
+---
+
+## 127. Audit Logging
+
+**What**: `AuditLog` is a thread-safe, append-only log for recording security-relevant events: authentication successes and failures, configuration changes, session creation and destruction, and custom application events. Each entry is timestamped and tagged with an event type. The log supports a configurable maximum size with automatic rotation (oldest entries are dropped when the limit is reached).
+
+**Why**: Security auditing is a compliance requirement for many organizations (SOC 2, HIPAA, GDPR). An in-process audit log captures events with minimal latency and no external dependencies. The append-only design ensures that logged events cannot be retroactively modified, and the rotation policy prevents unbounded memory growth.
+
+```rust
+use ai_assistant::http_server::AuditLog;
+
+// Create an audit log with a max of 10,000 entries
+let audit = AuditLog::new(10_000);
+
+// Log authentication events
+audit.log_event("AUTH_SUCCESS", "User admin logged in from 192.168.1.1");
+audit.log_event("AUTH_FAILURE", "Invalid API key from 10.0.0.5");
+
+// Log configuration changes
+audit.log_event("CONFIG_CHANGE", "rate_limit_rpm changed from 60 to 120");
+
+// Log session lifecycle
+audit.log_event("SESSION_START", "Session sess_abc123 created");
+audit.log_event("SESSION_END", "Session sess_abc123 destroyed after 45m");
+
+// Retrieve recent entries
+let entries = audit.recent_entries(50);
+for entry in &entries {
+    println!("[{}] {}: {}", entry.timestamp, entry.event_type, entry.message);
+}
+
+// The log is thread-safe — multiple request handlers can log concurrently
+// When entries exceed the max, the oldest entries are automatically rotated out
+```
+
+**Key types**: `AuditLog`, `AuditEntry`
+
+**Feature flags**: `core`
+
+---
+
+## 128. API Versioning
+
+**What**: All HTTP API endpoints are available at both their base path (e.g., `/chat`) and a versioned path (e.g., `/api/v1/chat`). Every response includes an `X-API-Version` header indicating the current API version. This dual-path scheme ensures backward compatibility: existing clients using base paths continue to work, while new clients can pin to a specific version.
+
+**Why**: API versioning is essential for production services that have multiple client versions in the wild. By serving both versioned and unversioned paths from the start, the crate avoids a breaking migration later. The `X-API-Version` header lets clients programmatically verify which version they are talking to.
+
+```rust
+use ai_assistant::http_server::ServerConfig;
+
+let config = ServerConfig {
+    host: "127.0.0.1".to_string(),
+    port: 8080,
+    ..ServerConfig::default()
+};
+
+// Both of these reach the same handler:
+//   POST /chat           -> chat handler (X-API-Version: v1)
+//   POST /api/v1/chat    -> chat handler (X-API-Version: v1)
+//
+//   POST /chat/stream           -> SSE streaming handler
+//   POST /api/v1/chat/stream    -> SSE streaming handler
+//
+//   GET  /models                -> list models handler
+//   GET  /api/v1/models         -> list models handler
+//
+//   GET  /health                -> health check handler
+//   GET  /api/v1/health         -> health check handler
+
+// Response headers always include:
+//   X-API-Version: v1
+//
+// Future API versions (v2, v3, ...) will get separate paths
+// while v1 paths remain stable for backward compatibility.
+```
+
+**Key types**: `ServerConfig`
+
+**Feature flags**: `core`
+
+---
+
+## 129. Structured Error Responses
+
+**What**: All error responses from the HTTP server use a consistent JSON structure with four fields: `error_code` (a machine-readable string like `RATE_LIMITED` or `AUTH_FAILED`), `message` (a human-readable explanation), `details` (optional additional context), and `retry_after_secs` (optional, present for rate-limit errors). This replaces ad-hoc plain-text error messages.
+
+**Why**: Consistent error structures make clients easier to write and debug. A machine-readable `error_code` lets clients branch on error type without parsing human-readable strings. The `retry_after_secs` field for rate-limit errors enables automatic backoff. Structured errors also improve logging and monitoring because every error has a categorized code.
+
+```rust
+// Error response JSON format:
+// {
+//   "error_code": "RATE_LIMITED",
+//   "message": "Too many requests. Please retry after 30 seconds.",
+//   "details": "60 requests per minute exceeded",
+//   "retry_after_secs": 30
+// }
+
+// Standard error codes:
+// INVALID_JSON       - Request body is not valid JSON
+// AUTH_FAILED        - API key missing or invalid
+// RATE_LIMITED       - Too many requests (includes retry_after_secs)
+// VALIDATION_ERROR   - Request fields failed validation (e.g., empty prompt)
+// MODEL_ERROR        - LLM provider returned an error
+// INTERNAL_ERROR     - Unexpected server error
+// NOT_FOUND          - Endpoint does not exist
+// METHOD_NOT_ALLOWED - Wrong HTTP method for endpoint
+
+use ai_assistant::http_server::ErrorResponse;
+
+// Create a structured error response
+let error = ErrorResponse {
+    error_code: "VALIDATION_ERROR".to_string(),
+    message: "Prompt cannot be empty".to_string(),
+    details: Some("The 'prompt' field must contain at least one character".to_string()),
+    retry_after_secs: None,
+};
+
+// Rate limit error with retry information
+let rate_error = ErrorResponse {
+    error_code: "RATE_LIMITED".to_string(),
+    message: "Too many requests".to_string(),
+    details: None,
+    retry_after_secs: Some(30),
+};
+
+// Serializes to consistent JSON for all error paths
+let json = serde_json::to_string(&error).unwrap();
+```
+
+**Key types**: `ErrorResponse`
+
+**Feature flags**: `core`
+
+---
+
+## 130. Compressed Memory Snapshots
+
+**What**: Two pairs of methods for persisting `AiAssistant` memory to disk. `save_compressed(path)` / `load_compressed(path)` serialize memory to JSON, then gzip-compress the result before writing it to a file. `save_with_checksum(path)` / `load_with_checksum(path)` write uncompressed JSON alongside a sidecar `.checksum` file containing an FNV-1a hash of the data. On load, the checksum is recomputed and compared to detect corruption or tampering.
+
+**Why**: Assistant memory (conversation history, user preferences, session state) can grow large. Gzip compression typically reduces JSON memory snapshots by 70-90%, saving disk space and speeding up I/O for backups and transfers. Checksum verification adds integrity guarantees: if a snapshot file is corrupted on disk or modified by another process, the load fails fast with a clear error instead of silently ingesting bad data.
+
+```rust
+use ai_assistant::AiAssistant;
+
+let mut assistant = AiAssistant::default();
+// ... use the assistant, accumulate memory ...
+
+// --- Compressed snapshots (gzip JSON) ---
+// Save memory as gzip-compressed JSON
+assistant.save_compressed("memory/assistant_backup.json.gz")
+    .expect("failed to save compressed snapshot");
+
+// Load it back — decompresses automatically
+assistant.load_compressed("memory/assistant_backup.json.gz")
+    .expect("failed to load compressed snapshot");
+
+// --- Checksummed snapshots (JSON + FNV-1a sidecar) ---
+// Save memory as JSON with an integrity checksum
+assistant.save_with_checksum("memory/assistant_backup.json")
+    .expect("failed to save checksummed snapshot");
+// This creates two files:
+//   memory/assistant_backup.json          — the JSON data
+//   memory/assistant_backup.json.checksum — FNV-1a hash
+
+// Load with integrity verification
+assistant.load_with_checksum("memory/assistant_backup.json")
+    .expect("failed to load — checksum mismatch means corruption");
+
+// If the .checksum file is missing or the hash does not match,
+// load_with_checksum returns an error instead of silently loading bad data.
+```
+
+**Key types**: `AiAssistant`
+
+**Feature flags**: `core`

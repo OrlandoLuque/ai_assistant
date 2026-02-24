@@ -27,8 +27,6 @@
     - feature_matrix.html                                 (v14: v6 — RemoteMcpClient, HitlApprovalGate, TrajectoryRecorder, RedTeamSuite, MctsPlanner, AgentDebugger, MCP Elicitation/Audio/Batching, A2A AGENTS.md/ACP, PromptSignature SIMBA, MemoryOS, discourse-aware chunking, MMR diversity retrieval, natural language guards, WebRTC voice, video frame analysis, multi-backend sandbox, deployment profiles. 4449 tests, 231 source files)
     - feature_matrix_2026-02-24_1200_pre-v8-update.html  (v14 snapshot before v8 additions)
     - feature_matrix.html                                 (v15: v7+v8 — Server hardening (auth middleware, CORS, correlation IDs, graceful shutdown, Prometheus /metrics, request limits, TLS config), error context enrichment (ContextualError + ResultExt), prelude module, config hot-reload (ConfigWatcher), Dockerfile, memory persistence (save/load, AutoPersistenceConfig, snapshots, rotation), output PII guard, output toxicity guard, provider-level structured logging, module-level logging (assistant, cloud_connectors, mcp_client). 4882 tests, 232 source files)
-    - feature_matrix_2026-02-24_1030_pre-v9-update.html  (v15 snapshot before v9 additions)
-    - feature_matrix.html                                 (v16: v9 — SSE Streaming (POST /chat/stream, token-by-token), Response Compression (gzip via flate2), Server Rate Limiting (ServerRateLimiter, 429 responses), API Versioning (/api/v1/ prefix routes), Audit Logging (AuditLog, security event tracking), Structured Errors (JSON error format with codes), Feature Integration (generate_with_grammar, send_message_with_approval, MCP/distillation methods), Compressed Snapshots (gzip memory persistence, checksum verification). 5034 tests, 232 source files)
 -->
 <html lang="es">
 <head>
@@ -732,7 +730,7 @@
 <body>
 
 <h1>AI Assistant &mdash; Matriz Casos de Uso vs Tecnolog&iacute;as</h1>
-<p class="subtitle">v16 (2026-02-24) &mdash; 5034 tests | 6 benchmarks | 20 examples | 232 source files | 0 warnings &mdash; Haz clic en cualquier celda para editarla.</p>
+<p class="subtitle">v15 (2026-02-24) &mdash; 4882 tests | 6 benchmarks | 20 examples | 232 source files | 0 warnings &mdash; Haz clic en cualquier celda para editarla.</p>
 
 <div class="legend">
   <div class="legend-item"><div class="legend-dot" style="background:var(--core)"></div>Core (siempre activo)</div>
@@ -955,9 +953,7 @@
     <li><code>feature_matrix_2026-02-23_1800_pre-v6.html</code> &mdash; v13 snapshot antes de v6</li>
     <li><code>feature_matrix.html</code> &mdash; v14: v6 — RemoteMcpClient (MCP client pool), HitlApprovalGate (Human-in-the-Loop), TrajectoryRecorder (agent trajectory eval), RedTeamSuite (automated red teaming), MctsPlanner (MCTS planning), AgentDebugger (devtools). Extensions: MCP Elicitation/Audio/Batching/Completions, A2A AGENTS.md parser/ACP Bridge, PromptSignature SIMBA/reasoning traces/LLM-as-Judge, MemoryOS, discourse-aware chunking, MMR diversity retrieval/hierarchical router, natural language guards, WebRTC transport/Speech-to-Speech, video frame analysis, multi-backend sandbox (Podman/WASM/Process), deployment profiles. 4449 tests, 231 source files, 0 warnings</li>
     <li><code>feature_matrix_2026-02-24_1200_pre-v8-update.html</code> &mdash; v14 snapshot antes de v8</li>
-    <li><code>feature_matrix.html</code> &mdash; v15: v7+v8 — Server hardening (auth middleware Bearer+API Key, configurable CORS, X-Request-Id correlation IDs, graceful shutdown, Prometheus /metrics, request limits, TLS config struct), error context enrichment (ContextualError + ResultExt), prelude module, config hot-reload (ConfigWatcher), Dockerfile + .dockerignore, memory persistence (save_to_file/load_from_file, AutoPersistenceConfig with snapshots and rotation), output PII guard, output toxicity guard, provider-level structured logging, module-level logging (assistant, cloud_connectors, mcp_client). 4882 tests, 232 source files, 0 warnings</li>
-    <li><code>feature_matrix_2026-02-24_1030_pre-v9-update.html</code> &mdash; v15 snapshot antes de v9</li>
-    <li><code>feature_matrix.html</code> &mdash; v16 (actual): v9 — SSE Streaming (POST /chat/stream, token-by-token delivery), Response Compression (gzip via flate2, Accept-Encoding negotiation), Server Rate Limiting (ServerRateLimiter, per-minute limits, 429 responses), API Versioning (/api/v1/ prefix routes, backward compatible), Audit Logging (AuditLog, security event tracking, thread-safe), Structured Errors (JSON error format with error codes), Feature Integration (generate_with_grammar, send_message_with_approval, MCP/distillation methods), Compressed Snapshots (gzip memory persistence, checksum verification). 5034 tests, 232 source files, 0 warnings</li>
+    <li><code>feature_matrix.html</code> &mdash; v15 (actual): v7+v8 — Server hardening (auth middleware Bearer+API Key, configurable CORS, X-Request-Id correlation IDs, graceful shutdown, Prometheus /metrics, request limits, TLS config struct), error context enrichment (ContextualError + ResultExt), prelude module, config hot-reload (ConfigWatcher), Dockerfile + .dockerignore, memory persistence (save_to_file/load_from_file, AutoPersistenceConfig with snapshots and rotation), output PII guard, output toxicity guard, provider-level structured logging, module-level logging (assistant, cloud_connectors, mcp_client). 4882 tests, 232 source files, 0 warnings</li>
   </ul>
   <p><strong>Pol&iacute;tica de backups:</strong> antes de cambios significativos, crear copia con formato <code>feature_matrix_YYYY-MM-DD_HHMM_descripcion.html</code>.</p>
 
@@ -1789,43 +1785,6 @@ const GROUPS = [
         cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
         typical: ['basic_chat','rag_chat','agent_tools','autonomous','multi_agent','http_server'],
         notes: 'Siempre compilado. Structured log::debug!/log::info!/log::warn! statements across assistant.rs, cloud_connectors.rs, mcp_client.rs. Module-scoped logging for debugging and operational monitoring. v8.' },
-    ]
-  },
-  {
-    name: 'v9 Features',
-    rows: [
-      { tech: 'SSE Streaming (POST /chat/stream)', flag: null,
-        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
-        typical: ['http_server','basic_chat','rag_chat','multi_user','autonomous','multi_agent'],
-        notes: 'Siempre compilado. POST /chat/stream endpoint with Server-Sent Events format, token-by-token delivery. Real-time streaming responses over HTTP. server.rs. v9.' },
-      { tech: 'Response Compression (gzip via flate2)', flag: null,
-        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
-        typical: ['http_server','multi_user','autonomous','multi_agent'],
-        notes: 'Siempre compilado. gzip response compression via flate2, Accept-Encoding negotiation, Content-Encoding headers. Reduces bandwidth for API responses. server.rs. v9.' },
-      { tech: 'Server Rate Limiting (ServerRateLimiter)', flag: null,
-        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
-        typical: ['http_server','multi_user','autonomous','multi_agent'],
-        notes: 'Siempre compilado. ServerRateLimiter with per-minute limits, per-client tracking, 429 Too Many Requests responses. Protection against API abuse. server.rs. v9.' },
-      { tech: 'API Versioning (/api/v1/ prefix routes)', flag: null,
-        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
-        typical: ['http_server','multi_user'],
-        notes: 'Siempre compilado. /api/v1/ prefix routes for all API endpoints, backward compatible routing. Enables future API evolution without breaking clients. server.rs. v9.' },
-      { tech: 'Audit Logging (AuditLog)', flag: null,
-        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
-        typical: ['http_server','multi_user','autonomous','multi_agent'],
-        notes: 'Siempre compilado. AuditLog with security event tracking, thread-safe logging, timestamped entries. Compliance and forensics support. v9.' },
-      { tech: 'Structured Errors (JSON error format)', flag: null,
-        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
-        typical: ['http_server','basic_chat','rag_chat','multi_user','agent_tools','autonomous','multi_agent'],
-        notes: 'Siempre compilado. JSON error format with error codes, human-readable messages, and machine-parsable structure. Consistent error responses across all API endpoints. v9.' },
-      { tech: 'Feature Integration (generate_with_grammar, send_message_with_approval, MCP/distillation)', flag: null,
-        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
-        typical: ['basic_chat','rag_chat','agent_tools','autonomous','multi_agent','http_server'],
-        notes: 'Siempre compilado. Convenience methods on AiAssistant: generate_with_grammar (constrained decoding), send_message_with_approval (HITL), MCP discovery/tool listing, distillation APIs. Cross-feature bridge methods. v9.' },
-      { tech: 'Compressed Snapshots (gzip memory persistence)', flag: 'advanced-memory',
-        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
-        typical: ['basic_chat','rag_chat','autonomous','multi_agent'],
-        notes: 'Feature flag advanced-memory. gzip-compressed memory snapshots for persistence, checksum verification on load, reduced disk footprint. advanced_memory.rs. v9.' },
     ]
   },
 ];
