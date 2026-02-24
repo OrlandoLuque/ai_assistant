@@ -7187,3 +7187,117 @@ assistant.load_with_checksum("memory/assistant_backup.json")
 **Key types**: `AiAssistant`
 
 **Feature flags**: `core`
+
+---
+
+## 56. WebSocket Chat Endpoint
+
+The embedded HTTP server supports WebSocket connections for real-time chat with streaming responses.
+
+```rust
+// Server-side: WebSocket is automatically available on /ws and /api/v1/ws
+// No additional configuration needed — just start the server normally.
+
+let config = ServerConfig {
+    host: "0.0.0.0".to_string(),
+    port: 8090,
+    ..Default::default()
+};
+let server = AiServer::new(config);
+server.run_blocking();
+```
+
+Client-side (JavaScript):
+```javascript
+const ws = new WebSocket('ws://localhost:8090/ws');
+ws.onopen = () => ws.send(JSON.stringify({ message: 'Hello!' }));
+ws.onmessage = (event) => {
+    const msg = JSON.parse(event.data);
+    if (msg.type === 'done') return;
+    process.stdout.write(msg.data);
+};
+```
+
+**Feature flags**: `core`
+
+---
+
+## 57. TLS / HTTPS (Native)
+
+Enable native TLS termination with the `server-tls` feature flag.
+
+```rust
+use ai_assistant::server::{ServerConfig, TlsConfig};
+
+let config = ServerConfig {
+    tls: Some(TlsConfig {
+        cert_path: "/path/to/cert.pem".to_string(),
+        key_path: "/path/to/key.pem".to_string(),
+    }),
+    ..Default::default()
+};
+// Build with: cargo build --features "full,server-tls"
+```
+
+**Feature flags**: `server-tls`
+
+---
+
+## 58. OpenAPI Specification
+
+The server auto-generates and serves an OpenAPI 3.0.0 spec at `/api/v1/openapi.json`.
+
+```bash
+curl http://localhost:8090/api/v1/openapi.json | jq .paths
+```
+
+Programmatic access:
+```rust
+use ai_assistant::openapi_export::generate_server_api_spec;
+let spec = generate_server_api_spec();
+println!("{}", serde_json::to_string_pretty(&spec).unwrap());
+```
+
+**Feature flags**: `core`
+
+---
+
+## 59. Server Plugin System
+
+Extend the HTTP server with plugins for logging, access control, and metrics.
+
+```rust
+use ai_assistant::{PluginManager, RequestLoggingPlugin, IpAllowlistPlugin, MetricsCollectorPlugin};
+
+let mut pm = PluginManager::new();
+pm.register(Box::new(RequestLoggingPlugin::new()));
+pm.register(Box::new(IpAllowlistPlugin::new(vec!["127.0.0.1".to_string()])));
+pm.register(Box::new(MetricsCollectorPlugin::new()));
+```
+
+**Key types**: `Plugin`, `PluginManager`, `RequestLoggingPlugin`, `IpAllowlistPlugin`, `MetricsCollectorPlugin`
+
+**Feature flags**: `core`
+
+---
+
+## 60. Server CLI Binary
+
+Run the server from the command line with full configuration support.
+
+```bash
+# Basic usage
+cargo run --bin ai_assistant_server --features full -- --port 8090
+
+# With config file
+cargo run --bin ai_assistant_server --features full -- --config server.json
+
+# With TLS (requires server-tls feature)
+cargo run --bin ai_assistant_server --features "full,server-tls" -- \
+    --tls-cert cert.pem --tls-key key.pem
+
+# Dry run (validate config, print JSON, exit)
+cargo run --bin ai_assistant_server --features full -- --dry-run --config server.json
+```
+
+**Feature flags**: `full`
