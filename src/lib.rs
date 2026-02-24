@@ -1957,6 +1957,16 @@ pub use voice_agent::{
 };
 
 // =============================================================================
+// WEBRTC VOICE TRANSPORT (SDP, ICE, RTP)
+// =============================================================================
+
+#[cfg(all(feature = "webrtc", feature = "voice-agent"))]
+pub use voice_agent::{
+    IceCandidateType, RtpStreamConfig, SdpAnswer, SdpOffer, TurnServer, WebRtcAudioCodec,
+    WebRtcConfig, WebRtcIceCandidate, WebRtcSessionStats, WebRtcTransport,
+};
+
+// =============================================================================
 // MEDIA GENERATION (image & video generation providers)
 // =============================================================================
 
