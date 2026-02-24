@@ -645,6 +645,189 @@ fn build_sse_response(sse_body: &str, extra_headers: &str) -> String {
 }
 
 // ============================================================================
+// WebSocket support (RFC 6455)
+// ============================================================================
+
+/// WebSocket magic GUID for Sec-WebSocket-Accept (RFC 6455 §4.2.2).
+const WS_MAGIC_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+/// Read a single WebSocket frame from a stream (RFC 6455 §5.2).
+fn read_ws_frame(stream: &mut dyn Read) -> std::io::Result<crate::websocket_streaming::WsFrame> {
+    use crate::websocket_streaming::{WsFrame, WsOpcode};
+
+    let mut header = [0u8; 2];
+    stream.read_exact(&mut header)?;
+
+    let fin = (header[0] & 0x80) != 0;
+    let opcode_byte = header[0] & 0x0F;
+    let masked = (header[1] & 0x80) != 0;
+    let mut payload_len = (header[1] & 0x7F) as u64;
+
+    if payload_len == 126 {
+        let mut ext = [0u8; 2];
+        stream.read_exact(&mut ext)?;
+        payload_len = u16::from_be_bytes(ext) as u64;
+    } else if payload_len == 127 {
+        let mut ext = [0u8; 8];
+        stream.read_exact(&mut ext)?;
+        payload_len = u64::from_be_bytes(ext);
+    }
+
+    if payload_len > 16 * 1024 * 1024 {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "WebSocket frame too large"));
+    }
+
+    let mask = if masked {
+        let mut m = [0u8; 4];
+        stream.read_exact(&mut m)?;
+        Some(m)
+    } else {
+        None
+    };
+
+    let mut payload = vec![0u8; payload_len as usize];
+    if !payload.is_empty() {
+        stream.read_exact(&mut payload)?;
+    }
+
+    if let Some(mask_key) = mask {
+        for (i, byte) in payload.iter_mut().enumerate() {
+            *byte ^= mask_key[i % 4];
+        }
+    }
+
+    let opcode = WsOpcode::from_byte(opcode_byte).unwrap_or(WsOpcode::Close);
+
+    Ok(WsFrame { fin, opcode, masked: false, payload })
+}
+
+/// Write a WebSocket frame to a stream (server → client, unmasked per RFC 6455).
+fn write_ws_frame(stream: &mut dyn Write, frame: &crate::websocket_streaming::WsFrame) -> std::io::Result<()> {
+    let mut header = Vec::with_capacity(10);
+    let fin_bit = if frame.fin { 0x80u8 } else { 0x00 };
+    let opcode_byte = match frame.opcode {
+        crate::websocket_streaming::WsOpcode::Continuation => 0x0,
+        crate::websocket_streaming::WsOpcode::Text => 0x1,
+        crate::websocket_streaming::WsOpcode::Binary => 0x2,
+        crate::websocket_streaming::WsOpcode::Close => 0x8,
+        crate::websocket_streaming::WsOpcode::Ping => 0x9,
+        crate::websocket_streaming::WsOpcode::Pong => 0xA,
+    };
+    header.push(fin_bit | opcode_byte);
+
+    let len = frame.payload.len();
+    if len < 126 {
+        header.push(len as u8);
+    } else if len <= 65535 {
+        header.push(126);
+        header.extend_from_slice(&(len as u16).to_be_bytes());
+    } else {
+        header.push(127);
+        header.extend_from_slice(&(len as u64).to_be_bytes());
+    }
+
+    stream.write_all(&header)?;
+    stream.write_all(&frame.payload)?;
+    stream.flush()?;
+    Ok(())
+}
+
+/// Perform the WebSocket upgrade handshake (server side).
+fn ws_handshake(stream: &mut dyn Write, headers: &[(String, String)], extra_headers: &str) -> std::io::Result<()> {
+    let ws_key = headers.iter().find(|(k, _)| k == "sec-websocket-key").map(|(_, v)| v.as_str()).unwrap_or("");
+    let mut accept_input = ws_key.to_string();
+    accept_input.push_str(WS_MAGIC_GUID);
+    let hash = crate::websocket_streaming::sha1_hash(accept_input.as_bytes());
+    let accept = crate::websocket_streaming::base64_encode(&hash);
+
+    let response = format!(
+        "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {}\r\n{}\r\n",
+        accept, extra_headers,
+    );
+    stream.write_all(response.as_bytes())?;
+    stream.flush()?;
+    Ok(())
+}
+
+/// Handle a WebSocket chat session after upgrade.
+fn handle_ws_chat(stream: &mut dyn ReadWrite, assistant: &Arc<Mutex<AiAssistant>>, config: &ServerConfig) -> std::io::Result<()> {
+    use crate::websocket_streaming::{WsFrame, WsOpcode};
+
+    loop {
+        let frame = match read_ws_frame(stream) {
+            Ok(f) => f,
+            Err(_) => break,
+        };
+
+        match frame.opcode {
+            WsOpcode::Text => {
+                let text = match std::str::from_utf8(&frame.payload) {
+                    Ok(s) => s,
+                    Err(_) => {
+                        let _ = write_ws_frame(stream, &WsFrame::close(1007, "Invalid UTF-8"));
+                        break;
+                    }
+                };
+
+                #[derive(serde::Deserialize)]
+                struct WsChatReq { message: String, #[serde(default)] system_prompt: Option<String> }
+
+                let req: WsChatReq = match serde_json::from_str(text) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        let err = serde_json::json!({"type": "error", "message": format!("Invalid JSON: {}", e)});
+                        let _ = write_ws_frame(stream, &WsFrame::text(&err.to_string()));
+                        continue;
+                    }
+                };
+
+                if req.message.len() > config.max_message_length {
+                    let err = serde_json::json!({"type": "error", "message": "Message too long"});
+                    let _ = write_ws_frame(stream, &WsFrame::text(&err.to_string()));
+                    continue;
+                }
+
+                let response_text = {
+                    let mut guard = assistant.lock().unwrap_or_else(|e| e.into_inner());
+                    let sys = req.system_prompt.as_deref().unwrap_or("");
+                    guard.send_message_with_notes(req.message.clone(), "", sys, "");
+                    // Poll until we get the full response
+                    loop {
+                        match guard.poll_response() {
+                            Some(crate::messages::AiResponse::Complete(text)) => break text,
+                            Some(crate::messages::AiResponse::Error(e)) => break format!("[Error: {}]", e),
+                            Some(crate::messages::AiResponse::Cancelled(partial)) => break partial,
+                            Some(_) => continue,
+                            None => std::thread::sleep(std::time::Duration::from_millis(10)),
+                        }
+                    }
+                };
+
+                for word in response_text.split_whitespace() {
+                    let chunk = serde_json::json!({"type": "chunk", "data": word});
+                    if write_ws_frame(stream, &WsFrame::text(&chunk.to_string())).is_err() {
+                        return Ok(());
+                    }
+                }
+                let done = serde_json::json!({"type": "done"});
+                let _ = write_ws_frame(stream, &WsFrame::text(&done.to_string()));
+            }
+            WsOpcode::Ping => { let _ = write_ws_frame(stream, &WsFrame::pong(&frame.payload)); }
+            WsOpcode::Close => { let _ = write_ws_frame(stream, &WsFrame::close(1000, "Normal closure")); break; }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Check whether an HTTP request is a WebSocket upgrade.
+fn is_websocket_upgrade(headers: &[(String, String)]) -> bool {
+    let has_upgrade = headers.iter().any(|(k, v)| k == "upgrade" && v.eq_ignore_ascii_case("websocket"));
+    let has_connection = headers.iter().any(|(k, v)| k == "connection" && v.to_ascii_lowercase().contains("upgrade"));
+    has_upgrade && has_connection
+}
+
+// ============================================================================
 // AI Server
 // ============================================================================
 
@@ -1092,6 +1275,17 @@ fn handle_connection(
         stream.write_all(response.as_bytes())?;
         stream.flush()?;
         return Ok(());
+    }
+
+    // Check if this is a WebSocket upgrade request
+    let is_ws = (request.path == "/ws" || request.path == "/api/v1/ws")
+        && request.method == "GET"
+        && is_websocket_upgrade(&request.headers);
+    if is_ws {
+        log::info!("[{}] WebSocket upgrade {} → 101 ({:.1}ms)", request_id, request.path, start.elapsed().as_secs_f64() * 1000.0);
+        metrics.record_request("101", start.elapsed());
+        ws_handshake(stream, &request.headers, &extra_headers)?;
+        return handle_ws_chat(stream, assistant, config);
     }
 
     // Check if this is an SSE streaming request
@@ -2225,6 +2419,249 @@ mod tests {
         let config: ServerConfig = serde_json::from_str(&json).unwrap();
         assert!(config.tls.is_none());
         assert_eq!(config.port, 8090);
+    }
+
+    // ========================================================================
+    // WebSocket tests (v10 Phase 5)
+    // ========================================================================
+
+    #[test]
+    fn test_is_websocket_upgrade_valid() {
+        let headers = vec![
+            ("upgrade".to_string(), "websocket".to_string()),
+            ("connection".to_string(), "Upgrade".to_string()),
+            ("sec-websocket-key".to_string(), "dGhlIHNhbXBsZSBub25jZQ==".to_string()),
+            ("sec-websocket-version".to_string(), "13".to_string()),
+        ];
+        assert!(is_websocket_upgrade(&headers));
+    }
+
+    #[test]
+    fn test_is_websocket_upgrade_missing_upgrade() {
+        let headers = vec![
+            ("connection".to_string(), "Upgrade".to_string()),
+            ("sec-websocket-key".to_string(), "dGhlIHNhbXBsZSBub25jZQ==".to_string()),
+        ];
+        assert!(!is_websocket_upgrade(&headers));
+    }
+
+    #[test]
+    fn test_is_websocket_upgrade_missing_connection() {
+        let headers = vec![
+            ("upgrade".to_string(), "websocket".to_string()),
+            ("sec-websocket-key".to_string(), "dGhlIHNhbXBsZSBub25jZQ==".to_string()),
+        ];
+        assert!(!is_websocket_upgrade(&headers));
+    }
+
+    #[test]
+    fn test_is_websocket_upgrade_wrong_value() {
+        let headers = vec![
+            ("upgrade".to_string(), "h2c".to_string()),
+            ("connection".to_string(), "Upgrade".to_string()),
+        ];
+        assert!(!is_websocket_upgrade(&headers));
+    }
+
+    #[test]
+    fn test_is_websocket_upgrade_case_insensitive() {
+        let headers = vec![
+            ("upgrade".to_string(), "WebSocket".to_string()),
+            ("connection".to_string(), "upgrade".to_string()),
+        ];
+        assert!(is_websocket_upgrade(&headers));
+    }
+
+    #[test]
+    fn test_ws_magic_guid_correct() {
+        assert_eq!(WS_MAGIC_GUID, "258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
+    }
+
+    #[test]
+    fn test_ws_handshake_accept_value() {
+        // RFC 6455 §4.2.2 example: key = "dGhlIHNhbXBsZSBub25jZQ=="
+        // Expected accept = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
+        let key = "dGhlIHNhbXBsZSBub25jZQ==";
+        let mut accept_input = key.to_string();
+        accept_input.push_str(WS_MAGIC_GUID);
+        let hash = crate::websocket_streaming::sha1_hash(accept_input.as_bytes());
+        let accept = crate::websocket_streaming::base64_encode(&hash);
+        assert_eq!(accept, "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=");
+    }
+
+    #[test]
+    fn test_ws_handshake_writes_101() {
+        let headers = vec![
+            ("sec-websocket-key".to_string(), "dGhlIHNhbXBsZSBub25jZQ==".to_string()),
+        ];
+        let mut buf = Vec::new();
+        ws_handshake(&mut buf, &headers, "").unwrap();
+        let response = String::from_utf8(buf).unwrap();
+        assert!(response.starts_with("HTTP/1.1 101 Switching Protocols\r\n"));
+        assert!(response.contains("Upgrade: websocket\r\n"));
+        assert!(response.contains("Connection: Upgrade\r\n"));
+        assert!(response.contains("Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo="));
+    }
+
+    #[test]
+    fn test_ws_handshake_includes_extra_headers() {
+        let headers = vec![
+            ("sec-websocket-key".to_string(), "dGhlIHNhbXBsZSBub25jZQ==".to_string()),
+        ];
+        let mut buf = Vec::new();
+        ws_handshake(&mut buf, &headers, "X-Request-Id: abc123\r\n").unwrap();
+        let response = String::from_utf8(buf).unwrap();
+        assert!(response.contains("X-Request-Id: abc123"));
+    }
+
+    #[test]
+    fn test_write_ws_frame_text() {
+        use crate::websocket_streaming::WsFrame;
+        let frame = WsFrame::text("hello");
+        let mut buf = Vec::new();
+        write_ws_frame(&mut buf, &frame).unwrap();
+        // FIN + Text opcode = 0x81, length = 5
+        assert_eq!(buf[0], 0x81);
+        assert_eq!(buf[1], 5);
+        assert_eq!(&buf[2..], b"hello");
+    }
+
+    #[test]
+    fn test_write_ws_frame_ping() {
+        use crate::websocket_streaming::WsFrame;
+        let frame = WsFrame::ping(b"");
+        let mut buf = Vec::new();
+        write_ws_frame(&mut buf, &frame).unwrap();
+        // FIN + Ping opcode = 0x89, length = 0
+        assert_eq!(buf[0], 0x89);
+        assert_eq!(buf[1], 0);
+    }
+
+    #[test]
+    fn test_write_ws_frame_close() {
+        use crate::websocket_streaming::WsFrame;
+        let frame = WsFrame::close(1000, "bye");
+        let mut buf = Vec::new();
+        write_ws_frame(&mut buf, &frame).unwrap();
+        // FIN + Close opcode = 0x88
+        assert_eq!(buf[0], 0x88);
+        // Payload: 2 bytes status code + "bye" = 5 bytes
+        assert_eq!(buf[1], 5);
+    }
+
+    #[test]
+    fn test_write_ws_frame_medium_payload() {
+        use crate::websocket_streaming::WsFrame;
+        // 200 bytes payload → extended 16-bit length
+        let data = "x".repeat(200);
+        let frame = WsFrame::text(&data);
+        let mut buf = Vec::new();
+        write_ws_frame(&mut buf, &frame).unwrap();
+        assert_eq!(buf[0], 0x81); // FIN + Text
+        assert_eq!(buf[1], 126);  // Extended 16-bit
+        let len = u16::from_be_bytes([buf[2], buf[3]]) as usize;
+        assert_eq!(len, 200);
+        assert_eq!(buf.len(), 4 + 200);
+    }
+
+    #[test]
+    fn test_read_ws_frame_unmasked_text() {
+        use crate::websocket_streaming::WsOpcode;
+        // Build a minimal unmasked text frame: FIN=1, opcode=1, mask=0, len=5, "hello"
+        let data: Vec<u8> = vec![0x81, 0x05, b'h', b'e', b'l', b'l', b'o'];
+        let mut cursor = std::io::Cursor::new(data);
+        let frame = read_ws_frame(&mut cursor).unwrap();
+        assert!(frame.fin);
+        assert_eq!(frame.opcode, WsOpcode::Text);
+        assert_eq!(frame.payload, b"hello");
+    }
+
+    #[test]
+    fn test_read_ws_frame_masked_text() {
+        use crate::websocket_streaming::WsOpcode;
+        // Build a masked text frame: FIN=1, opcode=1, mask=1, len=5
+        let mask: [u8; 4] = [0x37, 0xfa, 0x21, 0x3d];
+        let payload = b"Hello";
+        let mut masked_payload = payload.to_vec();
+        for (i, byte) in masked_payload.iter_mut().enumerate() {
+            *byte ^= mask[i % 4];
+        }
+        let mut data = vec![0x81, 0x85]; // FIN+Text, masked+len=5
+        data.extend_from_slice(&mask);
+        data.extend_from_slice(&masked_payload);
+        let mut cursor = std::io::Cursor::new(data);
+        let frame = read_ws_frame(&mut cursor).unwrap();
+        assert!(frame.fin);
+        assert_eq!(frame.opcode, WsOpcode::Text);
+        assert_eq!(frame.payload, b"Hello");
+    }
+
+    #[test]
+    fn test_read_ws_frame_close() {
+        use crate::websocket_streaming::WsOpcode;
+        // Close frame: FIN=1, opcode=8, mask=0, len=2, status=1000
+        let data: Vec<u8> = vec![0x88, 0x02, 0x03, 0xE8]; // 0x03E8 = 1000
+        let mut cursor = std::io::Cursor::new(data);
+        let frame = read_ws_frame(&mut cursor).unwrap();
+        assert_eq!(frame.opcode, WsOpcode::Close);
+        assert_eq!(frame.payload, vec![0x03, 0xE8]);
+    }
+
+    #[test]
+    fn test_read_ws_frame_ping() {
+        use crate::websocket_streaming::WsOpcode;
+        // Ping frame: FIN=1, opcode=9, mask=0, len=0
+        let data: Vec<u8> = vec![0x89, 0x00];
+        let mut cursor = std::io::Cursor::new(data);
+        let frame = read_ws_frame(&mut cursor).unwrap();
+        assert_eq!(frame.opcode, WsOpcode::Ping);
+        assert!(frame.payload.is_empty());
+    }
+
+    #[test]
+    fn test_read_ws_frame_too_large() {
+        // Frame claiming 32MB payload → error
+        let mut data: Vec<u8> = vec![0x81, 127]; // FIN+Text, 64-bit length
+        let huge_len: u64 = 32 * 1024 * 1024;
+        data.extend_from_slice(&huge_len.to_be_bytes());
+        let mut cursor = std::io::Cursor::new(data);
+        let result = read_ws_frame(&mut cursor);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_read_ws_frame_extended_16bit_length() {
+        use crate::websocket_streaming::WsOpcode;
+        // Text frame with 200-byte payload via 16-bit extended length
+        let payload = vec![0x41u8; 200]; // 200 'A' bytes
+        let mut data = vec![0x81, 126]; // FIN+Text, 16-bit length follows
+        data.extend_from_slice(&200u16.to_be_bytes());
+        data.extend_from_slice(&payload);
+        let mut cursor = std::io::Cursor::new(data);
+        let frame = read_ws_frame(&mut cursor).unwrap();
+        assert_eq!(frame.opcode, WsOpcode::Text);
+        assert_eq!(frame.payload.len(), 200);
+    }
+
+    #[test]
+    fn test_read_write_ws_frame_roundtrip() {
+        use crate::websocket_streaming::WsFrame;
+        let original = WsFrame::text("roundtrip test");
+        let mut buf = Vec::new();
+        write_ws_frame(&mut buf, &original).unwrap();
+        let mut cursor = std::io::Cursor::new(buf);
+        let decoded = read_ws_frame(&mut cursor).unwrap();
+        assert_eq!(decoded.payload, original.payload);
+        assert!(decoded.fin);
+    }
+
+    #[test]
+    fn test_ws_functions_exist() {
+        // Compile-time check for function signatures
+        let _: fn(&mut dyn Read) -> std::io::Result<crate::websocket_streaming::WsFrame> = read_ws_frame;
+        let _: fn(&mut dyn Write, &crate::websocket_streaming::WsFrame) -> std::io::Result<()> = write_ws_frame;
+        let _: fn(&mut dyn Write, &[(String, String)], &str) -> std::io::Result<()> = ws_handshake;
+        let _: fn(&[(String, String)]) -> bool = is_websocket_upgrade;
     }
 
     // ========================================================================
