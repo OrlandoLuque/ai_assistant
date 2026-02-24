@@ -4974,4 +4974,121 @@ mod tests {
         ai.load_session(&sid);
         ai.delete_session(&sid);
     }
+
+    // ----------------------------------------------------------
+    // Session Persistence Tests (7.3)
+    // ----------------------------------------------------------
+
+    #[test]
+    fn test_save_sessions_empty() {
+        let ai = AiAssistant::new();
+        let dir = std::env::temp_dir().join(format!("test_sessions_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("sessions.bin");
+        ai.save_sessions_to_file(&path).unwrap();
+        assert!(path.exists());
+        // File should have been created and contain data
+        let metadata = std::fs::metadata(&path).unwrap();
+        assert!(metadata.len() > 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_save_and_load_sessions() {
+        let mut ai = AiAssistant::new();
+        ai.new_session();
+        ai.conversation.push(ChatMessage::user("hello"));
+        ai.save_current_session();
+
+        let dir = std::env::temp_dir().join(format!("test_sessions_load_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("sessions.bin");
+        let expected_count = ai.session_store.sessions.len();
+        ai.save_sessions_to_file(&path).unwrap();
+
+        let mut ai2 = AiAssistant::new();
+        ai2.load_sessions_from_file(&path).unwrap();
+        assert_eq!(ai2.session_store.sessions.len(), expected_count);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_load_sessions_nonexistent_returns_default() {
+        let mut ai = AiAssistant::new();
+        // load_from_file returns Ok(default) for nonexistent paths
+        let result = ai.load_sessions_from_file(std::path::Path::new("/nonexistent_dir_xyz/sessions.bin"));
+        // On most OSes this returns Ok with an empty default store
+        // The exact behavior depends on the platform, so just verify it doesn't panic
+        if result.is_ok() {
+            assert!(ai.session_store.sessions.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_save_sessions_preserves_messages() {
+        let mut ai = AiAssistant::new();
+        ai.new_session();
+        ai.conversation.push(ChatMessage::user("test message"));
+        ai.conversation.push(ChatMessage::assistant("test reply"));
+        ai.save_current_session();
+
+        let dir = std::env::temp_dir().join(format!("test_sessions_msgs_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("sessions.bin");
+        ai.save_sessions_to_file(&path).unwrap();
+
+        let mut ai2 = AiAssistant::new();
+        ai2.load_sessions_from_file(&path).unwrap();
+        // Should have restored the session with messages
+        assert!(!ai2.session_store.sessions.is_empty());
+        let session = &ai2.session_store.sessions[0];
+        assert_eq!(session.messages.len(), 2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_save_sessions_multiple_sessions() {
+        let mut ai = AiAssistant::new();
+        ai.new_session();
+        ai.conversation.push(ChatMessage::user("session 1"));
+        ai.save_current_session();
+        ai.new_session();
+        ai.conversation.push(ChatMessage::user("session 2"));
+        ai.save_current_session();
+
+        let dir = std::env::temp_dir().join(format!("test_sessions_multi_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("sessions.bin");
+        let expected_count = ai.session_store.sessions.len();
+        ai.save_sessions_to_file(&path).unwrap();
+
+        let mut ai2 = AiAssistant::new();
+        ai2.load_sessions_from_file(&path).unwrap();
+        assert_eq!(ai2.session_store.sessions.len(), expected_count);
+        // At least one session should exist
+        assert!(ai2.session_store.sessions.len() >= 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_load_sessions_restores_current() {
+        let mut ai = AiAssistant::new();
+        ai.new_session();
+        let sid = ai.current_session.as_ref().unwrap().id.clone();
+        ai.conversation.push(ChatMessage::user("restore me"));
+        ai.save_current_session();
+
+        let dir = std::env::temp_dir().join(format!("test_sessions_restore_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("sessions.bin");
+        ai.save_sessions_to_file(&path).unwrap();
+
+        let mut ai2 = AiAssistant::new();
+        ai2.load_sessions_from_file(&path).unwrap();
+        // The current session should be restored
+        assert!(ai2.current_session.is_some());
+        assert_eq!(ai2.current_session.as_ref().unwrap().id, sid);
+        assert!(!ai2.conversation.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

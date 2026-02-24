@@ -436,4 +436,274 @@ mod tests {
         assert_eq!(json["topic_coherence"], 0.8);
         assert_eq!(json["topics"].as_array().unwrap().len(), 1);
     }
+
+    // ====================================================================
+    // Additional tests: state transitions, edge cases, coverage expansion
+    // ====================================================================
+
+    #[test]
+    fn test_state_transition_user_assistant_user() {
+        let mut analyzer = FlowAnalyzer::new();
+        analyzer.add_turn(ConversationTurn::new("user", "What is Rust programming?"));
+        analyzer.add_turn(ConversationTurn::new(
+            "assistant",
+            "Rust is a systems programming language focused on safety and performance.",
+        ));
+        analyzer.add_turn(ConversationTurn::new(
+            "user",
+            "Tell me more about its memory safety features.",
+        ));
+
+        let analysis = analyzer.analyze();
+        // Last message contains "tell me more" -> Elaboration
+        assert_eq!(analysis.current_state, FlowState::Elaboration);
+    }
+
+    #[test]
+    fn test_state_conclusion_on_thank_you() {
+        let mut analyzer = FlowAnalyzer::new();
+        analyzer.add_turn(ConversationTurn::new("user", "How do I sort a list in Python?"));
+        analyzer.add_turn(ConversationTurn::new(
+            "assistant",
+            "You can use the sorted() function or the list.sort() method.",
+        ));
+        analyzer.add_turn(ConversationTurn::new(
+            "user",
+            "Thank you so much, that helps!",
+        ));
+
+        let analysis = analyzer.analyze();
+        assert_eq!(analysis.current_state, FlowState::Conclusion);
+    }
+
+    #[test]
+    fn test_state_clarification() {
+        let mut analyzer = FlowAnalyzer::new();
+        analyzer.add_turn(ConversationTurn::new("user", "Explain monads."));
+        analyzer.add_turn(ConversationTurn::new(
+            "assistant",
+            "Monads are a design pattern used in functional programming.",
+        ));
+        analyzer.add_turn(ConversationTurn::new(
+            "user",
+            "What do you mean? Can you clarify?",
+        ));
+
+        let analysis = analyzer.analyze();
+        assert_eq!(analysis.current_state, FlowState::Clarification);
+    }
+
+    #[test]
+    fn test_state_information_gathering_with_question() {
+        let mut analyzer = FlowAnalyzer::new();
+        analyzer.add_turn(ConversationTurn::new(
+            "user",
+            "I have a project with multiple modules. Which architecture pattern should I use?",
+        ));
+
+        let analysis = analyzer.analyze();
+        // Contains "?" but not "clarify" or "tell me more" -> InformationGathering
+        assert_eq!(analysis.current_state, FlowState::InformationGathering);
+    }
+
+    #[test]
+    fn test_state_stalled_short_messages() {
+        let mut analyzer = FlowAnalyzer::new();
+        analyzer.add_turn(ConversationTurn::new("user", "Ok"));
+        analyzer.add_turn(ConversationTurn::new("assistant", "Yes"));
+        analyzer.add_turn(ConversationTurn::new("user", "Hmm"));
+
+        let analysis = analyzer.analyze();
+        assert_eq!(analysis.current_state, FlowState::Stalled);
+    }
+
+    #[test]
+    fn test_state_problem_solving_default() {
+        let mut analyzer = FlowAnalyzer::new();
+        analyzer.add_turn(ConversationTurn::new(
+            "user",
+            "I am implementing a binary search tree in Rust with generics and lifetime parameters.",
+        ));
+
+        let analysis = analyzer.analyze();
+        // No question mark, not short, no keywords -> ProblemSolving
+        assert_eq!(analysis.current_state, FlowState::ProblemSolving);
+    }
+
+    #[test]
+    fn test_single_message_conversation() {
+        let mut analyzer = FlowAnalyzer::new();
+        analyzer.add_turn(ConversationTurn::new("user", "Hello world"));
+
+        let analysis = analyzer.analyze();
+        assert_eq!(analysis.turn_distribution.get("user"), Some(&1));
+        assert!(analysis.average_turn_length > 0.0);
+        // Only user turns -> balance deviates from 0.5
+        assert!(analysis.conversation_balance < 1.0);
+    }
+
+    #[test]
+    fn test_empty_message_turn() {
+        let turn = ConversationTurn::new("user", "");
+        assert_eq!(turn.token_count, 0);
+        assert_eq!(turn.content, "");
+        assert_eq!(turn.role, "user");
+    }
+
+    #[test]
+    fn test_very_long_message() {
+        let long_content = "word ".repeat(5000);
+        let turn = ConversationTurn::new("user", &long_content);
+        assert_eq!(turn.token_count, 5000);
+        assert!(turn.content.len() > 20000);
+    }
+
+    #[test]
+    fn test_turn_distribution_balanced() {
+        let mut analyzer = FlowAnalyzer::new();
+        for _ in 0..5 {
+            analyzer.add_turn(ConversationTurn::new("user", "This is a user message with enough words."));
+            analyzer.add_turn(ConversationTurn::new(
+                "assistant",
+                "This is an assistant reply with enough words too.",
+            ));
+        }
+
+        let analysis = analyzer.analyze();
+        assert_eq!(analysis.turn_distribution.get("user"), Some(&5));
+        assert_eq!(analysis.turn_distribution.get("assistant"), Some(&5));
+        // Perfect balance should be close to 1.0
+        assert!(
+            analysis.conversation_balance > 0.9,
+            "Expected balanced conversation, got {}",
+            analysis.conversation_balance
+        );
+    }
+
+    #[test]
+    fn test_depth_score_with_indicators() {
+        let mut analyzer = FlowAnalyzer::new();
+        analyzer.add_turn(ConversationTurn::new(
+            "user",
+            "Because of the complexity, I need a detailed solution. Furthermore, for example, \
+             consider the case where the input is invalid. Moreover, specifically the edge cases \
+             need to be handled. Therefore the implementation must be robust. However, in detail, \
+             we should also consider performance.",
+        ));
+
+        let analysis = analyzer.analyze();
+        assert!(
+            analysis.depth_score > 0.0,
+            "Expected positive depth score, got {}",
+            analysis.depth_score
+        );
+    }
+
+    #[test]
+    fn test_engagement_score_with_questions() {
+        let mut analyzer = FlowAnalyzer::new();
+        analyzer.add_turn(ConversationTurn::new(
+            "user",
+            "How does async work in Rust? What about lifetimes? Can you show an example?",
+        ));
+        analyzer.add_turn(ConversationTurn::new(
+            "assistant",
+            "Great questions! Async in Rust works through the Future trait. \
+             Would you like me to elaborate on any specific aspect?",
+        ));
+
+        let analysis = analyzer.analyze();
+        // Both turns have questions, so engagement should be > baseline 0.5
+        assert!(
+            analysis.engagement_score > 0.5,
+            "Expected engagement > 0.5, got {}",
+            analysis.engagement_score
+        );
+    }
+
+    #[test]
+    fn test_suggest_next_action_per_state() {
+        // Opening
+        let analyzer = FlowAnalyzer::new();
+        let suggestion = analyzer.suggest_next_action();
+        assert!(suggestion.contains("Gather"));
+
+        // Conclusion
+        let mut analyzer2 = FlowAnalyzer::new();
+        analyzer2.add_turn(ConversationTurn::new("user", "Thank you, goodbye!"));
+        let suggestion2 = analyzer2.suggest_next_action();
+        assert!(suggestion2.contains("Summarize"));
+
+        // Stalled
+        let mut analyzer3 = FlowAnalyzer::new();
+        analyzer3.add_turn(ConversationTurn::new("user", "Ok"));
+        analyzer3.add_turn(ConversationTurn::new("assistant", "Yes"));
+        analyzer3.add_turn(ConversationTurn::new("user", "Hmm"));
+        let suggestion3 = analyzer3.suggest_next_action();
+        assert!(suggestion3.contains("engaging question"));
+    }
+
+    #[test]
+    fn test_flow_analysis_to_json_with_transitions() {
+        let analysis = FlowAnalysis {
+            current_state: FlowState::ProblemSolving,
+            topic_coherence: 0.9,
+            engagement_score: 0.85,
+            depth_score: 0.7,
+            topics: vec!["rust".to_string(), "async".to_string()],
+            transitions: vec![TopicTransition {
+                from_topic: "rust".to_string(),
+                to_topic: "async".to_string(),
+                turn_index: 3,
+                smoothness: 0.4,
+            }],
+            turn_distribution: {
+                let mut m = HashMap::new();
+                m.insert("user".to_string(), 5);
+                m.insert("assistant".to_string(), 4);
+                m
+            },
+            average_turn_length: 42.0,
+            conversation_balance: 0.9,
+        };
+        let json = analysis.to_json();
+        assert_eq!(json["current_state"], "ProblemSolving");
+        assert_eq!(json["topics"].as_array().unwrap().len(), 2);
+        let transitions = json["transitions"].as_array().unwrap();
+        assert_eq!(transitions.len(), 1);
+        assert_eq!(transitions[0]["from_topic"], "rust");
+        assert_eq!(transitions[0]["to_topic"], "async");
+        assert_eq!(transitions[0]["turn_index"], 3);
+    }
+
+    #[test]
+    fn test_default_flow_analyzer() {
+        let analyzer = FlowAnalyzer::default();
+        let analysis = analyzer.analyze();
+        assert_eq!(analysis.current_state, FlowState::Opening);
+        assert_eq!(analysis.average_turn_length, 0.0);
+        assert_eq!(analysis.depth_score, 0.0);
+        assert_eq!(analysis.conversation_balance, 0.5);
+    }
+
+    #[test]
+    fn test_topic_extraction_with_repeated_words() {
+        let mut analyzer = FlowAnalyzer::new();
+        // Words must appear at least twice and be > 4 chars to be extracted as topics
+        analyzer.add_turn(ConversationTurn::new(
+            "user",
+            "I want to learn about programming languages and their performance characteristics.",
+        ));
+        analyzer.add_turn(ConversationTurn::new(
+            "assistant",
+            "Programming languages differ in performance based on their type system and runtime.",
+        ));
+
+        let analysis = analyzer.analyze();
+        // "programming" and "performance" appear in both turns and are > 4 chars
+        assert!(
+            !analysis.topics.is_empty(),
+            "Expected topics to be extracted from repeated words"
+        );
+    }
 }

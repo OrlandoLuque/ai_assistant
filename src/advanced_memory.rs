@@ -3174,6 +3174,76 @@ impl AutoPersistenceConfig {
             snapshots.remove(0);
         }
     }
+
+    // ============================================================
+    // Compressed Snapshots (7.1)
+    // ============================================================
+
+    /// Save data as a gzip-compressed JSON snapshot.
+    pub fn save_compressed(&self, store_name: &str, data: &[u8]) -> Result<(), String> {
+        use std::io::Write;
+        let path = self.snapshot_path(store_name).with_extension("json.gz");
+        let tmp = path.with_extension("tmp.gz");
+        let file = std::fs::File::create(&tmp).map_err(|e| format!("Create error: {}", e))?;
+        let mut encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+        encoder.write_all(data).map_err(|e| format!("Compress error: {}", e))?;
+        encoder.finish().map_err(|e| format!("Flush error: {}", e))?;
+        std::fs::rename(&tmp, &path).map_err(|e| format!("Rename error: {}", e))?;
+        Ok(())
+    }
+
+    /// Load and decompress a gzip JSON snapshot.
+    pub fn load_compressed(path: &std::path::Path) -> Result<Vec<u8>, String> {
+        use std::io::Read;
+        let file = std::fs::File::open(path).map_err(|e| format!("Open error: {}", e))?;
+        let mut decoder = flate2::read::GzDecoder::new(file);
+        let mut data = Vec::new();
+        decoder.read_to_end(&mut data).map_err(|e| format!("Decompress error: {}", e))?;
+        Ok(data)
+    }
+
+    // ============================================================
+    // Checksum Verification (7.2)
+    // ============================================================
+
+    /// Compute a simple checksum (FNV-1a hash) of data.
+    pub fn compute_checksum(data: &[u8]) -> u64 {
+        let mut hash: u64 = 0xcbf29ce484222325;
+        for &byte in data {
+            hash ^= byte as u64;
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        hash
+    }
+
+    /// Save data with a checksum sidecar file (.checksum).
+    pub fn save_with_checksum(path: &std::path::Path, data: &[u8]) -> Result<(), String> {
+        let checksum = Self::compute_checksum(data);
+        let tmp = path.with_extension("tmp");
+        std::fs::write(&tmp, data).map_err(|e| format!("Write error: {}", e))?;
+        std::fs::rename(&tmp, path).map_err(|e| format!("Rename error: {}", e))?;
+        let checksum_path = path.with_extension("checksum");
+        std::fs::write(&checksum_path, checksum.to_string())
+            .map_err(|e| format!("Checksum write error: {}", e))?;
+        Ok(())
+    }
+
+    /// Load data and verify its checksum.
+    pub fn load_with_checksum(path: &std::path::Path) -> Result<Vec<u8>, String> {
+        let data = std::fs::read(path).map_err(|e| format!("Read error: {}", e))?;
+        let checksum_path = path.with_extension("checksum");
+        if checksum_path.exists() {
+            let stored = std::fs::read_to_string(&checksum_path)
+                .map_err(|e| format!("Checksum read error: {}", e))?;
+            let stored_checksum: u64 = stored.trim().parse()
+                .map_err(|e| format!("Checksum parse error: {}", e))?;
+            let computed = Self::compute_checksum(&data);
+            if stored_checksum != computed {
+                return Err(format!("Checksum mismatch: stored={}, computed={}", stored_checksum, computed));
+            }
+        }
+        Ok(data)
+    }
 }
 
 // ============================================================
@@ -6234,5 +6304,138 @@ mod tests {
         assert_eq!(config.save_interval_secs, 60);
         assert_eq!(config.max_snapshots, 10);
         assert!(!config.save_on_drop);
+    }
+
+    // ----------------------------------------------------------
+    // Compressed snapshot tests (7.1)
+    // ----------------------------------------------------------
+
+    #[test]
+    fn test_save_and_load_compressed() {
+        let dir = std::env::temp_dir().join(format!("test_compress_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let config = AutoPersistenceConfig::new(&dir);
+        let data = b"{\"episodes\": [1,2,3]}";
+        config.save_compressed("episodic", data).unwrap();
+        // Find the .gz file
+        let files: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.extension().map(|e| e == "gz").unwrap_or(false))
+            .collect();
+        assert_eq!(files.len(), 1);
+        let loaded = AutoPersistenceConfig::load_compressed(&files[0]).unwrap();
+        assert_eq!(loaded, data);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_compressed_smaller_than_raw() {
+        let dir = std::env::temp_dir().join(format!("test_compress_size_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let config = AutoPersistenceConfig::new(&dir);
+        // Highly compressible data
+        let data = "a]".repeat(10000);
+        config.save_compressed("compressible", data.as_bytes()).unwrap();
+        let files: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.extension().map(|e| e == "gz").unwrap_or(false))
+            .collect();
+        assert_eq!(files.len(), 1);
+        let compressed_size = std::fs::metadata(&files[0]).unwrap().len();
+        assert!(compressed_size < data.len() as u64);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_load_compressed_nonexistent() {
+        let result = AutoPersistenceConfig::load_compressed(std::path::Path::new("/nonexistent/file.json.gz"));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Open error"));
+    }
+
+    #[test]
+    fn test_compressed_empty_data() {
+        let dir = std::env::temp_dir().join(format!("test_compress_empty_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let config = AutoPersistenceConfig::new(&dir);
+        config.save_compressed("empty", b"").unwrap();
+        let files: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.extension().map(|e| e == "gz").unwrap_or(false))
+            .collect();
+        assert_eq!(files.len(), 1);
+        let loaded = AutoPersistenceConfig::load_compressed(&files[0]).unwrap();
+        assert!(loaded.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ----------------------------------------------------------
+    // Checksum verification tests (7.2)
+    // ----------------------------------------------------------
+
+    #[test]
+    fn test_checksum_deterministic() {
+        let data = b"hello world";
+        let c1 = AutoPersistenceConfig::compute_checksum(data);
+        let c2 = AutoPersistenceConfig::compute_checksum(data);
+        assert_eq!(c1, c2);
+    }
+
+    #[test]
+    fn test_checksum_different_data() {
+        let c1 = AutoPersistenceConfig::compute_checksum(b"hello");
+        let c2 = AutoPersistenceConfig::compute_checksum(b"world");
+        assert_ne!(c1, c2);
+    }
+
+    #[test]
+    fn test_save_and_load_with_checksum() {
+        let dir = std::env::temp_dir().join(format!("test_checksum_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("test_data.json");
+        let data = b"{\"key\": \"value\"}";
+        AutoPersistenceConfig::save_with_checksum(&path, data).unwrap();
+        let loaded = AutoPersistenceConfig::load_with_checksum(&path).unwrap();
+        assert_eq!(loaded, data);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_load_with_checksum_corrupted() {
+        let dir = std::env::temp_dir().join(format!("test_checksum_corrupt_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("corrupt.json");
+        let data = b"original data";
+        AutoPersistenceConfig::save_with_checksum(&path, data).unwrap();
+        // Corrupt the data
+        std::fs::write(&path, b"corrupted!").unwrap();
+        let result = AutoPersistenceConfig::load_with_checksum(&path);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Checksum mismatch"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_load_without_checksum_file() {
+        let dir = std::env::temp_dir().join(format!("test_no_checksum_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("no_checksum.json");
+        std::fs::write(&path, b"some data").unwrap();
+        // No .checksum file — should still load fine
+        let loaded = AutoPersistenceConfig::load_with_checksum(&path).unwrap();
+        assert_eq!(loaded, b"some data");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_checksum_empty_data() {
+        let c = AutoPersistenceConfig::compute_checksum(b"");
+        assert_ne!(c, 0); // FNV offset basis
     }
 }

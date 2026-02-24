@@ -3328,4 +3328,366 @@ mod tests {
         assert_eq!(db.backend_info().name, "Elasticsearch");
         assert_eq!(db.count(), 0);
     }
+
+    // ====================================================================
+    // Additional tests: entry creation, search edge cases, delete, export,
+    // cache operations, error handling, distance metrics
+    // ====================================================================
+
+    #[test]
+    fn test_stored_vector_creation() {
+        let sv = StoredVector {
+            id: "test-vec-1".to_string(),
+            vector: vec![0.1, 0.2, 0.3],
+            metadata: serde_json::json!({"label": "test", "score": 42}),
+            timestamp: 1234567890,
+        };
+        assert_eq!(sv.id, "test-vec-1");
+        assert_eq!(sv.vector.len(), 3);
+        assert_eq!(sv.metadata["label"], "test");
+        assert_eq!(sv.metadata["score"], 42);
+        assert_eq!(sv.timestamp, 1234567890);
+    }
+
+    #[test]
+    fn test_search_empty_collection() {
+        let config = VectorDbConfig {
+            dimensions: 3,
+            ..Default::default()
+        };
+        let db = InMemoryVectorDb::new(config);
+
+        let results = db.search(&[1.0, 0.0, 0.0], 10, None).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_search_query_dimension_mismatch() {
+        let config = VectorDbConfig {
+            dimensions: 3,
+            ..Default::default()
+        };
+        let db = InMemoryVectorDb::new(config);
+
+        // Query with wrong dimensions should fail
+        let result = db.search(&[1.0, 0.0], 10, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_delete_nonexistent_vector() {
+        let config = VectorDbConfig {
+            dimensions: 3,
+            ..Default::default()
+        };
+        let mut db = InMemoryVectorDb::new(config);
+
+        // Deleting a vector that doesn't exist should return false
+        let deleted = db.delete("nonexistent").unwrap();
+        assert!(!deleted);
+    }
+
+    #[test]
+    fn test_delete_then_search() {
+        let config = VectorDbConfig {
+            dimensions: 3,
+            ..Default::default()
+        };
+        let mut db = InMemoryVectorDb::new(config);
+
+        db.insert("v1", vec![1.0, 0.0, 0.0], serde_json::json!({}))
+            .unwrap();
+        db.insert("v2", vec![0.0, 1.0, 0.0], serde_json::json!({}))
+            .unwrap();
+
+        assert_eq!(db.count(), 2);
+        db.delete("v1").unwrap();
+        assert_eq!(db.count(), 1);
+
+        let results = db.search(&[1.0, 0.0, 0.0], 10, None).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "v2");
+    }
+
+    #[test]
+    fn test_clear_collection() {
+        let config = VectorDbConfig {
+            dimensions: 3,
+            ..Default::default()
+        };
+        let mut db = InMemoryVectorDb::new(config);
+
+        db.insert("v1", vec![1.0, 0.0, 0.0], serde_json::json!({}))
+            .unwrap();
+        db.insert("v2", vec![0.0, 1.0, 0.0], serde_json::json!({}))
+            .unwrap();
+        assert_eq!(db.count(), 2);
+
+        db.clear().unwrap();
+        assert_eq!(db.count(), 0);
+
+        let results = db.search(&[1.0, 0.0, 0.0], 10, None).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_export_all_in_memory() {
+        let config = VectorDbConfig {
+            dimensions: 3,
+            ..Default::default()
+        };
+        let mut db = InMemoryVectorDb::new(config);
+
+        db.insert("v1", vec![1.0, 0.0, 0.0], serde_json::json!({"a": 1}))
+            .unwrap();
+        db.insert("v2", vec![0.0, 1.0, 0.0], serde_json::json!({"b": 2}))
+            .unwrap();
+
+        let exported = db.export_all().unwrap();
+        assert_eq!(exported.len(), 2);
+        let ids: Vec<&str> = exported.iter().map(|v| v.id.as_str()).collect();
+        assert!(ids.contains(&"v1"));
+        assert!(ids.contains(&"v2"));
+    }
+
+    #[test]
+    fn test_in_memory_backend_info() {
+        let config = VectorDbConfig {
+            dimensions: 3,
+            ..Default::default()
+        };
+        let db = InMemoryVectorDb::new(config);
+
+        let info = db.backend_info();
+        assert_eq!(info.name, "InMemory");
+        assert_eq!(info.tier, 0);
+        assert!(!info.supports_persistence);
+        assert!(info.supports_filtering);
+        assert!(info.supports_export);
+        assert_eq!(info.max_recommended_vectors, Some(10_000));
+    }
+
+    #[test]
+    fn test_health_check_in_memory() {
+        let config = VectorDbConfig {
+            dimensions: 3,
+            ..Default::default()
+        };
+        let db = InMemoryVectorDb::new(config);
+
+        assert!(db.health_check().unwrap());
+    }
+
+    #[test]
+    fn test_upsert_overwrite() {
+        let config = VectorDbConfig {
+            dimensions: 3,
+            ..Default::default()
+        };
+        let mut db = InMemoryVectorDb::new(config);
+
+        db.insert("v1", vec![1.0, 0.0, 0.0], serde_json::json!({"ver": 1}))
+            .unwrap();
+        db.insert("v1", vec![0.0, 1.0, 0.0], serde_json::json!({"ver": 2}))
+            .unwrap();
+
+        // Should still only be one vector (overwritten)
+        assert_eq!(db.count(), 1);
+
+        let v = db.get("v1").unwrap().unwrap();
+        assert_eq!(v.metadata["ver"], 2);
+        assert_eq!(v.vector, vec![0.0, 1.0, 0.0]);
+    }
+
+    #[test]
+    fn test_distance_metric_dot_product() {
+        let a = vec![1.0, 2.0, 3.0];
+        let b = vec![4.0, 5.0, 6.0];
+        // Dot product: 1*4 + 2*5 + 3*6 = 32
+        let dp = DistanceMetric::DotProduct;
+        let dist = dp.calculate(&a, &b);
+        assert!((dist - (-32.0)).abs() < 0.001);
+        // Similarity = -distance = 32.0
+        let sim = dp.to_similarity(dist);
+        assert!((sim - 32.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_distance_metric_manhattan() {
+        let a = vec![1.0, 2.0, 3.0];
+        let b = vec![4.0, 6.0, 3.0];
+        // Manhattan: |1-4| + |2-6| + |3-3| = 3 + 4 + 0 = 7
+        let manhattan = DistanceMetric::Manhattan;
+        let dist = manhattan.calculate(&a, &b);
+        assert!((dist - 7.0).abs() < 0.001);
+        // Similarity: 1/(1+7) = 0.125
+        let sim = manhattan.to_similarity(dist);
+        assert!((sim - 0.125).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_distance_metric_cosine_zero_vector() {
+        let a = vec![0.0, 0.0, 0.0];
+        let b = vec![1.0, 0.0, 0.0];
+        let cosine = DistanceMetric::Cosine;
+        // Zero vector norm is 0, should return 1.0 (max distance)
+        let dist = cosine.calculate(&a, &b);
+        assert!((dist - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_metadata_filter_not_equals() {
+        let filter = MetadataFilter {
+            field: "type".to_string(),
+            operation: FilterOperation::NotEquals(serde_json::json!("draft")),
+        };
+        let meta = serde_json::json!({"type": "published"});
+        assert!(filter.matches(&meta));
+
+        let meta_draft = serde_json::json!({"type": "draft"});
+        assert!(!filter.matches(&meta_draft));
+    }
+
+    #[test]
+    fn test_metadata_filter_greater_than() {
+        let filter = MetadataFilter {
+            field: "score".to_string(),
+            operation: FilterOperation::GreaterThan(50.0),
+        };
+        let meta_high = serde_json::json!({"score": 75});
+        assert!(filter.matches(&meta_high));
+
+        let meta_low = serde_json::json!({"score": 30});
+        assert!(!filter.matches(&meta_low));
+    }
+
+    #[test]
+    fn test_metadata_filter_less_than() {
+        let filter = MetadataFilter {
+            field: "price".to_string(),
+            operation: FilterOperation::LessThan(100.0),
+        };
+        let meta_cheap = serde_json::json!({"price": 50});
+        assert!(filter.matches(&meta_cheap));
+
+        let meta_expensive = serde_json::json!({"price": 200});
+        assert!(!filter.matches(&meta_expensive));
+    }
+
+    #[test]
+    fn test_metadata_filter_contains_string() {
+        let filter = MetadataFilter {
+            field: "title".to_string(),
+            operation: FilterOperation::Contains("Rust".to_string()),
+        };
+        let meta_match = serde_json::json!({"title": "Learning Rust Programming"});
+        assert!(filter.matches(&meta_match));
+
+        let meta_no_match = serde_json::json!({"title": "Learning Python"});
+        assert!(!filter.matches(&meta_no_match));
+    }
+
+    #[test]
+    fn test_metadata_filter_contains_array() {
+        let filter = MetadataFilter {
+            field: "tags".to_string(),
+            operation: FilterOperation::Contains("ai".to_string()),
+        };
+        let meta = serde_json::json!({"tags": ["ai", "ml", "nlp"]});
+        assert!(filter.matches(&meta));
+
+        let meta_no = serde_json::json!({"tags": ["web", "frontend"]});
+        assert!(!filter.matches(&meta_no));
+    }
+
+    #[test]
+    fn test_metadata_filter_in_list() {
+        let filter = MetadataFilter {
+            field: "status".to_string(),
+            operation: FilterOperation::In(vec![
+                serde_json::json!("active"),
+                serde_json::json!("pending"),
+            ]),
+        };
+        let meta_active = serde_json::json!({"status": "active"});
+        assert!(filter.matches(&meta_active));
+
+        let meta_archived = serde_json::json!({"status": "archived"});
+        assert!(!filter.matches(&meta_archived));
+    }
+
+    #[test]
+    fn test_metadata_filter_missing_field() {
+        let filter = MetadataFilter {
+            field: "nonexistent".to_string(),
+            operation: FilterOperation::Equals(serde_json::json!("value")),
+        };
+        let meta = serde_json::json!({"other": "data"});
+        assert!(!filter.matches(&meta));
+    }
+
+    #[test]
+    fn test_string_id_to_u64_deterministic() {
+        let id1 = string_id_to_u64("my-document-id");
+        let id2 = string_id_to_u64("my-document-id");
+        assert_eq!(id1, id2);
+
+        let id3 = string_id_to_u64("different-id");
+        assert_ne!(id1, id3);
+    }
+
+    #[test]
+    fn test_vector_db_config_default() {
+        let config = VectorDbConfig::default();
+        assert_eq!(config.dimensions, 384);
+        assert_eq!(config.distance_metric, DistanceMetric::Cosine);
+        assert_eq!(config.max_vectors, Some(100_000));
+        assert_eq!(config.collection_name, "default");
+        assert!(config.qdrant_url.is_none());
+        assert!(config.qdrant_api_key.is_none());
+    }
+
+    #[test]
+    fn test_search_with_multiple_filters() {
+        let config = VectorDbConfig {
+            dimensions: 3,
+            ..Default::default()
+        };
+        let mut db = InMemoryVectorDb::new(config);
+
+        db.insert(
+            "v1",
+            vec![1.0, 0.0, 0.0],
+            serde_json::json!({"type": "article", "score": 80}),
+        )
+        .unwrap();
+        db.insert(
+            "v2",
+            vec![0.9, 0.1, 0.0],
+            serde_json::json!({"type": "article", "score": 40}),
+        )
+        .unwrap();
+        db.insert(
+            "v3",
+            vec![0.8, 0.2, 0.0],
+            serde_json::json!({"type": "book", "score": 90}),
+        )
+        .unwrap();
+
+        let filters = vec![
+            MetadataFilter {
+                field: "type".to_string(),
+                operation: FilterOperation::Equals(serde_json::json!("article")),
+            },
+            MetadataFilter {
+                field: "score".to_string(),
+                operation: FilterOperation::GreaterThan(50.0),
+            },
+        ];
+
+        let results = db.search(&[1.0, 0.0, 0.0], 10, Some(&filters)).unwrap();
+        // Only v1 matches both filters (type=article AND score > 50)
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "v1");
+    }
 }

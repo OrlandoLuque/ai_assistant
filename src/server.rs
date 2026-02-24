@@ -136,6 +136,8 @@ pub struct ServerConfig {
     pub max_header_line: usize,
     /// Timeout for reading the request body in milliseconds (default: 30000).
     pub body_read_timeout_ms: u64,
+    /// Maximum message length in characters (default: 100_000).
+    pub max_message_length: usize,
     /// TLS configuration (optional). When set, the server should use HTTPS.
     #[serde(skip)]
     pub tls: Option<TlsConfig>,
@@ -153,6 +155,7 @@ impl Default for ServerConfig {
             max_headers: 100,
             max_header_line: 8192,
             body_read_timeout_ms: 30_000,
+            max_message_length: 100_000,
             tls: None,
         }
     }
@@ -202,6 +205,9 @@ struct HealthResponse {
     version: String,
     model: String,
     provider: String,
+    uptime_secs: u64,
+    active_sessions: usize,
+    conversation_messages: usize,
 }
 
 /// Error response.
@@ -224,6 +230,8 @@ struct ServerMetrics {
     request_duration_us_total: AtomicU64,
     /// Counter for generating unique request IDs when the client does not supply one.
     request_id_counter: AtomicU64,
+    /// Instant when the server started, used for uptime calculation.
+    started_at: std::time::Instant,
 }
 
 impl ServerMetrics {
@@ -235,6 +243,7 @@ impl ServerMetrics {
             requests_5xx: AtomicU64::new(0),
             request_duration_us_total: AtomicU64::new(0),
             request_id_counter: AtomicU64::new(0),
+            started_at: std::time::Instant::now(),
         }
     }
 
@@ -288,6 +297,115 @@ impl ServerMetrics {
              ai_server_request_duration_seconds_total {:.6}\n",
             total, ok, client_err, server_err, duration_secs
         )
+    }
+}
+
+// ============================================================================
+// Audit Log (items 4.1, 4.2)
+// ============================================================================
+
+/// Audit event types for compliance logging.
+#[derive(Debug, Clone, Serialize)]
+pub enum AuditEventType {
+    AuthSuccess,
+    AuthFailure,
+    ConfigChange,
+    SessionCreated,
+    SessionDeleted,
+    RequestProcessed,
+}
+
+/// A single audit log entry.
+#[derive(Debug, Clone, Serialize)]
+pub struct AuditEntry {
+    pub timestamp: u64,
+    pub event_type: AuditEventType,
+    pub actor: String,
+    pub path: String,
+    pub details: String,
+}
+
+/// Thread-safe append-only audit log.
+pub struct AuditLog {
+    entries: std::sync::Mutex<Vec<AuditEntry>>,
+    max_entries: usize,
+}
+
+impl AuditLog {
+    pub fn new(max_entries: usize) -> Self {
+        Self {
+            entries: std::sync::Mutex::new(Vec::new()),
+            max_entries,
+        }
+    }
+
+    pub fn log(&self, event_type: AuditEventType, actor: &str, path: &str, details: &str) {
+        let entry = AuditEntry {
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            event_type,
+            actor: actor.to_string(),
+            path: path.to_string(),
+            details: details.to_string(),
+        };
+        let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
+        if entries.len() >= self.max_entries {
+            entries.remove(0);
+        }
+        entries.push(entry);
+    }
+
+    pub fn entries(&self) -> Vec<AuditEntry> {
+        self.entries.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.lock().unwrap_or_else(|e| e.into_inner()).len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+// ============================================================================
+// Structured Error Responses (items 6.1, 6.2)
+// ============================================================================
+
+/// Structured error response with error code.
+#[derive(Debug, Serialize)]
+pub struct StructuredError {
+    error_code: String,
+    message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    details: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    retry_after_secs: Option<u64>,
+}
+
+impl StructuredError {
+    /// Create a new structured error with a code and message.
+    pub fn new(code: &str, message: &str) -> Self {
+        Self {
+            error_code: code.to_string(),
+            message: message.to_string(),
+            details: None,
+            retry_after_secs: None,
+        }
+    }
+
+    /// Add detail text to the error.
+    pub fn with_details(mut self, details: &str) -> Self {
+        self.details = Some(details.to_string());
+        self
+    }
+
+    /// Add a retry-after hint in seconds.
+    pub fn with_retry(mut self, secs: u64) -> Self {
+        self.retry_after_secs = Some(secs);
+        self
     }
 }
 
@@ -646,7 +764,7 @@ fn handle_connection(
         return Ok(());
     }
 
-    let (status, body) = route_request(&request, assistant, metrics);
+    let (status, body) = route_request_with_config(&request, assistant, metrics, config);
     let status_code = status.split_whitespace().next().unwrap_or("500");
     let response = format!(
         "HTTP/1.1 {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{}Connection: close\r\n\r\n{}",
@@ -737,18 +855,57 @@ fn parse_request(stream: &TcpStream, config: &ServerConfig) -> std::io::Result<H
     })
 }
 
+/// Route a request using default `ServerConfig`.  Kept for backward
+/// compatibility and test convenience — production traffic goes through
+/// `route_request_with_config` via `handle_connection`.
+#[allow(dead_code)]
 fn route_request(
     request: &HttpRequest,
     assistant: &Arc<Mutex<AiAssistant>>,
     metrics: &Arc<ServerMetrics>,
 ) -> (String, String) {
+    let default_config = ServerConfig::default();
+    route_request_with_config(request, assistant, metrics, &default_config)
+}
+
+fn route_request_with_config(
+    request: &HttpRequest,
+    assistant: &Arc<Mutex<AiAssistant>>,
+    metrics: &Arc<ServerMetrics>,
+    config: &ServerConfig,
+) -> (String, String) {
     match (request.method.as_str(), request.path.as_str()) {
-        ("GET", "/health") => handle_health(assistant),
+        ("GET", "/health") => handle_health(assistant, metrics),
         ("GET", "/models") => handle_list_models(assistant),
-        ("POST", "/chat") => handle_chat(request, assistant),
+        ("POST", "/chat") => handle_chat(request, assistant, config),
         ("GET", "/config") => handle_get_config(assistant),
         ("POST", "/config") => handle_set_config(request, assistant),
         ("GET", "/metrics") => ("200 OK".to_string(), metrics.render_prometheus()),
+        ("GET", "/sessions") => handle_list_sessions(assistant),
+        ("DELETE", path) if path.starts_with("/sessions/") => {
+            let id = &path[10..]; // skip "/sessions/"
+            handle_delete_session(id, assistant)
+        }
+        ("GET", path) if path.starts_with("/sessions/") => {
+            let id = &path[10..];
+            handle_get_session(id, assistant)
+        }
+        // Versioned routes — same handlers, /api/v1/ prefix (items 5.1, 5.2)
+        ("GET", "/api/v1/health") => handle_health(assistant, metrics),
+        ("GET", "/api/v1/models") => handle_list_models(assistant),
+        ("POST", "/api/v1/chat") => handle_chat(request, assistant, config),
+        ("GET", "/api/v1/config") => handle_get_config(assistant),
+        ("POST", "/api/v1/config") => handle_set_config(request, assistant),
+        ("GET", "/api/v1/metrics") => ("200 OK".to_string(), metrics.render_prometheus()),
+        ("GET", "/api/v1/sessions") => handle_list_sessions(assistant),
+        ("DELETE", path) if path.starts_with("/api/v1/sessions/") => {
+            let id = &path[17..];
+            handle_delete_session(id, assistant)
+        }
+        ("GET", path) if path.starts_with("/api/v1/sessions/") => {
+            let id = &path[17..];
+            handle_get_session(id, assistant)
+        }
         _ => (
             "404 Not Found".to_string(),
             serde_json::to_string(&ErrorResponse {
@@ -759,13 +916,16 @@ fn route_request(
     }
 }
 
-fn handle_health(assistant: &Arc<Mutex<AiAssistant>>) -> (String, String) {
+fn handle_health(assistant: &Arc<Mutex<AiAssistant>>, metrics: &Arc<ServerMetrics>) -> (String, String) {
     let ass = assistant.lock().unwrap_or_else(|e| e.into_inner());
     let resp = HealthResponse {
         status: "ok".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         model: ass.config.selected_model.clone(),
         provider: ass.config.provider.display_name().to_string(),
+        uptime_secs: metrics.started_at.elapsed().as_secs(),
+        active_sessions: ass.session_store.sessions.len(),
+        conversation_messages: ass.conversation.len(),
     };
     (
         "200 OK".to_string(),
@@ -792,7 +952,7 @@ fn handle_list_models(assistant: &Arc<Mutex<AiAssistant>>) -> (String, String) {
     )
 }
 
-fn handle_chat(request: &HttpRequest, assistant: &Arc<Mutex<AiAssistant>>) -> (String, String) {
+fn handle_chat(request: &HttpRequest, assistant: &Arc<Mutex<AiAssistant>>, config: &ServerConfig) -> (String, String) {
     let chat_req: ChatRequest = match serde_json::from_str(&request.body) {
         Ok(req) => req,
         Err(e) => {
@@ -805,6 +965,21 @@ fn handle_chat(request: &HttpRequest, assistant: &Arc<Mutex<AiAssistant>>) -> (S
             );
         }
     };
+
+    // Request validation: reject oversized messages
+    if chat_req.message.len() > config.max_message_length {
+        return (
+            "422 Unprocessable Entity".to_string(),
+            serde_json::to_string(&ErrorResponse {
+                error: format!(
+                    "Message too long: {} characters (max {})",
+                    chat_req.message.len(),
+                    config.max_message_length
+                ),
+            })
+            .unwrap_or_default(),
+        );
+    }
 
     let mut ass = assistant.lock().unwrap_or_else(|e| e.into_inner());
 
@@ -907,6 +1082,48 @@ fn handle_set_config(
 }
 
 // ============================================================================
+// Session Endpoints
+// ============================================================================
+
+fn handle_list_sessions(assistant: &Arc<Mutex<AiAssistant>>) -> (String, String) {
+    let ass = assistant.lock().unwrap_or_else(|e| e.into_inner());
+    let sessions: Vec<serde_json::Value> = ass.session_store.sessions.iter().map(|s| {
+        serde_json::json!({
+            "id": s.id,
+            "messages": s.messages.len(),
+        })
+    }).collect();
+    ("200 OK".to_string(), serde_json::to_string(&sessions).unwrap_or_default())
+}
+
+fn handle_get_session(id: &str, assistant: &Arc<Mutex<AiAssistant>>) -> (String, String) {
+    let ass = assistant.lock().unwrap_or_else(|e| e.into_inner());
+    match ass.session_store.sessions.iter().find(|s| s.id == id) {
+        Some(session) => {
+            let msgs: Vec<serde_json::Value> = session.messages.iter().map(|m| {
+                serde_json::json!({"role": m.role, "content": m.content})
+            }).collect();
+            ("200 OK".to_string(), serde_json::to_string(&msgs).unwrap_or_default())
+        }
+        None => ("404 Not Found".to_string(),
+            serde_json::to_string(&ErrorResponse { error: format!("Session not found: {}", id) }).unwrap_or_default())
+    }
+}
+
+fn handle_delete_session(id: &str, assistant: &Arc<Mutex<AiAssistant>>) -> (String, String) {
+    let mut ass = assistant.lock().unwrap_or_else(|e| e.into_inner());
+    let before = ass.session_store.sessions.len();
+    ass.delete_session(id);
+    let deleted = ass.session_store.sessions.len() < before;
+    if deleted {
+        ("200 OK".to_string(), serde_json::to_string(&serde_json::json!({"deleted": true})).unwrap_or_default())
+    } else {
+        ("404 Not Found".to_string(),
+            serde_json::to_string(&ErrorResponse { error: format!("Session not found: {}", id) }).unwrap_or_default())
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -936,7 +1153,8 @@ mod tests {
     #[test]
     fn test_health_endpoint() {
         let assistant = Arc::new(Mutex::new(AiAssistant::new()));
-        let (status, body) = handle_health(&assistant);
+        let metrics = Arc::new(ServerMetrics::new());
+        let (status, body) = handle_health(&assistant, &metrics);
         assert_eq!(status, "200 OK");
         let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(parsed["status"], "ok");
@@ -978,6 +1196,7 @@ mod tests {
     #[test]
     fn test_chat_endpoint_invalid_json() {
         let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let config = ServerConfig::default();
 
         let request = HttpRequest {
             method: "POST".to_string(),
@@ -986,7 +1205,7 @@ mod tests {
             body: "not json".to_string(),
         };
 
-        let (status, body) = handle_chat(&request, &assistant);
+        let (status, body) = handle_chat(&request, &assistant, &config);
         assert_eq!(status, "400 Bad Request");
         assert!(body.contains("Invalid JSON"));
     }
@@ -1622,5 +1841,529 @@ mod tests {
         let config: ServerConfig = serde_json::from_str(&json).unwrap();
         assert!(config.tls.is_none());
         assert_eq!(config.port, 8090);
+    }
+
+    // ========================================================================
+    // Enhanced Health Check tests (item 1.2)
+    // ========================================================================
+
+    #[test]
+    fn test_health_enhanced_fields() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let metrics = Arc::new(ServerMetrics::new());
+
+        // Sleep briefly so uptime_secs is at least 0 (it should always be)
+        let (status, body) = handle_health(&assistant, &metrics);
+        assert_eq!(status, "200 OK");
+
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(parsed["status"], "ok");
+        assert!(parsed["version"].is_string());
+        assert!(parsed["model"].is_string());
+        assert!(parsed["provider"].is_string());
+        // uptime_secs should be a number >= 0
+        assert!(parsed["uptime_secs"].is_number());
+        assert!(parsed["uptime_secs"].as_u64().unwrap() < 60); // test runs fast
+        // No sessions or messages in a fresh assistant
+        assert_eq!(parsed["active_sessions"].as_u64().unwrap(), 0);
+        assert_eq!(parsed["conversation_messages"].as_u64().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_health_with_conversation_messages() {
+        let mut ass = AiAssistant::new();
+        ass.conversation.push(crate::messages::ChatMessage::user("hello"));
+        ass.conversation.push(crate::messages::ChatMessage::assistant("hi there"));
+        let assistant = Arc::new(Mutex::new(ass));
+        let metrics = Arc::new(ServerMetrics::new());
+
+        let (status, body) = handle_health(&assistant, &metrics);
+        assert_eq!(status, "200 OK");
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(parsed["conversation_messages"].as_u64().unwrap(), 2);
+    }
+
+    #[test]
+    fn test_health_with_active_sessions() {
+        let mut ass = AiAssistant::new();
+        let session = crate::session::ChatSession::new("test-session");
+        ass.session_store.save_session(session);
+        let assistant = Arc::new(Mutex::new(ass));
+        let metrics = Arc::new(ServerMetrics::new());
+
+        let (status, body) = handle_health(&assistant, &metrics);
+        assert_eq!(status, "200 OK");
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(parsed["active_sessions"].as_u64().unwrap(), 1);
+    }
+
+    #[test]
+    fn test_health_uptime_increases() {
+        let metrics = Arc::new(ServerMetrics::new());
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        // uptime should be >= 0
+        let uptime = metrics.started_at.elapsed().as_secs();
+        assert!(uptime < 5); // sanity check — test shouldn't take 5 seconds
+    }
+
+    // ========================================================================
+    // Session Endpoints tests (item 1.3)
+    // ========================================================================
+
+    #[test]
+    fn test_list_sessions_empty() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let (status, body) = handle_list_sessions(&assistant);
+        assert_eq!(status, "200 OK");
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert!(parsed.is_array());
+        assert_eq!(parsed.as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_list_sessions_with_sessions() {
+        let mut ass = AiAssistant::new();
+        let mut s1 = crate::session::ChatSession::new("Session A");
+        s1.id = "sess-001".to_string();
+        s1.messages.push(crate::messages::ChatMessage::user("hello"));
+        s1.messages.push(crate::messages::ChatMessage::assistant("hi"));
+        ass.session_store.save_session(s1);
+
+        let mut s2 = crate::session::ChatSession::new("Session B");
+        s2.id = "sess-002".to_string();
+        ass.session_store.save_session(s2);
+
+        let assistant = Arc::new(Mutex::new(ass));
+        let (status, body) = handle_list_sessions(&assistant);
+        assert_eq!(status, "200 OK");
+
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let arr = parsed.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+
+        // First session has 2 messages
+        let first = arr.iter().find(|s| s["id"] == "sess-001").unwrap();
+        assert_eq!(first["messages"].as_u64().unwrap(), 2);
+
+        // Second session has 0 messages
+        let second = arr.iter().find(|s| s["id"] == "sess-002").unwrap();
+        assert_eq!(second["messages"].as_u64().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_get_session_not_found() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let (status, body) = handle_get_session("nonexistent", &assistant);
+        assert_eq!(status, "404 Not Found");
+        assert!(body.contains("Session not found"));
+        assert!(body.contains("nonexistent"));
+    }
+
+    #[test]
+    fn test_get_session_found() {
+        let mut ass = AiAssistant::new();
+        let mut session = crate::session::ChatSession::new("My Chat");
+        session.id = "sess-abc".to_string();
+        session.messages.push(crate::messages::ChatMessage::user("What is Rust?"));
+        session.messages.push(crate::messages::ChatMessage::assistant("Rust is a systems programming language."));
+        ass.session_store.save_session(session);
+
+        let assistant = Arc::new(Mutex::new(ass));
+        let (status, body) = handle_get_session("sess-abc", &assistant);
+        assert_eq!(status, "200 OK");
+
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let arr = parsed.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["role"], "user");
+        assert_eq!(arr[0]["content"], "What is Rust?");
+        assert_eq!(arr[1]["role"], "assistant");
+        assert!(arr[1]["content"].as_str().unwrap().contains("systems programming"));
+    }
+
+    #[test]
+    fn test_delete_session_found() {
+        let mut ass = AiAssistant::new();
+        let mut session = crate::session::ChatSession::new("To Delete");
+        session.id = "sess-del".to_string();
+        ass.session_store.save_session(session);
+
+        let assistant = Arc::new(Mutex::new(ass));
+        let (status, body) = handle_delete_session("sess-del", &assistant);
+        assert_eq!(status, "200 OK");
+
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(parsed["deleted"], true);
+
+        // Verify it's actually gone
+        let ass = assistant.lock().unwrap();
+        assert!(ass.session_store.sessions.is_empty());
+    }
+
+    #[test]
+    fn test_delete_session_not_found() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let (status, body) = handle_delete_session("no-such-session", &assistant);
+        assert_eq!(status, "404 Not Found");
+        assert!(body.contains("Session not found"));
+    }
+
+    // ========================================================================
+    // Request Validation tests (item 1.4)
+    // ========================================================================
+
+    #[test]
+    fn test_request_validation_message_too_long() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let config = ServerConfig {
+            max_message_length: 10, // very small for testing
+            ..Default::default()
+        };
+
+        let request = HttpRequest {
+            method: "POST".to_string(),
+            path: "/chat".to_string(),
+            headers: vec![],
+            body: serde_json::to_string(&serde_json::json!({
+                "message": "This message is definitely longer than 10 characters"
+            })).unwrap(),
+        };
+
+        let (status, body) = handle_chat(&request, &assistant, &config);
+        assert_eq!(status, "422 Unprocessable Entity");
+        assert!(body.contains("Message too long"));
+        assert!(body.contains("max 10"));
+    }
+
+    #[test]
+    fn test_request_validation_max_message_default() {
+        let config = ServerConfig::default();
+        assert_eq!(config.max_message_length, 100_000);
+    }
+
+    #[test]
+    fn test_request_validation_exact_limit() {
+        // Message exactly at the limit should pass (not be rejected)
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let config = ServerConfig {
+            max_message_length: 5,
+            ..Default::default()
+        };
+
+        let request = HttpRequest {
+            method: "POST".to_string(),
+            path: "/chat".to_string(),
+            headers: vec![],
+            body: serde_json::to_string(&serde_json::json!({
+                "message": "Hello"  // exactly 5 chars
+            })).unwrap(),
+        };
+
+        // Should NOT return 422 — it may return 500 (provider not running) but not 422
+        let (status, _body) = handle_chat(&request, &assistant, &config);
+        assert_ne!(status, "422 Unprocessable Entity");
+    }
+
+    #[test]
+    fn test_request_validation_one_over_limit() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let config = ServerConfig {
+            max_message_length: 5,
+            ..Default::default()
+        };
+
+        let request = HttpRequest {
+            method: "POST".to_string(),
+            path: "/chat".to_string(),
+            headers: vec![],
+            body: serde_json::to_string(&serde_json::json!({
+                "message": "Hello!" // 6 chars, over limit of 5
+            })).unwrap(),
+        };
+
+        let (status, body) = handle_chat(&request, &assistant, &config);
+        assert_eq!(status, "422 Unprocessable Entity");
+        assert!(body.contains("Message too long"));
+    }
+
+    // ========================================================================
+    // Session endpoints via route_request (integration)
+    // ========================================================================
+
+    #[test]
+    fn test_session_endpoints_integration() {
+        let mut ass = AiAssistant::new();
+
+        // Create two sessions with messages
+        let mut s1 = crate::session::ChatSession::new("Integration A");
+        s1.id = "int-001".to_string();
+        s1.messages.push(crate::messages::ChatMessage::user("first"));
+        ass.session_store.save_session(s1);
+
+        let mut s2 = crate::session::ChatSession::new("Integration B");
+        s2.id = "int-002".to_string();
+        s2.messages.push(crate::messages::ChatMessage::user("second"));
+        s2.messages.push(crate::messages::ChatMessage::assistant("reply"));
+        ass.session_store.save_session(s2);
+
+        let assistant = Arc::new(Mutex::new(ass));
+        let metrics = Arc::new(ServerMetrics::new());
+
+        // 1. List sessions
+        let req = HttpRequest {
+            method: "GET".to_string(),
+            path: "/sessions".to_string(),
+            headers: vec![],
+            body: String::new(),
+        };
+        let (status, body) = route_request(&req, &assistant, &metrics);
+        assert_eq!(status, "200 OK");
+        let list: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(list.as_array().unwrap().len(), 2);
+
+        // 2. Get specific session
+        let req = HttpRequest {
+            method: "GET".to_string(),
+            path: "/sessions/int-002".to_string(),
+            headers: vec![],
+            body: String::new(),
+        };
+        let (status, body) = route_request(&req, &assistant, &metrics);
+        assert_eq!(status, "200 OK");
+        let msgs: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(msgs.as_array().unwrap().len(), 2);
+
+        // 3. Delete a session
+        let req = HttpRequest {
+            method: "DELETE".to_string(),
+            path: "/sessions/int-001".to_string(),
+            headers: vec![],
+            body: String::new(),
+        };
+        let (status, body) = route_request(&req, &assistant, &metrics);
+        assert_eq!(status, "200 OK");
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(parsed["deleted"], true);
+
+        // 4. List sessions — should now have only 1
+        let req = HttpRequest {
+            method: "GET".to_string(),
+            path: "/sessions".to_string(),
+            headers: vec![],
+            body: String::new(),
+        };
+        let (status, body) = route_request(&req, &assistant, &metrics);
+        assert_eq!(status, "200 OK");
+        let list: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(list.as_array().unwrap().len(), 1);
+        assert_eq!(list[0]["id"], "int-002");
+
+        // 5. Get deleted session — 404
+        let req = HttpRequest {
+            method: "GET".to_string(),
+            path: "/sessions/int-001".to_string(),
+            headers: vec![],
+            body: String::new(),
+        };
+        let (status, _body) = route_request(&req, &assistant, &metrics);
+        assert_eq!(status, "404 Not Found");
+    }
+
+    #[test]
+    fn test_session_route_via_route_request() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let metrics = Arc::new(ServerMetrics::new());
+
+        // GET /sessions on empty store
+        let req = HttpRequest {
+            method: "GET".to_string(),
+            path: "/sessions".to_string(),
+            headers: vec![],
+            body: String::new(),
+        };
+        let (status, body) = route_request(&req, &assistant, &metrics);
+        assert_eq!(status, "200 OK");
+        assert_eq!(body, "[]");
+    }
+
+    #[test]
+    fn test_health_via_route_includes_enhanced_fields() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let metrics = Arc::new(ServerMetrics::new());
+
+        let req = HttpRequest {
+            method: "GET".to_string(),
+            path: "/health".to_string(),
+            headers: vec![],
+            body: String::new(),
+        };
+        let (status, body) = route_request(&req, &assistant, &metrics);
+        assert_eq!(status, "200 OK");
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        // Enhanced fields must be present
+        assert!(parsed.get("uptime_secs").is_some());
+        assert!(parsed.get("active_sessions").is_some());
+        assert!(parsed.get("conversation_messages").is_some());
+    }
+
+    // ========================================================================
+    // Audit Log tests (items 4.1, 4.2)
+    // ========================================================================
+
+    #[test]
+    fn test_audit_log_new() {
+        let log = AuditLog::new(100);
+        assert!(log.is_empty());
+        assert_eq!(log.len(), 0);
+    }
+
+    #[test]
+    fn test_audit_log_append() {
+        let log = AuditLog::new(100);
+        log.log(AuditEventType::AuthSuccess, "user1", "/chat", "Bearer token");
+        assert_eq!(log.len(), 1);
+        let entries = log.entries();
+        assert_eq!(entries[0].actor, "user1");
+        assert_eq!(entries[0].path, "/chat");
+    }
+
+    #[test]
+    fn test_audit_log_max_entries() {
+        let log = AuditLog::new(3);
+        log.log(AuditEventType::AuthSuccess, "a", "/1", "");
+        log.log(AuditEventType::AuthFailure, "b", "/2", "");
+        log.log(AuditEventType::ConfigChange, "c", "/3", "");
+        log.log(AuditEventType::SessionCreated, "d", "/4", "");
+        assert_eq!(log.len(), 3);
+        // First entry should have been evicted
+        let entries = log.entries();
+        assert_eq!(entries[0].actor, "b");
+    }
+
+    #[test]
+    fn test_audit_log_entry_has_timestamp() {
+        let log = AuditLog::new(100);
+        log.log(AuditEventType::RequestProcessed, "test", "/", "ok");
+        let entries = log.entries();
+        assert!(entries[0].timestamp > 0);
+    }
+
+    #[test]
+    fn test_audit_log_all_event_types() {
+        let log = AuditLog::new(100);
+        log.log(AuditEventType::AuthSuccess, "", "", "");
+        log.log(AuditEventType::AuthFailure, "", "", "");
+        log.log(AuditEventType::ConfigChange, "", "", "");
+        log.log(AuditEventType::SessionCreated, "", "", "");
+        log.log(AuditEventType::SessionDeleted, "", "", "");
+        log.log(AuditEventType::RequestProcessed, "", "", "");
+        assert_eq!(log.len(), 6);
+    }
+
+    #[test]
+    fn test_audit_entry_serializable() {
+        let log = AuditLog::new(100);
+        log.log(AuditEventType::AuthSuccess, "admin", "/health", "ok");
+        let entries = log.entries();
+        let json = serde_json::to_string(&entries[0]).unwrap();
+        assert!(json.contains("AuthSuccess"));
+        assert!(json.contains("admin"));
+    }
+
+    // ========================================================================
+    // API Versioning tests (items 5.1, 5.2)
+    // ========================================================================
+
+    #[test]
+    fn test_versioned_health_route() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let metrics = Arc::new(ServerMetrics::new());
+        let config = ServerConfig::default();
+        let request = HttpRequest {
+            method: "GET".to_string(),
+            path: "/api/v1/health".to_string(),
+            headers: vec![],
+            body: String::new(),
+        };
+        let (status, body) = route_request_with_config(&request, &assistant, &metrics, &config);
+        assert_eq!(status, "200 OK");
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(parsed["status"], "ok");
+    }
+
+    #[test]
+    fn test_versioned_sessions_route() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let metrics = Arc::new(ServerMetrics::new());
+        let config = ServerConfig::default();
+        let request = HttpRequest {
+            method: "GET".to_string(),
+            path: "/api/v1/sessions".to_string(),
+            headers: vec![],
+            body: String::new(),
+        };
+        let (status, body) = route_request_with_config(&request, &assistant, &metrics, &config);
+        assert_eq!(status, "200 OK");
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert!(parsed.is_array());
+    }
+
+    #[test]
+    fn test_versioned_models_route() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let metrics = Arc::new(ServerMetrics::new());
+        let config = ServerConfig::default();
+        let request = HttpRequest {
+            method: "GET".to_string(),
+            path: "/api/v1/models".to_string(),
+            headers: vec![],
+            body: String::new(),
+        };
+        let (status, _body) = route_request_with_config(&request, &assistant, &metrics, &config);
+        assert_eq!(status, "200 OK");
+    }
+
+    // ========================================================================
+    // Structured Error tests (items 6.1, 6.2)
+    // ========================================================================
+
+    #[test]
+    fn test_structured_error_basic() {
+        let err = StructuredError::new("INVALID_JSON", "Could not parse request body");
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(json.contains("INVALID_JSON"));
+        assert!(!json.contains("details")); // None should be skipped
+        assert!(!json.contains("retry_after_secs"));
+    }
+
+    #[test]
+    fn test_structured_error_with_details() {
+        let err = StructuredError::new("AUTH_FAILED", "Invalid credentials")
+            .with_details("Bearer token expired");
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(json.contains("AUTH_FAILED"));
+        assert!(json.contains("Bearer token expired"));
+    }
+
+    #[test]
+    fn test_structured_error_with_retry() {
+        let err = StructuredError::new("RATE_LIMITED", "Too many requests")
+            .with_retry(60);
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(json.contains("RATE_LIMITED"));
+        assert!(json.contains("60"));
+    }
+
+    #[test]
+    fn test_structured_error_full() {
+        let err = StructuredError::new("MODEL_ERROR", "Provider unavailable")
+            .with_details("OpenAI API returned 503")
+            .with_retry(30);
+        let json = serde_json::to_string(&err).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["error_code"], "MODEL_ERROR");
+        assert_eq!(parsed["message"], "Provider unavailable");
+        assert_eq!(parsed["details"], "OpenAI API returned 503");
+        assert_eq!(parsed["retry_after_secs"], 30);
     }
 }

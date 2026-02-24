@@ -302,7 +302,9 @@ pub use http_client::{
 };
 
 pub use server::{
-    AiServer, AuthConfig, AuthResult, CorsConfig, ServerConfig, ServerHandle, TlsConfig,
+    AiServer, AuditEntry as ServerAuditEntry, AuditEventType as ServerAuditEventType,
+    AuditLog as ServerAuditLog, AuthConfig, AuthResult, CorsConfig, ServerConfig, ServerHandle,
+    StructuredError, TlsConfig,
 };
 
 pub use secure_credentials::{

@@ -2980,4 +2980,374 @@ mod tests {
         assert!(json["relations"].as_array().unwrap().is_empty());
         assert_eq!(json["stats"]["total_entities"].as_u64().unwrap(), 0);
     }
+
+    // ====================================================================
+    // Additional tests: entity ops, relation ops, dedup, traversal, etc.
+    // ====================================================================
+
+    #[test]
+    fn test_entity_creation_and_retrieval_by_name() {
+        let config = KnowledgeGraphConfig::default();
+        let store = KnowledgeGraphStore::in_memory(config).unwrap();
+
+        let id = store
+            .get_or_create_entity("Tesla", EntityType::Organization, &[])
+            .unwrap();
+
+        let entity = store.get_entity_by_name("Tesla").unwrap().unwrap();
+        assert_eq!(entity.id, id);
+        assert_eq!(entity.name, "Tesla");
+        assert_eq!(entity.entity_type, EntityType::Organization);
+    }
+
+    #[test]
+    fn test_entity_retrieval_nonexistent() {
+        let config = KnowledgeGraphConfig::default();
+        let store = KnowledgeGraphStore::in_memory(config).unwrap();
+
+        let result = store.get_entity_by_name("NonExistent").unwrap();
+        assert!(result.is_none());
+
+        let result_by_id = store.get_entity(999).unwrap();
+        assert!(result_by_id.is_none());
+    }
+
+    #[test]
+    fn test_entity_deduplication_same_name() {
+        let config = KnowledgeGraphConfig::default();
+        let store = KnowledgeGraphStore::in_memory(config).unwrap();
+
+        let id1 = store
+            .get_or_create_entity("Duplicated", EntityType::Product, &[])
+            .unwrap();
+        let id2 = store
+            .get_or_create_entity("Duplicated", EntityType::Product, &[])
+            .unwrap();
+
+        // Same name should return same ID (no duplicate)
+        assert_eq!(id1, id2);
+
+        let stats = store.get_stats().unwrap();
+        assert_eq!(stats.total_entities, 1);
+    }
+
+    #[test]
+    fn test_entity_deduplication_via_alias() {
+        let config = KnowledgeGraphConfig::default();
+        let store = KnowledgeGraphStore::in_memory(config).unwrap();
+
+        let id1 = store
+            .get_or_create_entity(
+                "Microsoft",
+                EntityType::Organization,
+                &["MSFT".to_string()],
+            )
+            .unwrap();
+
+        // Creating entity by alias name should resolve to same entity
+        let _id2 = store
+            .get_or_create_entity("MSFT", EntityType::Organization, &[])
+            .unwrap();
+
+        // The alias lookup should find the original entity. However, if MSFT is looked up
+        // as a name first and not found, then aliases are checked.
+        // Since we added "MSFT" as an alias for "Microsoft", find_entity_id("MSFT") should find id1.
+        let found_id = store.find_entity_id("MSFT").unwrap();
+        assert_eq!(found_id, Some(id1));
+
+        // id2 may or may not equal id1 depending on the exact flow,
+        // but find_entity_id should work correctly for the alias
+        assert!(found_id.is_some());
+    }
+
+    #[test]
+    fn test_relationship_creation_between_entities() {
+        let config = KnowledgeGraphConfig::default();
+        let store = KnowledgeGraphStore::in_memory(config).unwrap();
+
+        let org_id = store
+            .get_or_create_entity("SpaceX", EntityType::Organization, &[])
+            .unwrap();
+        let product_id = store
+            .get_or_create_entity("Falcon 9", EntityType::Product, &[])
+            .unwrap();
+
+        let rel_id = store
+            .add_relation(
+                org_id,
+                product_id,
+                "manufactures",
+                0.95,
+                Some("SpaceX builds Falcon 9 rockets"),
+                None,
+            )
+            .unwrap();
+        assert!(rel_id > 0);
+
+        let relations = store.get_relations_from(org_id, 1).unwrap();
+        assert_eq!(relations.len(), 1);
+        assert_eq!(relations[0].from, "SpaceX");
+        assert_eq!(relations[0].to, "Falcon 9");
+        assert_eq!(relations[0].relation_type, "manufactures");
+    }
+
+    #[test]
+    fn test_relation_confidence_update_on_conflict() {
+        let config = KnowledgeGraphConfig::default();
+        let store = KnowledgeGraphStore::in_memory(config).unwrap();
+
+        let a = store
+            .get_or_create_entity("EntityA", EntityType::Other, &[])
+            .unwrap();
+        let b = store
+            .get_or_create_entity("EntityB", EntityType::Other, &[])
+            .unwrap();
+
+        // Insert relation with low confidence
+        store
+            .add_relation(a, b, "related_to", 0.5, None, None)
+            .unwrap();
+
+        // Insert same relation with higher confidence (should update via ON CONFLICT)
+        store
+            .add_relation(a, b, "related_to", 0.9, Some("better evidence"), None)
+            .unwrap();
+
+        let relations = store.list_all_relations().unwrap();
+        assert_eq!(relations.len(), 1);
+        // Confidence should be MAX(0.5, 0.9) = 0.9
+        assert!(
+            (relations[0].4 - 0.9).abs() < 0.01,
+            "Expected confidence ~0.9, got {}",
+            relations[0].4
+        );
+    }
+
+    #[test]
+    fn test_graph_traversal_depth_2() {
+        let (store, a, _b, _c, _d, _e) = create_test_graph();
+
+        // Depth 1: only A -> B
+        let depth1 = store.get_relations_from(a, 1).unwrap();
+        assert_eq!(depth1.len(), 1);
+
+        // Depth 2: A -> B, then B -> C
+        let depth2 = store.get_relations_from(a, 2).unwrap();
+        assert_eq!(depth2.len(), 2);
+    }
+
+    #[test]
+    fn test_relations_from_isolated_entity() {
+        let (_store, _a, _b, _c, _d, e) = create_test_graph();
+
+        // E is isolated - no outgoing relations
+        let relations = _store.get_relations_from(e, 2).unwrap();
+        assert!(relations.is_empty());
+    }
+
+    #[test]
+    fn test_empty_graph_stats() {
+        let config = KnowledgeGraphConfig::default();
+        let store = KnowledgeGraphStore::in_memory(config).unwrap();
+
+        let stats = store.get_stats().unwrap();
+        assert_eq!(stats.total_entities, 0);
+        assert_eq!(stats.total_relations, 0);
+        assert_eq!(stats.total_chunks, 0);
+        assert_eq!(stats.total_mentions, 0);
+        assert!(stats.entities_by_type.is_empty());
+        assert!(stats.relations_by_type.is_empty());
+    }
+
+    #[test]
+    fn test_empty_graph_operations() {
+        let config = KnowledgeGraphConfig::default();
+        let store = KnowledgeGraphStore::in_memory(config).unwrap();
+
+        // find_entity_id on empty graph
+        assert_eq!(store.find_entity_id("Nothing").unwrap(), None);
+
+        // get_entity on empty graph
+        assert!(store.get_entity(1).unwrap().is_none());
+
+        // get_entity_by_name on empty graph
+        assert!(store.get_entity_by_name("Nobody").unwrap().is_none());
+
+        // list_all_entities on empty graph
+        let entities = store.list_all_entities().unwrap();
+        assert!(entities.is_empty());
+
+        // list_all_relations on empty graph
+        let relations = store.list_all_relations().unwrap();
+        assert!(relations.is_empty());
+
+        // get_chunks_for_entities with empty list
+        let chunks = store.get_chunks_for_entities(&[]).unwrap();
+        assert!(chunks.is_empty());
+    }
+
+    #[test]
+    fn test_clear_graph() {
+        let config = KnowledgeGraphConfig::default();
+        let store = KnowledgeGraphStore::in_memory(config).unwrap();
+
+        store
+            .get_or_create_entity("Alpha", EntityType::Organization, &[])
+            .unwrap();
+        store
+            .get_or_create_entity("Beta", EntityType::Product, &[])
+            .unwrap();
+
+        let stats_before = store.get_stats().unwrap();
+        assert_eq!(stats_before.total_entities, 2);
+
+        store.clear().unwrap();
+
+        let stats_after = store.get_stats().unwrap();
+        assert_eq!(stats_after.total_entities, 0);
+        assert_eq!(stats_after.total_relations, 0);
+    }
+
+    #[test]
+    fn test_entity_type_all_variants() {
+        let all = EntityType::all();
+        assert_eq!(all.len(), 7);
+        // Check round-trip conversion for each variant
+        for et in all {
+            let s = et.as_str();
+            let back = EntityType::from_str(s);
+            assert_eq!(*et, back, "Round-trip failed for {:?} -> {}", et, s);
+        }
+    }
+
+    #[test]
+    fn test_entity_type_from_str_aliases() {
+        // Check various aliases defined in from_str
+        assert_eq!(EntityType::from_str("org"), EntityType::Organization);
+        assert_eq!(EntityType::from_str("company"), EntityType::Organization);
+        assert_eq!(EntityType::from_str("faction"), EntityType::Organization);
+        assert_eq!(EntityType::from_str("ship"), EntityType::Product);
+        assert_eq!(EntityType::from_str("vehicle"), EntityType::Product);
+        assert_eq!(EntityType::from_str("weapon"), EntityType::Product);
+        assert_eq!(EntityType::from_str("item"), EntityType::Product);
+        assert_eq!(EntityType::from_str("character"), EntityType::Person);
+        assert_eq!(EntityType::from_str("npc"), EntityType::Person);
+        assert_eq!(EntityType::from_str("place"), EntityType::Location);
+        assert_eq!(EntityType::from_str("system"), EntityType::Location);
+        assert_eq!(EntityType::from_str("planet"), EntityType::Location);
+        assert_eq!(EntityType::from_str("station"), EntityType::Location);
+        assert_eq!(EntityType::from_str("mechanic"), EntityType::Concept);
+        assert_eq!(EntityType::from_str("feature"), EntityType::Concept);
+        assert_eq!(EntityType::from_str("mission"), EntityType::Event);
+        assert_eq!(EntityType::from_str("battle"), EntityType::Event);
+        assert_eq!(EntityType::from_str("xyz_unknown"), EntityType::Other);
+    }
+
+    #[test]
+    fn test_chunk_deduplication() {
+        let config = KnowledgeGraphConfig::default();
+        let store = KnowledgeGraphStore::in_memory(config).unwrap();
+
+        let id1 = store
+            .add_chunk("doc1", "This is the same chunk content.", 0)
+            .unwrap();
+        let id2 = store
+            .add_chunk("doc1", "This is the same chunk content.", 1)
+            .unwrap();
+
+        // Same content hash should return the same chunk ID
+        assert_eq!(id1, id2);
+    }
+
+    #[test]
+    fn test_link_entity_to_chunk_multiple_mentions() {
+        let config = KnowledgeGraphConfig::default();
+        let store = KnowledgeGraphStore::in_memory(config).unwrap();
+
+        let entity_id = store
+            .get_or_create_entity("Foo", EntityType::Concept, &[])
+            .unwrap();
+        let chunk_id = store
+            .add_chunk("doc1", "Foo appears here.", 0)
+            .unwrap();
+
+        // Link twice - mention_count should increase
+        store
+            .link_entity_to_chunk(entity_id, chunk_id, Some(0), Some("first mention"))
+            .unwrap();
+        store
+            .link_entity_to_chunk(entity_id, chunk_id, Some(10), Some("second mention"))
+            .unwrap();
+
+        let stats = store.get_stats().unwrap();
+        assert_eq!(stats.total_mentions, 1); // One row, but count incremented
+    }
+
+    #[test]
+    fn test_graph_query_where_in() {
+        let query = GraphQuery::new()
+            .match_node("n", None)
+            .return_fields(&["n.name"]);
+
+        // Build a query with WhereClause::In manually
+        let mut q = query;
+        q.where_clauses.push(WhereClause::In(
+            "n.entity_type".to_string(),
+            vec!["organization".to_string(), "product".to_string()],
+        ));
+
+        let sql = q.to_sql();
+        assert!(sql.contains("n.entity_type IN ('organization', 'product')"));
+    }
+
+    #[test]
+    fn test_graph_query_execute_on_store() {
+        let (store, _a, _b, _c, _d, _e) = create_test_graph();
+
+        // entity_type is stored lowercase ("organization") by EntityType::as_str()
+        let query = GraphQuery::new()
+            .match_node("n", Some("organization"))
+            .return_fields(&["n.name", "n.entity_type"])
+            .limit(10);
+
+        let result = query.execute(&store).unwrap();
+        assert_eq!(result.columns.len(), 2);
+        // Only entity A is Organization
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(result.rows[0][0], "A");
+    }
+
+    #[test]
+    fn test_pattern_extractor_with_custom_pattern() {
+        let extractor = PatternEntityExtractor::new()
+            .add_entity("rust", EntityType::Concept)
+            .add_pattern(r"\b[A-Z][a-z]+\b", EntityType::Other)
+            .unwrap();
+
+        let text = "Rust is great. Alice loves it.";
+        let result = extractor.extract(text).unwrap();
+
+        // "rust" should be found (known entity, case-insensitive)
+        assert!(
+            result
+                .entities
+                .iter()
+                .any(|e| e.name.to_lowercase() == "rust"),
+            "Expected to find 'rust' entity"
+        );
+    }
+
+    #[test]
+    fn test_pattern_extractor_query_entities() {
+        let extractor = PatternEntityExtractor::new()
+            .add_entity("python", EntityType::Concept)
+            .add_entity("javascript", EntityType::Concept);
+
+        let query_entities = extractor
+            .extract_query_entities("Tell me about python and javascript")
+            .unwrap();
+
+        assert!(query_entities.iter().any(|e| e == "python"));
+        assert!(query_entities.iter().any(|e| e == "javascript"));
+    }
 }
