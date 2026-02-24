@@ -345,6 +345,10 @@ name = "quality_tests"
 name = "streaming"
 
 [[example]]
+name = "speech_demo"
+required-features = ["audio"]
+
+[[example]]
 name = "container_sandbox"
 required-features = ["containers"]
 

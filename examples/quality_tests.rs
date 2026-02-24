@@ -6,10 +6,7 @@
 //!
 //! Run with: cargo run --example quality_tests --features rag
 
-use ai_assistant::{
-    AiAssistant, ConversationTestCase, MessageMetrics, TestSuite, TestSuiteResults,
-};
-use std::path::Path;
+use ai_assistant::{ConversationTestCase, MessageMetrics, TestSuite, TestSuiteResults};
 
 fn main() {
     println!("AI Assistant Quality Test Example\n");
