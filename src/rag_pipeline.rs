@@ -1892,4 +1892,539 @@ mod tests {
         let fused = pipeline.reciprocal_rank_fusion(chunks);
         assert!(!fused.is_empty());
     }
+
+    // ========================================================================
+    // Phase 2 (v11): Pipeline config variants
+    // ========================================================================
+
+    #[test]
+    fn test_from_rag_config() {
+        let rag_config = RagConfig::with_tier(RagTier::Thorough);
+        let pipeline_config = RagPipelineConfig::from_rag_config(rag_config);
+        assert_eq!(pipeline_config.rag_config.tier, RagTier::Thorough);
+        assert_eq!(pipeline_config.timeout_ms, Some(30000));
+        assert_eq!(pipeline_config.llm_timeout_ms, 10000);
+        assert!(pipeline_config.continue_on_error);
+        assert_eq!(pipeline_config.min_chunks, 1);
+    }
+
+    #[test]
+    fn test_for_tier_all_variants() {
+        let tiers = [
+            RagTier::Disabled,
+            RagTier::Fast,
+            RagTier::Semantic,
+            RagTier::Enhanced,
+            RagTier::Thorough,
+            RagTier::Agentic,
+            RagTier::Graph,
+            RagTier::Full,
+            RagTier::Custom,
+        ];
+        for tier in &tiers {
+            let config = RagPipelineConfig::for_tier(*tier);
+            assert_eq!(config.rag_config.tier, *tier);
+            assert!(config.enable_caching);
+            assert!((config.dedup_threshold - 0.9).abs() < f32::EPSILON);
+        }
+    }
+
+    #[test]
+    fn test_with_config_custom_values() {
+        let mut pipeline_config = RagPipelineConfig::default();
+        pipeline_config.timeout_ms = Some(5000);
+        pipeline_config.llm_timeout_ms = 2000;
+        pipeline_config.continue_on_error = false;
+        pipeline_config.min_chunks = 3;
+        pipeline_config.max_query_variants = 10;
+        pipeline_config.max_sub_queries = 8;
+        pipeline_config.rerank_top_k = 20;
+        pipeline_config.compression_target_tokens = 500;
+
+        let pipeline = RagPipeline::with_config(pipeline_config);
+        assert_eq!(pipeline.config().timeout_ms, Some(5000));
+        assert_eq!(pipeline.config().llm_timeout_ms, 2000);
+        assert!(!pipeline.config().continue_on_error);
+        assert_eq!(pipeline.config().min_chunks, 3);
+        assert_eq!(pipeline.config().max_query_variants, 10);
+    }
+
+    #[test]
+    fn test_pipeline_default_config_values() {
+        let config = RagPipelineConfig::default();
+        assert_eq!(config.timeout_ms, Some(30000));
+        assert_eq!(config.llm_timeout_ms, 10000);
+        assert!(config.continue_on_error);
+        assert_eq!(config.min_chunks, 1);
+        assert!(config.enable_caching);
+        assert_eq!(config.max_query_variants, 5);
+        assert_eq!(config.max_sub_queries, 4);
+        assert_eq!(config.rerank_top_k, 10);
+        assert_eq!(config.compression_target_tokens, 200);
+        assert_eq!(config.sentence_window_size, 2);
+        assert_eq!(config.agentic_max_iterations, 5);
+        assert_eq!(config.graph_max_depth, 2);
+    }
+
+    // ========================================================================
+    // Phase 2 (v11): check_requirements
+    // ========================================================================
+
+    #[test]
+    fn test_check_requirements_fast_satisfied() {
+        let pipeline = RagPipeline::new(RagConfig::with_tier(RagTier::Fast));
+        let missing = pipeline.check_requirements(false, false, false);
+        assert!(missing.is_empty(), "Fast tier should have no missing requirements");
+    }
+
+    #[test]
+    fn test_check_requirements_semantic_missing_embeddings() {
+        let pipeline = RagPipeline::new(RagConfig::with_tier(RagTier::Semantic));
+        let missing = pipeline.check_requirements(false, false, false);
+        assert!(
+            missing
+                .iter()
+                .any(|r| matches!(r, RagRequirement::EmbeddingModel)),
+            "Semantic tier needs embedding model"
+        );
+    }
+
+    #[test]
+    fn test_check_requirements_semantic_satisfied() {
+        let pipeline = RagPipeline::new(RagConfig::with_tier(RagTier::Semantic));
+        let missing = pipeline.check_requirements(true, false, false);
+        assert!(
+            !missing
+                .iter()
+                .any(|r| matches!(r, RagRequirement::EmbeddingModel)),
+        );
+    }
+
+    #[test]
+    fn test_check_requirements_disabled_empty() {
+        let pipeline = RagPipeline::new(RagConfig::with_tier(RagTier::Disabled));
+        let missing = pipeline.check_requirements(false, false, false);
+        assert!(missing.is_empty(), "Disabled tier should need nothing");
+    }
+
+    // ========================================================================
+    // Phase 2 (v11): Query processing
+    // ========================================================================
+
+    #[test]
+    fn test_synonym_expansion() {
+        let pipeline = RagPipeline::new(RagConfig::default());
+        let expanded = pipeline.expand_synonyms("How fast is this ship?");
+        // "ship" should match synonym entries if any exist
+        // The function may or may not find matches depending on the synonym map
+        let _ = expanded; // Just verify it doesn't panic
+    }
+
+    #[test]
+    fn test_synonym_expansion_empty_query() {
+        let pipeline = RagPipeline::new(RagConfig::default());
+        let expanded = pipeline.expand_synonyms("");
+        assert!(expanded.is_empty());
+    }
+
+    #[test]
+    fn test_process_disabled_tier() {
+        let config = RagConfig::with_tier(RagTier::Disabled);
+        let mut pipeline = RagPipeline::new(config);
+        let llm = MockLlm;
+        let retrieval = MockRetrieval;
+
+        let result = pipeline.process("test query", &llm, None, &retrieval, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_process_empty_query() {
+        let config = RagConfig::with_tier(RagTier::Fast);
+        let mut pipeline = RagPipeline::new(config);
+        let llm = MockLlm;
+        let retrieval = MockRetrieval;
+
+        let result = pipeline.process("", &llm, None, &retrieval, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_process_enhanced_tier() {
+        let config = RagConfig::with_tier(RagTier::Enhanced);
+        let mut pipeline = RagPipeline::new(config);
+        let llm = MockLlm;
+        let retrieval = MockRetrieval;
+
+        let result = pipeline
+            .process("What is the cargo capacity?", &llm, None, &retrieval, None);
+        assert!(result.is_ok());
+        let result = result.unwrap();
+        assert!(!result.context.is_empty());
+    }
+
+    // ========================================================================
+    // Phase 2 (v11): Post-processing
+    // ========================================================================
+
+    #[test]
+    fn test_assemble_context_empty_chunks() {
+        let pipeline = RagPipeline::new(RagConfig::default());
+        let features = pipeline.config().rag_config.effective_features();
+        let debug_logger = RagDebugLogger::new(RagDebugConfig::default());
+        let session = debug_logger.start_query("test");
+
+        let chunks: Vec<RetrievedChunk> = vec![];
+        let (context, used, truncated) = pipeline.assemble_context(&chunks, &features, &session);
+        assert!(context.is_empty());
+        assert!(used.is_empty());
+        assert!(!truncated);
+    }
+
+    #[test]
+    fn test_assemble_context_all_chunks_fit() {
+        let mut rag_config = RagConfig::with_tier(RagTier::Fast);
+        rag_config.max_knowledge_tokens = 10000;
+        let pipeline = RagPipeline::new(rag_config);
+        let features = pipeline.config().rag_config.effective_features();
+        let debug_logger = RagDebugLogger::new(RagDebugConfig::default());
+        let session = debug_logger.start_query("test");
+
+        let chunks = vec![
+            RetrievedChunk {
+                chunk_id: "c1".to_string(),
+                content: "Content A".to_string(),
+                source: "doc.md".to_string(),
+                section: None,
+                score: 0.9,
+                keyword_score: None,
+                semantic_score: None,
+                token_count: 10,
+                position: None,
+                metadata: HashMap::new(),
+            },
+            RetrievedChunk {
+                chunk_id: "c2".to_string(),
+                content: "Content B".to_string(),
+                source: "doc.md".to_string(),
+                section: None,
+                score: 0.8,
+                keyword_score: None,
+                semantic_score: None,
+                token_count: 10,
+                position: None,
+                metadata: HashMap::new(),
+            },
+        ];
+
+        let (_context, used, truncated) = pipeline.assemble_context(&chunks, &features, &session);
+        assert_eq!(used.len(), 2);
+        assert!(!truncated);
+    }
+
+    #[test]
+    fn test_assemble_context_truncation() {
+        let mut rag_config = RagConfig::with_tier(RagTier::Fast);
+        rag_config.max_knowledge_tokens = 20;
+        let pipeline = RagPipeline::new(rag_config);
+        let features = pipeline.config().rag_config.effective_features();
+        let debug_logger = RagDebugLogger::new(RagDebugConfig::default());
+        let session = debug_logger.start_query("test");
+
+        let chunks = vec![
+            RetrievedChunk {
+                chunk_id: "c1".to_string(),
+                content: "First chunk content that is reasonably long".to_string(),
+                source: "src1.md".to_string(),
+                section: None,
+                score: 0.9,
+                keyword_score: Some(0.9),
+                semantic_score: None,
+                token_count: 15,
+                position: None,
+                metadata: HashMap::new(),
+            },
+            RetrievedChunk {
+                chunk_id: "c2".to_string(),
+                content: "Second chunk content that will exceed the budget".to_string(),
+                source: "src2.md".to_string(),
+                section: None,
+                score: 0.8,
+                keyword_score: Some(0.8),
+                semantic_score: None,
+                token_count: 15,
+                position: None,
+                metadata: HashMap::new(),
+            },
+        ];
+
+        let (context, used, truncated) = pipeline.assemble_context(&chunks, &features, &session);
+        assert_eq!(used.len(), 1);
+        assert!(truncated);
+        assert!(!context.is_empty());
+    }
+
+    #[test]
+    fn test_weighted_fusion() {
+        let pipeline = RagPipeline::new(RagConfig::default());
+
+        let chunks = vec![
+            RetrievedChunk {
+                chunk_id: "shared".to_string(),
+                content: "shared content".to_string(),
+                source: "test".to_string(),
+                section: None,
+                score: 0.5,
+                keyword_score: Some(0.8),
+                semantic_score: None,
+                token_count: 5,
+                position: None,
+                metadata: HashMap::new(),
+            },
+            RetrievedChunk {
+                chunk_id: "shared".to_string(),
+                content: "shared content".to_string(),
+                source: "test".to_string(),
+                section: None,
+                score: 0.5,
+                keyword_score: None,
+                semantic_score: Some(0.9),
+                token_count: 5,
+                position: None,
+                metadata: HashMap::new(),
+            },
+        ];
+
+        let fused = pipeline.weighted_fusion(chunks);
+        assert_eq!(fused.len(), 1, "Duplicate chunk_ids should merge");
+        assert!(fused[0].score > 0.0);
+    }
+
+    #[test]
+    fn test_deduplicate_keeps_highest_score() {
+        let pipeline = RagPipeline::new(RagConfig::default());
+
+        let chunks = vec![
+            RetrievedChunk {
+                chunk_id: "dup".to_string(),
+                content: "low".to_string(),
+                source: "s".to_string(),
+                section: None,
+                score: 0.3,
+                keyword_score: None,
+                semantic_score: None,
+                token_count: 5,
+                position: None,
+                metadata: HashMap::new(),
+            },
+            RetrievedChunk {
+                chunk_id: "dup".to_string(),
+                content: "high".to_string(),
+                source: "s".to_string(),
+                section: None,
+                score: 0.95,
+                keyword_score: None,
+                semantic_score: None,
+                token_count: 5,
+                position: None,
+                metadata: HashMap::new(),
+            },
+            RetrievedChunk {
+                chunk_id: "unique".to_string(),
+                content: "only".to_string(),
+                source: "s".to_string(),
+                section: None,
+                score: 0.5,
+                keyword_score: None,
+                semantic_score: None,
+                token_count: 5,
+                position: None,
+                metadata: HashMap::new(),
+            },
+        ];
+
+        let deduped = pipeline.deduplicate_chunks(chunks);
+        assert_eq!(deduped.len(), 2);
+        let dup_entry = deduped.iter().find(|c| c.chunk_id == "dup").unwrap();
+        assert!((dup_entry.score - 0.95).abs() < f32::EPSILON);
+    }
+
+    // ========================================================================
+    // Phase 2 (v11): Stats tracking
+    // ========================================================================
+
+    #[test]
+    fn test_stats_initial_state() {
+        let pipeline = RagPipeline::new(RagConfig::default());
+        let stats = pipeline.stats();
+        assert_eq!(stats.queries_processed, 0);
+        assert_eq!(stats.llm_calls, 0);
+        assert_eq!(stats.chunks_retrieved, 0);
+        assert_eq!(stats.chunks_used, 0);
+    }
+
+    #[test]
+    fn test_stats_after_process() {
+        let config = RagConfig::with_tier(RagTier::Fast);
+        let mut pipeline = RagPipeline::new(config);
+        let llm = MockLlm;
+        let retrieval = MockRetrieval;
+
+        let _ = pipeline.process("test query", &llm, None, &retrieval, None);
+        let stats = pipeline.stats();
+        assert_eq!(stats.queries_processed, 1);
+    }
+
+    #[test]
+    fn test_stats_accumulate_across_queries() {
+        let config = RagConfig::with_tier(RagTier::Fast);
+        let mut pipeline = RagPipeline::new(config);
+        let llm = MockLlm;
+        let retrieval = MockRetrieval;
+
+        let _ = pipeline.process("first query", &llm, None, &retrieval, None);
+        let _ = pipeline.process("second query", &llm, None, &retrieval, None);
+        let stats = pipeline.stats();
+        assert_eq!(stats.queries_processed, 2);
+    }
+
+    // ========================================================================
+    // Phase 2 (v11): Debug logger + edge cases
+    // ========================================================================
+
+    #[test]
+    fn test_debug_logger_default() {
+        let pipeline = RagPipeline::new(RagConfig::default());
+        let logger = pipeline.debug_logger();
+        let _session = logger.start_query("hello");
+    }
+
+    #[test]
+    fn test_with_debug_logger_custom() {
+        let custom_config = RagDebugConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        let custom_logger = Arc::new(RagDebugLogger::new(custom_config));
+        let pipeline_config = RagPipelineConfig::default();
+        let pipeline = RagPipeline::with_debug_logger(pipeline_config, custom_logger.clone());
+        assert!(Arc::ptr_eq(&pipeline.debug_logger(), &custom_logger));
+    }
+
+    #[test]
+    fn test_count_by_score_type() {
+        let chunks = vec![
+            RetrievedChunk {
+                chunk_id: "kw1".to_string(),
+                content: "c".to_string(),
+                source: "s".to_string(),
+                section: None,
+                score: 0.9,
+                keyword_score: Some(0.9),
+                semantic_score: None,
+                token_count: 5,
+                position: None,
+                metadata: HashMap::new(),
+            },
+            RetrievedChunk {
+                chunk_id: "sem1".to_string(),
+                content: "c".to_string(),
+                source: "s".to_string(),
+                section: None,
+                score: 0.8,
+                keyword_score: None,
+                semantic_score: Some(0.8),
+                token_count: 5,
+                position: None,
+                metadata: HashMap::new(),
+            },
+            RetrievedChunk {
+                chunk_id: "both".to_string(),
+                content: "c".to_string(),
+                source: "s".to_string(),
+                section: None,
+                score: 0.7,
+                keyword_score: Some(0.7),
+                semantic_score: Some(0.6),
+                token_count: 5,
+                position: None,
+                metadata: HashMap::new(),
+            },
+        ];
+
+        let (kw_count, sem_count) = count_by_score_type(&chunks);
+        assert_eq!(kw_count, 2);
+        assert_eq!(sem_count, 2);
+    }
+
+    #[test]
+    fn test_estimate_tokens_edge_cases() {
+        let empty_tokens = estimate_tokens("");
+        assert!(empty_tokens <= 1);
+        let single_char = estimate_tokens("x");
+        assert_eq!(single_char, 1);
+        let long_text = estimate_tokens("hello world this is a test");
+        assert!(long_text > 0);
+    }
+
+    #[test]
+    fn test_pipeline_error_display() {
+        let errors = vec![
+            RagPipelineError::NoSources,
+            RagPipelineError::Timeout,
+            RagPipelineError::QueryProcessingError("bad".to_string()),
+            RagPipelineError::RetrievalError("fail".to_string()),
+            RagPipelineError::PostProcessingError("post".to_string()),
+            RagPipelineError::LlmError("llm".to_string()),
+            RagPipelineError::ConfigError("cfg".to_string()),
+            RagPipelineError::Internal("int".to_string()),
+        ];
+        for error in &errors {
+            let display = format!("{}", error);
+            assert!(!display.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_very_long_query() {
+        let config = RagConfig::with_tier(RagTier::Fast);
+        let mut pipeline = RagPipeline::new(config);
+        let llm = MockLlm;
+        let retrieval = MockRetrieval;
+
+        let long_query = "a ".repeat(5000);
+        let result = pipeline.process(&long_query, &llm, None, &retrieval, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_special_characters_query() {
+        let config = RagConfig::with_tier(RagTier::Fast);
+        let mut pipeline = RagPipeline::new(config);
+        let llm = MockLlm;
+        let retrieval = MockRetrieval;
+
+        let result = pipeline.process(
+            "query with <html> & \"quotes\" and \nnewlines",
+            &llm,
+            None,
+            &retrieval,
+            None,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_pipeline_result_has_debug_session_id() {
+        let config = RagConfig::with_tier(RagTier::Fast);
+        let mut pipeline = RagPipeline::new(config);
+        let llm = MockLlm;
+        let retrieval = MockRetrieval;
+
+        let result = pipeline
+            .process("test", &llm, None, &retrieval, None)
+            .unwrap();
+        assert!(result.debug_session_id.is_some());
+        assert!(!result.debug_session_id.unwrap().is_empty());
+    }
 }
