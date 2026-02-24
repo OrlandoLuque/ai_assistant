@@ -306,6 +306,8 @@ pub use server::{
     AuditLog as ServerAuditLog, AuthConfig, AuthResult, CorsConfig, ServerConfig, ServerHandle,
     ServerRateLimiter, StructuredError, TlsConfig,
 };
+#[cfg(feature = "server-tls")]
+pub use server::load_tls_config;
 
 pub use secure_credentials::{
     CallbackSource, CredentialError, CredentialResolver, CredentialSource, EnvVarSource, FileSource,

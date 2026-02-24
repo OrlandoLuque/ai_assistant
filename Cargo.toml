@@ -72,6 +72,10 @@ p2p = ["distributed"]
 # Not in 'full' by default due to heavy deps (quinn/rustls). Opt-in: --features distributed-network
 distributed-network = ["distributed", "dep:quinn", "dep:rustls", "dep:rcgen", "dep:sha2", "dep:tokio", "dep:bincode"]
 
+# TLS support for the embedded HTTP server (HTTPS via rustls).
+# Not in 'full' — opt-in only. Requires PEM cert/key files.
+server-tls = ["dep:rustls", "dep:rustls-pemfile"]
+
 # RAG with SQLite FTS5 and encrypted knowledge packages
 rag = ["rusqlite", "aes-gcm"]
 
@@ -236,8 +240,10 @@ reqwest = { version = "0.12", features = ["json", "blocking", "stream"], optiona
 rayon = { version = "1", optional = true }
 # Optional QUIC transport for distributed networking
 quinn = { version = "0.11", optional = true }
-# Optional TLS for distributed networking (required by quinn)
+# Optional TLS for distributed networking (required by quinn) and server-tls
 rustls = { version = "0.23", optional = true, default-features = false, features = ["ring", "std"] }
+# Optional PEM certificate/key loading for server-tls
+rustls-pemfile = { version = "2", optional = true }
 # Optional certificate generation for node identity
 rcgen = { version = "0.13", optional = true }
 # Optional SHA-256 for Merkle tree hashing
