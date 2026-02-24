@@ -676,6 +676,351 @@ pub fn generate_ai_assistant_spec() -> OpenApiSpec {
         .build()
 }
 
+/// Generate OpenAPI 3.0.0 spec for the embedded HTTP server endpoints.
+///
+/// Returns a `serde_json::Value` describing every route served by `AiServer`,
+/// including both the root paths and the `/api/v1/` prefixed paths.
+pub fn generate_server_api_spec() -> serde_json::Value {
+    let health_response_schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "status": { "type": "string", "example": "ok" },
+            "version": { "type": "string" },
+            "model": { "type": "string" },
+            "provider": { "type": "string" },
+            "uptime_secs": { "type": "integer", "format": "int64" },
+            "active_sessions": { "type": "integer" },
+            "conversation_messages": { "type": "integer" }
+        },
+        "required": ["status", "uptime_secs"]
+    });
+
+    let chat_request_schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "message": { "type": "string", "description": "The user message to send" },
+            "system_prompt": { "type": "string", "description": "Optional system prompt override" },
+            "knowledge_context": { "type": "string", "description": "Optional RAG knowledge context" }
+        },
+        "required": ["message"]
+    });
+
+    let chat_response_schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "content": { "type": "string", "description": "The assistant response text" },
+            "model": { "type": "string", "description": "Model used for generation" }
+        },
+        "required": ["content", "model"]
+    });
+
+    let error_response_schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "error": { "type": "string", "description": "Error message" }
+        },
+        "required": ["error"]
+    });
+
+    let models_item_schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "name": { "type": "string" },
+            "provider": { "type": "string" },
+            "size": { "type": "integer" }
+        }
+    });
+
+    // Helper: build a path item for GET endpoints with a JSON response
+    let health_path = serde_json::json!({
+        "get": {
+            "summary": "Health check",
+            "description": "Returns server health status including uptime and request counts.",
+            "operationId": "getHealth",
+            "tags": ["server"],
+            "responses": {
+                "200": {
+                    "description": "Server is healthy",
+                    "content": {
+                        "application/json": {
+                            "schema": { "$ref": "#/components/schemas/HealthResponse" }
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    let models_path = serde_json::json!({
+        "get": {
+            "summary": "List available models",
+            "description": "Returns the list of models available from the configured provider.",
+            "operationId": "listModels",
+            "tags": ["models"],
+            "responses": {
+                "200": {
+                    "description": "List of models",
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "models": {
+                                        "type": "array",
+                                        "items": models_item_schema
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    let chat_path = serde_json::json!({
+        "post": {
+            "summary": "Send chat message",
+            "description": "Send a message and receive a synchronous response from the LLM.",
+            "operationId": "postChat",
+            "tags": ["chat"],
+            "security": [{ "BearerAuth": [] }],
+            "requestBody": {
+                "required": true,
+                "content": {
+                    "application/json": {
+                        "schema": { "$ref": "#/components/schemas/ChatRequest" }
+                    }
+                }
+            },
+            "responses": {
+                "200": {
+                    "description": "Chat response",
+                    "content": {
+                        "application/json": {
+                            "schema": { "$ref": "#/components/schemas/ChatResponse" }
+                        }
+                    }
+                },
+                "400": {
+                    "description": "Invalid request body",
+                    "content": {
+                        "application/json": {
+                            "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+                        }
+                    }
+                },
+                "422": {
+                    "description": "Message too long",
+                    "content": {
+                        "application/json": {
+                            "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+                        }
+                    }
+                },
+                "500": {
+                    "description": "Server / provider error",
+                    "content": {
+                        "application/json": {
+                            "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    let chat_stream_path = serde_json::json!({
+        "post": {
+            "summary": "Send chat message (streaming)",
+            "description": "Send a message and receive a Server-Sent Events stream of tokens.",
+            "operationId": "postChatStream",
+            "tags": ["chat"],
+            "security": [{ "BearerAuth": [] }],
+            "requestBody": {
+                "required": true,
+                "content": {
+                    "application/json": {
+                        "schema": { "$ref": "#/components/schemas/ChatRequest" }
+                    }
+                }
+            },
+            "responses": {
+                "200": {
+                    "description": "SSE token stream",
+                    "content": {
+                        "text/event-stream": {
+                            "schema": { "type": "string" }
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    let config_path = serde_json::json!({
+        "get": {
+            "summary": "Get server configuration",
+            "description": "Returns the current (redacted) server configuration.",
+            "operationId": "getConfig",
+            "tags": ["config"],
+            "responses": {
+                "200": {
+                    "description": "Current server config (api_key redacted)",
+                    "content": {
+                        "application/json": {
+                            "schema": { "type": "object" }
+                        }
+                    }
+                }
+            }
+        },
+        "post": {
+            "summary": "Update server configuration",
+            "description": "Partially update server configuration (model, temperature, etc.).",
+            "operationId": "postConfig",
+            "tags": ["config"],
+            "security": [{ "BearerAuth": [] }],
+            "requestBody": {
+                "required": true,
+                "content": {
+                    "application/json": {
+                        "schema": { "type": "object", "description": "Partial config fields to update" }
+                    }
+                }
+            },
+            "responses": {
+                "200": {
+                    "description": "Configuration updated",
+                    "content": {
+                        "application/json": {
+                            "schema": { "type": "object" }
+                        }
+                    }
+                },
+                "400": {
+                    "description": "Invalid JSON body",
+                    "content": {
+                        "application/json": {
+                            "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    let metrics_path = serde_json::json!({
+        "get": {
+            "summary": "Prometheus metrics",
+            "description": "Returns server metrics in Prometheus text exposition format.",
+            "operationId": "getMetrics",
+            "tags": ["server"],
+            "responses": {
+                "200": {
+                    "description": "Prometheus metrics",
+                    "content": {
+                        "text/plain": {
+                            "schema": { "type": "string" }
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    let ws_path = serde_json::json!({
+        "get": {
+            "summary": "WebSocket endpoint",
+            "description": "Upgrade to a WebSocket connection for bidirectional chat streaming.",
+            "operationId": "getWebSocket",
+            "tags": ["streaming"],
+            "responses": {
+                "101": {
+                    "description": "Switching Protocols — WebSocket upgrade successful"
+                }
+            }
+        }
+    });
+
+    let openapi_path = serde_json::json!({
+        "get": {
+            "summary": "OpenAPI specification",
+            "description": "Returns this OpenAPI 3.0.0 specification as JSON.",
+            "operationId": "getOpenApiSpec",
+            "tags": ["server"],
+            "responses": {
+                "200": {
+                    "description": "OpenAPI 3.0.0 JSON specification",
+                    "content": {
+                        "application/json": {
+                            "schema": { "type": "object" }
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    serde_json::json!({
+        "openapi": "3.0.0",
+        "info": {
+            "title": "AI Assistant API",
+            "description": "Embedded HTTP server API for the ai_assistant Rust crate. Provides chat completions, model listing, configuration management, metrics, and WebSocket streaming.",
+            "version": "1.0.0",
+            "license": {
+                "name": "PolyForm Noncommercial 1.0.0",
+                "url": "https://polyformproject.org/licenses/noncommercial/1.0.0/"
+            }
+        },
+        "servers": [
+            {
+                "url": "http://localhost:8090",
+                "description": "Default local server"
+            }
+        ],
+        "tags": [
+            { "name": "chat", "description": "Chat completion endpoints" },
+            { "name": "models", "description": "Model management" },
+            { "name": "config", "description": "Server configuration" },
+            { "name": "server", "description": "Health, metrics and metadata" },
+            { "name": "streaming", "description": "WebSocket and SSE streaming" }
+        ],
+        "paths": {
+            "/health": health_path,
+            "/models": models_path,
+            "/chat": chat_path,
+            "/chat/stream": chat_stream_path,
+            "/config": config_path,
+            "/metrics": metrics_path,
+            "/ws": ws_path,
+            "/openapi.json": openapi_path,
+            "/api/v1/health": health_path,
+            "/api/v1/models": models_path,
+            "/api/v1/chat": chat_path,
+            "/api/v1/chat/stream": chat_stream_path,
+            "/api/v1/config": config_path,
+            "/api/v1/metrics": metrics_path,
+            "/api/v1/openapi.json": openapi_path
+        },
+        "components": {
+            "schemas": {
+                "ChatRequest": chat_request_schema,
+                "ChatResponse": chat_response_schema,
+                "ErrorResponse": error_response_schema,
+                "HealthResponse": health_response_schema
+            },
+            "securitySchemes": {
+                "BearerAuth": {
+                    "type": "http",
+                    "scheme": "bearer",
+                    "description": "Bearer token authentication (API key)"
+                }
+            }
+        }
+    })
+}
+
 /// Export spec to JSON
 pub fn export_to_json(spec: &OpenApiSpec) -> Result<String, serde_json::Error> {
     serde_json::to_string_pretty(spec)
@@ -826,5 +1171,96 @@ mod tests {
 
         assert!(schema.enum_values.is_some());
         assert_eq!(schema.enum_values.as_ref().unwrap().len(), 2);
+    }
+
+    // ========================================================================
+    // Server API spec tests (v10 Phase 6)
+    // ========================================================================
+
+    #[test]
+    fn test_server_api_spec_valid_json() {
+        let spec = generate_server_api_spec();
+        // Serialize to string and back to confirm it round-trips as valid JSON
+        let json_str = serde_json::to_string_pretty(&spec).unwrap();
+        let reparsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        assert!(reparsed.is_object());
+    }
+
+    #[test]
+    fn test_server_api_spec_has_required_fields() {
+        let spec = generate_server_api_spec();
+        assert_eq!(spec["openapi"], "3.0.0");
+        assert!(spec["info"].is_object());
+        assert_eq!(spec["info"]["title"], "AI Assistant API");
+        assert_eq!(spec["info"]["version"], "1.0.0");
+        assert!(spec["paths"].is_object());
+    }
+
+    #[test]
+    fn test_server_api_spec_has_all_endpoints() {
+        let spec = generate_server_api_spec();
+        let paths = spec["paths"].as_object().unwrap();
+        // Root paths
+        assert!(paths.contains_key("/health"), "missing /health");
+        assert!(paths.contains_key("/chat"), "missing /chat");
+        assert!(paths.contains_key("/chat/stream"), "missing /chat/stream");
+        assert!(paths.contains_key("/config"), "missing /config");
+        assert!(paths.contains_key("/models"), "missing /models");
+        assert!(paths.contains_key("/metrics"), "missing /metrics");
+        assert!(paths.contains_key("/ws"), "missing /ws");
+        assert!(paths.contains_key("/openapi.json"), "missing /openapi.json");
+        // Versioned paths
+        assert!(paths.contains_key("/api/v1/health"), "missing /api/v1/health");
+        assert!(paths.contains_key("/api/v1/chat"), "missing /api/v1/chat");
+        assert!(paths.contains_key("/api/v1/openapi.json"), "missing /api/v1/openapi.json");
+    }
+
+    #[test]
+    fn test_server_api_spec_has_security() {
+        let spec = generate_server_api_spec();
+        let schemes = &spec["components"]["securitySchemes"];
+        assert!(schemes.is_object());
+        assert!(schemes["BearerAuth"].is_object());
+        assert_eq!(schemes["BearerAuth"]["type"], "http");
+        assert_eq!(schemes["BearerAuth"]["scheme"], "bearer");
+    }
+
+    #[test]
+    fn test_server_api_spec_has_schemas() {
+        let spec = generate_server_api_spec();
+        let schemas = &spec["components"]["schemas"];
+        assert!(schemas.is_object());
+        assert!(schemas["ChatRequest"].is_object(), "missing ChatRequest schema");
+        assert!(schemas["ChatResponse"].is_object(), "missing ChatResponse schema");
+        assert!(schemas["ErrorResponse"].is_object(), "missing ErrorResponse schema");
+    }
+
+    #[test]
+    fn test_server_api_spec_has_servers() {
+        let spec = generate_server_api_spec();
+        let servers = spec["servers"].as_array().unwrap();
+        assert!(!servers.is_empty());
+        assert_eq!(servers[0]["url"], "http://localhost:8090");
+    }
+
+    #[test]
+    fn test_server_api_spec_chat_request_schema() {
+        let spec = generate_server_api_spec();
+        let chat_req = &spec["components"]["schemas"]["ChatRequest"];
+        assert_eq!(chat_req["type"], "object");
+        let props = chat_req["properties"].as_object().unwrap();
+        assert!(props.contains_key("message"), "ChatRequest must have 'message' field");
+        let required = chat_req["required"].as_array().unwrap();
+        assert!(required.contains(&serde_json::json!("message")));
+    }
+
+    #[test]
+    fn test_server_api_spec_health_response() {
+        let spec = generate_server_api_spec();
+        let health = &spec["components"]["schemas"]["HealthResponse"];
+        assert_eq!(health["type"], "object");
+        let props = health["properties"].as_object().unwrap();
+        assert!(props.contains_key("status"), "HealthResponse must have 'status' field");
+        assert!(props.contains_key("uptime_secs"), "HealthResponse must have 'uptime_secs' field");
     }
 }

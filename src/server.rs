@@ -1474,6 +1474,10 @@ fn route_request_with_config(
                 Err((status, body)) => (status, body),
             }
         }
+        ("GET", "/api/v1/openapi.json") | ("GET", "/openapi.json") => {
+            let spec = crate::openapi_export::generate_server_api_spec();
+            ("200 OK".to_string(), serde_json::to_string_pretty(&spec).unwrap_or_default())
+        }
         ("GET", "/api/v1/metrics") => ("200 OK".to_string(), metrics.render_prometheus()),
         ("GET", "/api/v1/sessions") => handle_list_sessions(assistant),
         ("DELETE", path) if path.starts_with("/api/v1/sessions/") => {
@@ -3726,5 +3730,89 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
     fn test_rate_limiter_default_none() {
         let config = ServerConfig::default();
         assert!(config.rate_limiter.is_none());
+    }
+
+    // ========================================================================
+    // OpenAPI route tests (v10 Phase 6)
+    // ========================================================================
+
+    #[test]
+    fn test_openapi_route() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let metrics = Arc::new(ServerMetrics::new());
+
+        let request = HttpRequest {
+            method: "GET".to_string(),
+            path: "/api/v1/openapi.json".to_string(),
+            headers: vec![],
+            body: String::new(),
+        };
+
+        let (status, body) = route_request(&request, &assistant, &metrics);
+        assert_eq!(status, "200 OK");
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(parsed["openapi"], "3.0.0");
+    }
+
+    #[test]
+    fn test_openapi_route_legacy() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let metrics = Arc::new(ServerMetrics::new());
+
+        let request = HttpRequest {
+            method: "GET".to_string(),
+            path: "/openapi.json".to_string(),
+            headers: vec![],
+            body: String::new(),
+        };
+
+        let (status, body) = route_request(&request, &assistant, &metrics);
+        assert_eq!(status, "200 OK");
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(parsed["info"]["title"], "AI Assistant API");
+    }
+
+    #[test]
+    fn test_openapi_route_has_paths() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let metrics = Arc::new(ServerMetrics::new());
+
+        let request = HttpRequest {
+            method: "GET".to_string(),
+            path: "/api/v1/openapi.json".to_string(),
+            headers: vec![],
+            body: String::new(),
+        };
+
+        let (status, body) = route_request(&request, &assistant, &metrics);
+        assert_eq!(status, "200 OK");
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let paths = parsed["paths"].as_object().unwrap();
+        assert!(paths.contains_key("/health"));
+        assert!(paths.contains_key("/chat"));
+        assert!(paths.contains_key("/api/v1/health"));
+        assert!(paths.contains_key("/api/v1/chat"));
+    }
+
+    #[test]
+    fn test_openapi_content_type() {
+        // The route returns JSON — verify the body is valid JSON
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let metrics = Arc::new(ServerMetrics::new());
+
+        let request = HttpRequest {
+            method: "GET".to_string(),
+            path: "/api/v1/openapi.json".to_string(),
+            headers: vec![],
+            body: String::new(),
+        };
+
+        let (status, body) = route_request(&request, &assistant, &metrics);
+        assert_eq!(status, "200 OK");
+        // The server default Content-Type is application/json; verify body parses as JSON
+        assert!(serde_json::from_str::<serde_json::Value>(&body).is_ok());
+        // Also check it contains the expected content-type hint in schemas
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert!(parsed["components"]["schemas"].is_object());
     }
 }
