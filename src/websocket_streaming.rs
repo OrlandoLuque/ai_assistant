@@ -529,7 +529,7 @@ fn generate_ws_key() -> String {
 }
 
 /// SHA-1 hash (RFC 3174). Returns 20-byte digest.
-fn sha1_hash(data: &[u8]) -> [u8; 20] {
+pub(crate) fn sha1_hash(data: &[u8]) -> [u8; 20] {
     let mut h0: u32 = 0x67452301;
     let mut h1: u32 = 0xEFCDAB89;
     let mut h2: u32 = 0x98BADCFE;
@@ -600,7 +600,7 @@ fn sha1_hash(data: &[u8]) -> [u8; 20] {
 }
 
 /// Standard base64 encoding (RFC 4648)
-fn base64_encode(data: &[u8]) -> String {
+pub(crate) fn base64_encode(data: &[u8]) -> String {
     const CHARS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
     let mut result = String::with_capacity((data.len() + 2) / 3 * 4);
