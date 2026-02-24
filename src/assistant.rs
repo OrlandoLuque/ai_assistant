@@ -5653,7 +5653,7 @@ ws ::= " "*"#;
         let tools = ai.list_mcp_tools("http://localhost:19999/mcp");
         // Simulated mode returns some placeholder tools
         // (may be empty or populated depending on implementation)
-        assert!(tools.len() >= 0); // just verify it does not panic
+        let _ = tools.len(); // just verify it does not panic
     }
 
     #[test]
@@ -5662,7 +5662,7 @@ ws ::= " "*"#;
         // The client will fall back to simulated mode for an unreachable server
         let tools = ai.list_mcp_tools("http://192.0.2.1:1/mcp");
         // Should return empty or simulated tools without panicking
-        assert!(tools.len() >= 0);
+        let _ = tools.len();
     }
 
     // =========================================================================
