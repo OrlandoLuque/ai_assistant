@@ -364,6 +364,42 @@ required-features = ["containers"]
 name = "document_creation"
 required-features = ["containers"]
 
+[[example]]
+name = "workflow_demo"
+required-features = ["workflows"]
+
+[[example]]
+name = "prompt_signature_demo"
+required-features = ["prompt-signatures"]
+
+[[example]]
+name = "a2a_demo"
+required-features = ["a2a"]
+
+[[example]]
+name = "distillation_demo"
+required-features = ["distillation"]
+
+[[example]]
+name = "hitl_demo"
+required-features = ["hitl"]
+
+[[example]]
+name = "constrained_demo"
+required-features = ["constrained-decoding"]
+
+[[example]]
+name = "voice_agent_demo"
+required-features = ["voice-agent"]
+
+[[example]]
+name = "media_gen_demo"
+required-features = ["media-generation"]
+
+[[example]]
+name = "webrtc_demo"
+required-features = ["webrtc", "voice-agent"]
+
 [dev-dependencies]
 tempfile = "3"
 criterion = { version = "0.5", features = ["html_reports"] }
