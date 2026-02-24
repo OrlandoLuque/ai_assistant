@@ -7190,7 +7190,7 @@ assistant.load_with_checksum("memory/assistant_backup.json")
 
 ---
 
-## 56. WebSocket Chat Endpoint
+## 61. WebSocket Chat Endpoint
 
 The embedded HTTP server supports WebSocket connections for real-time chat with streaming responses.
 
@@ -7222,7 +7222,7 @@ ws.onmessage = (event) => {
 
 ---
 
-## 57. TLS / HTTPS (Native)
+## 62. TLS / HTTPS (Native)
 
 Enable native TLS termination with the `server-tls` feature flag.
 
@@ -7243,7 +7243,7 @@ let config = ServerConfig {
 
 ---
 
-## 58. OpenAPI Specification
+## 63. OpenAPI Specification
 
 The server auto-generates and serves an OpenAPI 3.0.0 spec at `/api/v1/openapi.json`.
 
@@ -7262,7 +7262,7 @@ println!("{}", serde_json::to_string_pretty(&spec).unwrap());
 
 ---
 
-## 59. Server Plugin System
+## 64. Server Plugin System
 
 Extend the HTTP server with plugins for logging, access control, and metrics.
 
@@ -7281,7 +7281,7 @@ pm.register(Box::new(MetricsCollectorPlugin::new()));
 
 ---
 
-## 60. Server CLI Binary
+## 65. Server CLI Binary
 
 Run the server from the command line with full configuration support.
 

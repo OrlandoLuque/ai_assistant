@@ -143,9 +143,6 @@ aws-bedrock = ["dep:hmac"]
 # The postgres crate is heavy; this feature enables the pgvector SQL generation and types.
 vector-pgvector = []
 
-# OpenTelemetry integration: OTel-compatible tracing for AI operations
-otel = []
-
 # Code sandbox: isolated code execution for AI agents
 code-sandbox = ["autonomous"]
 
