@@ -24,8 +24,9 @@
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use crate::assistant::AiAssistant;
 
@@ -141,6 +142,9 @@ pub struct ServerConfig {
     /// TLS configuration (optional). When set, the server should use HTTPS.
     #[serde(skip)]
     pub tls: Option<TlsConfig>,
+    /// Rate limiter (optional). When set, requests exceeding the limit get 429.
+    #[serde(skip)]
+    pub rate_limiter: Option<Arc<ServerRateLimiter>>,
 }
 
 impl Default for ServerConfig {
@@ -157,6 +161,7 @@ impl Default for ServerConfig {
             body_read_timeout_ms: 30_000,
             max_message_length: 100_000,
             tls: None,
+            rate_limiter: None,
         }
     }
 }
@@ -407,6 +412,190 @@ impl StructuredError {
         self.retry_after_secs = Some(secs);
         self
     }
+}
+
+// ============================================================================
+// Rate Limiting (item 1.6)
+// ============================================================================
+
+/// Thread-safe per-server rate limiter based on a sliding window of one minute.
+///
+/// When the request count exceeds `requests_per_minute` within the current
+/// window, `check_rate_limit()` returns `false` and the server should
+/// respond with 429 Too Many Requests.
+#[allow(dead_code)]
+pub struct ServerRateLimiter {
+    /// Maximum number of requests allowed per 60-second window.
+    pub requests_per_minute: u32,
+    /// Start of the current window.
+    window_start: Mutex<Instant>,
+    /// Number of requests observed in the current window.
+    request_count: AtomicU32,
+}
+
+impl std::fmt::Debug for ServerRateLimiter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ServerRateLimiter")
+            .field("requests_per_minute", &self.requests_per_minute)
+            .field("request_count", &self.request_count.load(Ordering::Relaxed))
+            .finish()
+    }
+}
+
+#[allow(dead_code)]
+impl ServerRateLimiter {
+    /// Create a new rate limiter with the given requests-per-minute cap.
+    pub fn new(requests_per_minute: u32) -> Self {
+        Self {
+            requests_per_minute,
+            window_start: Mutex::new(Instant::now()),
+            request_count: AtomicU32::new(0),
+        }
+    }
+
+    /// Reset the window if 60 seconds have elapsed since `window_start`.
+    pub fn reset_if_window_expired(&self) {
+        let mut start = self.window_start.lock().unwrap_or_else(|e| e.into_inner());
+        if start.elapsed().as_secs() >= 60 {
+            *start = Instant::now();
+            self.request_count.store(0, Ordering::Relaxed);
+        }
+    }
+
+    /// Check whether the current request is allowed.
+    ///
+    /// Returns `true` if the request should be processed, `false` if the
+    /// rate limit has been exceeded.
+    pub fn check_rate_limit(&self) -> bool {
+        self.reset_if_window_expired();
+        let count = self.request_count.fetch_add(1, Ordering::Relaxed);
+        count < self.requests_per_minute
+    }
+
+    /// Return the number of seconds remaining in the current window.
+    pub fn retry_after_secs(&self) -> u64 {
+        let start = self.window_start.lock().unwrap_or_else(|e| e.into_inner());
+        let elapsed = start.elapsed().as_secs();
+        if elapsed >= 60 { 0 } else { 60 - elapsed }
+    }
+}
+
+// ============================================================================
+// Response Compression (item 1.5)
+// ============================================================================
+
+/// Compress `data` with gzip using `flate2`.
+#[allow(dead_code)]
+fn compress_gzip(data: &[u8]) -> Vec<u8> {
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
+    let _ = encoder.write_all(data);
+    encoder.finish().unwrap_or_else(|_| data.to_vec())
+}
+
+/// Conditionally compress `body` if the client sent `Accept-Encoding: gzip`.
+///
+/// Returns `(body_bytes, was_compressed)`.
+#[allow(dead_code)]
+fn maybe_compress_response(body: &str, accept_encoding: Option<&str>) -> (Vec<u8>, bool) {
+    if let Some(enc) = accept_encoding {
+        if enc.contains("gzip") {
+            let compressed = compress_gzip(body.as_bytes());
+            return (compressed, true);
+        }
+    }
+    (body.as_bytes().to_vec(), false)
+}
+
+// ============================================================================
+// SSE Streaming (item 1.1)
+// ============================================================================
+
+/// Handle a POST /chat/stream request by returning Server-Sent Events.
+///
+/// The response simulates streaming by splitting the LLM response into
+/// individual word tokens and sending each as an SSE `data:` event.
+#[allow(dead_code)]
+fn handle_chat_stream(
+    request: &HttpRequest,
+    assistant: &Arc<Mutex<AiAssistant>>,
+    config: &ServerConfig,
+) -> Result<String, (String, String)> {
+    let chat_req: ChatRequest = serde_json::from_str(&request.body).map_err(|e| {
+        (
+            "400 Bad Request".to_string(),
+            serde_json::to_string(&ErrorResponse {
+                error: format!("Invalid JSON: {}", e),
+            })
+            .unwrap_or_default(),
+        )
+    })?;
+
+    // Validate message length
+    if chat_req.message.len() > config.max_message_length {
+        return Err((
+            "422 Unprocessable Entity".to_string(),
+            serde_json::to_string(&ErrorResponse {
+                error: format!(
+                    "Message too long: {} characters (max {})",
+                    chat_req.message.len(),
+                    config.max_message_length
+                ),
+            })
+            .unwrap_or_default(),
+        ));
+    }
+
+    let mut ass = assistant.lock().unwrap_or_else(|e| e.into_inner());
+
+    ass.send_message_with_notes(
+        chat_req.message.clone(),
+        &chat_req.knowledge_context,
+        &chat_req.system_prompt,
+        "",
+    );
+
+    // Collect the full response first, then we split into tokens for SSE
+    let full_text = loop {
+        match ass.poll_response() {
+            Some(crate::messages::AiResponse::Complete(text)) => break text,
+            Some(crate::messages::AiResponse::Error(e)) => {
+                return Err((
+                    "500 Internal Server Error".to_string(),
+                    serde_json::to_string(&ErrorResponse { error: e }).unwrap_or_default(),
+                ));
+            }
+            Some(crate::messages::AiResponse::Cancelled(partial)) => break partial,
+            Some(_) => continue,
+            None => {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
+    };
+
+    // Build SSE event stream
+    let mut sse_body = String::new();
+    for word in full_text.split_whitespace() {
+        let token_json = serde_json::json!({"token": word});
+        sse_body.push_str(&format!("data: {}\n\n", token_json));
+    }
+    sse_body.push_str("data: [DONE]\n\n");
+
+    Ok(sse_body)
+}
+
+/// Format SSE data into a full SSE HTTP response (used by `handle_chat_stream`
+/// when the stream is produced successfully).
+#[allow(dead_code)]
+fn build_sse_response(sse_body: &str, extra_headers: &str) -> String {
+    format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\n{}Content-Length: {}\r\n\r\n{}",
+        extra_headers,
+        sse_body.len(),
+        sse_body,
+    )
 }
 
 // ============================================================================
@@ -699,7 +888,7 @@ fn handle_connection(
     config: &ServerConfig,
     metrics: &Arc<ServerMetrics>,
 ) -> std::io::Result<()> {
-    let start = std::time::Instant::now();
+    let start = Instant::now();
 
     stream.set_read_timeout(Some(std::time::Duration::from_secs(config.read_timeout_secs)))?;
     stream.set_write_timeout(Some(std::time::Duration::from_secs(config.read_timeout_secs)))?;
@@ -729,6 +918,29 @@ fn handle_connection(
         .map(|(k, v)| format!("{}: {}\r\n", k, v))
         .collect();
     extra_headers.push_str(&format!("X-Request-Id: {}\r\n", request_id));
+
+    // Rate limiting check — before auth so we don't waste cycles
+    if let Some(ref rl) = config.rate_limiter {
+        if !rl.check_rate_limit() {
+            let retry_after = rl.retry_after_secs();
+            let body = serde_json::to_string(&ErrorResponse {
+                error: "Too Many Requests".to_string(),
+            })
+            .unwrap_or_else(|_| r#"{"error":"Too Many Requests"}"#.to_string());
+            let response = format!(
+                "HTTP/1.1 429 Too Many Requests\r\nContent-Type: application/json\r\nContent-Length: {}\r\nRetry-After: {}\r\n{}Connection: close\r\n\r\n{}",
+                body.len(),
+                retry_after,
+                extra_headers,
+                body
+            );
+            log::info!("[{}] {} {} → 429 ({:.1}ms)", request_id, request.method, request.path, start.elapsed().as_secs_f64() * 1000.0);
+            metrics.record_request("429", start.elapsed());
+            stream.write_all(response.as_bytes())?;
+            stream.flush()?;
+            return Ok(());
+        }
+    }
 
     // Authenticate the request
     let auth_result = authenticate_request(&request.headers, &request.path, &config.auth);
@@ -764,21 +976,65 @@ fn handle_connection(
         return Ok(());
     }
 
+    // Check if this is an SSE streaming request
+    let is_sse = request.path == "/chat/stream" || request.path == "/api/v1/chat/stream";
+
+    if is_sse && request.method == "POST" {
+        // Handle SSE streaming with its own Content-Type
+        match handle_chat_stream(&request, assistant, config) {
+            Ok(sse_body) => {
+                let response = build_sse_response(&sse_body, &extra_headers);
+                log::info!("[{}] {} {} → 200 SSE ({:.1}ms)", request_id, request.method, request.path, start.elapsed().as_secs_f64() * 1000.0);
+                metrics.record_request("200", start.elapsed());
+                stream.write_all(response.as_bytes())?;
+                stream.flush()?;
+            }
+            Err((status, body)) => {
+                let status_code = status.split_whitespace().next().unwrap_or("500");
+                let response = format!(
+                    "HTTP/1.1 {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{}Connection: close\r\n\r\n{}",
+                    status, body.len(), extra_headers, body
+                );
+                log::info!("[{}] {} {} → {} ({:.1}ms)", request_id, request.method, request.path, status_code, start.elapsed().as_secs_f64() * 1000.0);
+                metrics.record_request(status_code, start.elapsed());
+                stream.write_all(response.as_bytes())?;
+                stream.flush()?;
+            }
+        }
+        return Ok(());
+    }
+
     let (status, body) = route_request_with_config(&request, assistant, metrics, config);
     let status_code = status.split_whitespace().next().unwrap_or("500");
-    let response = format!(
-        "HTTP/1.1 {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{}Connection: close\r\n\r\n{}",
+
+    // Check Accept-Encoding for gzip support
+    let accept_encoding = request
+        .headers
+        .iter()
+        .find(|(k, _)| k == "accept-encoding")
+        .map(|(_, v)| v.as_str());
+    let (body_bytes, compressed) = maybe_compress_response(&body, accept_encoding);
+
+    let encoding_header = if compressed {
+        "Content-Encoding: gzip\r\n"
+    } else {
+        ""
+    };
+
+    let response_header = format!(
+        "HTTP/1.1 {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{}{}Connection: close\r\n\r\n",
         status,
-        body.len(),
+        body_bytes.len(),
+        encoding_header,
         extra_headers,
-        body
     );
 
     let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
     log::info!("[{}] {} {} → {} ({:.1}ms)", request_id, request.method, request.path, status_code, elapsed_ms);
     metrics.record_request(status_code, start.elapsed());
 
-    stream.write_all(response.as_bytes())?;
+    stream.write_all(response_header.as_bytes())?;
+    stream.write_all(&body_bytes)?;
     stream.flush()?;
     Ok(())
 }
@@ -896,6 +1152,16 @@ fn route_request_with_config(
         ("POST", "/api/v1/chat") => handle_chat(request, assistant, config),
         ("GET", "/api/v1/config") => handle_get_config(assistant),
         ("POST", "/api/v1/config") => handle_set_config(request, assistant),
+        ("POST", "/chat/stream") | ("POST", "/api/v1/chat/stream") => {
+            // SSE streaming is handled separately in handle_connection to use
+            // the correct Content-Type.  When called through route_request
+            // (unit tests) we fall through to the same handler but return JSON-
+            // wrapped output so tests can validate correctness.
+            match handle_chat_stream(request, assistant, config) {
+                Ok(sse_body) => ("200 OK".to_string(), sse_body),
+                Err((status, body)) => (status, body),
+            }
+        }
         ("GET", "/api/v1/metrics") => ("200 OK".to_string(), metrics.render_prometheus()),
         ("GET", "/api/v1/sessions") => handle_list_sessions(assistant),
         ("DELETE", path) if path.starts_with("/api/v1/sessions/") => {
@@ -2365,5 +2631,325 @@ mod tests {
         assert_eq!(parsed["message"], "Provider unavailable");
         assert_eq!(parsed["details"], "OpenAI API returned 503");
         assert_eq!(parsed["retry_after_secs"], 30);
+    }
+
+    // ========================================================================
+    // SSE Streaming Endpoint tests (item 1.1)
+    // ========================================================================
+
+    #[test]
+    fn test_chat_stream_invalid_json() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let config = ServerConfig::default();
+        let request = HttpRequest {
+            method: "POST".to_string(),
+            path: "/chat/stream".to_string(),
+            headers: vec![],
+            body: "not json".to_string(),
+        };
+        let result = handle_chat_stream(&request, &assistant, &config);
+        assert!(result.is_err());
+        let (status, body) = result.unwrap_err();
+        assert_eq!(status, "400 Bad Request");
+        assert!(body.contains("Invalid JSON"));
+    }
+
+    #[test]
+    fn test_chat_stream_message_too_long() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let config = ServerConfig {
+            max_message_length: 5,
+            ..Default::default()
+        };
+        let request = HttpRequest {
+            method: "POST".to_string(),
+            path: "/chat/stream".to_string(),
+            headers: vec![],
+            body: serde_json::to_string(&serde_json::json!({"message": "This is too long"})).unwrap(),
+        };
+        let result = handle_chat_stream(&request, &assistant, &config);
+        assert!(result.is_err());
+        let (status, body) = result.unwrap_err();
+        assert_eq!(status, "422 Unprocessable Entity");
+        assert!(body.contains("Message too long"));
+    }
+
+    #[test]
+    fn test_chat_stream_route_invalid_json() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let metrics = Arc::new(ServerMetrics::new());
+        let config = ServerConfig::default();
+        let request = HttpRequest {
+            method: "POST".to_string(),
+            path: "/chat/stream".to_string(),
+            headers: vec![],
+            body: "bad body".to_string(),
+        };
+        let (status, body) = route_request_with_config(&request, &assistant, &metrics, &config);
+        assert_eq!(status, "400 Bad Request");
+        assert!(body.contains("Invalid JSON"));
+    }
+
+    #[test]
+    fn test_chat_stream_versioned_route_invalid_json() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let metrics = Arc::new(ServerMetrics::new());
+        let config = ServerConfig::default();
+        let request = HttpRequest {
+            method: "POST".to_string(),
+            path: "/api/v1/chat/stream".to_string(),
+            headers: vec![],
+            body: "not valid".to_string(),
+        };
+        let (status, body) = route_request_with_config(&request, &assistant, &metrics, &config);
+        assert_eq!(status, "400 Bad Request");
+        assert!(body.contains("Invalid JSON"));
+    }
+
+    #[test]
+    fn test_build_sse_response_headers() {
+        let sse_body = "data: {\"token\": \"hello\"}\n\ndata: [DONE]\n\n";
+        let response = build_sse_response(sse_body, "");
+        assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
+        assert!(response.contains("Content-Type: text/event-stream\r\n"));
+        assert!(response.contains("Cache-Control: no-cache\r\n"));
+        assert!(response.contains("Connection: keep-alive\r\n"));
+        assert!(response.contains(&format!("Content-Length: {}\r\n", sse_body.len())));
+        assert!(response.ends_with(sse_body));
+    }
+
+    #[test]
+    fn test_build_sse_response_with_extra_headers() {
+        let sse_body = "data: [DONE]\n\n";
+        let extra = "X-Request-Id: abc123\r\n";
+        let response = build_sse_response(sse_body, extra);
+        assert!(response.contains("X-Request-Id: abc123\r\n"));
+        assert!(response.contains("text/event-stream"));
+    }
+
+    #[test]
+    fn test_chat_stream_route_message_too_long() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let metrics = Arc::new(ServerMetrics::new());
+        let config = ServerConfig {
+            max_message_length: 3,
+            ..Default::default()
+        };
+        let request = HttpRequest {
+            method: "POST".to_string(),
+            path: "/chat/stream".to_string(),
+            headers: vec![],
+            body: serde_json::to_string(&serde_json::json!({"message": "toolong"})).unwrap(),
+        };
+        let (status, body) = route_request_with_config(&request, &assistant, &metrics, &config);
+        assert_eq!(status, "422 Unprocessable Entity");
+        assert!(body.contains("Message too long"));
+    }
+
+    #[test]
+    fn test_chat_stream_get_method_not_found() {
+        // GET to /chat/stream should 404 since only POST is supported
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let metrics = Arc::new(ServerMetrics::new());
+        let config = ServerConfig::default();
+        let request = HttpRequest {
+            method: "GET".to_string(),
+            path: "/chat/stream".to_string(),
+            headers: vec![],
+            body: String::new(),
+        };
+        let (status, _body) = route_request_with_config(&request, &assistant, &metrics, &config);
+        assert_eq!(status, "404 Not Found");
+    }
+
+    #[test]
+    fn test_chat_stream_empty_message() {
+        // Empty message is valid (length 0 <= any max_message_length)
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let config = ServerConfig::default();
+        let request = HttpRequest {
+            method: "POST".to_string(),
+            path: "/chat/stream".to_string(),
+            headers: vec![],
+            body: serde_json::to_string(&serde_json::json!({"message": ""})).unwrap(),
+        };
+        // The handler will try to call the LLM, which will block/error — we just
+        // verify it doesn't reject the request with 400 or 422
+        let result = handle_chat_stream(&request, &assistant, &config);
+        // If it returns Err, it should be a 500 from the provider, not 400/422
+        if let Err((status, _)) = &result {
+            assert!(
+                status.starts_with("500"),
+                "Empty message should not be rejected as invalid"
+            );
+        }
+    }
+
+    #[test]
+    fn test_chat_stream_missing_message_field() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let config = ServerConfig::default();
+        let request = HttpRequest {
+            method: "POST".to_string(),
+            path: "/chat/stream".to_string(),
+            headers: vec![],
+            body: r#"{"prompt": "hello"}"#.to_string(), // wrong field name
+        };
+        let result = handle_chat_stream(&request, &assistant, &config);
+        assert!(result.is_err());
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, "400 Bad Request");
+    }
+
+    // ========================================================================
+    // Response Compression tests (item 1.5)
+    // ========================================================================
+
+    #[test]
+    fn test_compress_gzip_produces_valid_output() {
+        let data = b"Hello, world! This is some test data for compression.";
+        let compressed = compress_gzip(data);
+        // Compressed output should be non-empty
+        assert!(!compressed.is_empty());
+        // gzip magic bytes: 0x1f, 0x8b
+        assert_eq!(compressed[0], 0x1f);
+        assert_eq!(compressed[1], 0x8b);
+    }
+
+    #[test]
+    fn test_compress_gzip_decompresses_correctly() {
+        use flate2::read::GzDecoder;
+
+        let original = b"The quick brown fox jumps over the lazy dog.";
+        let compressed = compress_gzip(original);
+
+        let mut decoder = GzDecoder::new(&compressed[..]);
+        let mut decompressed = String::new();
+        decoder.read_to_string(&mut decompressed).unwrap();
+        assert_eq!(decompressed.as_bytes(), original);
+    }
+
+    #[test]
+    fn test_maybe_compress_no_accept_encoding() {
+        let body = "Some response body";
+        let (bytes, compressed) = maybe_compress_response(body, None);
+        assert!(!compressed);
+        assert_eq!(bytes, body.as_bytes());
+    }
+
+    #[test]
+    fn test_maybe_compress_with_gzip_accept() {
+        let body = "Some response body that should be compressed";
+        let (bytes, compressed) = maybe_compress_response(body, Some("gzip, deflate, br"));
+        assert!(compressed);
+        // Should be valid gzip
+        assert_eq!(bytes[0], 0x1f);
+        assert_eq!(bytes[1], 0x8b);
+    }
+
+    #[test]
+    fn test_maybe_compress_without_gzip_accept() {
+        let body = "Some response body";
+        let (bytes, compressed) = maybe_compress_response(body, Some("deflate, br"));
+        assert!(!compressed);
+        assert_eq!(bytes, body.as_bytes());
+    }
+
+    #[test]
+    fn test_compress_gzip_empty_input() {
+        let data = b"";
+        let compressed = compress_gzip(data);
+        // Even empty data produces a valid gzip stream
+        assert!(!compressed.is_empty());
+        assert_eq!(compressed[0], 0x1f);
+        assert_eq!(compressed[1], 0x8b);
+
+        // Decompresses to empty
+        use flate2::read::GzDecoder;
+        let mut decoder = GzDecoder::new(&compressed[..]);
+        let mut result = Vec::new();
+        decoder.read_to_end(&mut result).unwrap();
+        assert!(result.is_empty());
+    }
+
+    // ========================================================================
+    // Rate Limiting tests (item 1.6)
+    // ========================================================================
+
+    #[test]
+    fn test_rate_limiter_new() {
+        let rl = ServerRateLimiter::new(100);
+        assert_eq!(rl.requests_per_minute, 100);
+    }
+
+    #[test]
+    fn test_rate_limiter_allows_within_limit() {
+        let rl = ServerRateLimiter::new(5);
+        for _ in 0..5 {
+            assert!(rl.check_rate_limit());
+        }
+    }
+
+    #[test]
+    fn test_rate_limiter_blocks_over_limit() {
+        let rl = ServerRateLimiter::new(3);
+        assert!(rl.check_rate_limit()); // 1
+        assert!(rl.check_rate_limit()); // 2
+        assert!(rl.check_rate_limit()); // 3
+        assert!(!rl.check_rate_limit()); // 4 — blocked
+        assert!(!rl.check_rate_limit()); // 5 — still blocked
+    }
+
+    #[test]
+    fn test_rate_limiter_retry_after() {
+        let rl = ServerRateLimiter::new(10);
+        let retry = rl.retry_after_secs();
+        // Should be between 0 and 60 (we just created it, so close to 60)
+        assert!(retry <= 60);
+    }
+
+    #[test]
+    fn test_rate_limiter_zero_limit() {
+        // Zero means no requests are allowed
+        let rl = ServerRateLimiter::new(0);
+        assert!(!rl.check_rate_limit());
+    }
+
+    #[test]
+    fn test_rate_limiter_thread_safe() {
+        let rl = Arc::new(ServerRateLimiter::new(100));
+        let mut handles = Vec::new();
+        for _ in 0..4 {
+            let rl_clone = rl.clone();
+            handles.push(std::thread::spawn(move || {
+                let mut allowed = 0u32;
+                for _ in 0..30 {
+                    if rl_clone.check_rate_limit() {
+                        allowed += 1;
+                    }
+                }
+                allowed
+            }));
+        }
+        let total_allowed: u32 = handles.into_iter().map(|h| h.join().unwrap()).sum();
+        // 4 threads * 30 requests = 120 total attempts, limit is 100
+        assert_eq!(total_allowed, 100);
+    }
+
+    #[test]
+    fn test_rate_limiter_in_server_config() {
+        let rl = Arc::new(ServerRateLimiter::new(60));
+        let config = ServerConfig {
+            rate_limiter: Some(rl.clone()),
+            ..Default::default()
+        };
+        assert!(config.rate_limiter.is_some());
+        assert_eq!(config.rate_limiter.as_ref().unwrap().requests_per_minute, 60);
+    }
+
+    #[test]
+    fn test_rate_limiter_default_none() {
+        let config = ServerConfig::default();
+        assert!(config.rate_limiter.is_none());
     }
 }
