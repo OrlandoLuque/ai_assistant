@@ -324,8 +324,8 @@ pub use request_queue::{
 };
 
 pub use plugins::{
-    LoggingPlugin, MessageProcessorPlugin, Plugin, PluginCapability, PluginContext, PluginInfo,
-    PluginManager,
+    IpAllowlistPlugin, LoggingPlugin, MessageProcessorPlugin, MetricsCollectorPlugin, Plugin,
+    PluginCapability, PluginContext, PluginInfo, PluginManager, RequestLoggingPlugin,
 };
 
 pub use batch::{
