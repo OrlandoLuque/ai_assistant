@@ -141,6 +141,14 @@ Read this for understanding, inspiration, and to demystify the magic.
 131. [Error Context Enrichment](#131-error-context-enrichment)
 132. [Configuration Hot-Reload](#132-configuration-hot-reload)
 133. [Prelude Module](#133-prelude-module)
+134. [SSE Streaming](#134-sse-streaming)
+135. [Response Compression](#135-response-compression)
+136. [Server Rate Limiting](#136-server-rate-limiting)
+137. [AiAssistant Feature Integration](#137-aiassistant-feature-integration)
+138. [Audit Logging](#138-audit-logging)
+139. [Compressed Memory Snapshots](#139-compressed-memory-snapshots)
+140. [API Versioning](#140-api-versioning)
+141. [Structured Error Responses](#141-structured-error-responses)
 
 ---
 
@@ -3136,5 +3144,53 @@ The same zoom-in/zoom-out principle applies to knowledge graph entities. A clust
 ## 133. Prelude Module
 
 **The fundamental idea**: The prelude re-exports the ~15 most commonly used types so `use ai_assistant::prelude::*` gives you everything for basic usage. Follows the Rust ecosystem convention (std::prelude, tokio::prelude).
+
+**Feature flag**: core (always available)
+
+## 134. SSE Streaming
+
+**The fundamental idea**: POST /chat/stream returns Server-Sent Events format — each token arrives as `data: {"token":"word"}\n\n`, ending with `data: [DONE]\n\n`. Enables real-time UX where users see tokens as they arrive, matching the industry standard for LLM chat interfaces.
+
+**Feature flag**: core (always available)
+
+## 135. Response Compression
+
+**The fundamental idea**: When the client sends `Accept-Encoding: gzip`, the server compresses response bodies using flate2 and sets `Content-Encoding: gzip`. Reduces bandwidth usage for large JSON responses without requiring external proxies.
+
+**Feature flag**: core (always available)
+
+## 136. Server Rate Limiting
+
+**The fundamental idea**: ServerRateLimiter tracks requests per minute using an atomic counter with a sliding time window. When the limit is exceeded, returns 429 Too Many Requests with a Retry-After header. Thread-safe for concurrent connections.
+
+**Feature flag**: core (always available)
+
+## 137. AiAssistant Feature Integration
+
+**The fundamental idea**: Standalone modules (constrained_decoding, hitl, mcp_client, distillation) get convenience methods on AiAssistant: `generate_with_grammar()`, `send_message_with_approval()`, `connect_mcp_server()`, `collect_trajectory()`, `export_training_data()`. Users don't need to manage module internals directly.
+
+**Feature flag**: varies per integration (constrained-decoding, hitl, distillation)
+
+## 138. Audit Logging
+
+**The fundamental idea**: AuditLog captures security-relevant server events (auth success/failure, config changes, session deletions) in a thread-safe append-only log with timestamps. Essential for compliance and incident response.
+
+**Feature flag**: core (always available)
+
+## 139. Compressed Memory Snapshots
+
+**The fundamental idea**: Memory stores (episodic, procedural, entity) can be saved as gzip-compressed JSON snapshots (`.json.gz`) and loaded back with checksum verification. Reduces storage footprint and ensures data integrity.
+
+**Feature flag**: core (always available)
+
+## 140. API Versioning
+
+**The fundamental idea**: All server endpoints are available under both root (`/chat`) and versioned (`/api/v1/chat`) paths. Backward compatibility is preserved while allowing future `/api/v2/` without breaking existing clients.
+
+**Feature flag**: core (always available)
+
+## 141. Structured Error Responses
+
+**The fundamental idea**: All server errors return a consistent JSON format: `{error_code, message, details, retry_after_secs}`. Error codes (INVALID_JSON, AUTH_FAILED, RATE_LIMITED, etc.) allow programmatic error handling by API consumers.
 
 **Feature flag**: core (always available)
