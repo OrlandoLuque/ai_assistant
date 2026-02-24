@@ -2298,4 +2298,871 @@ mod tests {
         let result = retriever.rerank("query", &[]);
         assert!(result.is_empty(), "Empty candidates should return empty results");
     }
+
+    // ========================================================================
+    // v8 Phase 4.2 — Extended rag_methods test coverage
+    // ========================================================================
+
+    // --- Configurable Mock LLM for controlling responses ---
+
+    struct ConfigurableMockLlm {
+        response: String,
+    }
+
+    impl ConfigurableMockLlm {
+        fn new(response: &str) -> Self {
+            Self {
+                response: response.to_string(),
+            }
+        }
+    }
+
+    impl LlmGenerate for ConfigurableMockLlm {
+        fn generate(&self, _prompt: &str, _max_tokens: usize) -> Result<String, String> {
+            Ok(self.response.clone())
+        }
+        fn model_name(&self) -> &str {
+            "configurable-mock"
+        }
+    }
+
+    // --- Mock LLM that returns an error ---
+
+    struct ErrorMockLlm;
+
+    impl LlmGenerate for ErrorMockLlm {
+        fn generate(&self, _prompt: &str, _max_tokens: usize) -> Result<String, String> {
+            Err("LLM unavailable".to_string())
+        }
+        fn model_name(&self) -> &str {
+            "error-mock"
+        }
+    }
+
+    // --- Mock embedding generator ---
+
+    struct MockEmbedder {
+        dim: usize,
+    }
+
+    impl MockEmbedder {
+        fn new(dim: usize) -> Self {
+            Self { dim }
+        }
+    }
+
+    impl EmbeddingGenerate for MockEmbedder {
+        fn embed(&self, text: &str) -> Result<Vec<f32>, String> {
+            // Deterministic embedding based on text length
+            let base = text.len() as f32 / 100.0;
+            Ok((0..self.dim).map(|i| base + i as f32 * 0.01).collect())
+        }
+        fn dimension(&self) -> usize {
+            self.dim
+        }
+    }
+
+    // --- Mock cross-encoder ---
+
+    struct MockCrossEncoder;
+
+    impl CrossEncoderScore for MockCrossEncoder {
+        fn score_pair(&self, _query: &str, document: &str) -> Result<f32, String> {
+            // Score based on document length (longer = higher for test determinism)
+            Ok((document.len() as f32 / 100.0).min(1.0))
+        }
+    }
+
+    // --- HydeGenerator tests ---
+
+    #[test]
+    fn test_hyde_generator_default_config() {
+        let hyde = HydeGenerator::new();
+        assert_eq!(hyde.config.target_length, 200);
+        assert_eq!(hyde.config.num_hypotheticals, 1);
+        assert!(hyde.config.prompt_template.is_none());
+    }
+
+    #[test]
+    fn test_hyde_generator_custom_config() {
+        let config = HydeConfig {
+            target_length: 500,
+            num_hypotheticals: 3,
+            prompt_template: Some("Custom: {query}".to_string()),
+        };
+        let hyde = HydeGenerator::with_config(config);
+        assert_eq!(hyde.config.target_length, 500);
+        assert_eq!(hyde.config.num_hypotheticals, 3);
+        assert!(hyde.config.prompt_template.is_some());
+    }
+
+    #[test]
+    fn test_hyde_generate_single_hypothetical() {
+        let hyde = HydeGenerator::new();
+        let llm = ConfigurableMockLlm::new(
+            "The Aurora MR is a single-seat starter ship manufactured by RSI.",
+        );
+        let result = hyde.generate("What is the Aurora MR?", &llm);
+        assert!(result.is_ok());
+        let method_result = result.expect("generate should succeed");
+        assert_eq!(method_result.result.len(), 1);
+        assert!(method_result.result[0].contains("Aurora MR"));
+        assert_eq!(
+            method_result.details.get("num_generated"),
+            Some(&"1".to_string())
+        );
+    }
+
+    #[test]
+    fn test_hyde_generate_multiple_hypotheticals() {
+        let config = HydeConfig {
+            target_length: 100,
+            num_hypotheticals: 3,
+            prompt_template: None,
+        };
+        let hyde = HydeGenerator::with_config(config);
+        let llm = ConfigurableMockLlm::new("A hypothetical answer document.");
+        let result = hyde.generate("test query", &llm);
+        assert!(result.is_ok());
+        let method_result = result.expect("generate should succeed");
+        assert_eq!(method_result.result.len(), 3);
+    }
+
+    #[test]
+    fn test_hyde_generate_with_embedding() {
+        let hyde = HydeGenerator::new();
+        let llm = ConfigurableMockLlm::new("The Aurora MR has a top speed of 210 m/s.");
+        let embedder = MockEmbedder::new(128);
+        let result = hyde.generate_with_embedding("Aurora MR speed", &llm, &embedder);
+        assert!(result.is_ok());
+        let method_result = result.expect("generate_with_embedding should succeed");
+        let (doc, embedding) = &method_result.result;
+        assert!(doc.contains("Aurora MR"));
+        assert_eq!(embedding.len(), 128);
+        assert!(method_result.details.contains_key("doc_length"));
+    }
+
+    #[test]
+    fn test_hyde_generate_error_propagation() {
+        let hyde = HydeGenerator::new();
+        let llm = ErrorMockLlm;
+        let result = hyde.generate("test query", &llm);
+        assert!(result.is_err());
+        assert_eq!(result.err(), Some("LLM unavailable".to_string()));
+    }
+
+    // --- LlmReranker tests ---
+
+    #[test]
+    fn test_llm_reranker_default_config() {
+        let reranker = LlmReranker::new();
+        assert_eq!(reranker.config.max_chunks, 10);
+        assert_eq!(reranker.config.chunk_preview_length, 300);
+        assert!(reranker.config.prompt_template.is_none());
+    }
+
+    #[test]
+    fn test_llm_reranker_empty_items() {
+        let reranker = LlmReranker::new();
+        let llm = MockLlm;
+        let result = reranker.rerank("query", Vec::<ScoredItem<String>>::new(), &llm);
+        assert!(result.is_ok());
+        let method_result = result.expect("rerank should succeed");
+        assert!(method_result.result.is_empty());
+    }
+
+    #[test]
+    fn test_llm_reranker_reorders_by_llm_ranking() {
+        let reranker = LlmReranker::new();
+        // LLM returns "3,1,2" — item 3 is most relevant, then 1, then 2
+        let llm = ConfigurableMockLlm::new("3, 1, 2");
+        let items = vec![
+            ScoredItem::new("First document about Rust".to_string(), 0.9),
+            ScoredItem::new("Second document about Python".to_string(), 0.8),
+            ScoredItem::new("Third document about Aurora MR".to_string(), 0.7),
+        ];
+        let result = reranker.rerank("Aurora MR", items, &llm);
+        assert!(result.is_ok());
+        let method_result = result.expect("rerank should succeed");
+        assert_eq!(method_result.result.len(), 3);
+        // First item should be the one ranked #3 originally (Aurora MR)
+        assert!(method_result.result[0].item.contains("Aurora MR"));
+        // Scores should decrease from first to last
+        assert!(method_result.result[0].score > method_result.result[1].score);
+    }
+
+    #[test]
+    fn test_llm_reranker_handles_invalid_ranking() {
+        let reranker = LlmReranker::new();
+        // LLM returns gibberish — no valid rankings
+        let llm = ConfigurableMockLlm::new("I cannot rank these documents");
+        let items = vec![
+            ScoredItem::new("doc A".to_string(), 0.9),
+            ScoredItem::new("doc B".to_string(), 0.8),
+        ];
+        let result = reranker.rerank("query", items, &llm);
+        assert!(result.is_ok());
+        let method_result = result.expect("rerank should succeed even with bad ranking");
+        // All items should still be present (added as unranked with score 0.1)
+        assert_eq!(method_result.result.len(), 2);
+        for item in &method_result.result {
+            assert!((item.score - 0.1).abs() < f32::EPSILON);
+        }
+    }
+
+    #[test]
+    fn test_llm_reranker_error_propagation() {
+        let reranker = LlmReranker::new();
+        let llm = ErrorMockLlm;
+        let items = vec![ScoredItem::new("doc".to_string(), 0.5)];
+        let result = reranker.rerank("query", items, &llm);
+        assert!(result.is_err());
+    }
+
+    // --- ContextualCompressor tests ---
+
+    #[test]
+    fn test_contextual_compressor_default_config() {
+        let compressor = ContextualCompressor::new();
+        assert_eq!(compressor.config.target_tokens, 150);
+        assert_eq!(compressor.config.min_tokens, 30);
+        assert!(compressor.config.prompt_template.is_none());
+    }
+
+    #[test]
+    fn test_contextual_compressor_compress() {
+        let compressor = ContextualCompressor::new();
+        // Return a compressed version that's still long enough (> min_tokens * 4 chars)
+        let compressed_text = "The Aurora MR is manufactured by RSI and has a top speed of 210 m/s with a cargo capacity of 3 SCU. It features twin laser cannons for defense.";
+        let llm = ConfigurableMockLlm::new(compressed_text);
+        let original = "The Aurora MR is a versatile single-seat spacecraft manufactured by Roberts Space Industries. It was designed as an introductory ship. The Aurora MR has a top speed of 210 m/s and a cargo capacity of 3 SCU. It features twin laser cannons. Additional irrelevant text about unrelated topics goes here to pad the original.";
+        let result = compressor.compress("Aurora MR specs", original, &llm);
+        assert!(result.is_ok());
+        let method_result = result.expect("compress should succeed");
+        assert!(method_result.result.contains("Aurora MR"));
+        assert!(method_result.details.contains_key("compression_ratio"));
+    }
+
+    #[test]
+    fn test_contextual_compressor_too_short_returns_original() {
+        let compressor = ContextualCompressor::new();
+        // Return a very short response (< min_tokens * 4 chars = 30 * 4 = 120 chars)
+        let llm = ConfigurableMockLlm::new("Short");
+        let original = "This is the original long document content that should be returned when compression is too aggressive.";
+        let result = compressor.compress("query", original, &llm);
+        assert!(result.is_ok());
+        let method_result = result.expect("compress should succeed");
+        // Should return original because compressed output is too short
+        assert_eq!(method_result.result, original);
+        assert_eq!(
+            method_result.details.get("compression_skipped"),
+            Some(&"output_too_short".to_string())
+        );
+    }
+
+    #[test]
+    fn test_contextual_compressor_batch() {
+        let compressor = ContextualCompressor::new();
+        let llm = ConfigurableMockLlm::new(
+            "Compressed content that is long enough to pass the minimum token threshold for this test case scenario.",
+        );
+        let contents = vec![
+            "First document about Rust programming language with lots of details.".to_string(),
+            "Second document about Python scripting with extensive information.".to_string(),
+        ];
+        let result = compressor.compress_batch("programming languages", &contents, &llm);
+        assert!(result.is_ok());
+        let batch_results = result.expect("batch compress should succeed");
+        assert_eq!(batch_results.len(), 2);
+    }
+
+    // --- SelfRagEvaluator tests ---
+
+    #[test]
+    fn test_self_rag_evaluator_default_config() {
+        let evaluator = SelfRagEvaluator::new();
+        assert!((evaluator.config.confidence_threshold - 0.6).abs() < f32::EPSILON);
+        assert_eq!(evaluator.config.context_preview_length, 1000);
+    }
+
+    #[test]
+    fn test_self_rag_evaluator_accept_action() {
+        let evaluator = SelfRagEvaluator::new();
+        // YES with high confidence => UseAsIs
+        let llm = ConfigurableMockLlm::new("YES|85|Contains specific ship specifications");
+        let result = evaluator.evaluate("Aurora MR speed?", "The Aurora MR has a top speed of 210 m/s.", &llm);
+        assert!(result.is_ok());
+        let method_result = result.expect("evaluate should succeed");
+        assert!(method_result.result.is_sufficient);
+        assert!((method_result.result.confidence - 0.85).abs() < f32::EPSILON);
+        assert!(matches!(
+            method_result.result.suggested_action,
+            SelfReflectionAction::UseAsIs
+        ));
+        assert!(method_result.result.reason.is_some());
+    }
+
+    #[test]
+    fn test_self_rag_evaluator_expand_search_action() {
+        let evaluator = SelfRagEvaluator::new();
+        // NO with very low confidence => ExpandSearch
+        let llm = ConfigurableMockLlm::new("NO|15|No relevant information found");
+        let result = evaluator.evaluate("quantum drive theory?", "Unrelated text about cooking.", &llm);
+        assert!(result.is_ok());
+        let method_result = result.expect("evaluate should succeed");
+        assert!(!method_result.result.is_sufficient);
+        assert!((method_result.result.confidence - 0.15).abs() < f32::EPSILON);
+        assert!(matches!(
+            method_result.result.suggested_action,
+            SelfReflectionAction::ExpandSearch
+        ));
+    }
+
+    #[test]
+    fn test_self_rag_evaluator_seek_more_context_action() {
+        let evaluator = SelfRagEvaluator::new();
+        // NO with moderate confidence (0.3 <= c < 0.6) => SeekMoreContext
+        let llm = ConfigurableMockLlm::new("NO|45|Partial information available");
+        let result = evaluator.evaluate("Aurora MR cargo?", "The Aurora is a ship by RSI.", &llm);
+        assert!(result.is_ok());
+        let method_result = result.expect("evaluate should succeed");
+        assert!(!method_result.result.is_sufficient);
+        assert!(matches!(
+            method_result.result.suggested_action,
+            SelfReflectionAction::SeekMoreContext
+        ));
+    }
+
+    #[test]
+    fn test_self_rag_evaluator_refine_query_action() {
+        let evaluator = SelfRagEvaluator::new();
+        // NO with high confidence (>= threshold 0.6) => RefineQuery (else branch)
+        let llm = ConfigurableMockLlm::new("NO|65|Context is related but query needs refinement");
+        let result = evaluator.evaluate("query", "some context", &llm);
+        assert!(result.is_ok());
+        let method_result = result.expect("evaluate should succeed");
+        assert!(!method_result.result.is_sufficient);
+        assert!(matches!(
+            method_result.result.suggested_action,
+            SelfReflectionAction::RefineQuery
+        ));
+    }
+
+    // --- CragEvaluator tests ---
+
+    #[test]
+    fn test_crag_evaluator_default_config() {
+        let evaluator = CragEvaluator::new();
+        assert!((evaluator.config.correct_threshold - 0.7).abs() < f32::EPSILON);
+        assert!((evaluator.config.ambiguous_threshold - 0.4).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_crag_evaluator_correct_action() {
+        let evaluator = CragEvaluator::new();
+        // High score => Correct
+        let llm = ConfigurableMockLlm::new("85|Documents contain comprehensive relevant information");
+        let docs = vec!["The Aurora MR has a top speed of 210 m/s."];
+        let result = evaluator.evaluate("Aurora MR speed?", &docs, &llm);
+        assert!(result.is_ok());
+        let method_result = result.expect("evaluate should succeed");
+        assert!(method_result.result.quality_score >= 0.7);
+        assert!(matches!(method_result.result.action, CragAction::Correct));
+        assert!(method_result.result.reason.is_some());
+    }
+
+    #[test]
+    fn test_crag_evaluator_ambiguous_action() {
+        let evaluator = CragEvaluator::new();
+        // Medium score (0.4 <= s < 0.7) => Ambiguous
+        let llm = ConfigurableMockLlm::new("55|Partially relevant but missing key details");
+        let docs = vec!["The Aurora is a ship."];
+        let result = evaluator.evaluate("Aurora MR cargo capacity?", &docs, &llm);
+        assert!(result.is_ok());
+        let method_result = result.expect("evaluate should succeed");
+        assert!(matches!(method_result.result.action, CragAction::Ambiguous));
+    }
+
+    #[test]
+    fn test_crag_evaluator_incorrect_action() {
+        let evaluator = CragEvaluator::new();
+        // Low score (< 0.4) => Incorrect
+        let llm = ConfigurableMockLlm::new("20|Documents are completely unrelated");
+        let docs = vec!["Recipe for chocolate cake."];
+        let result = evaluator.evaluate("Aurora MR weapons?", &docs, &llm);
+        assert!(result.is_ok());
+        let method_result = result.expect("evaluate should succeed");
+        assert!(method_result.result.quality_score < 0.4);
+        assert!(matches!(method_result.result.action, CragAction::Incorrect));
+    }
+
+    #[test]
+    fn test_crag_evaluator_unparseable_response() {
+        let evaluator = CragEvaluator::new();
+        // Response that cannot be parsed as a number => defaults to 0.5
+        let llm = ConfigurableMockLlm::new("I cannot assess this");
+        let docs = vec!["Some document."];
+        let result = evaluator.evaluate("query", &docs, &llm);
+        assert!(result.is_ok());
+        let method_result = result.expect("evaluate should succeed");
+        // Default quality_score is 0.5, which falls in Ambiguous range (0.4..0.7)
+        assert!((method_result.result.quality_score - 0.5).abs() < f32::EPSILON);
+        assert!(matches!(method_result.result.action, CragAction::Ambiguous));
+    }
+
+    // --- GraphRagRetriever tests ---
+
+    #[test]
+    fn test_graph_rag_retriever_extract_entities() {
+        let config = GraphRagConfig {
+            max_depth: 2,
+            max_entities: 10,
+            entity_types: vec!["PRODUCT".to_string(), "ORGANIZATION".to_string()],
+        };
+        let retriever = GraphRagRetriever::new(config);
+        let llm = ConfigurableMockLlm::new(
+            "PRODUCT: Aurora MR\nORGANIZATION: Roberts Space Industries\nPRODUCT: Mustang Alpha",
+        );
+        let result = retriever.extract_entities(
+            "The Aurora MR by RSI competes with the Mustang Alpha.",
+            &llm,
+        );
+        assert!(result.is_ok());
+        let method_result = result.expect("extract_entities should succeed");
+        assert_eq!(method_result.result.len(), 3);
+        assert_eq!(method_result.result[0].name, "Aurora MR");
+        assert_eq!(method_result.result[0].entity_type, "PRODUCT");
+        assert_eq!(method_result.result[1].name, "Roberts Space Industries");
+        assert_eq!(method_result.result[1].entity_type, "ORGANIZATION");
+    }
+
+    #[test]
+    fn test_graph_rag_retriever_empty_entity_types_uses_defaults() {
+        let config = GraphRagConfig {
+            max_depth: 1,
+            max_entities: 5,
+            entity_types: vec![],
+        };
+        let retriever = GraphRagRetriever::new(config);
+        let llm = ConfigurableMockLlm::new("PERSON: John Doe");
+        let result = retriever.extract_entities("John Doe works at Acme Corp.", &llm);
+        assert!(result.is_ok());
+        let method_result = result.expect("extract_entities should succeed");
+        assert_eq!(method_result.result.len(), 1);
+        assert_eq!(method_result.result[0].entity_type, "PERSON");
+    }
+
+    #[test]
+    fn test_graph_rag_retriever_max_entities_limit() {
+        let config = GraphRagConfig {
+            max_depth: 1,
+            max_entities: 2,
+            entity_types: vec![],
+        };
+        let retriever = GraphRagRetriever::new(config);
+        let llm = ConfigurableMockLlm::new(
+            "PERSON: Alice\nPERSON: Bob\nPERSON: Charlie\nPERSON: Dave",
+        );
+        let result = retriever.extract_entities("Alice, Bob, Charlie, Dave met.", &llm);
+        assert!(result.is_ok());
+        let method_result = result.expect("extract_entities should succeed");
+        // Should be limited to max_entities = 2
+        assert_eq!(method_result.result.len(), 2);
+    }
+
+    #[test]
+    fn test_graph_rag_retriever_malformed_response() {
+        let config = GraphRagConfig {
+            max_depth: 1,
+            max_entities: 10,
+            entity_types: vec![],
+        };
+        let retriever = GraphRagRetriever::new(config);
+        // Response without colon separators — should yield no entities
+        let llm = ConfigurableMockLlm::new("No entities found in this text");
+        let result = retriever.extract_entities("some text", &llm);
+        assert!(result.is_ok());
+        let method_result = result.expect("extract_entities should succeed");
+        // "No entities found in this text" has no colon-separated TYPE: name pattern
+        // Actually: "No entities found in this text" -> split on ':' yields ["No entities found in this text"]
+        // which is len 1, so the filter_map returns None. Good.
+        assert!(method_result.result.is_empty());
+    }
+
+    // --- RaptorRetriever tests ---
+
+    #[test]
+    fn test_raptor_retriever_default_config() {
+        let config = RaptorConfig::default();
+        assert_eq!(config.max_levels, 3);
+        assert_eq!(config.chunks_per_summary, 5);
+        assert_eq!(config.summary_length, 200);
+    }
+
+    #[test]
+    fn test_raptor_retriever_summarize_group() {
+        let config = RaptorConfig::default();
+        let retriever = RaptorRetriever::new(config);
+        let llm = ConfigurableMockLlm::new(
+            "The Aurora MR is an entry-level ship by RSI with basic combat and cargo capabilities.",
+        );
+        let chunks = vec![
+            "The Aurora MR is manufactured by RSI.",
+            "It has a top speed of 210 m/s.",
+            "Cargo capacity is 3 SCU.",
+        ];
+        let result = retriever.summarize_group(&chunks, &llm);
+        assert!(result.is_ok());
+        let method_result = result.expect("summarize_group should succeed");
+        assert!(method_result.result.contains("Aurora MR"));
+    }
+
+    #[test]
+    fn test_raptor_retriever_summarize_single_chunk() {
+        let config = RaptorConfig {
+            max_levels: 2,
+            chunks_per_summary: 3,
+            summary_length: 100,
+        };
+        let retriever = RaptorRetriever::new(config);
+        let llm = ConfigurableMockLlm::new("Summary of single chunk.");
+        let chunks = vec!["Only one chunk of text here."];
+        let result = retriever.summarize_group(&chunks, &llm);
+        assert!(result.is_ok());
+    }
+
+    // --- AdaptiveStrategySelector with LLM tests ---
+
+    #[test]
+    fn test_adaptive_strategy_select_with_llm_disabled() {
+        let config = AdaptiveStrategyConfig { use_llm: false };
+        let selector = AdaptiveStrategySelector::with_config(config);
+        let llm = MockLlm;
+        let result = selector.select_with_llm("Aurora MR specifications stats", &llm);
+        assert!(result.is_ok());
+        let method_result = result.expect("select should succeed");
+        // Should use heuristic fallback since use_llm is false
+        assert_eq!(method_result.result, RetrievalStrategy::HybridKeywordHeavy);
+        assert_eq!(
+            method_result.details.get("method"),
+            Some(&"heuristic".to_string())
+        );
+    }
+
+    #[test]
+    fn test_adaptive_strategy_select_with_llm_keyword() {
+        let selector = AdaptiveStrategySelector::new();
+        let llm = ConfigurableMockLlm::new("KEYWORD");
+        let result = selector.select_with_llm("test query", &llm);
+        assert!(result.is_ok());
+        let method_result = result.expect("select should succeed");
+        assert_eq!(method_result.result, RetrievalStrategy::KeywordOnly);
+    }
+
+    #[test]
+    fn test_adaptive_strategy_select_with_llm_semantic() {
+        let selector = AdaptiveStrategySelector::new();
+        let llm = ConfigurableMockLlm::new("SEMANTIC");
+        let result = selector.select_with_llm("test query", &llm);
+        assert!(result.is_ok());
+        assert_eq!(
+            result.expect("select should succeed").result,
+            RetrievalStrategy::SemanticOnly
+        );
+    }
+
+    #[test]
+    fn test_adaptive_strategy_select_with_llm_multiquery() {
+        let selector = AdaptiveStrategySelector::new();
+        let llm = ConfigurableMockLlm::new("MULTIQUERY");
+        let result = selector.select_with_llm("test query", &llm);
+        assert!(result.is_ok());
+        assert_eq!(
+            result.expect("select should succeed").result,
+            RetrievalStrategy::MultiQuery
+        );
+    }
+
+    #[test]
+    fn test_adaptive_strategy_select_with_llm_agentic() {
+        let selector = AdaptiveStrategySelector::new();
+        let llm = ConfigurableMockLlm::new("AGENTIC");
+        let result = selector.select_with_llm("test query", &llm);
+        assert!(result.is_ok());
+        assert_eq!(
+            result.expect("select should succeed").result,
+            RetrievalStrategy::AgenticIterative
+        );
+    }
+
+    #[test]
+    fn test_adaptive_strategy_select_with_llm_default_fallback() {
+        let selector = AdaptiveStrategySelector::new();
+        // Unrecognized response falls back to HybridBalanced
+        let llm = ConfigurableMockLlm::new("something unrecognizable");
+        let result = selector.select_with_llm("test query", &llm);
+        assert!(result.is_ok());
+        assert_eq!(
+            result.expect("select should succeed").result,
+            RetrievalStrategy::HybridBalanced
+        );
+    }
+
+    // --- CrossEncoderReranker tests ---
+
+    #[test]
+    fn test_cross_encoder_reranker_empty_items() {
+        let reranker = CrossEncoderReranker::new(5);
+        let encoder = MockCrossEncoder;
+        let result = reranker.rerank("query", Vec::<ScoredItem<String>>::new(), &encoder);
+        assert!(result.is_ok());
+        assert!(result.expect("rerank should succeed").result.is_empty());
+    }
+
+    #[test]
+    fn test_cross_encoder_reranker_sorts_by_score() {
+        let reranker = CrossEncoderReranker::new(3);
+        let encoder = MockCrossEncoder;
+        let items = vec![
+            ScoredItem::new("short".to_string(), 0.9),
+            ScoredItem::new("a much longer document text here for testing purposes".to_string(), 0.5),
+            ScoredItem::new("medium length document".to_string(), 0.7),
+        ];
+        let result = reranker.rerank("query", items, &encoder);
+        assert!(result.is_ok());
+        let method_result = result.expect("rerank should succeed");
+        // MockCrossEncoder scores by length, so longer doc should be first
+        assert!(method_result.result[0].score >= method_result.result[1].score);
+        assert!(method_result.result[1].score >= method_result.result[2].score);
+    }
+
+    #[test]
+    fn test_cross_encoder_reranker_top_k_truncation() {
+        let reranker = CrossEncoderReranker::new(2);
+        let encoder = MockCrossEncoder;
+        let items = vec![
+            ScoredItem::new("doc1".to_string(), 0.9),
+            ScoredItem::new("doc2".to_string(), 0.8),
+            ScoredItem::new("doc3".to_string(), 0.7),
+            ScoredItem::new("doc4".to_string(), 0.6),
+        ];
+        let result = reranker.rerank("query", items, &encoder);
+        assert!(result.is_ok());
+        assert_eq!(
+            result.expect("rerank should succeed").result.len(),
+            2,
+            "Should truncate to top_k=2"
+        );
+    }
+
+    // --- MethodResult tests ---
+
+    #[test]
+    fn test_method_result_construction() {
+        let result = MethodResult::new("hello".to_string(), std::time::Duration::from_millis(42));
+        assert_eq!(result.result, "hello");
+        assert_eq!(result.duration_ms, 42);
+        assert!(result.details.is_empty());
+    }
+
+    #[test]
+    fn test_method_result_with_details_chaining() {
+        let result = MethodResult::new(42, std::time::Duration::from_millis(10))
+            .with_details("key1", "value1")
+            .with_details("key2", "value2");
+        assert_eq!(result.details.get("key1"), Some(&"value1".to_string()));
+        assert_eq!(result.details.get("key2"), Some(&"value2".to_string()));
+        assert_eq!(result.details.len(), 2);
+    }
+
+    // --- QueryExpander with LLM tests ---
+
+    #[test]
+    fn test_query_expander_expand_with_llm() {
+        let config = QueryExpanderConfig {
+            max_expansions: 3,
+            use_synonyms: false,
+            prompt_template: None,
+        };
+        let expander = QueryExpander::with_config(config);
+        let llm = ConfigurableMockLlm::new(
+            "What are the specifications of the Aurora MR?\nTell me about Aurora MR features\nAurora MR ship details",
+        );
+        let result = expander.expand("Aurora MR specs", &llm);
+        assert!(result.is_ok());
+        let method_result = result.expect("expand should succeed");
+        assert!(!method_result.result.is_empty());
+        assert!(method_result.result.len() <= 3);
+    }
+
+    #[test]
+    fn test_query_expander_expand_filters_short_lines() {
+        let config = QueryExpanderConfig {
+            max_expansions: 5,
+            use_synonyms: false,
+            prompt_template: None,
+        };
+        let expander = QueryExpander::with_config(config);
+        // Some lines are too short (<=3 chars) and should be filtered
+        let llm = ConfigurableMockLlm::new("OK\n\nA valid query expansion here\nno\nAnother valid expansion line");
+        let result = expander.expand("test", &llm);
+        assert!(result.is_ok());
+        let method_result = result.expect("expand should succeed");
+        // "OK" (2 chars) and "no" (2 chars) should be filtered out
+        for item in &method_result.result {
+            assert!(item.len() > 3, "Short lines should be filtered: {}", item);
+        }
+    }
+
+    #[test]
+    fn test_query_expander_synonym_expand_no_matches() {
+        let expander = QueryExpander::new();
+        let synonyms = expander.synonym_expand("quantum entanglement theory");
+        assert!(synonyms.is_empty(), "No synonym matches should return empty");
+    }
+
+    // --- MultiQueryDecomposer with LLM tests ---
+
+    #[test]
+    fn test_multi_query_decomposer_below_threshold() {
+        let decomposer = MultiQueryDecomposer::new();
+        let llm = MockLlm;
+        // Simple query below complexity threshold
+        let result = decomposer.decompose("What is the Aurora?", &llm);
+        assert!(result.is_ok());
+        let method_result = result.expect("decompose should succeed");
+        // Should return just the original query (complexity below threshold)
+        assert_eq!(method_result.result.len(), 1);
+        assert_eq!(method_result.result[0], "What is the Aurora?");
+        assert_eq!(
+            method_result.details.get("skipped"),
+            Some(&"complexity_below_threshold".to_string())
+        );
+    }
+
+    // --- Edge cases: boundary and empty inputs ---
+
+    #[test]
+    fn test_mmr_scorer_empty_texts() {
+        let score = MmrScorer::similarity("", "", &DiversityMetric::Cosine);
+        assert!((score - 0.0).abs() < f64::EPSILON, "Empty texts should have 0 similarity");
+        let score = MmrScorer::similarity("", "", &DiversityMetric::Jaccard);
+        assert!((score - 0.0).abs() < f64::EPSILON);
+        let score = MmrScorer::similarity("", "", &DiversityMetric::Overlap);
+        assert!((score - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_mmr_scorer_one_empty_text() {
+        let score = MmrScorer::similarity("hello world", "", &DiversityMetric::Cosine);
+        assert!((score - 0.0).abs() < f64::EPSILON);
+        let score = MmrScorer::similarity("", "hello world", &DiversityMetric::Overlap);
+        assert!((score - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_rrf_fusion_empty_lists() {
+        let fusion = RrfFusion::new();
+        let result = fusion.fuse_strings(vec![]);
+        assert!(result.result.is_empty());
+    }
+
+    #[test]
+    fn test_rrf_fusion_single_item_list() {
+        let fusion = RrfFusion::new();
+        let list = vec![vec![ScoredItem::new("only_doc".to_string(), 0.9)]];
+        let result = fusion.fuse_strings(list);
+        assert_eq!(result.result.len(), 1);
+        assert_eq!(result.result[0].item, "only_doc");
+        // RRF score = 1 / (60 + 0 + 1) = 1/61
+        let expected_score = 1.0_f32 / 61.0;
+        assert!(
+            (result.result[0].score - expected_score).abs() < 0.001,
+            "Single item RRF score should be 1/(k+1), got {}",
+            result.result[0].score
+        );
+    }
+
+    #[test]
+    fn test_scored_item_zero_score() {
+        let item = ScoredItem::new("zero score doc".to_string(), 0.0);
+        assert!((item.score - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_entity_and_relationship_construction() {
+        let entity = Entity {
+            name: "Aurora MR".to_string(),
+            entity_type: "PRODUCT".to_string(),
+            mentions: vec![EntityMention {
+                text: "Aurora MR".to_string(),
+                start: 4,
+                end: 13,
+                confidence: 0.95,
+            }],
+        };
+        assert_eq!(entity.name, "Aurora MR");
+        assert_eq!(entity.mentions.len(), 1);
+        assert!((entity.mentions[0].confidence - 0.95).abs() < f32::EPSILON);
+
+        let relationship = Relationship {
+            from_entity: "Aurora MR".to_string(),
+            to_entity: "RSI".to_string(),
+            relation_type: "manufactured_by".to_string(),
+            weight: 0.9,
+            source_chunk: Some("chunk_1".to_string()),
+        };
+        assert_eq!(relationship.from_entity, "Aurora MR");
+        assert_eq!(relationship.to_entity, "RSI");
+        assert!(relationship.source_chunk.is_some());
+    }
+
+    #[test]
+    fn test_raptor_node_construction() {
+        let node = RaptorNode {
+            id: "node_1".to_string(),
+            level: 2,
+            content: "Summary of cluster".to_string(),
+            children: vec!["child_1".to_string(), "child_2".to_string()],
+            embedding: Some(vec![0.1, 0.2, 0.3]),
+        };
+        assert_eq!(node.id, "node_1");
+        assert_eq!(node.level, 2);
+        assert_eq!(node.children.len(), 2);
+        assert!(node.embedding.is_some());
+        assert_eq!(node.embedding.as_ref().map(|e| e.len()), Some(3));
+    }
+
+    #[test]
+    fn test_router_query_complexity_display() {
+        assert_eq!(format!("{}", RouterQueryComplexity::Simple), "simple");
+        assert_eq!(format!("{}", RouterQueryComplexity::Factual), "factual");
+        assert_eq!(format!("{}", RouterQueryComplexity::MultiHop), "multi_hop");
+        assert_eq!(
+            format!("{}", RouterQueryComplexity::Analytical),
+            "analytical"
+        );
+        assert_eq!(
+            format!("{}", RouterQueryComplexity::Conversational),
+            "conversational"
+        );
+    }
+
+    #[test]
+    fn test_adaptive_strategy_complex_query() {
+        let selector = AdaptiveStrategySelector::new();
+        // Complex query: >100 chars or multiple question marks or "and" + "or"
+        let complex_query = "Tell me about the Aurora and the Mustang or the Gladius and compare their speeds and also their weapons and cargo capacity and armor ratings?";
+        let result = selector.select_heuristic(complex_query);
+        assert_eq!(result, RetrievalStrategy::MultiQuery);
+    }
+
+    #[test]
+    fn test_adaptive_strategy_balanced_default() {
+        let selector = AdaptiveStrategySelector::new();
+        // A query that doesn't match any specific pattern
+        let generic_query = "Tell me about the latest update";
+        let result = selector.select_heuristic(generic_query);
+        assert_eq!(result, RetrievalStrategy::HybridBalanced);
+    }
 }

@@ -227,6 +227,7 @@ impl RemoteMcpClient {
     /// Returns [`McpClientError::ConnectionFailed`] when the configured URL
     /// is empty.
     pub fn connect(&mut self) -> Result<(), McpClientError> {
+        log::info!("MCP client connecting: url={}", self.config.url);
         if self.config.url.is_empty() {
             return Err(McpClientError::ConnectionFailed {
                 url: "(empty)".to_string(),
@@ -326,6 +327,7 @@ impl RemoteMcpClient {
         self.server_capabilities = Some(capabilities);
         self.connected = true;
         self.simulated = false;
+        log::info!("MCP client connected: url={}, session_id={:?}", self.config.url, self.session_id);
 
         Ok(())
     }
@@ -342,6 +344,7 @@ impl RemoteMcpClient {
         self.server_capabilities = Some(ServerCapabilities::default());
         self.connected = true;
         self.simulated = true;
+        log::info!("MCP client connected (simulated): url={}, session_id={:?}", self.config.url, self.session_id);
 
         Ok(())
     }
@@ -371,6 +374,7 @@ impl RemoteMcpClient {
 
     /// Disconnect from the remote MCP server and clear session state.
     pub fn disconnect(&mut self) {
+        log::info!("MCP client disconnecting: url={}", self.config.url);
         self.session_id = None;
         self.server_capabilities = None;
         self.tools_cache.clear();

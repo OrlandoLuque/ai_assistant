@@ -114,9 +114,12 @@ mod models;
 mod providers;
 mod session;
 
-// Core utilities
+// Core utilities — always available regardless of feature flags
 pub mod adaptive_thinking;
 pub mod async_support;
+
+/// Prelude module — import commonly-used types with `use ai_assistant::prelude::*;`
+pub mod prelude;
 pub mod batch;
 pub mod cache_compression;
 pub mod caching;
@@ -174,8 +177,9 @@ pub use session::{
 };
 
 pub use error::{
-    AiError, AiResult, ConfigError, IoError as AiIoError, NetworkError, ProviderError, RagError,
-    ResourceLimitError, SerializationError, ValidationError as AiValidationError,
+    AiError, AiResult, ConfigError, ContextualError, IoError as AiIoError, NetworkError,
+    ProviderError, RagError, ResourceLimitError, ResultExt, SerializationError,
+    ValidationError as AiValidationError,
 };
 
 pub use progress::{
@@ -190,8 +194,9 @@ pub use events::{
 
 pub use config_file::{
     default_config_path, load_config, save_config, CacheConfig as FileCacheConfig, ConfigFile,
-    ConfigFormat, ConfigValidationError, GenerationConfig, HybridConfig, LoggingConfig,
-    ProviderConfig, RagFileConfig, SecurityConfig, UrlConfig,
+    ConfigFormat, ConfigValidationError, ConfigWatcher, GenerationConfig, HybridConfig,
+    LoggingConfig, ProviderConfig, RagFileConfig, ReloadResult, ReloadScope, SecurityConfig,
+    UrlConfig,
 };
 
 pub use memory_management::{
@@ -296,7 +301,9 @@ pub use http_client::{
     parse_kobold_models, parse_ollama_models, parse_openai_models, HttpClient, UreqClient,
 };
 
-pub use server::{AiServer, ServerConfig, ServerHandle};
+pub use server::{
+    AiServer, AuthConfig, AuthResult, CorsConfig, ServerConfig, ServerHandle, TlsConfig,
+};
 
 pub use secure_credentials::{
     CallbackSource, CredentialError, CredentialResolver, CredentialSource, EnvVarSource, FileSource,
@@ -678,7 +685,8 @@ pub use advanced_guardrails::{
 #[cfg(feature = "security")]
 pub use guardrail_pipeline::{
     AttackGuard, ContentLengthGuard, Guard, GuardAction, GuardCheckResult, GuardStage,
-    GuardrailPipeline, NaturalLanguageGuard, PatternGuard, PiiGuard, PipelineResult,
+    GuardrailPipeline, NaturalLanguageGuard, OutputPiiConfig, OutputPiiGuard,
+    OutputToxicityConfig, OutputToxicityGuard, PatternGuard, PiiGuard, PipelineResult,
     PolicyCompiler, PolicyPriority, PolicyScope, PolicyStatement, PolicyViolation,
     RateLimitGuard, SemanticChecker, StreamGuardAction, StreamingGuard,
     StreamingGuardrailConfig, StreamingGuardrailMetrics, StreamingGuardrailPipeline,
@@ -1897,6 +1905,7 @@ pub use advanced_memory::{
     ProcedureEvolver, ProcedureFeedback, SemanticFact, TemporalEdge, TemporalEdgeType,
     TemporalGraph, TemporalQuery, TemporalQueryType,
     cosine_similarity as memory_cosine_similarity, new_episode,
+    AutoPersistenceConfig,
 };
 
 // =============================================================================

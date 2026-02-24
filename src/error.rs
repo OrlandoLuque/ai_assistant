@@ -1910,6 +1910,87 @@ impl From<anyhow::Error> for AiError {
 /// Convenient Result type for AI assistant operations
 pub type AiResult<T> = std::result::Result<T, AiError>;
 
+// === Contextual error wrapper ===
+
+/// An error enriched with additional context describing what was being done
+/// when the error occurred. Supports error chaining via `std::error::Error::source()`.
+#[derive(Debug)]
+pub struct ContextualError {
+    /// The contextual message describing what operation was being performed
+    pub context: String,
+    /// The underlying error
+    pub source: AiError,
+}
+
+impl fmt::Display for ContextualError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.context, self.source)
+    }
+}
+
+impl std::error::Error for ContextualError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+impl AiError {
+    /// Wrap this error with additional context describing what was being done
+    /// when the error occurred.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let result = load_config(path)
+    ///     .map_err(|e| e.with_context("loading main configuration"));
+    /// ```
+    pub fn with_context(self, context: impl Into<String>) -> ContextualError {
+        ContextualError {
+            context: context.into(),
+            source: self,
+        }
+    }
+}
+
+/// Extension trait for `Result<T, AiError>` to add context conveniently.
+pub trait ResultExt<T> {
+    /// Add context to an error result, describing what operation was being performed.
+    ///
+    /// # Example
+    /// ```ignore
+    /// use ai_assistant::error::ResultExt;
+    ///
+    /// fn load_model(name: &str) -> AiResult<Model> {
+    ///     fetch_from_registry(name)
+    ///         .context(format!("loading model '{}'", name))
+    /// }
+    /// ```
+    fn context(self, msg: impl Into<String>) -> Result<T, ContextualError>;
+
+    /// Add lazy context to an error result (closure only called on error).
+    fn with_context_fn<F>(self, f: F) -> Result<T, ContextualError>
+    where
+        F: FnOnce() -> String;
+}
+
+impl<T> ResultExt<T> for Result<T, AiError> {
+    fn context(self, msg: impl Into<String>) -> Result<T, ContextualError> {
+        self.map_err(|e| e.with_context(msg))
+    }
+
+    fn with_context_fn<F>(self, f: F) -> Result<T, ContextualError>
+    where
+        F: FnOnce() -> String,
+    {
+        self.map_err(|e| e.with_context(f()))
+    }
+}
+
+impl From<ContextualError> for AiError {
+    fn from(ctx: ContextualError) -> Self {
+        AiError::Other(format!("{}: {}", ctx.context, ctx.source))
+    }
+}
+
 // === Error builder helpers ===
 
 impl AiError {
@@ -2602,5 +2683,80 @@ mod tests {
         for (err, expected_code) in &cases {
             assert_eq!(err.code(), *expected_code, "Wrong code for {:?}", err);
         }
+    }
+
+    // --- Error Context Tests (v8 item 10.1) ---
+
+    #[test]
+    fn test_with_context_wraps_error() {
+        let err = AiError::other("something failed");
+        let ctx = err.with_context("loading configuration");
+        assert!(ctx.to_string().contains("loading configuration"));
+        assert!(ctx.to_string().contains("something failed"));
+    }
+
+    #[test]
+    fn test_contextual_error_source_chain() {
+        let err = AiError::provider_unavailable("Ollama", "http://localhost:11434");
+        let ctx = err.with_context("initializing assistant");
+        // source() should return the original AiError
+        let source = std::error::Error::source(&ctx);
+        assert!(source.is_some());
+        let source_display = source.unwrap().to_string();
+        assert!(source_display.contains("Ollama"));
+    }
+
+    #[test]
+    fn test_result_ext_context() {
+        let result: AiResult<()> = Err(AiError::other("disk full"));
+        let ctx_result = result.context("saving checkpoint");
+        assert!(ctx_result.is_err());
+        let err = ctx_result.unwrap_err();
+        assert!(err.to_string().contains("saving checkpoint"));
+        assert!(err.to_string().contains("disk full"));
+    }
+
+    #[test]
+    fn test_result_ext_context_ok_passthrough() {
+        let result: AiResult<i32> = Ok(42);
+        let ctx_result = result.context("this context should not appear");
+        assert_eq!(ctx_result.unwrap(), 42);
+    }
+
+    #[test]
+    fn test_result_ext_with_context_fn_lazy() {
+        let result: AiResult<()> = Err(AiError::other("timeout"));
+        let ctx_result = result.with_context_fn(|| format!("connecting to {}", "remote-host"));
+        assert!(ctx_result.is_err());
+        let err = ctx_result.unwrap_err();
+        assert!(err.to_string().contains("connecting to remote-host"));
+    }
+
+    #[test]
+    fn test_contextual_error_into_ai_error() {
+        let err = AiError::other("root cause");
+        let ctx = err.with_context("during operation");
+        let ai_err: AiError = ctx.into();
+        assert!(ai_err.to_string().contains("during operation"));
+        assert!(ai_err.to_string().contains("root cause"));
+        assert_eq!(ai_err.code(), "OTHER");
+    }
+
+    #[test]
+    fn test_with_context_preserves_error_info() {
+        let err = AiError::rate_limited(100, 60);
+        let original_display = err.to_string();
+        let ctx = err.with_context("batch processing request 42");
+        assert!(ctx.to_string().starts_with("batch processing request 42"));
+        assert!(ctx.to_string().contains(&original_display));
+    }
+
+    #[test]
+    fn test_contextual_error_debug() {
+        let err = AiError::other("test");
+        let ctx = err.with_context("debug check");
+        let debug_str = format!("{:?}", ctx);
+        assert!(debug_str.contains("ContextualError"));
+        assert!(debug_str.contains("debug check"));
     }
 }
