@@ -268,6 +268,11 @@ bollard = { version = "0.18", optional = true, default-features = false, feature
 whisper-rs = { version = "0.15", optional = true }
 
 [[bin]]
+name = "ai_assistant_server"
+path = "src/bin/ai_assistant_server.rs"
+required-features = ["full"]
+
+[[bin]]
 name = "ai_test_harness"
 path = "src/bin/ai_test_harness.rs"
 
