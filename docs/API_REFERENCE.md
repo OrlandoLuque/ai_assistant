@@ -1,6 +1,6 @@
 # API Reference — ai_assistant HTTP Server
 
-> Version: v9 (2026-02-24)
+> Version: v10 (2026-02-24)
 >
 > Base URL: `http://localhost:8090` (default)
 >
@@ -25,6 +25,8 @@
   - [GET /sessions](#get-sessions)
   - [GET /sessions/{id}](#get-sessionsid)
   - [DELETE /sessions/{id}](#delete-sessionsid)
+  - [GET /ws](#get-ws)
+  - [GET /openapi.json](#get-openapijson)
 
 ---
 
@@ -485,3 +487,73 @@ eventSource.onmessage = (event) => {
   process.stdout.write(token);
 };
 ```
+
+---
+
+## GET /ws
+
+**WebSocket chat endpoint** (RFC 6455). Send JSON messages, receive streaming responses.
+
+### Upgrade Request
+
+```
+GET /ws HTTP/1.1
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+Sec-WebSocket-Version: 13
+```
+
+### Message Format (client → server)
+
+```json
+{
+  "message": "Hello, assistant!",
+  "system_prompt": "You are a helpful assistant"
+}
+```
+
+### Response Frames (server → client)
+
+```json
+{"type": "chunk", "data": "Hello"}
+{"type": "chunk", "data": "! How"}
+{"type": "chunk", "data": " can I help?"}
+{"type": "done"}
+```
+
+### JavaScript Example
+
+```javascript
+const ws = new WebSocket('ws://localhost:8090/ws');
+ws.onopen = () => {
+  ws.send(JSON.stringify({ message: 'Hello!' }));
+};
+ws.onmessage = (event) => {
+  const msg = JSON.parse(event.data);
+  if (msg.type === 'done') return;
+  process.stdout.write(msg.data);
+};
+```
+
+Also available at `/api/v1/ws`.
+
+---
+
+## GET /openapi.json
+
+Returns the OpenAPI 3.0.0 specification for all server endpoints.
+
+```bash
+curl http://localhost:8090/api/v1/openapi.json | jq .info
+```
+
+```json
+{
+  "title": "AI Assistant API",
+  "version": "1.0.0",
+  "description": "Embedded HTTP server for the ai_assistant crate"
+}
+```
+
+Also available at `/openapi.json`.

@@ -1,6 +1,6 @@
 # Deployment Guide — ai_assistant
 
-> Version: v9 (2026-02-24)
+> Version: v10 (2026-02-24)
 
 ---
 
@@ -255,9 +255,11 @@ let config = ServerConfig {
 };
 ```
 
-> **Note**: TLS runtime support requires the `server-tls` feature flag (planned).
-> The `TlsConfig` struct is available now for configuration; actual TLS termination
-> is recommended via a reverse proxy (nginx, Caddy, Traefik) in production.
+> **TLS runtime** is available via the `server-tls` feature flag:
+> `cargo build --features "full,server-tls"`.
+> When `tls` is set in `ServerConfig`, the server terminates TLS natively using rustls.
+> For production, a reverse proxy (nginx, Caddy, Traefik) is still recommended for
+> certificate rotation and additional security layers.
 
 ### Reverse Proxy (nginx example)
 
