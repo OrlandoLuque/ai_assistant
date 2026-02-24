@@ -132,6 +132,15 @@ Read this for understanding, inspiration, and to demystify the magic.
 122. [Multi-Backend Sandbox](#122-multi-backend-sandbox)
 123. [Agent Deployment Profiles](#123-agent-deployment-profiles)
 124. [Agent DevTools](#124-agent-devtools)
+125. [Server Authentication Middleware](#125-server-authentication-middleware)
+126. [Request Correlation IDs](#126-request-correlation-ids)
+127. [Graceful Server Shutdown](#127-graceful-server-shutdown)
+128. [Prometheus Metrics Exposition](#128-prometheus-metrics-exposition)
+129. [Output Guardrails](#129-output-guardrails)
+130. [Memory Persistence](#130-memory-persistence)
+131. [Error Context Enrichment](#131-error-context-enrichment)
+132. [Configuration Hot-Reload](#132-configuration-hot-reload)
+133. [Prelude Module](#133-prelude-module)
 
 ---
 
@@ -3057,3 +3066,75 @@ The same zoom-in/zoom-out principle applies to knowledge graph entities. A clust
 **The fundamental idea**: Debugging an agent is harder than debugging a function — the agent's behavior emerges from the interaction of prompts, tools, memory, and planning over multiple steps. Agent DevTools provide development-time tooling for understanding and debugging agent execution: step-through execution that pauses the agent after each action for inspection, breakpoints that trigger on specific conditions (tool name, error type, confidence threshold), execution recording that captures the complete agent trajectory for later replay, and performance profiling that tracks time and token usage per step. Replay mode re-executes a recorded trajectory with modified parameters, enabling counterfactual debugging — "what would have happened if the temperature were lower at step 5?"
 
 **Feature flag**: `autonomous`
+
+---
+
+## 125. Server Authentication Middleware
+
+**The fundamental idea**: An embedded HTTP server that exposes an AI assistant must protect its endpoints from unauthorized access. The auth middleware sits in the request pipeline before any handler runs. It supports two credential types: Bearer tokens (RFC 6750) via the `Authorization: Bearer <token>` header, and API keys via the `X-API-Key` header. Credential comparison uses constant-time equality (`ct_eq`) to prevent timing-based side-channel attacks — where an attacker could determine how many characters of a token are correct by measuring response time. Certain paths (like `/health`) are configured as exempt and bypass authentication entirely.
+
+**Feature flag**: core (always available)
+
+---
+
+## 126. Request Correlation IDs
+
+**The fundamental idea**: In a distributed system, tracing a single user request across multiple services requires a unique identifier that travels with the request. The server implements this via the `X-Request-Id` header. If the client provides one, the server echoes it back — preserving the client's trace context. If not, the server generates a 32-character hex ID by mixing a monotonic counter with high-resolution timestamps. Every log line includes this ID, enabling correlation: `[a1b2c3d4...] POST /chat -> 200 (42.5ms)`.
+
+**Feature flag**: core (always available)
+
+---
+
+## 127. Graceful Server Shutdown
+
+**The fundamental idea**: When a server receives a shutdown signal, it should stop accepting new connections while allowing in-flight requests to complete. The implementation uses an `Arc<AtomicBool>` flag. The TCP listener is set to non-blocking mode, and the accept loop polls both for new connections and the shutdown flag. When shutdown is requested, the loop exits cleanly. In-flight connections (already on worker threads) complete naturally.
+
+**Feature flag**: core (always available)
+
+---
+
+## 128. Prometheus Metrics Exposition
+
+**The fundamental idea**: Prometheus scrapes metrics from endpoints in a simple text format. The server maintains atomic counters tracking total requests, requests by status class (2xx/4xx/5xx), and total request duration. The `/metrics` endpoint renders these in Prometheus exposition format, enabling dashboards and alerts using standard tooling.
+
+**Feature flag**: core (always available)
+
+---
+
+## 129. Output Guardrails
+
+**The fundamental idea**: Input guardrails validate what the user sends to the LLM. Output guardrails validate what the LLM sends back. `OutputPiiGuard` scans responses for PII patterns (emails, phones, SSNs, credit cards) with configurable block/redact action. `OutputToxicityGuard` scores response toxicity and blocks responses above a threshold. Both implement `Guard` with `GuardStage::PostReceive`.
+
+**Feature flag**: core (always available)
+
+---
+
+## 130. Memory Persistence
+
+**The fundamental idea**: In-memory stores are fast but volatile. Memory persistence serializes store contents to JSON using atomic writes (tmp + rename) for crash safety. `AutoPersistenceConfig` adds automated snapshot management: periodic saves, rotation (keep N most recent), and save-on-Drop.
+
+**Feature flag**: `full` (advanced-memory)
+
+---
+
+## 131. Error Context Enrichment
+
+**The fundamental idea**: `ContextualError` wraps errors with additional context: `"connecting to OpenAI: connection refused"`. The `ResultExt` trait adds `.context("msg")` to any `Result<T, AiError>`, following the anyhow pattern without the external dependency.
+
+**Feature flag**: core (always available)
+
+---
+
+## 132. Configuration Hot-Reload
+
+**The fundamental idea**: Config hot-reload watches the config file by polling its mtime and applies safe changes without restart. Fields are classified as `HotReload` (model, temperature) or `RequiresRestart` (host, port, TLS).
+
+**Feature flag**: core (always available)
+
+---
+
+## 133. Prelude Module
+
+**The fundamental idea**: The prelude re-exports the ~15 most commonly used types so `use ai_assistant::prelude::*` gives you everything for basic usage. Follows the Rust ecosystem convention (std::prelude, tokio::prelude).
+
+**Feature flag**: core (always available)

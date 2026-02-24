@@ -1068,6 +1068,172 @@ impl ConfigFile {
     }
 }
 
+// =============================================================================
+// CONFIG HOT-RELOAD (v8 item 8.2)
+// =============================================================================
+
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime};
+
+/// Tracks which config fields can be hot-reloaded vs require restart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReloadScope {
+    /// Can be applied without restart (model, temperature, log level)
+    HotReload,
+    /// Requires server restart (host, port, TLS settings)
+    RequiresRestart,
+}
+
+/// Result of a config reload check.
+#[derive(Debug, Clone)]
+pub struct ReloadResult {
+    /// Whether the config file was modified since last check
+    pub changed: bool,
+    /// Fields that were hot-reloaded
+    pub reloaded_fields: Vec<String>,
+    /// Fields that changed but require restart
+    pub restart_required_fields: Vec<String>,
+}
+
+/// Watches a configuration file for changes and applies hot-reloadable settings.
+#[derive(Debug)]
+pub struct ConfigWatcher {
+    /// Path to the config file being watched
+    path: PathBuf,
+    /// Last modification time observed
+    last_modified: Arc<Mutex<Option<SystemTime>>>,
+    /// Current loaded config
+    current_config: Arc<Mutex<ConfigFile>>,
+    /// Poll interval
+    poll_interval: Duration,
+}
+
+impl ConfigWatcher {
+    /// Create a new config watcher for the given file path.
+    pub fn new(path: impl Into<PathBuf>, poll_interval_secs: u64) -> Result<Self, String> {
+        let path = path.into();
+        let config = ConfigFile::load(&path).map_err(|e| e.to_string())?;
+        let mtime = std::fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .ok();
+
+        Ok(Self {
+            path,
+            last_modified: Arc::new(Mutex::new(mtime)),
+            current_config: Arc::new(Mutex::new(config)),
+            poll_interval: Duration::from_secs(poll_interval_secs),
+        })
+    }
+
+    /// Get the poll interval.
+    pub fn poll_interval(&self) -> Duration {
+        self.poll_interval
+    }
+
+    /// Get a clone of the current config.
+    pub fn current_config(&self) -> ConfigFile {
+        self.current_config
+            .lock()
+            .map(|c| c.clone())
+            .unwrap_or_default()
+    }
+
+    /// Check if the config file has been modified and reload if so.
+    /// Returns which fields were hot-reloaded vs which require restart.
+    pub fn check_and_reload(&self) -> Result<ReloadResult, String> {
+        let current_mtime = std::fs::metadata(&self.path)
+            .and_then(|m| m.modified())
+            .map_err(|e| format!("Failed to stat config file: {}", e))?;
+
+        let mut last = self.last_modified.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+        let changed = match *last {
+            Some(prev) => current_mtime > prev,
+            None => true,
+        };
+
+        if !changed {
+            return Ok(ReloadResult {
+                changed: false,
+                reloaded_fields: vec![],
+                restart_required_fields: vec![],
+            });
+        }
+
+        // Reload config
+        let new_config = ConfigFile::load(&self.path).map_err(|e| e.to_string())?;
+
+        let mut reloaded = Vec::new();
+        let mut restart_required = Vec::new();
+
+        let mut current = self.current_config.lock().map_err(|e| format!("Lock poisoned: {}", e))?;
+
+        // Check hot-reloadable fields
+        if new_config.provider.model != current.provider.model {
+            reloaded.push("provider.model".to_string());
+        }
+        if (new_config.generation.temperature - current.generation.temperature).abs() > f32::EPSILON {
+            reloaded.push("generation.temperature".to_string());
+        }
+        if new_config.generation.max_history != current.generation.max_history {
+            reloaded.push("generation.max_history".to_string());
+        }
+        if new_config.generation.max_tokens != current.generation.max_tokens {
+            reloaded.push("generation.max_tokens".to_string());
+        }
+        if new_config.logging.level != current.logging.level {
+            reloaded.push("logging.level".to_string());
+        }
+        if new_config.cache.enabled != current.cache.enabled {
+            reloaded.push("cache.enabled".to_string());
+        }
+        if new_config.cache.ttl_seconds != current.cache.ttl_seconds {
+            reloaded.push("cache.ttl_seconds".to_string());
+        }
+
+        // Check restart-required fields
+        if new_config.provider.provider_type != current.provider.provider_type {
+            restart_required.push("provider.type".to_string());
+        }
+        if new_config.provider.custom_url != current.provider.custom_url {
+            restart_required.push("provider.custom_url".to_string());
+        }
+        if new_config.urls.ollama != current.urls.ollama {
+            restart_required.push("urls.ollama".to_string());
+        }
+        if new_config.urls.lm_studio != current.urls.lm_studio {
+            restart_required.push("urls.lm_studio".to_string());
+        }
+
+        // Apply the new config
+        *current = new_config;
+        *last = Some(current_mtime);
+
+        log::info!(
+            "Config reloaded from {:?}: {} hot-reloaded, {} require restart",
+            self.path,
+            reloaded.len(),
+            restart_required.len()
+        );
+
+        Ok(ReloadResult {
+            changed: true,
+            reloaded_fields: reloaded,
+            restart_required_fields: restart_required,
+        })
+    }
+
+    /// Classify a config field by its reload scope.
+    pub fn field_scope(field: &str) -> ReloadScope {
+        match field {
+            "provider.model" | "generation.temperature" | "generation.max_history"
+            | "generation.max_tokens" | "logging.level" | "cache.enabled"
+            | "cache.ttl_seconds" => ReloadScope::HotReload,
+            _ => ReloadScope::RequiresRestart,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1247,5 +1413,125 @@ knowledge_enabled = true
         let mut config = ConfigFile::default();
         config.provider.custom_url = Some("http://custom.server:9999".to_string());
         assert!(config.validate_detailed().is_ok());
+    }
+
+    // --- ConfigWatcher tests (v8 item 8.2) ---
+
+    #[test]
+    fn test_config_watcher_from_file() {
+        let dir = std::env::temp_dir().join("ai_test_watcher");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("test_config.toml");
+        std::fs::write(
+            &path,
+            "[provider]\ntype = \"ollama\"\nmodel = \"llama2\"\n",
+        )
+        .unwrap();
+
+        let watcher = ConfigWatcher::new(&path, 5);
+        assert!(watcher.is_ok());
+        let watcher = watcher.unwrap();
+        assert_eq!(watcher.poll_interval(), Duration::from_secs(5));
+        let config = watcher.current_config();
+        assert_eq!(config.provider.model, "llama2");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_config_watcher_no_change() {
+        let dir = std::env::temp_dir().join("ai_test_watcher_nochange");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("test_config.toml");
+        std::fs::write(&path, "[provider]\ntype = \"ollama\"\nmodel = \"llama2\"\n").unwrap();
+
+        let watcher = ConfigWatcher::new(&path, 1).unwrap();
+        // First check — marks the mtime
+        let _ = watcher.check_and_reload();
+        // Second check — no changes
+        let result = watcher.check_and_reload().unwrap();
+        assert!(!result.changed);
+        assert!(result.reloaded_fields.is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_config_watcher_detects_change() {
+        let dir = std::env::temp_dir().join("ai_test_watcher_change");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("test_config.toml");
+        std::fs::write(&path, "[provider]\ntype = \"ollama\"\nmodel = \"llama2\"\n").unwrap();
+
+        let watcher = ConfigWatcher::new(&path, 1).unwrap();
+        let _ = watcher.check_and_reload();
+
+        // Modify the file (need a small sleep so mtime changes)
+        std::thread::sleep(Duration::from_millis(50));
+        std::fs::write(
+            &path,
+            "[provider]\ntype = \"ollama\"\nmodel = \"mistral\"\n\n[generation]\ntemperature = 0.9\n",
+        )
+        .unwrap();
+
+        let result = watcher.check_and_reload().unwrap();
+        assert!(result.changed);
+        assert!(result.reloaded_fields.contains(&"provider.model".to_string()));
+        assert_eq!(watcher.current_config().provider.model, "mistral");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_config_watcher_restart_required_fields() {
+        let dir = std::env::temp_dir().join("ai_test_watcher_restart");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("test_config.toml");
+        std::fs::write(&path, "[provider]\ntype = \"ollama\"\nmodel = \"llama2\"\n").unwrap();
+
+        let watcher = ConfigWatcher::new(&path, 1).unwrap();
+        let _ = watcher.check_and_reload();
+
+        std::thread::sleep(Duration::from_millis(50));
+        std::fs::write(&path, "[provider]\ntype = \"openai\"\nmodel = \"llama2\"\n").unwrap();
+
+        let result = watcher.check_and_reload().unwrap();
+        assert!(result.changed);
+        assert!(result.restart_required_fields.contains(&"provider.type".to_string()));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_config_watcher_nonexistent_file() {
+        let result = ConfigWatcher::new("/tmp/nonexistent_ai_config_test_12345.toml", 1);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_field_scope_classification() {
+        assert_eq!(ConfigWatcher::field_scope("provider.model"), ReloadScope::HotReload);
+        assert_eq!(ConfigWatcher::field_scope("generation.temperature"), ReloadScope::HotReload);
+        assert_eq!(ConfigWatcher::field_scope("logging.level"), ReloadScope::HotReload);
+        assert_eq!(ConfigWatcher::field_scope("cache.enabled"), ReloadScope::HotReload);
+        assert_eq!(ConfigWatcher::field_scope("urls.ollama"), ReloadScope::RequiresRestart);
+        assert_eq!(ConfigWatcher::field_scope("provider.custom_url"), ReloadScope::RequiresRestart);
+    }
+
+    #[test]
+    fn test_reload_scope_eq() {
+        assert_eq!(ReloadScope::HotReload, ReloadScope::HotReload);
+        assert_ne!(ReloadScope::HotReload, ReloadScope::RequiresRestart);
+    }
+
+    #[test]
+    fn test_reload_result_debug() {
+        let result = ReloadResult {
+            changed: true,
+            reloaded_fields: vec!["provider.model".to_string()],
+            restart_required_fields: vec![],
+        };
+        let debug = format!("{:?}", result);
+        assert!(debug.contains("provider.model"));
     }
 }

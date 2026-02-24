@@ -80,6 +80,7 @@ pub struct Episode {
 }
 
 /// Store for episodic memories with capacity limits and temporal decay.
+#[derive(Debug)]
 pub struct EpisodicStore {
     episodes: Vec<Episode>,
     max_episodes: usize,
@@ -242,6 +243,28 @@ impl EpisodicStore {
             .map(|d| d.as_secs())
             .unwrap_or(0)
     }
+
+    /// Save the episodic store to a JSON file. Uses atomic write (temp file + rename).
+    pub fn save_to_file(&self, path: &std::path::Path) -> Result<String, String> {
+        let json = serde_json::to_string_pretty(&self.episodes)
+            .map_err(|e| format!("Serialize error: {}", e))?;
+        let tmp = path.with_extension("tmp");
+        std::fs::write(&tmp, &json).map_err(|e| format!("Write error: {}", e))?;
+        std::fs::rename(&tmp, path).map_err(|e| format!("Rename error: {}", e))?;
+        Ok(json)
+    }
+
+    /// Load an episodic store from a JSON file.
+    pub fn load_from_file(path: &std::path::Path, max_episodes: usize, decay_factor: f64) -> Result<Self, String> {
+        let data = std::fs::read_to_string(path).map_err(|e| format!("Read error: {}", e))?;
+        let episodes: Vec<Episode> =
+            serde_json::from_str(&data).map_err(|e| format!("Deserialize error: {}", e))?;
+        Ok(Self {
+            episodes,
+            max_episodes,
+            decay_factor,
+        })
+    }
 }
 
 // ============================================================
@@ -263,6 +286,7 @@ pub struct Procedure {
 }
 
 /// Store for procedural memories with capacity limits.
+#[derive(Debug)]
 pub struct ProceduralStore {
     procedures: Vec<Procedure>,
     max_procedures: usize,
@@ -394,6 +418,27 @@ impl ProceduralStore {
     pub fn all(&self) -> &[Procedure] {
         &self.procedures
     }
+
+    /// Save the procedural store to a JSON file. Uses atomic write (temp file + rename).
+    pub fn save_to_file(&self, path: &std::path::Path) -> Result<String, String> {
+        let json = serde_json::to_string_pretty(&self.procedures)
+            .map_err(|e| format!("Serialize error: {}", e))?;
+        let tmp = path.with_extension("tmp");
+        std::fs::write(&tmp, &json).map_err(|e| format!("Write error: {}", e))?;
+        std::fs::rename(&tmp, path).map_err(|e| format!("Rename error: {}", e))?;
+        Ok(json)
+    }
+
+    /// Load a procedural store from a JSON file.
+    pub fn load_from_file(path: &std::path::Path, max_procedures: usize) -> Result<Self, String> {
+        let data = std::fs::read_to_string(path).map_err(|e| format!("Read error: {}", e))?;
+        let procedures: Vec<Procedure> =
+            serde_json::from_str(&data).map_err(|e| format!("Deserialize error: {}", e))?;
+        Ok(Self {
+            procedures,
+            max_procedures,
+        })
+    }
 }
 
 // ============================================================
@@ -422,6 +467,7 @@ pub struct EntityRelation {
 }
 
 /// Store for entity records with name-based indexing and deduplication.
+#[derive(Debug)]
 pub struct EntityStore {
     entities: HashMap<String, EntityRecord>,
     name_index: HashMap<String, String>,
@@ -616,6 +662,32 @@ impl EntityStore {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0)
+    }
+
+    /// Save the entity store to a JSON file. Uses atomic write (temp file + rename).
+    pub fn save_to_file(&self, path: &std::path::Path) -> Result<String, String> {
+        let entries: Vec<&EntityRecord> = self.entities.values().collect();
+        let json = serde_json::to_string_pretty(&entries)
+            .map_err(|e| format!("Serialize error: {}", e))?;
+        let tmp = path.with_extension("tmp");
+        std::fs::write(&tmp, &json).map_err(|e| format!("Write error: {}", e))?;
+        std::fs::rename(&tmp, path).map_err(|e| format!("Rename error: {}", e))?;
+        Ok(json)
+    }
+
+    /// Load an entity store from a JSON file.
+    pub fn load_from_file(path: &std::path::Path) -> Result<Self, String> {
+        let data = std::fs::read_to_string(path).map_err(|e| format!("Read error: {}", e))?;
+        let records: Vec<EntityRecord> =
+            serde_json::from_str(&data).map_err(|e| format!("Deserialize error: {}", e))?;
+        let mut store = Self::new();
+        for rec in records {
+            let normalized = rec.name.to_lowercase();
+            let id = rec.id.clone();
+            store.name_index.insert(normalized, id.clone());
+            store.entities.insert(id, rec);
+        }
+        Ok(store)
     }
 }
 
@@ -3022,6 +3094,85 @@ impl MemorySearchEngine {
     /// Get a reference to the current search weights.
     pub fn weights(&self) -> &SearchWeights {
         &self.weights
+    }
+}
+
+// ============================================================
+// Auto-Persistence
+// ============================================================
+
+/// Configuration for automatic memory persistence.
+#[derive(Debug, Clone)]
+pub struct AutoPersistenceConfig {
+    /// Base directory for persistence files.
+    pub base_dir: std::path::PathBuf,
+    /// Save interval in seconds (0 = disabled).
+    pub save_interval_secs: u64,
+    /// Maximum number of snapshot files to keep (older ones are rotated out).
+    pub max_snapshots: usize,
+    /// Whether to save on Drop.
+    pub save_on_drop: bool,
+}
+
+impl Default for AutoPersistenceConfig {
+    fn default() -> Self {
+        Self {
+            base_dir: std::path::PathBuf::from("."),
+            save_interval_secs: 300,
+            max_snapshots: 5,
+            save_on_drop: true,
+        }
+    }
+}
+
+impl AutoPersistenceConfig {
+    /// Create a new config with the given base directory.
+    pub fn new(base_dir: impl Into<std::path::PathBuf>) -> Self {
+        Self {
+            base_dir: base_dir.into(),
+            ..Default::default()
+        }
+    }
+
+    /// Generate a timestamped snapshot filename for the given store name.
+    pub fn snapshot_path(&self, store_name: &str) -> std::path::PathBuf {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        self.base_dir
+            .join(format!("{}_{}.json", store_name, timestamp))
+    }
+
+    /// List existing snapshots for a store, sorted oldest first.
+    pub fn list_snapshots(&self, store_name: &str) -> Vec<std::path::PathBuf> {
+        let prefix = format!("{}_", store_name);
+        let mut snapshots: Vec<std::path::PathBuf> = std::fs::read_dir(&self.base_dir)
+            .into_iter()
+            .flatten()
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| {
+                p.extension().map(|e| e == "json").unwrap_or(false)
+                    && p.file_stem()
+                        .and_then(|s| s.to_str())
+                        .map(|s| s.starts_with(&prefix))
+                        .unwrap_or(false)
+            })
+            .collect();
+        snapshots.sort();
+        snapshots
+    }
+
+    /// Rotate snapshots: remove oldest files if more than max_snapshots exist.
+    pub fn rotate_snapshots(&self, store_name: &str) {
+        let mut snapshots = self.list_snapshots(store_name);
+        while snapshots.len() > self.max_snapshots {
+            if let Some(oldest) = snapshots.first() {
+                let _ = std::fs::remove_file(oldest);
+            }
+            snapshots.remove(0);
+        }
     }
 }
 
@@ -5808,5 +5959,280 @@ mod tests {
             }
             other => panic!("Expected Preference, got {:?}", other),
         }
+    }
+
+    // ----------------------------------------------------------
+    // Persistence tests (save_to_file / load_from_file)
+    // ----------------------------------------------------------
+
+    #[test]
+    fn test_episodic_store_save_and_load() {
+        let dir = std::env::temp_dir().join(format!("episodic_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("episodic.json");
+
+        let mut store = EpisodicStore::new(100, 0.001);
+        store.add(make_episode("e1", "hello world", &["greet"], &[1.0, 0.0], 1000));
+        store.add(make_episode("e2", "goodbye world", &["farewell"], &[0.0, 1.0], 2000));
+
+        store.save_to_file(&path).unwrap();
+        assert!(path.exists());
+
+        let loaded = EpisodicStore::load_from_file(&path, 100, 0.001).unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded.all()[0].id, "e1");
+        assert_eq!(loaded.all()[1].id, "e2");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_episodic_store_load_nonexistent_file() {
+        let path = std::path::Path::new("/tmp/nonexistent_episodic_987654321.json");
+        let result = EpisodicStore::load_from_file(path, 100, 0.001);
+        assert!(result.is_err());
+        match result {
+            Err(e) => assert!(e.contains("Read error"), "Expected 'Read error', got: {}", e),
+            Ok(_) => panic!("Expected error"),
+        }
+    }
+
+    #[test]
+    fn test_episodic_store_save_empty() {
+        let dir = std::env::temp_dir().join(format!("episodic_empty_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("episodic_empty.json");
+
+        let store = EpisodicStore::new(50, 0.01);
+        store.save_to_file(&path).unwrap();
+
+        let loaded = EpisodicStore::load_from_file(&path, 50, 0.01).unwrap();
+        assert_eq!(loaded.len(), 0);
+        assert!(loaded.is_empty());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_procedural_store_save_and_load() {
+        let dir = std::env::temp_dir().join(format!("procedural_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("procedural.json");
+
+        let mut store = ProceduralStore::new(100);
+        store.add(make_procedure("p1", "deploy", "when deploying", 0.9));
+        store.add(make_procedure("p2", "test", "when testing", 0.7));
+
+        store.save_to_file(&path).unwrap();
+        assert!(path.exists());
+
+        let loaded = ProceduralStore::load_from_file(&path, 100).unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded.get("p1").unwrap().name, "deploy");
+        assert_eq!(loaded.get("p2").unwrap().confidence, 0.7);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_procedural_store_load_nonexistent_file() {
+        let path = std::path::Path::new("/tmp/nonexistent_procedural_987654321.json");
+        let result = ProceduralStore::load_from_file(path, 100);
+        assert!(result.is_err());
+        match result {
+            Err(e) => assert!(e.contains("Read error"), "Expected 'Read error', got: {}", e),
+            Ok(_) => panic!("Expected error"),
+        }
+    }
+
+    #[test]
+    fn test_procedural_store_save_empty() {
+        let dir = std::env::temp_dir().join(format!("procedural_empty_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("procedural_empty.json");
+
+        let store = ProceduralStore::new(50);
+        store.save_to_file(&path).unwrap();
+
+        let loaded = ProceduralStore::load_from_file(&path, 50).unwrap();
+        assert_eq!(loaded.len(), 0);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_entity_store_save_and_load() {
+        let dir = std::env::temp_dir().join(format!("entity_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("entity.json");
+
+        let mut store = EntityStore::new();
+        store.add(make_entity("ent1", "Alice", "person")).unwrap();
+        store.add(make_entity("ent2", "Rust", "language")).unwrap();
+
+        store.save_to_file(&path).unwrap();
+        assert!(path.exists());
+
+        let loaded = EntityStore::load_from_file(&path).unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert!(loaded.find_by_name("alice").is_some());
+        assert!(loaded.find_by_name("rust").is_some());
+        assert_eq!(loaded.get("ent1").unwrap().entity_type, "person");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_entity_store_load_nonexistent_file() {
+        let path = std::path::Path::new("/tmp/nonexistent_entity_987654321.json");
+        let result = EntityStore::load_from_file(path);
+        assert!(result.is_err());
+        match result {
+            Err(e) => assert!(e.contains("Read error"), "Expected 'Read error', got: {}", e),
+            Ok(_) => panic!("Expected error"),
+        }
+    }
+
+    #[test]
+    fn test_entity_store_save_empty() {
+        let dir = std::env::temp_dir().join(format!("entity_empty_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("entity_empty.json");
+
+        let store = EntityStore::new();
+        store.save_to_file(&path).unwrap();
+
+        let loaded = EntityStore::load_from_file(&path).unwrap();
+        assert_eq!(loaded.len(), 0);
+        assert!(loaded.is_empty());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_episodic_store_save_preserves_content() {
+        let dir = std::env::temp_dir().join(format!("episodic_content_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("episodic_content.json");
+
+        let mut store = EpisodicStore::new(100, 0.005);
+        store.add(make_episode("e1", "special content with unicode: \u{00e9}\u{00e8}\u{00ea}", &["tag1", "tag2"], &[0.5, 0.5, 0.5], 5000));
+
+        let json = store.save_to_file(&path).unwrap();
+        assert!(json.contains("special content with unicode"));
+
+        let loaded = EpisodicStore::load_from_file(&path, 100, 0.005).unwrap();
+        assert_eq!(loaded.all()[0].content, "special content with unicode: \u{00e9}\u{00e8}\u{00ea}");
+        assert_eq!(loaded.all()[0].tags, vec!["tag1".to_string(), "tag2".to_string()]);
+        assert_eq!(loaded.all()[0].embedding, vec![0.5, 0.5, 0.5]);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_entity_store_load_invalid_json() {
+        let dir = std::env::temp_dir().join(format!("entity_invalid_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("entity_invalid.json");
+
+        std::fs::write(&path, "{ not valid json }}}").unwrap();
+
+        let result = EntityStore::load_from_file(&path);
+        assert!(result.is_err());
+        match result {
+            Err(e) => assert!(e.contains("Deserialize error"), "Expected 'Deserialize error', got: {}", e),
+            Ok(_) => panic!("Expected error"),
+        }
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // ----------------------------------------------------------
+    // AutoPersistenceConfig tests
+    // ----------------------------------------------------------
+
+    #[test]
+    fn test_auto_persistence_config_default() {
+        let config = AutoPersistenceConfig::default();
+        assert_eq!(config.save_interval_secs, 300);
+        assert_eq!(config.max_snapshots, 5);
+        assert!(config.save_on_drop);
+    }
+
+    #[test]
+    fn test_auto_persistence_config_new() {
+        let config = AutoPersistenceConfig::new("/tmp/memory");
+        assert_eq!(config.base_dir, std::path::PathBuf::from("/tmp/memory"));
+        assert_eq!(config.save_interval_secs, 300);
+    }
+
+    #[test]
+    fn test_auto_persistence_snapshot_path() {
+        let config = AutoPersistenceConfig::new("/tmp");
+        let path = config.snapshot_path("episodic");
+        let name = path.file_name().unwrap().to_str().unwrap();
+        assert!(name.starts_with("episodic_"));
+        assert!(name.ends_with(".json"));
+    }
+
+    #[test]
+    fn test_auto_persistence_list_snapshots_empty() {
+        let dir = std::env::temp_dir().join(format!("test_persist_empty_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let config = AutoPersistenceConfig::new(&dir);
+        let snapshots = config.list_snapshots("episodic");
+        assert!(snapshots.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_auto_persistence_list_snapshots_finds_files() {
+        let dir = std::env::temp_dir().join(format!("test_persist_list_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        std::fs::write(dir.join("episodic_1000.json"), "[]").unwrap();
+        std::fs::write(dir.join("episodic_2000.json"), "[]").unwrap();
+        std::fs::write(dir.join("procedural_1000.json"), "[]").unwrap();
+        let config = AutoPersistenceConfig::new(&dir);
+        let snapshots = config.list_snapshots("episodic");
+        assert_eq!(snapshots.len(), 2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_auto_persistence_rotate_snapshots() {
+        let dir = std::env::temp_dir().join(format!("test_persist_rotate_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        for i in 1..=4 {
+            std::fs::write(dir.join(format!("episodic_{}.json", i * 1000)), "[]").unwrap();
+        }
+        let config = AutoPersistenceConfig {
+            base_dir: dir.clone(),
+            max_snapshots: 2,
+            ..Default::default()
+        };
+        config.rotate_snapshots("episodic");
+        let remaining = config.list_snapshots("episodic");
+        assert_eq!(remaining.len(), 2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_auto_persistence_snapshot_path_format() {
+        let config = AutoPersistenceConfig::new("/tmp");
+        let p1 = config.snapshot_path("test");
+        assert!(p1.to_str().unwrap().contains("test_"));
+    }
+
+    #[test]
+    fn test_auto_persistence_config_custom() {
+        let config = AutoPersistenceConfig {
+            base_dir: "/data/memory".into(),
+            save_interval_secs: 60,
+            max_snapshots: 10,
+            save_on_drop: false,
+        };
+        assert_eq!(config.save_interval_secs, 60);
+        assert_eq!(config.max_snapshots, 10);
+        assert!(!config.save_on_drop);
     }
 }

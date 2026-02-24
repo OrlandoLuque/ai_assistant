@@ -25,8 +25,6 @@
     - feature_matrix.html                                 (v13: v5 — VoiceAgent, MediaGeneration, Distillation, ConstrainedDecoding, PromptSignature GEPA/MIPROv2, MCP v2 Streamable HTTP/OAuth, OTel GenAI conventions, multi-agent handoffs, workflows durable execution, advanced-memory semantic facts, streaming guardrails. 3907 tests)
     - feature_matrix_2026-02-23_1800_pre-v6.html          (v13 snapshot before v6 additions)
     - feature_matrix.html                                 (v14: v6 — RemoteMcpClient, HitlApprovalGate, TrajectoryRecorder, RedTeamSuite, MctsPlanner, AgentDebugger, MCP Elicitation/Audio/Batching, A2A AGENTS.md/ACP, PromptSignature SIMBA, MemoryOS, discourse-aware chunking, MMR diversity retrieval, natural language guards, WebRTC voice, video frame analysis, multi-backend sandbox, deployment profiles. 4449 tests, 231 source files)
-    - feature_matrix_2026-02-24_1200_pre-v8-update.html  (v14 snapshot before v8 additions)
-    - feature_matrix.html                                 (v15: v7+v8 — Server hardening (auth middleware, CORS, correlation IDs, graceful shutdown, Prometheus /metrics, request limits, TLS config), error context enrichment (ContextualError + ResultExt), prelude module, config hot-reload (ConfigWatcher), Dockerfile, memory persistence (save/load, AutoPersistenceConfig, snapshots, rotation), output PII guard, output toxicity guard, provider-level structured logging, module-level logging (assistant, cloud_connectors, mcp_client). 4882 tests, 232 source files)
 -->
 <html lang="es">
 <head>
@@ -730,7 +728,7 @@
 <body>
 
 <h1>AI Assistant &mdash; Matriz Casos de Uso vs Tecnolog&iacute;as</h1>
-<p class="subtitle">v15 (2026-02-24) &mdash; 4882 tests | 6 benchmarks | 20 examples | 232 source files | 0 warnings &mdash; Haz clic en cualquier celda para editarla.</p>
+<p class="subtitle">v14 (2026-02-23) &mdash; 4449 tests | 6 benchmarks | 20 examples | 231 source files | 0 warnings &mdash; Haz clic en cualquier celda para editarla.</p>
 
 <div class="legend">
   <div class="legend-item"><div class="legend-dot" style="background:var(--core)"></div>Core (siempre activo)</div>
@@ -840,21 +838,20 @@
   </table>
 
   <h2>Grupos de tecnolog&iacute;as (filas)</h2>
-  <p>Las filas est&aacute;n organizadas en 13 grupos colapsables:</p>
+  <p>Las filas est&aacute;n organizadas en 12 grupos colapsables:</p>
   <ul>
     <li><strong>Core &amp; Providers</strong> &mdash; Providers de LLM, config, sesiones, HTTP client, AWS Bedrock SigV4, provider plugins (7 presets), model registry, EmbeddingProvider trait (4 backends), GeminiProvider nativo, AsyncProviderPlugin (sync/async bridge), Ollama tool calling nativo, PromptToolFallback</li>
     <li><strong>RAG &amp; Knowledge</strong> &mdash; RAG, embeddings, graphs, documentos (CSV, PPTX, XLSX, EML), feeds, KPKG, pgvector, semantic chunking</li>
-    <li><strong>Security &amp; Access Control</strong> &mdash; Sanitizaci&oacute;n, PII, moderaci&oacute;n, RBAC, cifrado, SHA-256/HMAC signing, GuardrailPipeline (8 guards incl. output PII &amp; toxicity)</li>
+    <li><strong>Security &amp; Access Control</strong> &mdash; Sanitizaci&oacute;n, PII, moderaci&oacute;n, RBAC, cifrado, SHA-256/HMAC signing, GuardrailPipeline (6 guards)</li>
     <li><strong>Tools &amp; Agent</strong> &mdash; Tool registry, agentic loop, MCP, prompt chaining</li>
     <li><strong>Autonomous Agent</strong> &mdash; Loop aut&oacute;nomo, pol&iacute;ticas, sandbox, OS tools, scheduler, butler (con detecci&oacute;n de speech), browser CDP, code sandbox, container tools</li>
     <li><strong>Multi-Agent &amp; Orchestration</strong> &mdash; Orquestador, memoria compartida, task decomposition, agentes distribuidos</li>
     <li><strong>Containers &amp; Documents</strong> &mdash; ContainerExecutor (Docker/bollard), ContainerSandbox (ejecuci&oacute;n aislada), SharedFolder (bind mounts + cloud sync), DocumentPipeline (PDF, DOCX, PPTX via pandoc)</li>
     <li><strong>Audio &amp; Speech</strong> &mdash; SpeechProvider trait, STT (OpenAI Whisper, whisper.cpp local, Google Cloud), TTS (OpenAI, Google, Piper, Coqui), factory (6 providers)</li>
     <li><strong>Networking &amp; Distribution</strong> &mdash; DHT, CRDT, MapReduce, QUIC, Merkle sync, P2P manager</li>
-    <li><strong>HTTP Server &amp; API</strong> &mdash; REST server, SSE, WebSocket, resumable streaming, OpenAPI, webhooks, colas, auth middleware (Bearer+API Key), CORS, correlation IDs, graceful shutdown, Prometheus /metrics, request limits, TLS config</li>
+    <li><strong>HTTP Server &amp; API</strong> &mdash; REST server, SSE, WebSocket, resumable streaming, OpenAPI, webhooks, colas</li>
     <li><strong>Analytics &amp; Evaluation</strong> &mdash; M&eacute;tricas, analytics, confianza, alucinaciones, ensembles, A/B testing, LLM-as-Judge (6 criteria, pairwise, RAG faithfulness), forecasting</li>
     <li><strong>Cross-Cutting Utilities</strong> &mdash; Adaptive thinking, memoria, event bus, caching, plugins, i18n, OTel, cloud connectors, WASM, smart suggestions, CI/CD pipeline, etc.</li>
-    <li><strong>v7/v8 Features</strong> &mdash; Error context enrichment (ContextualError + ResultExt), prelude module, config hot-reload (ConfigWatcher), Dockerfile, memory persistence, output PII guard, output toxicity guard, provider-level structured logging, module-level logging</li>
   </ul>
   <p>La etiqueta <span style="color:#fbbf24;font-size:0.75rem">[nombre-flag]</span> junto al nombre de una tecnolog&iacute;a indica qu&eacute; feature flag la activa.</p>
 
@@ -951,9 +948,7 @@
     <li><code>feature_matrix_2026-02-23_1200_pre-v5.html</code> &mdash; v12 snapshot antes de v5</li>
     <li><code>feature_matrix.html</code> &mdash; v13: v5 — VoiceAgent (70 tests), MediaGeneration (62 tests), Distillation (53 tests), ConstrainedDecoding (36 tests), PromptSignature GEPA/MIPROv2 (157 tests), MCP v2 Streamable HTTP/OAuth (104 tests), OTel GenAI conventions (68 tests), multi-agent handoffs (84 tests), workflows durable execution (93 tests), advanced-memory semantic facts (122 tests), streaming guardrails updated. 3907 tests, 225 source files, 0 warnings</li>
     <li><code>feature_matrix_2026-02-23_1800_pre-v6.html</code> &mdash; v13 snapshot antes de v6</li>
-    <li><code>feature_matrix.html</code> &mdash; v14: v6 — RemoteMcpClient (MCP client pool), HitlApprovalGate (Human-in-the-Loop), TrajectoryRecorder (agent trajectory eval), RedTeamSuite (automated red teaming), MctsPlanner (MCTS planning), AgentDebugger (devtools). Extensions: MCP Elicitation/Audio/Batching/Completions, A2A AGENTS.md parser/ACP Bridge, PromptSignature SIMBA/reasoning traces/LLM-as-Judge, MemoryOS, discourse-aware chunking, MMR diversity retrieval/hierarchical router, natural language guards, WebRTC transport/Speech-to-Speech, video frame analysis, multi-backend sandbox (Podman/WASM/Process), deployment profiles. 4449 tests, 231 source files, 0 warnings</li>
-    <li><code>feature_matrix_2026-02-24_1200_pre-v8-update.html</code> &mdash; v14 snapshot antes de v8</li>
-    <li><code>feature_matrix.html</code> &mdash; v15 (actual): v7+v8 — Server hardening (auth middleware Bearer+API Key, configurable CORS, X-Request-Id correlation IDs, graceful shutdown, Prometheus /metrics, request limits, TLS config struct), error context enrichment (ContextualError + ResultExt), prelude module, config hot-reload (ConfigWatcher), Dockerfile + .dockerignore, memory persistence (save_to_file/load_from_file, AutoPersistenceConfig with snapshots and rotation), output PII guard, output toxicity guard, provider-level structured logging, module-level logging (assistant, cloud_connectors, mcp_client). 4882 tests, 232 source files, 0 warnings</li>
+    <li><code>feature_matrix.html</code> &mdash; v14 (actual): v6 — RemoteMcpClient (MCP client pool), HitlApprovalGate (Human-in-the-Loop), TrajectoryRecorder (agent trajectory eval), RedTeamSuite (automated red teaming), MctsPlanner (MCTS planning), AgentDebugger (devtools). Extensions: MCP Elicitation/Audio/Batching/Completions, A2A AGENTS.md parser/ACP Bridge, PromptSignature SIMBA/reasoning traces/LLM-as-Judge, MemoryOS, discourse-aware chunking, MMR diversity retrieval/hierarchical router, natural language guards, WebRTC transport/Speech-to-Speech, video frame analysis, multi-backend sandbox (Podman/WASM/Process), deployment profiles. 4449 tests, 231 source files, 0 warnings</li>
   </ul>
   <p><strong>Pol&iacute;tica de backups:</strong> antes de cambios significativos, crear copia con formato <code>feature_matrix_YYYY-MM-DD_HHMM_descripcion.html</code>.</p>
 
@@ -1188,10 +1183,10 @@ const GROUPS = [
       { tech: 'Log Redaction', flag: null,
         cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
         notes: 'Siempre compilado. Redacción de datos sensibles en logs, siempre útil.' },
-      { tech: 'Guardrail Pipeline (8 built-in guards + natural language)', flag: 'security',
+      { tech: 'Guardrail Pipeline (6 built-in guards + natural language)', flag: 'security',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['multi_user','agent_tools','autonomous','multi_agent','http_server'],
-        notes: 'Feature flag security. Guard trait unificado + GuardrailPipeline orchestrator con 8 guards: ContentLengthGuard, RateLimitGuard, PatternGuard, ToxicityGuard, PiiGuard, AttackGuard, OutputPiiGuard, OutputToxicityGuard. Stages PreSend/PostReceive, umbrales configurables, audit trail de violaciones. v6: natural language guards (define rules in plain English/Spanish, auto-compiled to guard logic). v8: output-side PII guard (scans LLM responses for PII leaks), output toxicity guard (blocks toxic/harmful generated content). guardrail_pipeline.rs. v2+v6+v8.' },
+        notes: 'Feature flag security. Guard trait unificado + GuardrailPipeline orchestrator con 6 guards: ContentLengthGuard, RateLimitGuard, PatternGuard, ToxicityGuard, PiiGuard, AttackGuard. Stages PreSend/PostReceive, umbrales configurables, audit trail de violaciones. v6: natural language guards (define rules in plain English/Spanish, auto-compiled to guard logic). guardrail_pipeline.rs (770 lines). v2+v6.' },
     ]
   },
   {
@@ -1439,34 +1434,6 @@ const GROUPS = [
         cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
         typical: ['http_server','multi_user'],
         notes: 'Siempre compilado. Cola de prioridad con process_all, process_batch y process_until_empty para gestionar requests en cualquier contexto.' },
-      { tech: 'Auth Middleware (Bearer + API Key)', flag: null,
-        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
-        typical: ['http_server','multi_user','autonomous','multi_agent'],
-        notes: 'Siempre compilado. AuthMiddleware con soporte Bearer token y API Key (X-API-Key header). Configurable per-route, deny-by-default. server.rs. v8.' },
-      { tech: 'Configurable CORS', flag: null,
-        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
-        typical: ['http_server','multi_user'],
-        notes: 'Siempre compilado. CorsConfig con allowed_origins, allowed_methods, allowed_headers, max_age, credentials support. Preflight OPTIONS handling. server.rs. v8.' },
-      { tech: 'Request Correlation IDs (X-Request-Id)', flag: null,
-        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
-        typical: ['http_server','multi_user','autonomous','multi_agent'],
-        notes: 'Siempre compilado. Auto-generated X-Request-Id UUID on each request, propagated through response headers for distributed tracing correlation. server.rs. v8.' },
-      { tech: 'Graceful Shutdown', flag: null,
-        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
-        typical: ['http_server','multi_user','autonomous','multi_agent','distributed'],
-        notes: 'Siempre compilado. Graceful shutdown con drain de conexiones activas, configurable shutdown timeout, signal handling (SIGTERM/SIGINT). server.rs. v8.' },
-      { tech: 'Prometheus /metrics Endpoint', flag: null,
-        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
-        typical: ['http_server','multi_user','autonomous','multi_agent'],
-        notes: 'Siempre compilado. Prometheus-compatible /metrics endpoint: request count, latency histograms, error rates, active connections. server.rs. v8.' },
-      { tech: 'Request Limits (max headers, max header line)', flag: null,
-        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
-        typical: ['http_server','multi_user'],
-        notes: 'Siempre compilado. Configurable request limits: max_headers, max_header_line_bytes. Protection against oversized request attacks. server.rs. v8.' },
-      { tech: 'TLS Configuration (struct ready)', flag: null,
-        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
-        typical: ['http_server','multi_user','distributed','p2p'],
-        notes: 'Siempre compilado. TlsConfig struct: cert_path, key_path, min_protocol_version. Ready for TLS termination integration. server.rs. v8.' },
     ]
   },
   {
@@ -1587,10 +1554,10 @@ const GROUPS = [
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['basic_chat','rag_chat','agent_tools'],
         notes: 'Feature flag adapters. Adaptadores de providers externos.' },
-      { tech: 'OpenTelemetry (GenAI conventions, agent tracing, structured logging)', flag: 'otel',
+      { tech: 'OpenTelemetry (GenAI conventions, agent tracing)', flag: 'otel',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['http_server','autonomous','multi_agent','distributed','multi_user'],
-        notes: 'Feature flag otel. Tracing OTel-compatible para operaciones AI: spans, m&eacute;tricas, propagaci&oacute;n de contexto distribuido. v5: GenAI semantic conventions, agent tracing spans, cost attribution per-request y per-model. v8: provider-level structured logging (per-provider request/response logging with metadata), module-level logging for assistant, cloud_connectors, mcp_client modules. 68 tests. v4+v5+v8.' },
+        notes: 'Feature flag otel. Tracing OTel-compatible para operaciones AI: spans, m&eacute;tricas, propagaci&oacute;n de contexto distribuido. v5: GenAI semantic conventions, agent tracing spans, cost attribution per-request y per-model. 68 tests. v4+v5.' },
       { tech: 'Cloud Connectors (S3, Google Drive)', flag: 'cloud-connectors',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['rag_chat','kpkg','autonomous','http_server'],
@@ -1650,10 +1617,10 @@ const GROUPS = [
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['multi_agent','autonomous','distributed','http_server'],
         notes: 'Feature flag a2a. Google A2A (Agent-to-Agent) protocol implementation: agent cards, task lifecycle, message exchange, capability discovery. v6: AGENTS.md parser (discovery via repo metadata), ACP Bridge (Agent Communication Protocol interop). ~45 tests. v4+v6.' },
-      { tech: 'AdvancedMemory (semantic facts, temporal graphs, Memory OS, persistence)', flag: 'advanced-memory',
+      { tech: 'AdvancedMemory (semantic facts, temporal graphs, Memory OS)', flag: 'advanced-memory',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['basic_chat','rag_chat','autonomous','multi_agent'],
-        notes: 'Feature flag advanced-memory. Episodic + semantic memory layers, memory consolidation, temporal decay, importance scoring, cross-session recall. v5: semantic facts extraction, temporal knowledge graphs, procedure evolution tracking, memory compaction strategies. v6: Memory OS (automatic extraction from conversations, background scheduler for consolidation, cross-session persistent recall, semantic search over memory store). v8: memory persistence (save_to_file/load_from_file JSON serialization), AutoPersistenceConfig (periodic snapshots, file rotation, configurable intervals). 122 tests. v4+v5+v6+v8.' },
+        notes: 'Feature flag advanced-memory. Episodic + semantic memory layers, memory consolidation, temporal decay, importance scoring, cross-session recall. v5: semantic facts extraction, temporal knowledge graphs, procedure evolution tracking, memory compaction strategies. v6: Memory OS (automatic extraction from conversations, background scheduler for consolidation, cross-session persistent recall, semantic search over memory store). 122 tests. v4+v5+v6.' },
       { tech: 'OnlineEval (live quality monitoring)', flag: 'eval',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['autonomous','multi_agent','http_server'],
@@ -1666,10 +1633,10 @@ const GROUPS = [
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['multi_agent','autonomous','distributed'],
         notes: 'Feature flag multi-agent. Multi-layer agent graph: hierarchical orchestration, sub-graph composition, cross-layer communication, dynamic graph restructuring. ~70 tests. v4.' },
-      { tech: 'GuardrailPipeline (streaming guardrails, natural language, output guards)', flag: 'security',
+      { tech: 'GuardrailPipeline (streaming guardrails, natural language)', flag: 'security',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['basic_chat','rag_chat','autonomous','multi_agent','http_server'],
-        notes: 'Feature flag security. Streaming guardrail pipeline: real-time content filtering during token generation, partial response validation, early termination on violation. v5: streaming guardrails con sliding window analysis, buffered pattern matching, configurable flush policies. v6: natural language guards (define rules in plain English/Spanish, auto-compiled to guard logic). v8: OutputPiiGuard (scans LLM output for PII leaks), OutputToxicityGuard (blocks toxic generated content). ~22 tests. v4+v5+v6+v8.' },
+        notes: 'Feature flag security. Streaming guardrail pipeline: real-time content filtering during token generation, partial response validation, early termination on violation. v5: streaming guardrails con sliding window analysis, buffered pattern matching, configurable flush policies. v6: natural language guards (define rules in plain English/Spanish, auto-compiled to guard logic). ~22 tests. v4+v5+v6.' },
       { tech: 'DistributedNetwork (P2P discovery)', flag: 'distributed-network',
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['distributed','p2p'],
@@ -1744,47 +1711,6 @@ const GROUPS = [
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['autonomous','multi_agent','agent_tools'],
         notes: 'Feature flag devtools (NEW). AgentDebugger, ExecutionRecorder, PerformanceProfiler, StateInspector. Agent development tools: step-through execution, state inspection, performance profiling, execution recording/replay, breakpoints on tool calls or state conditions. agent_devtools.rs. v6.' },
-    ]
-  },
-  {
-    name: 'v7/v8 Features',
-    rows: [
-      { tech: 'Error Context Enrichment (ContextualError + ResultExt)', flag: null,
-        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
-        typical: ['basic_chat','rag_chat','multi_user','agent_tools','autonomous','multi_agent','http_server','distributed','p2p'],
-        notes: 'Siempre compilado. ContextualError wrapper con source chain, context message, backtrace capture. ResultExt trait para .context() y .with_context() on any Result. Improved error diagnostics across the crate. v8.' },
-      { tech: 'Prelude Module', flag: null,
-        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
-        typical: ['basic_chat','rag_chat','multi_user','agent_tools','autonomous','multi_agent','http_server'],
-        notes: 'Siempre compilado. Prelude module (use ai_assistant::prelude::*) for ergonomic imports of the most commonly used types, traits, and functions. v8.' },
-      { tech: 'Config Hot-Reload (ConfigWatcher)', flag: null,
-        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
-        typical: ['http_server','multi_user','autonomous','multi_agent'],
-        notes: 'Siempre compilado. ConfigWatcher: file-system watcher for config files, automatic reload on change, callback notification, debounced updates. config_file.rs. v8.' },
-      { tech: 'Dockerfile + .dockerignore', flag: null,
-        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
-        typical: ['http_server','autonomous','multi_agent','distributed'],
-        notes: 'Siempre disponible. Multi-stage Dockerfile for building optimized production images, .dockerignore for clean build contexts. Deployment-ready containerization. v8.' },
-      { tech: 'Memory Persistence (save/load, AutoPersistenceConfig)', flag: 'advanced-memory',
-        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
-        typical: ['basic_chat','rag_chat','autonomous','multi_agent'],
-        notes: 'Feature flag advanced-memory. save_to_file/load_from_file for JSON persistence of memory store. AutoPersistenceConfig: periodic snapshots, configurable intervals, file rotation with max_snapshots. advanced_memory.rs. v8.' },
-      { tech: 'Output PII Guard', flag: 'security',
-        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
-        typical: ['multi_user','http_server','autonomous','multi_agent'],
-        notes: 'Feature flag security. OutputPiiGuard: scans LLM-generated responses for PII (emails, phone numbers, SSNs, credit cards, etc.) before returning to user. PostReceive stage guard. guardrail_pipeline.rs. v8.' },
-      { tech: 'Output Toxicity Guard', flag: 'security',
-        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
-        typical: ['multi_user','http_server','autonomous','multi_agent'],
-        notes: 'Feature flag security. OutputToxicityGuard: blocks toxic, harmful, or offensive content generated by LLMs. Keyword-based + pattern detection. PostReceive stage guard. guardrail_pipeline.rs. v8.' },
-      { tech: 'Provider-Level Structured Logging', flag: 'otel',
-        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
-        typical: ['http_server','autonomous','multi_agent','multi_user'],
-        notes: 'Feature flag otel. Per-provider structured logging: request/response metadata, latency, token counts, error details. Integrates with OTel spans for full observability. providers.rs + opentelemetry_integration.rs. v8.' },
-      { tech: 'Module-Level Logging (assistant, cloud_connectors, mcp_client)', flag: null,
-        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
-        typical: ['basic_chat','rag_chat','agent_tools','autonomous','multi_agent','http_server'],
-        notes: 'Siempre compilado. Structured log::debug!/log::info!/log::warn! statements across assistant.rs, cloud_connectors.rs, mcp_client.rs. Module-scoped logging for debugging and operational monitoring. v8.' },
     ]
   },
 ];

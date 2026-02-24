@@ -1,0 +1,13 @@
+target/
+.git/
+.claude/
+docs/
+*.md
+!README.md
+Informe_Viabilidad_ai_assistant.docx
+*.py
+*.tmp
+*.bak
+src/*.tmp
+src/*.bak
+src/*.txt

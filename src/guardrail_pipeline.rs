@@ -1354,6 +1354,583 @@ impl Guard for NaturalLanguageGuard {
     }
 }
 
+// ============================================================================
+// Output Guards (PostReceive)
+// ============================================================================
+
+/// Action to take when PII is detected in output.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PiiAction {
+    /// Block the response entirely.
+    Block,
+    /// Redact detected PII with the given character.
+    Redact(char),
+}
+
+/// Configuration for the output PII guard.
+#[derive(Debug, Clone)]
+pub struct OutputPiiConfig {
+    pub action: PiiAction,
+    pub check_emails: bool,
+    pub check_phones: bool,
+    pub check_ssns: bool,
+    pub check_credit_cards: bool,
+    pub check_ip_addresses: bool,
+}
+
+impl Default for OutputPiiConfig {
+    fn default() -> Self {
+        Self {
+            action: PiiAction::Block,
+            check_emails: true,
+            check_phones: true,
+            check_ssns: true,
+            check_credit_cards: true,
+            check_ip_addresses: true,
+        }
+    }
+}
+
+/// Guard that scans LLM output for PII leakage.
+///
+/// Unlike [`PiiGuard`] (which wraps the full [`PiiDetector`] with regex), this
+/// guard uses lightweight heuristic matching and is specifically designed for
+/// post-receive output scanning. It supports configurable per-type checks and
+/// can either block or redact detected PII.
+pub struct OutputPiiGuard {
+    config: OutputPiiConfig,
+}
+
+impl OutputPiiGuard {
+    /// Create a new output PII guard with the given configuration.
+    pub fn new(config: OutputPiiConfig) -> Self {
+        Self { config }
+    }
+
+    /// Replace detected PII in `text` with a repeated redaction character.
+    ///
+    /// Each matched span is replaced by the redaction character repeated to the
+    /// same length as the original match.
+    pub fn redact(&self, text: &str) -> String {
+        let redact_char = match &self.config.action {
+            PiiAction::Redact(c) => *c,
+            PiiAction::Block => '*',
+        };
+
+        let mut result = text.to_string();
+
+        // Collect all spans (start, end) to redact, sorted descending so
+        // later replacements don't shift earlier positions.
+        let mut spans: Vec<(usize, usize)> = Vec::new();
+
+        if self.config.check_emails {
+            spans.extend(Self::find_emails(&result));
+        }
+        if self.config.check_ssns {
+            spans.extend(Self::find_ssns(&result));
+        }
+        if self.config.check_credit_cards {
+            spans.extend(Self::find_credit_cards(&result));
+        }
+        if self.config.check_phones {
+            spans.extend(Self::find_phones(&result));
+        }
+        if self.config.check_ip_addresses {
+            spans.extend(Self::find_ip_addresses(&result));
+        }
+
+        // Sort descending by start position so we can replace from end to start.
+        spans.sort_by(|a, b| b.0.cmp(&a.0));
+
+        // Deduplicate overlapping spans.
+        spans.dedup_by(|a, b| a.0 >= b.0 && a.1 <= b.1);
+
+        for (start, end) in &spans {
+            let len = end - start;
+            let replacement: String = std::iter::repeat_n(redact_char, len).collect();
+            result.replace_range(*start..*end, &replacement);
+        }
+
+        result
+    }
+
+    // -- Heuristic matchers (no regex) --
+
+    /// Detect email-like patterns: word@word.word
+    fn find_emails(text: &str) -> Vec<(usize, usize)> {
+        let mut spans = Vec::new();
+        let bytes = text.as_bytes();
+        let len = bytes.len();
+
+        // Scan for '@' and expand outward.
+        for (i, &b) in bytes.iter().enumerate() {
+            if b != b'@' {
+                continue;
+            }
+
+            // Expand left: [a-zA-Z0-9._%+-]
+            let mut left = i;
+            while left > 0 {
+                let c = bytes[left - 1];
+                if c.is_ascii_alphanumeric()
+                    || c == b'.'
+                    || c == b'_'
+                    || c == b'%'
+                    || c == b'+'
+                    || c == b'-'
+                {
+                    left -= 1;
+                } else {
+                    break;
+                }
+            }
+
+            // Expand right: [a-zA-Z0-9.-]+\.[a-zA-Z]{2,}
+            let mut right = i + 1;
+            let mut has_dot = false;
+            while right < len {
+                let c = bytes[right];
+                if c.is_ascii_alphanumeric() || c == b'.' || c == b'-' {
+                    if c == b'.' {
+                        has_dot = true;
+                    }
+                    right += 1;
+                } else {
+                    break;
+                }
+            }
+
+            // Validate: non-empty local, non-empty domain with dot, TLD >= 2 chars.
+            if left < i && (i + 1) < right && has_dot {
+                let domain = &text[i + 1..right];
+                if let Some(dot_pos) = domain.rfind('.') {
+                    let tld = &domain[dot_pos + 1..];
+                    if tld.len() >= 2 && tld.chars().all(|c| c.is_ascii_alphabetic()) {
+                        spans.push((left, right));
+                    }
+                }
+            }
+        }
+
+        spans
+    }
+
+    /// Detect SSN patterns: NNN-NN-NNNN
+    fn find_ssns(text: &str) -> Vec<(usize, usize)> {
+        let mut spans = Vec::new();
+
+        // Scan for NNN-NN-NNNN (exactly 11 chars).
+        let bytes = text.as_bytes();
+        if bytes.len() < 11 {
+            return spans;
+        }
+
+        for i in 0..=bytes.len() - 11 {
+            // Check boundary: must not be preceded or followed by a digit.
+            if i > 0 && bytes[i - 1].is_ascii_digit() {
+                continue;
+            }
+            if i + 11 < bytes.len() && bytes[i + 11].is_ascii_digit() {
+                continue;
+            }
+
+            // Pattern: DDD-DD-DDDD
+            if bytes[i].is_ascii_digit()
+                && bytes[i + 1].is_ascii_digit()
+                && bytes[i + 2].is_ascii_digit()
+                && bytes[i + 3] == b'-'
+                && bytes[i + 4].is_ascii_digit()
+                && bytes[i + 5].is_ascii_digit()
+                && bytes[i + 6] == b'-'
+                && bytes[i + 7].is_ascii_digit()
+                && bytes[i + 8].is_ascii_digit()
+                && bytes[i + 9].is_ascii_digit()
+                && bytes[i + 10].is_ascii_digit()
+            {
+                spans.push((i, i + 11));
+            }
+        }
+
+        spans
+    }
+
+    /// Detect credit card patterns: DDDD-DDDD-DDDD-DDDD or DDDD DDDD DDDD DDDD
+    /// or DDDDDDDDDDDDDDDD (16 consecutive digits).
+    fn find_credit_cards(text: &str) -> Vec<(usize, usize)> {
+        let mut spans = Vec::new();
+        let bytes = text.as_bytes();
+
+        if bytes.len() < 16 {
+            return spans;
+        }
+
+        let mut i = 0;
+        while i < bytes.len() {
+            if !bytes[i].is_ascii_digit() {
+                i += 1;
+                continue;
+            }
+
+            // Check boundary: must not be preceded by a digit.
+            if i > 0 && bytes[i - 1].is_ascii_digit() {
+                i += 1;
+                continue;
+            }
+
+            // Try to match 4 groups of 4 digits separated by optional [-\s].
+            let mut pos = i;
+            let mut groups = 0;
+            let mut digits_in_group = 0;
+
+            let start = pos;
+            while pos < bytes.len() && groups < 4 {
+                if bytes[pos].is_ascii_digit() {
+                    digits_in_group += 1;
+                    pos += 1;
+                    if digits_in_group == 4 {
+                        groups += 1;
+                        digits_in_group = 0;
+                        // Check for separator between groups (not after last).
+                        if groups < 4
+                            && pos < bytes.len()
+                            && (bytes[pos] == b'-' || bytes[pos] == b' ')
+                        {
+                            pos += 1;
+                        }
+                    }
+                } else {
+                    break;
+                }
+            }
+
+            if groups == 4 {
+                // Check boundary: must not be followed by a digit.
+                if pos >= bytes.len() || !bytes[pos].is_ascii_digit() {
+                    spans.push((start, pos));
+                    i = pos;
+                    continue;
+                }
+            }
+
+            i += 1;
+        }
+
+        spans
+    }
+
+    /// Detect phone patterns: DDD-DDD-DDDD or DDD.DDD.DDDD or DDDDDDDDDD
+    fn find_phones(text: &str) -> Vec<(usize, usize)> {
+        let mut spans = Vec::new();
+        let bytes = text.as_bytes();
+
+        if bytes.len() < 10 {
+            return spans;
+        }
+
+        let mut i = 0;
+        while i < bytes.len() {
+            if !bytes[i].is_ascii_digit() {
+                i += 1;
+                continue;
+            }
+
+            // Check boundary: must not be preceded by a digit.
+            if i > 0 && bytes[i - 1].is_ascii_digit() {
+                i += 1;
+                continue;
+            }
+
+            // Try to match DDD[-.]?DDD[-.]?DDDD (10 digits, 0-2 separators).
+            let start = i;
+            let mut pos = i;
+            let mut digit_count = 0;
+            let mut group_sizes: Vec<usize> = Vec::new();
+            let mut current_group = 0;
+
+            while pos < bytes.len() {
+                if bytes[pos].is_ascii_digit() {
+                    digit_count += 1;
+                    current_group += 1;
+                    pos += 1;
+                } else if (bytes[pos] == b'-' || bytes[pos] == b'.') && digit_count < 10 && current_group > 0 {
+                    group_sizes.push(current_group);
+                    current_group = 0;
+                    pos += 1;
+                } else {
+                    break;
+                }
+
+                if digit_count == 10 {
+                    break;
+                }
+            }
+
+            if digit_count == 10 {
+                // Check boundary: must not be followed by a digit.
+                if pos >= bytes.len() || !bytes[pos].is_ascii_digit() {
+                    // Avoid matching SSNs (already handled) — SSNs are DDD-DD-DDDD.
+                    // Phones are DDD-DDD-DDDD or DDD.DDD.DDDD or 10 consecutive digits.
+                    group_sizes.push(current_group);
+                    let is_ssn_pattern = group_sizes == vec![3, 2, 4];
+                    if !is_ssn_pattern {
+                        spans.push((start, pos));
+                    }
+                }
+            }
+
+            i += 1;
+        }
+
+        spans
+    }
+
+    /// Detect IPv4 addresses: D{1,3}.D{1,3}.D{1,3}.D{1,3}
+    fn find_ip_addresses(text: &str) -> Vec<(usize, usize)> {
+        let mut spans = Vec::new();
+        let bytes = text.as_bytes();
+
+        if bytes.len() < 7 {
+            // Minimum: "0.0.0.0"
+            return spans;
+        }
+
+        let mut i = 0;
+        while i < bytes.len() {
+            if !bytes[i].is_ascii_digit() {
+                i += 1;
+                continue;
+            }
+
+            // Check boundary: must not be preceded by a digit or dot.
+            if i > 0 && (bytes[i - 1].is_ascii_digit() || bytes[i - 1] == b'.') {
+                i += 1;
+                continue;
+            }
+
+            // Try to match D{1,3}.D{1,3}.D{1,3}.D{1,3}
+            let start = i;
+            let mut pos = i;
+            let mut octets = 0;
+
+            for octet_idx in 0..4 {
+                let octet_start = pos;
+                let mut digit_count = 0;
+
+                while pos < bytes.len() && bytes[pos].is_ascii_digit() && digit_count < 3 {
+                    digit_count += 1;
+                    pos += 1;
+                }
+
+                if digit_count == 0 {
+                    break;
+                }
+
+                // Validate octet value (0-255).
+                if let Ok(val) = text[octet_start..pos].parse::<u16>() {
+                    if val > 255 {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+
+                octets += 1;
+
+                // Expect a dot between octets (not after the last).
+                if octet_idx < 3 {
+                    if pos < bytes.len() && bytes[pos] == b'.' {
+                        pos += 1;
+                    } else {
+                        break;
+                    }
+                }
+            }
+
+            if octets == 4 {
+                // Check boundary: must not be followed by a digit or dot.
+                if pos >= bytes.len() || (!bytes[pos].is_ascii_digit() && bytes[pos] != b'.') {
+                    spans.push((start, pos));
+                    i = pos;
+                    continue;
+                }
+            }
+
+            i += 1;
+        }
+
+        spans
+    }
+
+    /// Check whether any PII is present in the text given the current config.
+    fn has_pii(&self, text: &str) -> (bool, Vec<String>) {
+        let mut found_types = Vec::new();
+
+        if self.config.check_emails && !Self::find_emails(text).is_empty() {
+            found_types.push("email".to_string());
+        }
+        if self.config.check_phones && !Self::find_phones(text).is_empty() {
+            found_types.push("phone".to_string());
+        }
+        if self.config.check_ssns && !Self::find_ssns(text).is_empty() {
+            found_types.push("ssn".to_string());
+        }
+        if self.config.check_credit_cards && !Self::find_credit_cards(text).is_empty() {
+            found_types.push("credit_card".to_string());
+        }
+        if self.config.check_ip_addresses && !Self::find_ip_addresses(text).is_empty() {
+            found_types.push("ip_address".to_string());
+        }
+
+        let has = !found_types.is_empty();
+        (has, found_types)
+    }
+}
+
+impl Default for OutputPiiGuard {
+    fn default() -> Self {
+        Self::new(OutputPiiConfig::default())
+    }
+}
+
+impl Guard for OutputPiiGuard {
+    fn name(&self) -> &str {
+        "output_pii"
+    }
+
+    fn stage(&self) -> GuardStage {
+        GuardStage::PostReceive
+    }
+
+    fn check(&self, text: &str) -> GuardCheckResult {
+        let (has_pii, found_types) = self.has_pii(text);
+
+        if !has_pii {
+            return GuardCheckResult {
+                guard_name: self.name().to_string(),
+                action: GuardAction::Pass,
+                score: 0.0,
+                details: "no PII detected in output".to_string(),
+            };
+        }
+
+        let types_str = found_types.join(", ");
+        let action = match &self.config.action {
+            PiiAction::Block => {
+                GuardAction::Block(format!("PII detected in output: {}", types_str))
+            }
+            PiiAction::Redact(_) => {
+                GuardAction::Warn(format!("PII detected in output (redactable): {}", types_str))
+            }
+        };
+
+        GuardCheckResult {
+            guard_name: self.name().to_string(),
+            action,
+            score: 0.9,
+            details: format!("pii_types=[{}]", types_str),
+        }
+    }
+}
+
+/// Configuration for the output toxicity guard.
+#[derive(Debug, Clone)]
+pub struct OutputToxicityConfig {
+    pub severity_threshold: f64,
+}
+
+impl Default for OutputToxicityConfig {
+    fn default() -> Self {
+        Self {
+            severity_threshold: 0.7,
+        }
+    }
+}
+
+/// Guard that screens LLM output for toxic content.
+///
+/// Wraps a [`ToxicityDetector`] and compares its overall score against a
+/// configurable severity threshold. If the score meets or exceeds the
+/// threshold, the output is blocked.
+pub struct OutputToxicityGuard {
+    config: OutputToxicityConfig,
+    detector: ToxicityDetector,
+}
+
+impl OutputToxicityGuard {
+    /// Create a new output toxicity guard with the given configuration.
+    pub fn new(config: OutputToxicityConfig) -> Self {
+        Self {
+            config,
+            detector: ToxicityDetector::default(),
+        }
+    }
+}
+
+impl Default for OutputToxicityGuard {
+    fn default() -> Self {
+        Self::new(OutputToxicityConfig::default())
+    }
+}
+
+impl Guard for OutputToxicityGuard {
+    fn name(&self) -> &str {
+        "output_toxicity"
+    }
+
+    fn stage(&self) -> GuardStage {
+        GuardStage::PostReceive
+    }
+
+    fn check(&self, text: &str) -> GuardCheckResult {
+        let result = self.detector.detect(text);
+        let score = result.overall_score as f64;
+
+        if score >= self.config.severity_threshold {
+            GuardCheckResult {
+                guard_name: self.name().to_string(),
+                action: GuardAction::Block(format!(
+                    "Toxic output detected (score={:.2}, threshold={:.2})",
+                    score, self.config.severity_threshold
+                )),
+                score,
+                details: format!(
+                    "toxic={}, score={:.2}, threshold={:.2}, matches={}",
+                    result.is_toxic,
+                    score,
+                    self.config.severity_threshold,
+                    result.matches.len()
+                ),
+            }
+        } else if score > 0.0 {
+            GuardCheckResult {
+                guard_name: self.name().to_string(),
+                action: GuardAction::Warn(format!(
+                    "Mild toxicity in output (score={:.2})",
+                    score
+                )),
+                score,
+                details: format!(
+                    "toxic={}, score={:.2}, threshold={:.2}, matches={}",
+                    result.is_toxic,
+                    score,
+                    self.config.severity_threshold,
+                    result.matches.len()
+                ),
+            }
+        } else {
+            GuardCheckResult {
+                guard_name: self.name().to_string(),
+                action: GuardAction::Pass,
+                score: 0.0,
+                details: format!(
+                    "clean output, score={:.2}, threshold={:.2}",
+                    score, self.config.severity_threshold
+                ),
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -2298,5 +2875,166 @@ mod tests {
             },
         ]);
         assert_eq!(guard.policy_count(), 2);
+    }
+
+    // ========================================================================
+    // Output PII Guard tests (v8 - item 5.1)
+    // ========================================================================
+
+    #[test]
+    fn test_output_pii_detects_email() {
+        let guard = OutputPiiGuard::new(OutputPiiConfig::default());
+        let result = guard.check("Please contact user@example.com for details.");
+        assert!(matches!(result.action, GuardAction::Block(_)));
+        assert!((result.score - 0.9).abs() < f64::EPSILON);
+        assert!(result.details.contains("email"));
+    }
+
+    #[test]
+    fn test_output_pii_detects_phone() {
+        let guard = OutputPiiGuard::new(OutputPiiConfig::default());
+        let result = guard.check("Call us at 555-123-4567 for support.");
+        assert!(matches!(result.action, GuardAction::Block(_)));
+        assert!((result.score - 0.9).abs() < f64::EPSILON);
+        assert!(result.details.contains("phone"));
+    }
+
+    #[test]
+    fn test_output_pii_detects_ssn() {
+        let guard = OutputPiiGuard::new(OutputPiiConfig::default());
+        let result = guard.check("Your SSN is 123-45-6789.");
+        assert!(matches!(result.action, GuardAction::Block(_)));
+        assert!((result.score - 0.9).abs() < f64::EPSILON);
+        assert!(result.details.contains("ssn"));
+    }
+
+    #[test]
+    fn test_output_pii_detects_credit_card() {
+        let guard = OutputPiiGuard::new(OutputPiiConfig::default());
+        let result = guard.check("Card number: 4111-1111-1111-1111.");
+        assert!(matches!(result.action, GuardAction::Block(_)));
+        assert!((result.score - 0.9).abs() < f64::EPSILON);
+        assert!(result.details.contains("credit_card"));
+    }
+
+    #[test]
+    fn test_output_pii_clean_output_passes() {
+        let guard = OutputPiiGuard::new(OutputPiiConfig::default());
+        let result = guard.check("The weather today is sunny and warm.");
+        assert!(matches!(result.action, GuardAction::Pass));
+        assert_eq!(result.score, 0.0);
+        assert!(result.details.contains("no PII"));
+    }
+
+    #[test]
+    fn test_output_pii_redact_mode() {
+        let guard = OutputPiiGuard::new(OutputPiiConfig {
+            action: PiiAction::Redact('*'),
+            check_emails: true,
+            check_phones: false,
+            check_ssns: false,
+            check_credit_cards: false,
+            check_ip_addresses: false,
+        });
+
+        // In redact mode the guard should return Warn (not Block).
+        let result = guard.check("Contact user@example.com now.");
+        assert!(
+            matches!(result.action, GuardAction::Warn(_)),
+            "Expected Warn in redact mode, got {:?}",
+            result.action
+        );
+
+        // Test the redact method itself.
+        let redacted = guard.redact("Contact user@example.com now.");
+        assert!(!redacted.contains("user@example.com"));
+        assert!(redacted.contains("***"));
+    }
+
+    #[test]
+    fn test_output_pii_block_mode() {
+        let guard = OutputPiiGuard::new(OutputPiiConfig {
+            action: PiiAction::Block,
+            check_emails: true,
+            check_phones: true,
+            check_ssns: true,
+            check_credit_cards: true,
+            check_ip_addresses: true,
+        });
+        let result = guard.check("Email me at test@corp.io");
+        assert!(matches!(result.action, GuardAction::Block(_)));
+    }
+
+    #[test]
+    fn test_output_pii_guard_stage() {
+        let guard = OutputPiiGuard::new(OutputPiiConfig::default());
+        assert_eq!(guard.stage(), GuardStage::PostReceive);
+        assert_eq!(guard.name(), "output_pii");
+    }
+
+    #[test]
+    fn test_output_pii_default_config() {
+        let config = OutputPiiConfig::default();
+        assert_eq!(config.action, PiiAction::Block);
+        assert!(config.check_emails);
+        assert!(config.check_phones);
+        assert!(config.check_ssns);
+        assert!(config.check_credit_cards);
+        assert!(config.check_ip_addresses);
+
+        // Default guard should also work.
+        let guard = OutputPiiGuard::default();
+        assert_eq!(guard.name(), "output_pii");
+    }
+
+    // ========================================================================
+    // Output Toxicity Guard tests (v8 - item 5.2)
+    // ========================================================================
+
+    #[test]
+    fn test_output_toxicity_clean_passes() {
+        let guard = OutputToxicityGuard::new(OutputToxicityConfig::default());
+        let result = guard.check("The sky is clear and the temperature is pleasant.");
+        assert!(matches!(result.action, GuardAction::Pass));
+        assert_eq!(result.score, 0.0);
+    }
+
+    #[test]
+    fn test_output_toxicity_threshold_config() {
+        // A very low threshold should make even mild signals trigger a block.
+        let guard = OutputToxicityGuard::new(OutputToxicityConfig {
+            severity_threshold: 0.01,
+        });
+        assert!((guard.config.severity_threshold - 0.01).abs() < f64::EPSILON);
+
+        // A very high threshold should let most content pass.
+        let guard_high = OutputToxicityGuard::new(OutputToxicityConfig {
+            severity_threshold: 0.99,
+        });
+        let result = guard_high.check("This is normal text.");
+        assert!(matches!(result.action, GuardAction::Pass));
+    }
+
+    #[test]
+    fn test_output_toxicity_guard_name() {
+        let guard = OutputToxicityGuard::new(OutputToxicityConfig::default());
+        assert_eq!(guard.name(), "output_toxicity");
+    }
+
+    #[test]
+    fn test_output_toxicity_guard_stage() {
+        let guard = OutputToxicityGuard::new(OutputToxicityConfig::default());
+        assert_eq!(guard.stage(), GuardStage::PostReceive);
+    }
+
+    #[test]
+    fn test_output_toxicity_default_config() {
+        let config = OutputToxicityConfig::default();
+        assert!((config.severity_threshold - 0.7).abs() < f64::EPSILON);
+
+        // Default guard should also work.
+        let guard = OutputToxicityGuard::default();
+        assert_eq!(guard.name(), "output_toxicity");
+        assert_eq!(guard.stage(), GuardStage::PostReceive);
     }
 }

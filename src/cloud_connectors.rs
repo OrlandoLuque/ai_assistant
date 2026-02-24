@@ -277,6 +277,7 @@ impl S3Client {
 
 impl CloudStorage for S3Client {
     fn list(&self, options: &ListOptions) -> Result<ListResult> {
+        log::info!("S3 list: bucket={}, prefix={:?}", self.config.bucket, options.prefix);
         let mut url = format!("{}?list-type=2", self.config.base_url());
         if let Some(ref prefix) = options.prefix {
             url.push_str(&format!("&prefix={}", prefix));
@@ -305,6 +306,7 @@ impl CloudStorage for S3Client {
     }
 
     fn get(&self, key: &str) -> Result<Vec<u8>> {
+        log::info!("S3 download: bucket={}, key={}", self.config.bucket, key);
         let url = self.object_url(key);
         let resp = self.signed_get(&url)?;
 
@@ -316,6 +318,7 @@ impl CloudStorage for S3Client {
     }
 
     fn put(&self, key: &str, data: &[u8], content_type: Option<&str>) -> Result<()> {
+        log::info!("S3 upload: bucket={}, key={}, size={}", self.config.bucket, key, data.len());
         let url = self.object_url(key);
         let ct = content_type.unwrap_or("application/octet-stream");
         self.signed_put(&url, data, ct)?;
@@ -323,12 +326,14 @@ impl CloudStorage for S3Client {
     }
 
     fn delete(&self, key: &str) -> Result<()> {
+        log::info!("S3 delete: bucket={}, key={}", self.config.bucket, key);
         let url = self.object_url(key);
         self.signed_delete(&url)?;
         Ok(())
     }
 
     fn exists(&self, key: &str) -> Result<bool> {
+        log::debug!("S3 exists check: bucket={}, key={}", self.config.bucket, key);
         let url = self.object_url(key);
         match self.signed_head(&url) {
             Ok(_) => Ok(true),

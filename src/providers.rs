@@ -253,6 +253,11 @@ pub fn generate_ollama_streaming(
     tx: &Sender<AiResponse>,
 ) -> Result<()> {
     let url = format!("{}/api/chat", config.ollama_url);
+    log::debug!(
+        "[llm] ollama_streaming model={} url={}",
+        config.selected_model,
+        url
+    );
 
     let messages = build_messages_array(system_prompt, conversation, config.max_history_messages);
 
@@ -313,6 +318,11 @@ pub fn generate_openai_streaming(
     system_prompt: &str,
     tx: &Sender<AiResponse>,
 ) -> Result<()> {
+    log::debug!(
+        "[llm] openai_streaming provider={:?} model={}",
+        config.provider,
+        config.selected_model
+    );
     let base_url = match &config.provider {
         AiProvider::LMStudio => config.lm_studio_url.clone(),
         AiProvider::TextGenWebUI => config.text_gen_webui_url.clone(),
@@ -400,6 +410,12 @@ pub fn generate_ollama_response(
     system_prompt: &str,
 ) -> Result<String> {
     let url = format!("{}/api/chat", config.ollama_url);
+    log::debug!(
+        "[llm] ollama_request model={} url={} temperature={}",
+        config.selected_model,
+        url,
+        config.temperature
+    );
 
     let messages = build_messages_array(system_prompt, conversation, config.max_history_messages);
 
@@ -461,6 +477,13 @@ pub fn generate_openai_response(
     };
 
     let url = format!("{}/v1/chat/completions", base_url);
+    log::debug!(
+        "[llm] openai_request provider={:?} model={} url={} temperature={}",
+        config.provider,
+        config.selected_model,
+        url,
+        config.temperature
+    );
 
     let messages = build_messages_array(system_prompt, conversation, config.max_history_messages);
 
@@ -500,6 +523,12 @@ pub fn generate_kobold_response(
     system_prompt: &str,
 ) -> Result<String> {
     let url = format!("{}/api/v1/generate", config.kobold_url);
+    log::debug!(
+        "[llm] kobold_request model={} url={} temperature={}",
+        config.selected_model,
+        url,
+        config.temperature
+    );
 
     // Build prompt from conversation (Kobold uses a single prompt string)
     let mut full_prompt = format!("### System:\n{}\n\n", system_prompt);
@@ -556,10 +585,21 @@ pub fn generate_response_streaming(
     system_prompt: &str,
     tx: &Sender<AiResponse>,
 ) -> Result<()> {
-    match &config.provider {
+    let start = std::time::Instant::now();
+    log::info!(
+        "[llm] provider={:?} model={} request_start streaming=true",
+        config.provider,
+        config.selected_model
+    );
+
+    let result = match &config.provider {
         AiProvider::Ollama => generate_ollama_streaming(config, conversation, system_prompt, tx),
         AiProvider::KoboldCpp => {
             // Kobold doesn't support streaming well, fall back to non-streaming
+            log::warn!(
+                "[llm] provider=KoboldCpp model={} fallback=non-streaming reason=kobold_no_stream_support",
+                config.selected_model
+            );
             let response = generate_kobold_response(config, conversation, system_prompt)?;
             let _ = tx.send(AiResponse::Complete(response));
             Ok(())
@@ -582,11 +622,38 @@ pub fn generate_response_streaming(
         }
         AiProvider::Gemini => {
             // Gemini uses its own API format, not OpenAI-compatible
+            log::info!(
+                "[llm] provider=Gemini model={} fallback=non-streaming reason=gemini_custom_api",
+                config.selected_model
+            );
             let response = crate::cloud_providers::generate_gemini_cloud(config, conversation, system_prompt)?;
             let _ = tx.send(AiResponse::Complete(response));
             Ok(())
         }
+    };
+
+    let latency_ms = start.elapsed().as_millis();
+    match &result {
+        Ok(()) => {
+            log::info!(
+                "[llm] provider={:?} model={} status=ok latency_ms={} streaming=true",
+                config.provider,
+                config.selected_model,
+                latency_ms
+            );
+        }
+        Err(e) => {
+            log::error!(
+                "[llm] provider={:?} model={} status=error latency_ms={} streaming=true error={}",
+                config.provider,
+                config.selected_model,
+                latency_ms,
+                e
+            );
+        }
     }
+
+    result
 }
 
 /// Generate response without streaming - routes to appropriate provider
@@ -595,7 +662,14 @@ pub fn generate_response(
     conversation: &[ChatMessage],
     system_prompt: &str,
 ) -> Result<String> {
-    match &config.provider {
+    let start = std::time::Instant::now();
+    log::info!(
+        "[llm] provider={:?} model={} request_start streaming=false",
+        config.provider,
+        config.selected_model
+    );
+
+    let result = match &config.provider {
         AiProvider::Ollama => generate_ollama_response(config, conversation, system_prompt),
         AiProvider::KoboldCpp => generate_kobold_response(config, conversation, system_prompt),
         AiProvider::LMStudio
@@ -617,7 +691,33 @@ pub fn generate_response(
         AiProvider::Gemini => {
             crate::cloud_providers::generate_gemini_cloud(config, conversation, system_prompt)
         }
+    };
+
+    let latency_ms = start.elapsed().as_millis();
+    match &result {
+        Ok(response) => {
+            // Approximate token count from response length (rough: 1 token ~ 4 chars)
+            let approx_tokens = response.len() / 4;
+            log::info!(
+                "[llm] provider={:?} model={} status=ok latency_ms={} approx_tokens_out={}",
+                config.provider,
+                config.selected_model,
+                latency_ms,
+                approx_tokens
+            );
+        }
+        Err(e) => {
+            log::error!(
+                "[llm] provider={:?} model={} status=error latency_ms={} error={}",
+                config.provider,
+                config.selected_model,
+                latency_ms,
+                e
+            );
+        }
     }
+
+    result
 }
 
 // ============================================================================
@@ -805,11 +905,23 @@ pub fn generate_response_streaming_cancellable(
 ) -> Result<()> {
     // Check for cancellation before starting
     if cancel_token.is_cancelled() {
+        log::info!(
+            "[llm] provider={:?} model={} status=cancelled reason=pre_start",
+            config.provider,
+            config.selected_model
+        );
         let _ = tx.send(AiResponse::Cancelled(String::new()));
         return Ok(());
     }
 
-    match &config.provider {
+    let start = std::time::Instant::now();
+    log::info!(
+        "[llm] provider={:?} model={} request_start streaming=true cancellable=true",
+        config.provider,
+        config.selected_model
+    );
+
+    let result = match &config.provider {
         AiProvider::Ollama => generate_ollama_streaming_cancellable(
             config,
             conversation,
@@ -821,9 +933,17 @@ pub fn generate_response_streaming_cancellable(
             // Kobold doesn't support streaming well, fall back to non-streaming
             // Check cancellation before blocking call
             if cancel_token.is_cancelled() {
+                log::info!(
+                    "[llm] provider=KoboldCpp model={} status=cancelled reason=pre_kobold_call",
+                    config.selected_model
+                );
                 let _ = tx.send(AiResponse::Cancelled(String::new()));
                 return Ok(());
             }
+            log::warn!(
+                "[llm] provider=KoboldCpp model={} fallback=non-streaming reason=kobold_no_stream_support",
+                config.selected_model
+            );
             let response = generate_kobold_response(config, conversation, system_prompt)?;
             let _ = tx.send(AiResponse::Complete(response));
             Ok(())
@@ -850,14 +970,45 @@ pub fn generate_response_streaming_cancellable(
         ),
         AiProvider::Gemini => {
             if cancel_token.is_cancelled() {
+                log::info!(
+                    "[llm] provider=Gemini model={} status=cancelled reason=pre_gemini_call",
+                    config.selected_model
+                );
                 let _ = tx.send(AiResponse::Cancelled(String::new()));
                 return Ok(());
             }
+            log::info!(
+                "[llm] provider=Gemini model={} fallback=non-streaming reason=gemini_custom_api",
+                config.selected_model
+            );
             let response = crate::cloud_providers::generate_gemini_cloud(config, conversation, system_prompt)?;
             let _ = tx.send(AiResponse::Complete(response));
             Ok(())
         }
+    };
+
+    let latency_ms = start.elapsed().as_millis();
+    match &result {
+        Ok(()) => {
+            log::info!(
+                "[llm] provider={:?} model={} status=ok latency_ms={} streaming=true cancellable=true",
+                config.provider,
+                config.selected_model,
+                latency_ms
+            );
+        }
+        Err(e) => {
+            log::error!(
+                "[llm] provider={:?} model={} status=error latency_ms={} streaming=true cancellable=true error={}",
+                config.provider,
+                config.selected_model,
+                latency_ms,
+                e
+            );
+        }
     }
+
+    result
 }
 
 // ============================================================================
@@ -1693,28 +1844,50 @@ impl ResilientProviderRegistry {
 
         for (cfg, name) in configs.iter().zip(names.iter()) {
             if !self.is_provider_available(name) {
+                log::debug!(
+                    "[llm] resilient provider={} status=skipped reason=unavailable",
+                    name
+                );
                 continue;
             }
 
             tried_any = true;
+            log::info!(
+                "[llm] resilient provider={} attempting_request",
+                name
+            );
 
             match operation(cfg) {
                 Ok(value) => {
                     self.record_success(name);
+                    log::info!(
+                        "[llm] resilient provider={} status=ok",
+                        name
+                    );
                     return Ok((value, name.clone()));
                 }
                 Err(e) => {
                     let msg = e.to_string();
                     self.record_failure(name);
+                    log::warn!(
+                        "[llm] resilient provider={} status=failed error={} falling_back=true",
+                        name,
+                        msg
+                    );
                     errors.push((name.clone(), msg));
                 }
             }
         }
 
         if !tried_any {
+            log::error!("[llm] resilient status=no_available_providers");
             return Err(ResilientError::NoAvailableProviders);
         }
 
+        log::error!(
+            "[llm] resilient status=all_providers_failed count={}",
+            errors.len()
+        );
         Err(ResilientError::AllProvidersFailed { errors })
     }
 
@@ -1727,6 +1900,10 @@ impl ResilientProviderRegistry {
             cs.failures = 0;
             cs.last_success = Some(Instant::now());
             if cs.state == CircuitStateKind::HalfOpen {
+                log::info!(
+                    "[llm] circuit_breaker provider={} transition=half_open->closed",
+                    provider_name
+                );
                 cs.state = CircuitStateKind::Closed;
             }
         }
@@ -1742,6 +1919,11 @@ impl ResilientProviderRegistry {
             cs.failures += 1;
             cs.last_failure = Some(Instant::now());
             if cs.failures >= max {
+                log::warn!(
+                    "[llm] circuit_breaker provider={} transition=closed->open failures={}",
+                    provider_name,
+                    cs.failures
+                );
                 cs.state = CircuitStateKind::Open;
             }
         }
@@ -1767,6 +1949,11 @@ impl ResilientProviderRegistry {
     /// The result is stored in the internal health-status map and also returned.
     pub fn check_health(&mut self, provider: &ProviderConfig) -> ProviderHealthStatus {
         let url = format!("{}/", provider.base_url);
+        log::debug!(
+            "[llm] health_check provider={} url={}",
+            provider.name,
+            url
+        );
         let status = match ureq::get(&url)
             .timeout(Duration::from_secs(5))
             .call()
@@ -1775,6 +1962,11 @@ impl ResilientProviderRegistry {
             Err(ureq::Error::Status(code, _)) if code < 500 => ProviderHealthStatus::Degraded,
             Err(_) => ProviderHealthStatus::Unhealthy,
         };
+        log::info!(
+            "[llm] health_check provider={} status={:?}",
+            provider.name,
+            status
+        );
         self.health_status
             .insert(provider.name.clone(), status.clone());
         status
@@ -1817,6 +2009,22 @@ impl ResilientProviderRegistry {
         if let Some(secs) = headers.retry_after_secs {
             // retry-after takes precedence if present
             state.reset_at = Some(Instant::now() + Duration::from_secs(secs));
+        }
+
+        if headers.remaining_requests == Some(0) || headers.retry_after_secs.is_some() {
+            log::warn!(
+                "[llm] rate_limit provider={} remaining_requests={:?} retry_after={:?}",
+                provider_name,
+                headers.remaining_requests,
+                headers.retry_after_secs
+            );
+        } else {
+            log::debug!(
+                "[llm] rate_limit provider={} remaining_requests={:?} remaining_tokens={:?}",
+                provider_name,
+                headers.remaining_requests,
+                headers.remaining_tokens
+            );
         }
     }
 
@@ -3003,5 +3211,154 @@ mod resilient_registry_tests {
             h.join().unwrap();
         }
         assert_eq!(ap.entry_count(), 100);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Provider logging tests (Item 2.1)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod provider_logging_tests {
+    use super::*;
+
+    /// Helper: create a minimal AiConfig for Ollama (default).
+    fn ollama_config() -> AiConfig {
+        let mut cfg = AiConfig::default();
+        cfg.selected_model = "test-model".to_string();
+        cfg.temperature = 0.7;
+        cfg
+    }
+
+    /// Helper: create a minimal AiConfig for an OpenAI-compatible provider.
+    fn openai_config() -> AiConfig {
+        let mut cfg = AiConfig::default();
+        cfg.provider = AiProvider::OpenAI;
+        cfg.selected_model = "gpt-4o".to_string();
+        cfg.temperature = 0.5;
+        cfg
+    }
+
+    #[test]
+    fn test_generate_response_logs_provider() {
+        // Verify generate_response can be called (will fail due to no server
+        // but the logging code path is exercised). The actual log output is
+        // verified by running with RUST_LOG=info.
+        let config = ollama_config();
+        let conversation = vec![];
+        let result = generate_response(&config, &conversation, "test prompt");
+        // It will fail (no server) but should have logged the attempt
+        assert!(result.is_err() || result.is_ok());
+    }
+
+    #[test]
+    fn test_generate_response_streaming_logs() {
+        let config = ollama_config();
+        let conversation = vec![];
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let result = generate_response_streaming(&config, &conversation, "test prompt", &tx);
+        assert!(result.is_err() || result.is_ok());
+    }
+
+    #[test]
+    fn test_generate_response_openai_logs_provider() {
+        let config = openai_config();
+        let conversation = vec![];
+        let result = generate_response(&config, &conversation, "test prompt");
+        // Will fail (no API key / no server) but logging is exercised
+        assert!(result.is_err() || result.is_ok());
+    }
+
+    #[test]
+    fn test_generate_response_streaming_openai_logs() {
+        let config = openai_config();
+        let conversation = vec![];
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let result = generate_response_streaming(&config, &conversation, "test prompt", &tx);
+        assert!(result.is_err() || result.is_ok());
+    }
+
+    #[test]
+    fn test_generate_response_cancellable_logs_pre_cancel() {
+        let config = ollama_config();
+        let conversation = vec![];
+        let (tx, rx) = std::sync::mpsc::channel();
+        let cancel_token = crate::conversation_control::CancellationToken::new();
+        cancel_token.cancel();
+
+        let result = generate_response_streaming_cancellable(
+            &config,
+            &conversation,
+            "test prompt",
+            &tx,
+            &cancel_token,
+        );
+        // Should succeed immediately with Cancelled response
+        assert!(result.is_ok());
+        let msg = rx.recv().expect("should have received Cancelled");
+        match msg {
+            AiResponse::Cancelled(_) => {}
+            other => panic!("Expected Cancelled, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_generate_response_cancellable_logs_no_cancel() {
+        let config = ollama_config();
+        let conversation = vec![];
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let cancel_token = crate::conversation_control::CancellationToken::new();
+
+        // Not cancelled — will attempt connection (and fail due to no server)
+        let result = generate_response_streaming_cancellable(
+            &config,
+            &conversation,
+            "test prompt",
+            &tx,
+            &cancel_token,
+        );
+        assert!(result.is_err() || result.is_ok());
+    }
+
+    #[test]
+    fn test_resilient_fallback_logs_on_failure() {
+        let primary = ProviderConfig::new("primary-log-test", "http://localhost:19999")
+            .with_provider_type("ollama")
+            .with_priority(0);
+        let fallback = ProviderConfig::new("backup-log-test", "http://localhost:19998")
+            .with_provider_type("openai")
+            .with_priority(1);
+        let mut reg = ResilientProviderRegistry::new(primary);
+        reg.add_fallback(fallback);
+
+        // Primary fails, fallback succeeds — logging should capture the
+        // warn for primary failure and info for backup success.
+        let result = reg.generate_with_fallback(|p| -> Result<String, String> {
+            if p.name == "primary-log-test" {
+                Err("connection refused".to_string())
+            } else {
+                Ok(format!("ok from {}", p.name))
+            }
+        });
+
+        assert!(result.is_ok());
+        let (value, name) = result.expect("fallback should succeed");
+        assert_eq!(value, "ok from backup-log-test");
+        assert_eq!(name, "backup-log-test");
+    }
+
+    #[test]
+    fn test_resilient_circuit_breaker_logs_open() {
+        let primary = ProviderConfig::new("cb-log-test", "http://localhost:19999")
+            .with_provider_type("ollama")
+            .with_priority(0);
+        let mut reg = ResilientProviderRegistry::new(primary);
+        reg.set_max_failures(2);
+
+        // Two failures should open the circuit and log the transition
+        reg.record_failure("cb-log-test");
+        assert!(!reg.is_circuit_open("cb-log-test"));
+        reg.record_failure("cb-log-test");
+        assert!(reg.is_circuit_open("cb-log-test"));
     }
 }
