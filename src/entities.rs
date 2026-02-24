@@ -1407,4 +1407,345 @@ mod tests {
         assert!(store.facts[0].confidence > 0.8);
         assert_eq!(store.facts[0].reinforcement_count, 2);
     }
+
+    // ========================================================================
+    // Phase 3 (v11): EntityType display_name coverage
+    // ========================================================================
+
+    #[test]
+    fn test_entity_type_display_name_all_variants() {
+        assert_eq!(EntityType::Person.display_name(), "Person");
+        assert_eq!(EntityType::Organization.display_name(), "Organization");
+        assert_eq!(EntityType::Location.display_name(), "Location");
+        assert_eq!(EntityType::DateTime.display_name(), "Date/Time");
+        assert_eq!(EntityType::Money.display_name(), "Money");
+        assert_eq!(EntityType::Percentage.display_name(), "Percentage");
+        assert_eq!(EntityType::Email.display_name(), "Email");
+        assert_eq!(EntityType::Url.display_name(), "URL");
+        assert_eq!(EntityType::Phone.display_name(), "Phone");
+        assert_eq!(EntityType::ProgrammingLanguage.display_name(), "Language");
+        assert_eq!(EntityType::FilePath.display_name(), "File");
+        assert_eq!(EntityType::TechnicalTerm.display_name(), "Technical");
+        assert_eq!(EntityType::Version.display_name(), "Version");
+    }
+
+    #[test]
+    fn test_entity_type_custom_variant() {
+        let c1 = EntityType::Custom(0);
+        let c2 = EntityType::Custom(42);
+        assert_eq!(c1.display_name(), "Custom");
+        assert_eq!(c2.display_name(), "Custom");
+        assert_ne!(c1, c2);
+        assert_eq!(c1, EntityType::Custom(0));
+    }
+
+    // ========================================================================
+    // Phase 3 (v11): Entity metadata and position
+    // ========================================================================
+
+    #[test]
+    fn test_entity_with_metadata() {
+        let entity = Entity::new("test", EntityType::Person, 0.9, 0, 4)
+            .with_metadata("source", "manual")
+            .with_metadata("lang", "en");
+        assert_eq!(entity.metadata.len(), 2);
+        assert_eq!(entity.metadata.get("source").unwrap(), "manual");
+        assert_eq!(entity.metadata.get("lang").unwrap(), "en");
+    }
+
+    #[test]
+    fn test_entity_position_tracking() {
+        let entity = Entity::new("Rust", EntityType::ProgrammingLanguage, 0.85, 10, 14);
+        assert_eq!(entity.start_offset, 10);
+        assert_eq!(entity.end_offset, 14);
+        assert_eq!(entity.text, "Rust");
+        assert_eq!(entity.normalized, "rust");
+    }
+
+    #[test]
+    fn test_entity_normalization() {
+        let entity = Entity::new("  HELLO World  ", EntityType::TechnicalTerm, 0.7, 0, 15);
+        assert_eq!(entity.normalized, "hello world");
+        assert_eq!(entity.text, "  HELLO World  ");
+    }
+
+    // ========================================================================
+    // Phase 3 (v11): Entity extraction by type
+    // ========================================================================
+
+    #[test]
+    fn test_extract_programming_language() {
+        let extractor = EntityExtractor::new(EntityExtractorConfig::default());
+        let entities = extractor.extract("I am learning Rust and Python for my projects.");
+
+        let langs: Vec<&Entity> = entities
+            .iter()
+            .filter(|e| e.entity_type == EntityType::ProgrammingLanguage)
+            .collect();
+        assert!(
+            langs.len() >= 2,
+            "Expected at least 2 languages, got {}",
+            langs.len()
+        );
+    }
+
+    #[test]
+    fn test_extract_file_path() {
+        let extractor = EntityExtractor::new(EntityExtractorConfig::default());
+        let entities = extractor.extract("Edit the file main.rs and config.toml please.");
+
+        let paths: Vec<&Entity> = entities
+            .iter()
+            .filter(|e| e.entity_type == EntityType::FilePath)
+            .collect();
+        assert!(!paths.is_empty(), "Expected file path entities");
+    }
+
+    #[test]
+    fn test_extract_phone_number() {
+        let extractor = EntityExtractor::new(EntityExtractorConfig::default());
+        let entities = extractor.extract("Call me at +1 555-123-4567 tomorrow.");
+
+        let phones: Vec<&Entity> = entities
+            .iter()
+            .filter(|e| e.entity_type == EntityType::Phone)
+            .collect();
+        assert!(!phones.is_empty(), "Expected phone entity");
+    }
+
+    #[test]
+    fn test_extract_money() {
+        let extractor = EntityExtractor::new(EntityExtractorConfig::default());
+        let entities = extractor.extract("The price is $49.99 and the tax is $3.50.");
+
+        let money: Vec<&Entity> = entities
+            .iter()
+            .filter(|e| e.entity_type == EntityType::Money)
+            .collect();
+        assert!(
+            money.len() >= 2,
+            "Expected at least 2 money entities, got {}",
+            money.len()
+        );
+    }
+
+    #[test]
+    fn test_extract_percentage() {
+        let extractor = EntityExtractor::new(EntityExtractorConfig::default());
+        let entities = extractor.extract("Coverage went from 75% to 99.5% this week.");
+
+        let pcts: Vec<&Entity> = entities
+            .iter()
+            .filter(|e| e.entity_type == EntityType::Percentage)
+            .collect();
+        assert!(
+            pcts.len() >= 2,
+            "Expected at least 2 percentages, got {}",
+            pcts.len()
+        );
+    }
+
+    // ========================================================================
+    // Phase 3 (v11): Edge cases
+    // ========================================================================
+
+    #[test]
+    fn test_extract_empty_text() {
+        let extractor = EntityExtractor::new(EntityExtractorConfig::default());
+        let entities = extractor.extract("");
+        assert!(entities.is_empty());
+    }
+
+    #[test]
+    fn test_extract_whitespace_only() {
+        let extractor = EntityExtractor::new(EntityExtractorConfig::default());
+        let entities = extractor.extract("     \t\n   ");
+        assert!(entities.is_empty());
+    }
+
+    #[test]
+    fn test_extract_very_long_text() {
+        let extractor = EntityExtractor::new(EntityExtractorConfig::default());
+        let mut text = "word ".repeat(500);
+        text.push_str("contact user@longtest.com here ");
+        text.push_str(&"more ".repeat(500));
+        let entities = extractor.extract(&text);
+        let emails: Vec<&Entity> = entities
+            .iter()
+            .filter(|e| e.entity_type == EntityType::Email)
+            .collect();
+        assert_eq!(emails.len(), 1);
+        assert_eq!(emails[0].text, "user@longtest.com");
+    }
+
+    // ========================================================================
+    // Phase 3 (v11): FactStore operations
+    // ========================================================================
+
+    #[test]
+    fn test_fact_store_facts_by_subject() {
+        let mut store = FactStore::new();
+        store.add_fact(
+            Fact::new("User likes Rust", "likes", "Rust", "s1", 0.9).with_subject("user"),
+        );
+        store.add_fact(
+            Fact::new("Bot knows Rust", "knows", "Rust", "s2", 0.8).with_subject("bot"),
+        );
+
+        let user_facts = store.facts_by_subject("user");
+        assert_eq!(user_facts.len(), 1);
+        assert_eq!(user_facts[0].object, "Rust");
+
+        let bot_facts = store.facts_by_subject("bot");
+        assert_eq!(bot_facts.len(), 1);
+
+        let empty = store.facts_by_subject("nobody");
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn test_fact_store_facts_by_predicate() {
+        let mut store = FactStore::new();
+        store.add_fact(
+            Fact::new("Likes Rust", "likes", "Rust", "s1", 0.9).with_subject("user"),
+        );
+        store.add_fact(
+            Fact::new("Likes Python", "likes", "Python", "s2", 0.85).with_subject("user"),
+        );
+        store.add_fact(
+            Fact::new("Wants web", "wants to", "build a web app", "s3", 0.8)
+                .with_subject("user"),
+        );
+
+        let likes = store.facts_by_predicate("likes");
+        assert_eq!(likes.len(), 2);
+
+        let goals = store.facts_by_predicate("wants to");
+        assert_eq!(goals.len(), 1);
+
+        let empty = store.facts_by_predicate("hates");
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn test_fact_store_user_goals() {
+        let mut store = FactStore::new();
+        store.add_fact(
+            Fact::new("Want server", "wants to", "build a server", "s1", 0.9)
+                .with_subject("user"),
+        );
+        store.add_fact(
+            Fact::new("Want deploy", "wants to", "deploy to production", "s2", 0.85)
+                .with_subject("user"),
+        );
+
+        let goals = store.user_goals();
+        assert_eq!(goals.len(), 2);
+    }
+
+    #[test]
+    fn test_fact_store_top_facts() {
+        let mut store = FactStore::new();
+        store.add_fact(Fact::new("Low", "pred", "obj1", "s1", 0.5));
+        store.add_fact(Fact::new("High", "pred2", "obj2", "s2", 0.99));
+        store.add_fact(Fact::new("Mid", "pred3", "obj3", "s3", 0.75));
+
+        let top2 = store.top_facts(2);
+        assert_eq!(top2.len(), 2);
+        assert!(top2[0].confidence >= top2[1].confidence);
+    }
+
+    #[test]
+    fn test_fact_store_clear() {
+        let mut store = FactStore::new();
+        store.add_fact(Fact::new("A", "likes", "X", "s1", 0.9).with_subject("user"));
+        store.add_fact(Fact::new("B", "likes", "Y", "s2", 0.8).with_subject("user"));
+        assert_eq!(store.len(), 2);
+        assert!(!store.is_empty());
+
+        store.clear();
+        assert_eq!(store.len(), 0);
+        assert!(store.is_empty());
+    }
+
+    #[test]
+    fn test_fact_store_export_json() {
+        let mut store = FactStore::new();
+        store.add_fact(
+            Fact::new("Likes Rust", "likes", "Rust", "s1", 0.9).with_subject("user"),
+        );
+
+        let json = store.export();
+        assert!(!json.is_empty());
+        assert!(json.contains("Rust"));
+        assert!(json.contains("likes"));
+    }
+
+    // ========================================================================
+    // Phase 3 (v11): FactExtractor patterns
+    // ========================================================================
+
+    #[test]
+    fn test_fact_extractor_working_on_pattern() {
+        let extractor = FactExtractor::new(FactExtractorConfig::default());
+        let facts = extractor.extract_facts("I'm working on a new compiler.", "test");
+        let goal = facts.iter().find(|f| f.predicate == "wants to");
+        assert!(goal.is_some(), "Expected goal from 'I'm working on'");
+    }
+
+    #[test]
+    fn test_fact_extractor_building_pattern() {
+        let extractor = FactExtractor::new(FactExtractorConfig::default());
+        let facts = extractor.extract_facts("I'm building a distributed system.", "test");
+        let goal = facts.iter().find(|f| f.predicate == "wants to");
+        assert!(goal.is_some(), "Expected goal from 'I'm building'");
+    }
+
+    // ========================================================================
+    // Phase 3 (v11): Context summary
+    // ========================================================================
+
+    #[test]
+    fn test_build_context_summary_with_facts() {
+        let mut store = FactStore::new();
+        store.add_fact(
+            Fact::new("Likes Rust", "likes", "Rust", "s1", 0.9).with_subject("user"),
+        );
+        store.add_fact(
+            Fact::new("Goal", "wants to", "build APIs", "s2", 0.85).with_subject("user"),
+        );
+
+        let summary = store.build_context_summary(9);
+        assert!(!summary.is_empty());
+    }
+
+    #[test]
+    fn test_build_context_summary_empty_store() {
+        let store = FactStore::new();
+        let summary = store.build_context_summary(10);
+        assert!(summary.is_empty());
+    }
+
+    // ========================================================================
+    // Phase 3 (v11): Fact struct methods
+    // ========================================================================
+
+    #[test]
+    fn test_fact_add_related_entity() {
+        let mut fact = Fact::new("test", "likes", "Rust", "s1", 0.9);
+        fact.add_related_entity("programming");
+        fact.add_related_entity("systems");
+        fact.add_related_entity("programming"); // duplicate
+        assert_eq!(fact.related_entities.len(), 2);
+    }
+
+    #[test]
+    fn test_fact_reinforce_caps_at_one() {
+        let mut fact = Fact::new("test", "likes", "Rust", "s1", 0.98);
+        fact.reinforce();
+        fact.reinforce();
+        fact.reinforce();
+        assert!(fact.confidence <= 1.0);
+        assert_eq!(fact.reinforcement_count, 4);
+    }
 }
