@@ -979,3 +979,324 @@ use super::*;
         assert_eq!(names[0], "template");
         assert_eq!(names[1], "tesseract");
     }
+
+    // ========================================================================
+    // Phase 4 (v11): Synthetic ZIP tests for EPUB/DOCX/ODT/PPTX/XLSX
+    // ========================================================================
+
+    #[cfg(feature = "documents")]
+    mod zip_tests {
+        use super::*;
+        use std::io::{Cursor, Write};
+        use zip::write::{SimpleFileOptions, ZipWriter};
+
+        /// Helper: build a synthetic EPUB ZIP in memory.
+        fn build_epub(
+            opf_metadata: &str,
+            chapters: &[(&str, &str)],
+        ) -> Vec<u8> {
+            let buf = Cursor::new(Vec::new());
+            let mut zip = ZipWriter::new(buf);
+            let opts = SimpleFileOptions::default();
+
+            // mimetype must be first
+            zip.start_file("mimetype", opts).unwrap();
+            zip.write_all(b"application/epub+zip").unwrap();
+
+            // Build OPF manifest + spine
+            let mut manifest = String::new();
+            let mut spine = String::new();
+            for (i, (filename, _)) in chapters.iter().enumerate() {
+                let id = format!("ch{}", i + 1);
+                manifest.push_str(&format!(
+                    "<item id=\"{id}\" href=\"{filename}\" media-type=\"application/xhtml+xml\"/>\n"
+                ));
+                spine.push_str(&format!("<itemref idref=\"{id}\"/>\n"));
+            }
+
+            let opf = format!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+                 <package xmlns=\"http://www.idpf.org/2007/opf\" version=\"3.0\">\n\
+                   <metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\">\n\
+                     {opf_metadata}\n\
+                   </metadata>\n\
+                   <manifest>\n{manifest}</manifest>\n\
+                   <spine>\n{spine}</spine>\n\
+                 </package>"
+            );
+
+            zip.start_file("OEBPS/content.opf", opts).unwrap();
+            zip.write_all(opf.as_bytes()).unwrap();
+
+            // container.xml
+            let container = "<?xml version=\"1.0\"?>\n\
+                <container xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\" version=\"1.0\">\n\
+                  <rootfiles>\n\
+                    <rootfile full-path=\"OEBPS/content.opf\" media-type=\"application/oebps-package+xml\"/>\n\
+                  </rootfiles>\n\
+                </container>";
+            zip.start_file("META-INF/container.xml", opts).unwrap();
+            zip.write_all(container.as_bytes()).unwrap();
+
+            // Chapters
+            for (filename, body) in chapters {
+                let xhtml = format!(
+                    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+                     <html xmlns=\"http://www.w3.org/1999/xhtml\">\n\
+                     <head><title>Chapter</title></head>\n\
+                     <body>{body}</body>\n\
+                     </html>"
+                );
+                let path = format!("OEBPS/{filename}");
+                zip.start_file(&path, opts).unwrap();
+                zip.write_all(xhtml.as_bytes()).unwrap();
+            }
+
+            zip.finish().unwrap().into_inner()
+        }
+
+        /// Helper: build a synthetic DOCX ZIP in memory.
+        fn build_docx(paragraphs: &[&str], metadata_xml: Option<&str>) -> Vec<u8> {
+            let buf = Cursor::new(Vec::new());
+            let mut zip = ZipWriter::new(buf);
+            let opts = SimpleFileOptions::default();
+
+            // [Content_Types].xml
+            let content_types = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+                <Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\n\
+                  <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\n\
+                  <Default Extension=\"xml\" ContentType=\"application/xml\"/>\n\
+                </Types>";
+            zip.start_file("[Content_Types].xml", opts).unwrap();
+            zip.write_all(content_types.as_bytes()).unwrap();
+
+            // Build document.xml body
+            let mut body = String::new();
+            for p in paragraphs {
+                body.push_str(&format!(
+                    "<w:p><w:r><w:t>{p}</w:t></w:r></w:p>\n"
+                ));
+            }
+
+            let document = format!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+                 <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\n\
+                   <w:body>\n{body}  </w:body>\n\
+                 </w:document>"
+            );
+            zip.start_file("word/document.xml", opts).unwrap();
+            zip.write_all(document.as_bytes()).unwrap();
+
+            // Optional metadata
+            if let Some(meta) = metadata_xml {
+                zip.start_file("docProps/core.xml", opts).unwrap();
+                zip.write_all(meta.as_bytes()).unwrap();
+            }
+
+            zip.finish().unwrap().into_inner()
+        }
+
+        /// Helper: build a synthetic ODT ZIP in memory.
+        fn build_odt(paragraphs: &[&str], meta_xml: Option<&str>) -> Vec<u8> {
+            let buf = Cursor::new(Vec::new());
+            let mut zip = ZipWriter::new(buf);
+            let opts = SimpleFileOptions::default();
+
+            zip.start_file("mimetype", opts).unwrap();
+            zip.write_all(b"application/vnd.oasis.opendocument.text").unwrap();
+
+            let mut body = String::new();
+            for p in paragraphs {
+                body.push_str(&format!(
+                    "<text:p text:style-name=\"Standard\">{p}</text:p>\n"
+                ));
+            }
+
+            let content = format!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+                 <office:document-content \
+                   xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" \
+                   xmlns:text=\"urn:oasis:names:tc:opendocument:xmlns:text:1.0\">\n\
+                   <office:body>\n\
+                     <office:text>\n{body}    </office:text>\n\
+                   </office:body>\n\
+                 </office:document-content>"
+            );
+            zip.start_file("content.xml", opts).unwrap();
+            zip.write_all(content.as_bytes()).unwrap();
+
+            if let Some(meta) = meta_xml {
+                zip.start_file("meta.xml", opts).unwrap();
+                zip.write_all(meta.as_bytes()).unwrap();
+            }
+
+            zip.finish().unwrap().into_inner()
+        }
+
+        // ================================================================
+        // EPUB tests
+        // ================================================================
+
+        #[test]
+        fn test_parse_epub_synthetic() {
+            let data = build_epub(
+                "<dc:title>Test Book</dc:title>",
+                &[
+                    ("ch1.xhtml", "<p>Chapter 1 content here.</p>"),
+                    ("ch2.xhtml", "<p>Chapter 2 content here.</p>"),
+                ],
+            );
+
+            let parser = DocumentParser::new(DocumentParserConfig::default());
+            let result = parser.parse_bytes(&data, DocumentFormat::Epub);
+            assert!(result.is_ok(), "EPUB parse failed: {:?}", result.err());
+            let doc = result.unwrap();
+            assert!(doc.text.contains("Chapter 1 content"));
+            assert!(doc.text.contains("Chapter 2 content"));
+            assert_eq!(doc.format, DocumentFormat::Epub);
+        }
+
+        #[test]
+        fn test_parse_epub_metadata() {
+            let data = build_epub(
+                "<dc:title>My Novel</dc:title>\n\
+                 <dc:creator>Jane Doe</dc:creator>\n\
+                 <dc:language>en</dc:language>",
+                &[("ch1.xhtml", "<p>Some text.</p>")],
+            );
+
+            let parser = DocumentParser::new(DocumentParserConfig::default());
+            let doc = parser.parse_bytes(&data, DocumentFormat::Epub).unwrap();
+            assert_eq!(doc.metadata.title.as_deref(), Some("My Novel"));
+        }
+
+        #[test]
+        fn test_parse_epub_empty_chapters() {
+            let data = build_epub(
+                "<dc:title>Empty Book</dc:title>",
+                &[
+                    ("ch1.xhtml", ""),
+                    ("ch2.xhtml", ""),
+                ],
+            );
+
+            let parser = DocumentParser::new(DocumentParserConfig::default());
+            let result = parser.parse_bytes(&data, DocumentFormat::Epub);
+            assert!(result.is_ok());
+        }
+
+        // ================================================================
+        // DOCX tests
+        // ================================================================
+
+        #[test]
+        fn test_parse_docx_synthetic() {
+            let data = build_docx(
+                &["First paragraph.", "Second paragraph.", "Third paragraph."],
+                None,
+            );
+
+            let parser = DocumentParser::new(DocumentParserConfig::default());
+            let result = parser.parse_bytes(&data, DocumentFormat::Docx);
+            assert!(result.is_ok(), "DOCX parse failed: {:?}", result.err());
+            let doc = result.unwrap();
+            assert!(doc.text.contains("First paragraph"));
+            assert!(doc.text.contains("Second paragraph"));
+            assert!(doc.text.contains("Third paragraph"));
+            assert_eq!(doc.format, DocumentFormat::Docx);
+        }
+
+        #[test]
+        fn test_parse_docx_metadata() {
+            let meta = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+                <cp:coreProperties \
+                  xmlns:cp=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\" \
+                  xmlns:dc=\"http://purl.org/dc/elements/1.1/\">\n\
+                  <dc:title>My Document</dc:title>\n\
+                  <dc:creator>John Smith</dc:creator>\n\
+                </cp:coreProperties>";
+
+            let data = build_docx(&["Hello world."], Some(meta));
+
+            let parser = DocumentParser::new(DocumentParserConfig::default());
+            let doc = parser.parse_bytes(&data, DocumentFormat::Docx).unwrap();
+            assert_eq!(doc.metadata.title.as_deref(), Some("My Document"));
+        }
+
+        #[test]
+        fn test_parse_docx_no_metadata() {
+            let data = build_docx(&["Just text, no metadata."], None);
+
+            let parser = DocumentParser::new(DocumentParserConfig::default());
+            let doc = parser.parse_bytes(&data, DocumentFormat::Docx).unwrap();
+            assert!(doc.text.contains("Just text"));
+            // Metadata should have defaults
+            assert!(doc.metadata.title.is_none() || doc.metadata.title.as_deref() == Some(""));
+        }
+
+        // ================================================================
+        // ODT tests
+        // ================================================================
+
+        #[test]
+        fn test_parse_odt_synthetic() {
+            let data = build_odt(
+                &["ODT paragraph one.", "ODT paragraph two."],
+                None,
+            );
+
+            let parser = DocumentParser::new(DocumentParserConfig::default());
+            let result = parser.parse_bytes(&data, DocumentFormat::Odt);
+            assert!(result.is_ok(), "ODT parse failed: {:?}", result.err());
+            let doc = result.unwrap();
+            assert!(doc.text.contains("ODT paragraph one"));
+            assert!(doc.text.contains("ODT paragraph two"));
+            assert_eq!(doc.format, DocumentFormat::Odt);
+        }
+
+        #[test]
+        fn test_parse_odt_metadata() {
+            let meta = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+                <office:document-meta \
+                  xmlns:office=\"urn:oasis:names:tc:opendocument:xmlns:office:1.0\" \
+                  xmlns:dc=\"http://purl.org/dc/elements/1.1/\" \
+                  xmlns:meta=\"urn:oasis:names:tc:opendocument:xmlns:meta:1.0\">\n\
+                  <office:meta>\n\
+                    <dc:title>ODT Title</dc:title>\n\
+                    <dc:creator>Author Name</dc:creator>\n\
+                    <dc:language>es</dc:language>\n\
+                  </office:meta>\n\
+                </office:document-meta>";
+
+            let data = build_odt(&["Content here."], Some(meta));
+
+            let parser = DocumentParser::new(DocumentParserConfig::default());
+            let doc = parser.parse_bytes(&data, DocumentFormat::Odt).unwrap();
+            assert_eq!(doc.metadata.title.as_deref(), Some("ODT Title"));
+        }
+
+        // ================================================================
+        // Invalid/corrupt ZIP tests
+        // ================================================================
+
+        #[test]
+        fn test_parse_epub_invalid_zip() {
+            let parser = DocumentParser::new(DocumentParserConfig::default());
+            let result = parser.parse_bytes(b"not a zip file", DocumentFormat::Epub);
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn test_parse_docx_invalid_zip() {
+            let parser = DocumentParser::new(DocumentParserConfig::default());
+            let result = parser.parse_bytes(b"corrupted data", DocumentFormat::Docx);
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn test_parse_odt_invalid_zip() {
+            let parser = DocumentParser::new(DocumentParserConfig::default());
+            let result = parser.parse_bytes(b"bad data", DocumentFormat::Odt);
+            assert!(result.is_err());
+        }
+    }
