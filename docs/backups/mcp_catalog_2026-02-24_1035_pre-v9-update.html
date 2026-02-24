@@ -13,8 +13,6 @@
     - mcp_catalog.html  (v1: initial catalog, 29 capabilities)
     - mcp_catalog_2026-02-20_1430_pre-phase8-docs.html (v1 backup before phase-8 updates)
     - mcp_catalog.html  (v2: +structured output, model registry, benchmarks, browser/distributed exports)
-    - mcp_catalog_2026-02-24_1035_pre-v9-update.html (v2 backup before v9 updates)
-    - mcp_catalog.html  (v3: v9 — AiAssistant MCP convenience methods, RemoteMcpClient integration, simulated fallback)
 -->
 <html lang="es">
 <head>
@@ -382,7 +380,7 @@
 <body>
 
 <h1>AI Assistant &mdash; Cat&aacute;logo MCP</h1>
-<p class="subtitle">Tools, Resources y Prompts disponibles v&iacute;a Model Context Protocol (MCP 2024-11-05) &mdash; Updated 2026-02-24 (v9)</p>
+<p class="subtitle">Tools, Resources y Prompts disponibles v&iacute;a Model Context Protocol (MCP 2024-11-05) &mdash; Updated 2026-02-20</p>
 
 <div class="protocol-banner" id="banner"></div>
 
@@ -746,14 +744,6 @@ const CATEGORIES = [
         module: 'mcp_protocol.rs',
         notes: 'Transporte HTTP. Soporta initialize, list_tools, call_tool, list_resources, read_resource, list_prompts, get_prompt. Auto-incrementa request IDs.'
       },
-      { name: 'RemoteMcpClient', type: 'tool',
-        desc: 'Cliente MCP remoto con fallback simulado (v9)',
-        params: [
-          { name: 'server_url', type: 'string', required: true, desc: 'URL del servidor MCP remoto' }
-        ],
-        module: 'mcp_client.rs',
-        notes: 'v9: Cliente MCP avanzado integrado en AiAssistant. Cuando el servidor remoto no est\u00e1 disponible, proporciona un fallback simulado en lugar de fallar. Soporta auto-descubrimiento de tools disponibles en el servidor remoto.'
-      },
       { name: 'ToolRegistry Bridge', type: 'tool',
         desc: 'Puente entre ToolRegistry nativo y MCP',
         params: [],
@@ -765,44 +755,6 @@ const CATEGORIES = [
         params: [],
         module: 'unified_tools.rs',
         notes: 'Soporta: JSON Array, JSON Object (OpenAI), texto [TOOL:name(args)], XML <tool>, y function_call. Permite interoperabilidad con cualquier modelo.'
-      },
-    ]
-  },
-  {
-    id: 'mcp-assistant-api',
-    name: 'AiAssistant MCP API (v9)',
-    icon: '\uD83E\uDD16',
-    feature: 'tools',
-    featureInFull: true,
-    desc: 'v9: M\u00e9todos de conveniencia en AiAssistant para interacci\u00f3n directa con servidores MCP remotos. Integra RemoteMcpClient en la API principal del asistente.',
-    items: [
-      { name: 'AiAssistant::connect_mcp_server', type: 'tool',
-        desc: 'Conectar a un servidor MCP remoto desde AiAssistant',
-        params: [
-          { name: 'url', type: 'string', required: true, desc: 'URL del servidor MCP remoto (HTTP POST endpoint)' }
-        ],
-        module: 'assistant.rs',
-        notes: 'v9: M\u00e9todo de conveniencia que crea un RemoteMcpClient interno y establece la conexi\u00f3n. Si el servidor no es alcanzable, activa autom\u00e1ticamente el modo fallback simulado.'
-      },
-      { name: 'AiAssistant::list_mcp_tools', type: 'tool',
-        desc: 'Listar tools disponibles en un servidor MCP conectado',
-        params: [
-          { name: 'url', type: 'string', required: true, desc: 'URL del servidor MCP previamente conectado' }
-        ],
-        module: 'assistant.rs',
-        notes: 'v9: Consulta tools/list en el servidor MCP remoto. Si el servidor est\u00e1 ca\u00eddo, devuelve la lista cacheada del \u00faltimo descubrimiento exitoso o una lista vac\u00eda con indicador de fallback.'
-      },
-      { name: 'Simulated Fallback', type: 'tool',
-        desc: 'Fallback autom\u00e1tico cuando el servidor MCP remoto no responde',
-        params: [],
-        module: 'mcp_client.rs',
-        notes: 'v9: Cuando RemoteMcpClient no puede conectar al servidor, genera respuestas simuladas en lugar de propagar errores. Permite que el agente contin\u00fae operando en modo degradado sin interrupciones.'
-      },
-      { name: 'RemoteMcpClient Integration', type: 'tool',
-        desc: 'Integraci\u00f3n de RemoteMcpClient en la API principal de AiAssistant',
-        params: [],
-        module: 'mcp_client.rs + assistant.rs',
-        notes: 'v9: RemoteMcpClient (mcp_client.rs) est\u00e1 completamente integrado en AiAssistant, accesible via los m\u00e9todos connect_mcp_server() y list_mcp_tools(). Soporta m\u00faltiples servidores MCP simult\u00e1neos.'
       },
     ]
   },
@@ -1054,7 +1006,7 @@ function renderBanner() {
     <div class="protocol-stat"><div class="value">${totalResources}</div><div class="label">Resources</div></div>
     <div class="protocol-stat"><div class="value">${totalPrompts}</div><div class="label">Prompts</div></div>
     <div class="protocol-stat"><div class="value">2024-11-05</div><div class="label">MCP Version</div></div>
-    <div class="protocol-stat"><div class="value">5034</div><div class="label">Tests</div></div>
+    <div class="protocol-stat"><div class="value">2431</div><div class="label">Tests</div></div>
     <div class="protocol-stat"><div class="value">6</div><div class="label">Benchmarks</div></div>
     <div class="protocol-stat"><div class="value">19</div><div class="label">Examples</div></div>
   `;

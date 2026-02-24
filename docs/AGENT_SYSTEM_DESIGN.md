@@ -7489,3 +7489,455 @@ Triggers: push y PR a `main` / `master`.
 | **Total nuevos v2 Phases 3-4** | **25** |
 
 **Total acumulado**: 2,510 tests (2472 lib + 38 integration), 0 failures, 0 clippy warnings.
+
+---
+
+## 45. Server API Architecture (v9)
+
+> Fecha: 2026-02-24
+
+### Resumen
+
+El servidor HTTP embebido evoluciona en v9 hacia una API REST completa con capacidades de produccion: streaming SSE, compresion, rate limiting, versionado de API, audit logging, errores estructurados, gestion de sesiones y validacion de requests.
+
+### SSE Streaming
+
+El endpoint `POST /chat/stream` implementa Server-Sent Events (SSE) para entrega de tokens palabra a palabra durante la generacion de respuestas LLM.
+
+```
+Cliente                          Servidor
+  │                                 │
+  │  POST /chat/stream              │
+  │  Content-Type: application/json │
+  │  {"message": "Hello"}           │
+  │ ──────────────────────────────> │
+  │                                 │
+  │  HTTP/1.1 200 OK                │
+  │  Content-Type: text/event-stream│
+  │  Cache-Control: no-cache        │
+  │                                 │
+  │  data: {"token": "Hello"}       │
+  │ <────────────────────────────── │
+  │  data: {"token": " world"}      │
+  │ <────────────────────────────── │
+  │  data: {"token": "!"}           │
+  │ <────────────────────────────── │
+  │  data: [DONE]                   │
+  │ <────────────────────────────── │
+  │                                 │
+```
+
+Cada evento SSE contiene un token individual en formato JSON. El stream termina con el evento sentinel `[DONE]`. El cliente puede cerrar la conexion en cualquier momento para cancelar la generacion.
+
+### Gzip Response Compression
+
+Compresion transparente de respuestas usando `flate2`:
+
+```
+┌──────────┐                    ┌──────────────────────┐
+│  Client  │                    │   HTTP Server        │
+│          │  Accept-Encoding:  │                      │
+│          │  gzip              │  ┌────────────────┐  │
+│          │ ────────────────>  │  │ Check header   │  │
+│          │                    │  │ Accept-Encoding│  │
+│          │                    │  └───────┬────────┘  │
+│          │                    │          │            │
+│          │  Content-Encoding: │  ┌───────▼────────┐  │
+│          │  gzip              │  │ flate2 GzEncoder│  │
+│          │ <────────────────  │  │ compress body  │  │
+│          │  (compressed body) │  └────────────────┘  │
+└──────────┘                    └──────────────────────┘
+```
+
+El servidor inspecciona el header `Accept-Encoding` del request. Si contiene `gzip`, la respuesta se comprime con `flate2::write::GzEncoder` y se anade el header `Content-Encoding: gzip`. Si el cliente no soporta gzip, la respuesta se envia sin comprimir.
+
+### Rate Limiting
+
+`ServerRateLimiter` implementa un rate limiter basado en ventana de tiempo fija:
+
+```
+┌─────────────────────────────────────────────┐
+│           ServerRateLimiter                  │
+│                                              │
+│  ┌──────────────────┐  ┌─────────────────┐  │
+│  │ AtomicU32        │  │ Mutex<Instant>   │  │
+│  │ request_count    │  │ window_start     │  │
+│  └────────┬─────────┘  └────────┬────────┘  │
+│           │                      │           │
+│           ▼                      ▼           │
+│  ┌──────────────────────────────────────┐   │
+│  │         check_rate_limit()           │   │
+│  │                                      │   │
+│  │  if now - window_start > window_secs │   │
+│  │    → reset counter to 0             │   │
+│  │    → update window_start            │   │
+│  │                                      │   │
+│  │  if counter < max_requests           │   │
+│  │    → increment counter, return OK   │   │
+│  │  else                                │   │
+│  │    → return 429 + Retry-After       │   │
+│  └──────────────────────────────────────┘   │
+└─────────────────────────────────────────────┘
+```
+
+- **AtomicU32** para el contador de requests — lock-free increment en el hot path
+- **Mutex\<Instant\>** para el inicio de la ventana — solo se toma el lock cuando la ventana expira
+- Respuesta 429 Too Many Requests con header `Retry-After` indicando los segundos restantes hasta la siguiente ventana
+
+### API Versioning
+
+Rutas versionadas coexisten con las rutas raiz para retrocompatibilidad:
+
+```
+Rutas raiz (v0/legacy):          Rutas versionadas (v1):
+  POST /chat                       POST /api/v1/chat
+  POST /chat/stream                POST /api/v1/chat/stream
+  GET  /health                     GET  /api/v1/health
+  GET  /models                     GET  /api/v1/models
+  GET  /sessions/{id}              GET  /api/v1/sessions/{id}
+  DELETE /sessions/{id}            DELETE /api/v1/sessions/{id}
+```
+
+Ambos conjuntos de rutas invocan los mismos handlers internos. Las rutas raiz se mantienen indefinidamente para no romper clientes existentes. Nuevas funcionalidades futuras se anaden solo bajo `/api/v2/*`, etc.
+
+### Audit Logging
+
+`AuditLog` proporciona un registro de auditoria thread-safe para eventos de seguridad:
+
+```
+┌──────────────────────────────┐
+│         AuditLog             │
+│                              │
+│  entries: Vec<AuditEntry>    │
+│  (thread-safe append)        │
+│                              │
+│  Tipos de evento:            │
+│  ├── RateLimitExceeded       │
+│  ├── InvalidRequest          │
+│  ├── AuthenticationFailure   │
+│  ├── SessionCreated          │
+│  ├── SessionDeleted          │
+│  └── ApiError                │
+│                              │
+│  Cada entry contiene:        │
+│  ├── timestamp               │
+│  ├── event_type              │
+│  ├── source_ip (opcional)    │
+│  ├── details (String)        │
+│  └── severity                │
+└──────────────────────────────┘
+```
+
+Todos los eventos de seguridad (rate limit violations, requests invalidos, errores de autenticacion) se registran automaticamente. El log es append-only y consultable via `entries()`.
+
+### Structured Error Responses
+
+Todas las respuestas de error siguen un formato JSON consistente:
+
+```json
+{
+  "error_code": "RATE_LIMITED",
+  "message": "Too many requests",
+  "details": "Rate limit of 100 requests per 60s exceeded",
+  "retry_after_secs": 45
+}
+```
+
+| Campo | Tipo | Descripcion |
+|-------|------|-------------|
+| `error_code` | String | Codigo maquina-legible (RATE_LIMITED, VALIDATION_ERROR, etc.) |
+| `message` | String | Mensaje humano-legible |
+| `details` | String | Informacion adicional sobre el error |
+| `retry_after_secs` | Option\<u64\> | Solo presente en errores 429, indica segundos hasta retry |
+
+Codigos HTTP usados: 400 (bad request), 404 (not found), 422 (validation error), 429 (rate limited), 500 (internal error).
+
+### Session Management Endpoints
+
+Endpoints REST para consultar y gestionar sesiones de conversacion:
+
+- **GET /sessions/{id}** — Retorna el estado de una sesion (historial de mensajes, metadata, timestamps)
+- **DELETE /sessions/{id}** — Elimina una sesion y libera sus recursos
+
+Ambos retornan 404 con error estructurado si la sesion no existe.
+
+### Request Validation
+
+Validacion de requests entrantes antes del procesamiento:
+
+- `max_message_length` enforcement — si el campo `message` excede el limite configurado, se retorna 422 Unprocessable Entity con error estructurado indicando el limite y la longitud recibida
+- Validacion de Content-Type (debe ser `application/json` para endpoints de chat)
+- Validacion de campos requeridos en el body JSON
+
+---
+
+## 46. Feature Integration Pattern (v9)
+
+> Fecha: 2026-02-24
+
+### Resumen
+
+v9 establece un patron sistematico para integrar modulos standalone en `AiAssistant` mediante metodos de conveniencia. Cada modulo mantiene su API independiente, pero `AiAssistant` expone wrappers que simplifican el uso comun, manejan errores via `AiError` y abstraen la configuracion interna.
+
+### Patron General
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                     AiAssistant                          │
+│                                                          │
+│  pub fn convenience_method(&self, ...) -> Result<T>      │
+│       │                                                  │
+│       │  1. Crear/obtener instancia del modulo standalone│
+│       │  2. Configurar con parametros de AiAssistant     │
+│       │  3. Invocar API del modulo                       │
+│       │  4. Convertir errores a AiError                  │
+│       │  5. Retornar resultado                           │
+│       ▼                                                  │
+│  ┌────────────────────┐                                  │
+│  │ Standalone Module   │                                  │
+│  │ (su propia API)     │                                  │
+│  └────────────────────┘                                  │
+└─────────────────────────────────────────────────────────┘
+```
+
+Ventajas del patron:
+- Los modulos standalone siguen siendo usables de forma independiente
+- `AiAssistant` proporciona un punto de entrada unificado
+- Los errores de cada modulo se mapean a variantes de `AiError`
+- La configuracion se hereda del contexto de `AiAssistant` (proveedor activo, modelo, etc.)
+
+### 46.1 Constrained Decoding Integration
+
+**Modulo standalone**: `constrained_decoding.rs`
+**Feature**: `constrained-decoding`
+
+```
+AiAssistant::generate_with_grammar(grammar: &str, prompt: &str)
+       │
+       ▼
+┌──────────────────────────────┐
+│  1. Parse GBNF grammar      │
+│     GbnfGrammar::parse()     │
+│                              │
+│  2. Send prompt to LLM      │
+│     (active provider)        │
+│                              │
+│  3. Validate response        │
+│     against grammar rules    │
+│                              │
+│  4. Return validated output  │
+│     or AiError on mismatch   │
+└──────────────────────────────┘
+```
+
+El metodo `generate_with_grammar()` acepta una gramatica en formato GBNF (GGML BNF), la parsea, envia el prompt al LLM activo y valida que la respuesta cumpla las reglas gramaticales definidas. Esto permite forzar formatos de salida estructurados (JSON schema, XML, listas numeradas, etc.) sin depender de prompt engineering.
+
+### 46.2 HITL (Human-in-the-Loop) Integration
+
+**Modulo standalone**: `hitl.rs`
+**Feature**: `hitl`
+
+```
+AiAssistant::send_message_with_approval(msg: &str, auto_approve: bool)
+       │
+       ▼
+┌──────────────────────────────────────┐
+│  1. Generate LLM response            │
+│     (normal send_message flow)       │
+│                                      │
+│  2. Create HitlApprovalGate          │
+│     with auto_approve setting        │
+│                                      │
+│  3. Submit response for approval     │
+│     ├── auto_approve=true → pass     │
+│     └── auto_approve=false → pending │
+│                                      │
+│  4. Return response + approval state │
+└──────────────────────────────────────┘
+```
+
+El metodo `send_message_with_approval()` extiende el flujo de conversacion normal con una puerta de aprobacion. Cuando `auto_approve` es `false`, la respuesta queda en estado pendiente hasta que un operador humano la apruebe o rechace. Esto es critico para workflows de alto riesgo (ejecucion de codigo, transacciones, comunicaciones externas).
+
+### 46.3 MCP Client Integration
+
+**Modulo standalone**: `mcp_client.rs`
+**Feature**: `full`
+
+```
+AiAssistant::connect_mcp_server(url: &str) -> Result<()>
+AiAssistant::list_mcp_tools(url: &str) -> Result<Vec<McpToolInfo>>
+       │
+       ▼
+┌──────────────────────────────────────┐
+│  1. Create RemoteMcpClient           │
+│     (HTTP/SSE transport)             │
+│                                      │
+│  2. Connect to remote MCP server     │
+│     (handshake, capability exchange) │
+│                                      │
+│  3. list_mcp_tools():                │
+│     → Query tools/list endpoint      │
+│     → Return tool names + schemas    │
+│                                      │
+│  4. Tools available for tool_call    │
+│     in subsequent LLM interactions   │
+└──────────────────────────────────────┘
+```
+
+`connect_mcp_server()` establece conexion con un servidor MCP remoto (Model Context Protocol). `list_mcp_tools()` consulta las herramientas disponibles en ese servidor. Una vez conectado, las herramientas MCP remotas pueden ser invocadas por el LLM durante la generacion de respuestas, extendiendo las capacidades del agente sin codigo adicional.
+
+### 46.4 Distillation Integration
+
+**Modulo standalone**: `distillation.rs`
+**Feature**: `distillation`
+
+```
+AiAssistant::collect_trajectory() -> Result<Trajectory>
+AiAssistant::export_training_data() -> Result<Vec<TrainingExample>>
+       │
+       ▼
+┌──────────────────────────────────────────┐
+│  collect_trajectory():                    │
+│  1. Capture conversation history          │
+│  2. Extract (input, output) pairs         │
+│  3. Include tool calls + results          │
+│  4. Build Trajectory with all steps       │
+│                                           │
+│  export_training_data():                  │
+│  1. Collect trajectory (above)            │
+│  2. Format as TrainingExample records     │
+│     (instruction, input, output)          │
+│  3. Ready for fine-tuning pipelines       │
+│     (JSONL, HuggingFace, OpenAI format)   │
+└──────────────────────────────────────────┘
+```
+
+El pipeline de distillation convierte conversaciones reales en datos de entrenamiento. `collect_trajectory()` captura el historial completo de la sesion (incluyendo tool calls y sus resultados) como una secuencia de pasos. `export_training_data()` transforma esa trayectoria en ejemplos de entrenamiento listos para fine-tuning de modelos mas pequenos, permitiendo destilar el comportamiento de un modelo grande en uno mas eficiente.
+
+### Manejo de Errores
+
+Cada integracion convierte los errores del modulo standalone a variantes de `AiError`:
+
+| Modulo | Error standalone | Variante AiError |
+|--------|-----------------|------------------|
+| constrained_decoding | GrammarError | AiError::ConstrainedDecodingError |
+| hitl | HitlError | AiError::HitlError |
+| mcp_client | McpClientError | AiError::McpClientError |
+| distillation | DistillationError | AiError::DistillationError |
+
+---
+
+## 47. Memory Persistence Architecture (v9)
+
+> Fecha: 2026-02-24
+
+### Resumen
+
+v9 extiende la persistencia de memory stores con snapshots comprimidos y verificacion de integridad mediante checksums, complementando los mecanismos de v8 (`save_to_file`/`load_from_file` y `AutoPersistenceConfig`).
+
+### Compressed Snapshots
+
+Las funciones `save_compressed()` y `load_compressed()` permiten guardar y restaurar el estado completo de un memory store en formato gzip:
+
+```
+┌──────────────────────────────────────────────────┐
+│              save_compressed()                     │
+│                                                    │
+│  MemoryStore                                       │
+│       │                                            │
+│       ▼                                            │
+│  serde_json::to_vec()                              │
+│       │                                            │
+│       ▼ (JSON bytes)                               │
+│  flate2::write::GzEncoder                          │
+│       │ (Compression::default())                   │
+│       ▼ (gzip bytes)                               │
+│  std::fs::write("store.json.gz")                   │
+│       │                                            │
+│       ▼                                            │
+│  FNV-1a hash of compressed bytes                   │
+│       │                                            │
+│       ▼                                            │
+│  std::fs::write("store.json.gz.checksum")          │
+│  (hex-encoded hash string)                         │
+└──────────────────────────────────────────────────┘
+```
+
+```
+┌──────────────────────────────────────────────────┐
+│              load_compressed()                     │
+│                                                    │
+│  std::fs::read("store.json.gz")                    │
+│       │                                            │
+│       ▼ (gzip bytes)                               │
+│  FNV-1a hash of compressed bytes                   │
+│       │                                            │
+│       ▼                                            │
+│  Compare with "store.json.gz.checksum"             │
+│       │                                            │
+│       ├── MISMATCH → Error: corrupted/tampered     │
+│       │                                            │
+│       ▼ (match)                                    │
+│  flate2::read::GzDecoder                           │
+│       │                                            │
+│       ▼ (JSON bytes)                               │
+│  serde_json::from_slice()                          │
+│       │                                            │
+│       ▼                                            │
+│  MemoryStore (restored)                            │
+└──────────────────────────────────────────────────┘
+```
+
+El formato de archivo es `.json.gz` — JSON serializado con serde y comprimido con gzip via `flate2`. La compresion reduce significativamente el tamano de los snapshots para memory stores grandes con muchos embeddings o historial extenso.
+
+### Checksum Verification
+
+Cada snapshot comprimido genera un archivo sidecar `.checksum` con un hash FNV-1a del contenido comprimido:
+
+```
+Filesystem:
+  memories/
+    ├── store.json.gz            ← compressed snapshot
+    └── store.json.gz.checksum   ← hex-encoded FNV-1a hash
+```
+
+**FNV-1a** (Fowler-Noll-Vo, variant 1a) se usa por sus propiedades:
+- Implementacion trivial en Rust puro (no requiere dependencias criptograficas)
+- Distribucion uniforme para deteccion de corrupcion accidental
+- Rapido — no necesita propiedades criptograficas ya que el objetivo es detectar corrupcion de datos, no resistir ataques maliciosos
+
+El flujo de verificacion durante `load_compressed()`:
+1. Leer el archivo `.json.gz`
+2. Calcular FNV-1a hash del contenido leido
+3. Leer el archivo `.checksum` esperado
+4. Comparar ambos hashes
+5. Si no coinciden, retornar error inmediatamente sin intentar descomprimir — esto detecta corrupcion en disco, transferencias incompletas o modificaciones no autorizadas
+
+### Integracion con Persistencia Existente (v8)
+
+La arquitectura de persistencia de v9 se apila sobre los mecanismos de v8:
+
+```
+┌─────────────────────────────────────────────────┐
+│          Niveles de Persistencia                 │
+│                                                  │
+│  Nivel 3 (v9): Compressed + Checksum            │
+│  ├── save_compressed() / load_compressed()       │
+│  ├── .json.gz format (flate2 gzip)              │
+│  └── .checksum sidecar (FNV-1a)                 │
+│                                                  │
+│  Nivel 2 (v8): AutoPersistenceConfig            │
+│  ├── Automatic periodic saves                    │
+│  ├── Configurable interval                       │
+│  └── Background thread / timer                   │
+│                                                  │
+│  Nivel 1 (v8): Manual File I/O                   │
+│  ├── save_to_file() / load_from_file()           │
+│  └── Plain JSON format                           │
+└─────────────────────────────────────────────────┘
+```
+
+Los tres niveles son complementarios:
+- **Nivel 1** para desarrollo y depuracion (JSON legible)
+- **Nivel 2** para operacion continua (auto-saves periodicos)
+- **Nivel 3** para backups, archivado y transferencia entre nodos (comprimido + verificado)

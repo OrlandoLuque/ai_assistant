@@ -6,7 +6,7 @@ The project has two testing layers:
 
 | Layer | Tests | Run Command |
 |-------|-------|-------------|
-| Unit tests (`#[test]`) | 2472 | `cargo test --lib --features full` |
+| Unit tests (`#[test]`) | 5034 | `cargo test --lib --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools"` |
 | Integration tests | 38 | `cargo test --test integration_tests --features full` |
 | Test harness (CLI) | ~436 | `cargo run --bin ai_test_harness -- --all` (sin P2P) |
 | Distributed networking tests | 115 | `cargo test --features "full,distributed-network"` |
@@ -15,7 +15,7 @@ The project has two testing layers:
 | Test harness P2P categories | 16 | `cargo run --bin ai_test_harness --features "full,p2p" -- --category=p2p_nat` |
 | Benchmarks | 6 | `cargo bench --bench core_benchmarks --features full` |
 
-**Total: 2,510 tests** (2472 lib + 38 integration, verified with `cargo test --features "full,p2p,distributed-network,autonomous,scheduler,butler,browser,distributed-agents"`)
+**Total: 5,034 tests** (verified with `cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools" --lib`)
 
 ## Quick Start
 
@@ -119,6 +119,12 @@ Unit tests live inside each source file in `crates/ai_assistant/src/` using `#[c
 - `metrics.rs` - Metrics collection, counters, histograms, aggregation
 - `error.rs` - Error types, error propagation, Display/Debug impls
 
+**Server & HTTP** (v9):
+- `server.rs` - SSE streaming, gzip compression, rate limiting middleware, enhanced health check, session endpoints, request validation, audit logging, API versioning, structured error responses (~100 tests)
+
+**Assistant Integration** (v9):
+- `assistant.rs` - Provider integration, session management, constrained decoding, HITL approval, MCP client connection, distillation trajectory collection, session persistence (~101 tests)
+
 **REPL, Reranking & A/B Testing** (Phase 9):
 - `repl.rs` - ReplEngine, command parsing, history, session management, completions, theming (21 tests)
 - `reranker.rs` - CrossEncoderReranker, ReciprocalRankFusion, DiversityReranker (MMR), CascadeReranker, RerankerPipeline (15 tests)
@@ -163,6 +169,12 @@ Unit tests live inside each source file in `crates/ai_assistant/src/` using `#[c
 - `diff.rs` - Text diff computation
 - `streaming.rs` - StreamBuffer operations
 - `cache_compression.rs` - Compress/decompress roundtrips
+
+**RAG & Graph** (v9 test expansion):
+- `conversation_flow.rs` - State transitions, flow merge, edge cases (~20 tests)
+- `knowledge_graph.rs` - Entity dedup, cycles, traversal, query (~48 tests)
+- `vector_db.rs` - Migration, cache eviction, error paths (~62 tests)
+- `advanced_memory.rs` - Fact extraction/store, compressed snapshots, checksum verification (~204 tests)
 
 ## Benchmarks (`cargo bench`)
 
@@ -305,3 +317,18 @@ cargo run --bin ai_test_harness -- --all --no-color
 ```
 
 The harness exits with code 1 if any test fails, making it suitable for CI pipelines.
+
+---
+
+## Test Count History
+
+| Version | Total Tests | Delta | Date |
+|---------|------------|-------|------|
+| v2 | 2,510 | — | 2026-02-21 |
+| v3 | 2,731 | +221 | 2026-02-22 |
+| v4 | 3,401 | +670 | 2026-02-22 |
+| v5 | 3,907 | +506 | 2026-02-23 |
+| v6 | 4,449 | +542 | 2026-02-23 |
+| v7 | 4,687 | +238 | 2026-02-23 |
+| v8 | 4,882 | +195 | 2026-02-24 |
+| v9 | 5,034 | +152 | 2026-02-24 |
