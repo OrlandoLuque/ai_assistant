@@ -7941,3 +7941,245 @@ Los tres niveles son complementarios:
 - **Nivel 1** para desarrollo y depuracion (JSON legible)
 - **Nivel 2** para operacion continua (auto-saves periodicos)
 - **Nivel 3** para backups, archivado y transferencia entre nodos (comprimido + verificado)
+
+---
+
+## 48. Module Splitting Architecture (v10)
+
+> Fecha: 2026-02-24
+
+### Resumen
+
+v10 reorganiza los 4 modulos que superaban 5,000 LOC (`prompt_signature`, `advanced_memory`, `document_parsing`, `mcp_protocol`) en submodulos de directorio. La API publica permanece identica gracias a re-exportaciones `pub use`.
+
+### Patron de Splitting
+
+```
+Antes:
+  src/module.rs           (6,000+ LOC)
+
+Despues:
+  src/module/mod.rs       (re-exports + glue)
+  src/module/types.rs     (structs, enums, traits)
+  src/module/core.rs      (logica principal)
+  src/module/helpers.rs   (funciones auxiliares)
+  src/module/tests.rs     (tests del modulo)
+```
+
+El `mod.rs` contiene:
+
+```rust
+mod types;
+mod core;
+mod helpers;
+#[cfg(test)]
+mod tests;
+
+pub use types::*;
+pub use core::*;
+pub use helpers::*;
+```
+
+### Modulos Divididos
+
+| Modulo | LOC Original | Subarchivos | Criterio de Split |
+|--------|-------------|-------------|-------------------|
+| `prompt_signature` | 6,907 | 12 (types, compiled, optimizers, reflector, gepa, miprov2, assertions, adapters, simba, reasoning, judge, tests) | Por responsabilidad funcional |
+| `advanced_memory` | 6,441 | 9 (types, episodic, procedural, entity, consolidation, manager, persistence, auto_persistence, tests) | Por tipo de memoria |
+| `document_parsing` | 5,105 | 7 (types, parser, xml_helpers, ocr_engine, image_extraction, ocr_pipeline, tests) | Por etapa de pipeline |
+| `mcp_protocol` | 5,025 | 5 (types, server, oauth, v2, tests) | Por version/funcionalidad del protocolo |
+
+### Garantia de Compatibilidad
+
+El split no cambia ninguna ruta de importacion publica. Cualquier codigo que use `use ai_assistant::PromptSignature` sigue compilando sin cambios. Los tests existentes validan que todas las re-exportaciones funcionan correctamente.
+
+---
+
+## 49. TLS Integration Architecture (v10)
+
+> Fecha: 2026-02-24
+
+### Resumen
+
+El feature flag `server-tls` anade terminacion TLS nativa al servidor HTTP embebido usando `rustls`. El diseno usa polimorfismo via trait objects para que el pipeline de request handling sea identico para TCP y TLS.
+
+### ReadWrite Trait
+
+```rust
+trait ReadWrite: Read + Write {}
+impl ReadWrite for TcpStream {}
+impl ReadWrite for StreamOwned<ServerConnection, TcpStream> {}
+```
+
+Esto permite que `handle_connection()` acepte `Box<dyn ReadWrite>` sin saber si el stream subyacente es TCP plano o TLS.
+
+### Flujo de Conexion
+
+```
+                    ┌──────────────────┐
+                    │  TcpListener     │
+                    │  accept()        │
+                    └────────┬─────────┘
+                             │
+                    ┌────────▼─────────┐
+                    │  TLS configured? │
+                    └──┬───────────┬───┘
+                       │           │
+                    Yes│           │No
+                       │           │
+              ┌────────▼────┐  ┌──▼───────────┐
+              │ tls_accept() │  │ Box<TcpStream>│
+              │ rustls wrap   │  │ as ReadWrite  │
+              └────────┬─────┘  └──┬───────────┘
+                       │           │
+                    ┌──▼───────────▼──┐
+                    │  handle_request  │
+                    │  (Box<dyn RW>)   │
+                    └─────────────────┘
+```
+
+### Configuracion
+
+```rust
+let tls = TlsConfig {
+    cert_path: "/path/to/cert.pem".to_string(),
+    key_path: "/path/to/key.pem".to_string(),
+};
+```
+
+`load_tls_config()` lee los archivos PEM, parsea certificados y clave privada, y construye un `rustls::ServerConfig` con las configuraciones de seguridad por defecto de rustls (TLS 1.2+, cipher suites modernos).
+
+---
+
+## 50. WebSocket Chat Architecture (v10)
+
+> Fecha: 2026-02-24
+
+### Resumen
+
+El servidor HTTP embebido soporta WebSocket (RFC 6455) para chat bidireccional en tiempo real. El endpoint `/ws` (y `/api/v1/ws`) acepta conexiones WebSocket con upgrade HTTP estandar.
+
+### Handshake
+
+```
+Cliente                              Servidor
+  │                                     │
+  │  GET /ws HTTP/1.1                   │
+  │  Upgrade: websocket                 │
+  │  Connection: Upgrade                │
+  │  Sec-WebSocket-Key: <base64>        │
+  │  Sec-WebSocket-Version: 13          │
+  │ ──────────────────────────────────> │
+  │                                     │
+  │  HTTP/1.1 101 Switching Protocols   │
+  │  Upgrade: websocket                 │
+  │  Connection: Upgrade                │
+  │  Sec-WebSocket-Accept: <hash>       │
+  │ <────────────────────────────────── │
+  │                                     │
+  │  [WebSocket frames bidireccional]   │
+  │ <──────────────────────────────>    │
+```
+
+`Sec-WebSocket-Accept` se calcula como:
+1. Concatenar `Sec-WebSocket-Key` + GUID magico `258EAFA5-E914-47DA-95CA-C5AB0DC85B11`
+2. SHA-1 hash
+3. Base64 encode
+
+Las funciones `sha1_hash` y `base64_encode` se implementaron from scratch en `websocket_streaming.rs` y se reutilizan aqui via `pub(crate)`.
+
+### Frame I/O
+
+```
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-------+-+-------------+-------------------------------+
+|F|R|R|R| opcode|M| Payload len |    Extended payload length    |
+|I|S|S|S|  (4)  |A|     (7)     |             (16/64)           |
+|N|V|V|V|       |S|             |   (if payload len==126/127)   |
+| |1|2|3|       |K|             |                               |
++-+-+-+-+-------+-+-------------+-------------------------------+
+|     Masking-key (0 or 4 bytes)                                |
++-------------------------------+-------------------------------+
+|     Payload Data                                              |
++---------------------------------------------------------------+
+```
+
+`read_ws_frame()` decodifica frames del cliente (siempre masked). `write_ws_frame()` codifica frames del servidor (siempre unmasked). Se manejan opcodes: Text (0x1), Close (0x8), Ping (0x9), Pong (0xA).
+
+### Chat Loop
+
+El flujo de chat por WebSocket:
+
+1. Cliente envia frame Text con JSON: `{"message": "Hello", "system_prompt": "..."}`
+2. Servidor parsea, invoca al LLM con streaming
+3. Por cada token generado, servidor envia frame Text: `{"type": "chunk", "data": "token"}`
+4. Al terminar, servidor envia: `{"type": "done"}`
+5. El bucle continua hasta que el cliente envia Close frame o desconecta
+
+---
+
+## 51. Plugin System Architecture (v10)
+
+> Fecha: 2026-02-24
+
+### Resumen
+
+El sistema de plugins proporciona una arquitectura extensible de middleware para el servidor HTTP, permitiendo inyectar logica en el pipeline de request/response sin modificar el codigo del servidor.
+
+### Plugin Trait
+
+```rust
+pub trait Plugin: Send + Sync {
+    fn name(&self) -> &str;
+    fn on_request(&self, method: &str, path: &str, headers: &HashMap<String, String>)
+        -> PluginAction { PluginAction::Continue }
+    fn on_response(&self, method: &str, path: &str, status: u16, duration_ms: u64)
+        { /* no-op */ }
+    fn on_event(&self, event: &PluginEvent)
+        { /* no-op */ }
+}
+```
+
+Los metodos tienen implementaciones por defecto no-op, asi que cada plugin solo necesita implementar los hooks que le interesan.
+
+### PluginAction
+
+```rust
+pub enum PluginAction {
+    Continue,                    // Continuar procesando
+    Reject { status: u16, body: String },  // Rechazar request
+}
+```
+
+`on_request` puede retornar `Reject` para bloquear requests antes de que lleguen al handler. Esto permite plugins de seguridad como `IpAllowlistPlugin`.
+
+### Plugins Incorporados
+
+```
+┌──────────────────────────────────────────────────────┐
+│                   PluginManager                       │
+│  Vec<Box<dyn Plugin>>                                │
+│                                                       │
+│  ┌─────────────────────┐  ┌────────────────────────┐ │
+│  │ RequestLoggingPlugin │  │ IpAllowlistPlugin      │ │
+│  │ on_request: log      │  │ on_request: check IP   │ │
+│  │ on_response: log     │  │ → Continue / Reject    │ │
+│  └─────────────────────┘  └────────────────────────┘ │
+│                                                       │
+│  ┌──────────────────────┐                             │
+│  │ MetricsCollectorPlugin│                            │
+│  │ on_response: count++  │                            │
+│  │ on_response: latency  │                            │
+│  └──────────────────────┘                             │
+└──────────────────────────────────────────────────────┘
+```
+
+### Integracion con el Servidor
+
+El `PluginManager` se invoca en dos puntos del pipeline HTTP:
+
+1. **Pre-handler**: `dispatch_request()` ejecuta `on_request` en todos los plugins. Si alguno retorna `Reject`, el servidor responde inmediatamente sin invocar al handler.
+2. **Post-handler**: `dispatch_response()` ejecuta `on_response` en todos los plugins con el status code y duracion de la request.
+
+Adicionalmente, `dispatch_event()` permite notificar eventos arbitrarios (startup, shutdown, config changes) a todos los plugins registrados.
