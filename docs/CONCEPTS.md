@@ -3194,3 +3194,51 @@ The same zoom-in/zoom-out principle applies to knowledge graph entities. A clust
 **The fundamental idea**: All server errors return a consistent JSON format: `{error_code, message, details, retry_after_secs}`. Error codes (INVALID_JSON, AUTH_FAILED, RATE_LIMITED, etc.) allow programmatic error handling by API consumers.
 
 **Feature flag**: core (always available)
+
+---
+
+## 142. Module Splitting
+
+**The fundamental idea**: When a source file grows past ~5,000 lines it becomes hard to navigate, slow to recompile, and prone to merge conflicts. Module splitting converts a single `module.rs` into a directory `module/mod.rs` plus focused subfiles (`module/types.rs`, `module/validation.rs`, etc.). The `mod.rs` file declares `mod types; mod validation;` and re-exports everything through `pub use types::*; pub use validation::*;`, so every downstream `use crate::module::SomeType` continues to compile unchanged. In v10, four modules were split this way: `prompt_signature`, `advanced_memory`, `document_parsing`, and `mcp_protocol`. The public API surface remains identical — only the internal file layout changes.
+
+**Feature flag**: core (always available)
+
+---
+
+## 143. TLS Runtime (server-tls)
+
+**The fundamental idea**: Production servers must encrypt traffic. The `server-tls` feature flag adds native rustls integration to the embedded HTTP server. `load_tls_config()` reads PEM-encoded certificate and private key files and returns a configured `rustls::ServerConfig`. A `ReadWrite` trait object abstracts over plain TCP and TLS streams, so request handling code is polymorphic — it works identically regardless of transport. Both `run_blocking()` and `start_background()` accept an optional TLS config; when present, every accepted connection is wrapped in a TLS acceptor before entering the request pipeline.
+
+**Feature flag**: `server-tls`
+
+---
+
+## 144. Plugin System Server Hooks
+
+**The fundamental idea**: Hard-coding cross-cutting concerns (logging, IP filtering, metrics) into the request pipeline creates coupling and limits extensibility. The Plugin trait defines three hook methods — `on_request`, `on_response`, and `on_event` — each with a default no-op implementation so plugins only override what they need. Three built-in plugins ship with the crate: `RequestLoggingPlugin` logs method, path, status, and duration for every request; `IpAllowlistPlugin` rejects connections from IPs not in a configured allowlist; `MetricsCollectorPlugin` accumulates request counts and latencies for the `/metrics` endpoint. `PluginManager` holds a `Vec<Box<dyn Plugin>>` and dispatches each hook to all registered plugins in order, giving the server a composable middleware-like architecture without framework dependencies.
+
+**Feature flag**: core (always available)
+
+---
+
+## 145. OpenAPI Export
+
+**The fundamental idea**: API consumers need machine-readable documentation. `generate_server_api_spec()` returns a `serde_json::Value` containing a complete OpenAPI 3.0.0 specification that describes every server endpoint, its request/response schemas, authentication requirements, and error codes. The spec is auto-generated from the server's route table, so it never drifts from the actual implementation. It is served at both `/openapi.json` and `/api/v1/openapi.json`, making it directly consumable by Swagger UI, code generators, and API testing tools.
+
+**Feature flag**: core (always available)
+
+---
+
+## 146. Server CLI Binary (ai_assistant_server)
+
+**The fundamental idea**: Library users who just want to run the server should not have to write Rust code. The `ai_assistant_server` binary, declared as a `[[bin]]` entry with `required-features = ["full"]`, provides a ready-made CLI. It accepts `--host`, `--port`, `--config`, `--api-key`, `--tls-cert`, `--tls-key`, `--dry-run`, and `--help`. A JSON config file (passed via `--config`) can set all options declaratively. The `--dry-run` flag validates the configuration, prints the resolved settings as JSON, and exits without starting the server — useful for CI pipelines and deployment scripts.
+
+**Feature flag**: `full`
+
+---
+
+## 147. Criterion Benchmarks
+
+**The fundamental idea**: Performance claims need reproducible evidence. The `benches/core_benchmarks.rs` file contains 16 Criterion benchmarks covering the crate's hot paths: embedding generation, conversation management, RAG retrieval, streaming token dispatch, provider routing, config parsing, cosine similarity, guardrail evaluation, HTML processing, rate limiter throughput, WebSocket frame encoding, gzip compression, text transformation, JSON serialization, intent classification, and context window management. Running `cargo bench --features full` produces statistical reports with confidence intervals, and Criterion automatically detects regressions between runs.
+
+**Feature flag**: `full`
