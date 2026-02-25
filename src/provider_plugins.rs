@@ -2091,4 +2091,818 @@ And also:
             "Ollama should report tool_calling: true"
         );
     }
+
+    // ====================================================================
+    // NEW: URL trailing-slash trimming
+    // ====================================================================
+
+    #[test]
+    fn test_ollama_url_trailing_slash_trimmed() {
+        let provider = OllamaProvider::new("http://localhost:11434/");
+        assert_eq!(provider.base_url, "http://localhost:11434");
+    }
+
+    #[test]
+    fn test_lm_studio_url_trailing_slash_trimmed() {
+        let provider = LmStudioProvider::new("http://localhost:1234/");
+        assert_eq!(provider.base_url, "http://localhost:1234");
+    }
+
+    #[test]
+    fn test_text_gen_webui_url_trailing_slash_trimmed() {
+        let provider = TextGenWebUIProvider::new("http://localhost:5000/");
+        assert_eq!(provider.base_url, "http://localhost:5000");
+    }
+
+    #[test]
+    fn test_kobold_url_trailing_slash_trimmed() {
+        let provider = KoboldCppProvider::new("http://localhost:5001/");
+        assert_eq!(provider.base_url, "http://localhost:5001");
+    }
+
+    #[test]
+    fn test_openai_compatible_url_trailing_slash_trimmed() {
+        let provider = OpenAICompatibleProvider::new("test", "http://example.com/v1/");
+        assert_eq!(provider.base_url, "http://example.com/v1");
+    }
+
+    // ====================================================================
+    // NEW: with_timeout builder chains
+    // ====================================================================
+
+    #[test]
+    fn test_ollama_with_timeout() {
+        let provider =
+            OllamaProvider::new("http://localhost:11434").with_timeout(Duration::from_secs(30));
+        assert_eq!(provider.timeout, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn test_lm_studio_with_timeout() {
+        let provider =
+            LmStudioProvider::new("http://localhost:1234").with_timeout(Duration::from_secs(60));
+        assert_eq!(provider.timeout, Duration::from_secs(60));
+    }
+
+    #[test]
+    fn test_text_gen_webui_with_timeout() {
+        let provider =
+            TextGenWebUIProvider::new("http://localhost:5000").with_timeout(Duration::from_secs(45));
+        assert_eq!(provider.timeout, Duration::from_secs(45));
+    }
+
+    #[test]
+    fn test_kobold_with_timeout() {
+        let provider =
+            KoboldCppProvider::new("http://localhost:5001").with_timeout(Duration::from_secs(90));
+        assert_eq!(provider.timeout, Duration::from_secs(90));
+    }
+
+    #[test]
+    fn test_openai_compatible_with_timeout() {
+        let provider = OpenAICompatibleProvider::new("test", "http://example.com")
+            .with_timeout(Duration::from_secs(15));
+        assert_eq!(provider.timeout, Duration::from_secs(15));
+    }
+
+    // ====================================================================
+    // NEW: Default timeout values (should be 120s)
+    // ====================================================================
+
+    #[test]
+    fn test_default_timeout_all_providers() {
+        let expected = Duration::from_secs(120);
+        assert_eq!(OllamaProvider::new("http://x").timeout, expected);
+        assert_eq!(LmStudioProvider::new("http://x").timeout, expected);
+        assert_eq!(TextGenWebUIProvider::new("http://x").timeout, expected);
+        assert_eq!(KoboldCppProvider::new("http://x").timeout, expected);
+        assert_eq!(
+            OpenAICompatibleProvider::new("t", "http://x").timeout,
+            expected
+        );
+    }
+
+    // ====================================================================
+    // NEW: TextGenWebUIProvider creation + ProviderPlugin impl
+    // ====================================================================
+
+    #[test]
+    fn test_text_gen_webui_provider_creation() {
+        let provider = TextGenWebUIProvider::new("http://localhost:5000");
+        assert_eq!(provider.name(), "text_gen_webui");
+        assert_eq!(provider.base_url, "http://localhost:5000");
+    }
+
+    #[test]
+    fn test_text_gen_webui_capabilities() {
+        let caps = TextGenWebUIProvider::new("http://localhost:5000").capabilities();
+        assert!(caps.streaming);
+        assert!(!caps.tool_calling);
+        assert!(!caps.vision);
+        assert!(!caps.embeddings);
+        assert!(!caps.json_mode);
+        assert!(caps.system_prompt);
+    }
+
+    // ====================================================================
+    // NEW: KoboldCppProvider creation
+    // ====================================================================
+
+    #[test]
+    fn test_kobold_provider_creation() {
+        let provider = KoboldCppProvider::new("http://localhost:5001");
+        assert_eq!(provider.name(), "kobold_cpp");
+        assert_eq!(provider.base_url, "http://localhost:5001");
+    }
+
+    // ====================================================================
+    // NEW: Full capability flag coverage per provider
+    // ====================================================================
+
+    #[test]
+    fn test_ollama_all_capabilities() {
+        let caps = OllamaProvider::new("http://localhost:11434").capabilities();
+        assert!(caps.streaming);
+        assert!(caps.tool_calling);
+        assert!(caps.vision);
+        assert!(caps.embeddings);
+        assert!(caps.json_mode);
+        assert!(caps.system_prompt);
+    }
+
+    #[test]
+    fn test_lm_studio_all_capabilities() {
+        let caps = LmStudioProvider::new("http://localhost:1234").capabilities();
+        assert!(caps.streaming);
+        assert!(!caps.tool_calling);
+        assert!(!caps.vision);
+        assert!(!caps.embeddings);
+        assert!(caps.json_mode);
+        assert!(caps.system_prompt);
+    }
+
+    #[test]
+    fn test_kobold_all_capabilities() {
+        let caps = KoboldCppProvider::new("http://localhost:5001").capabilities();
+        assert!(caps.streaming);
+        assert!(caps.tool_calling);
+        assert!(!caps.vision);
+        assert!(!caps.embeddings);
+        assert!(!caps.json_mode);
+        assert!(caps.system_prompt);
+    }
+
+    #[test]
+    fn test_openai_compatible_all_capabilities() {
+        let caps = OpenAICompatibleProvider::new("test", "http://x").capabilities();
+        assert!(caps.streaming);
+        assert!(caps.tool_calling);
+        assert!(!caps.vision);
+        assert!(caps.embeddings);
+        assert!(caps.json_mode);
+        assert!(caps.system_prompt);
+    }
+
+    #[test]
+    fn test_huggingface_all_capabilities() {
+        let caps = HuggingFaceInferenceProvider::new("gpt2").capabilities();
+        assert!(!caps.streaming);
+        assert!(!caps.tool_calling);
+        assert!(!caps.vision);
+        assert!(caps.embeddings);
+        assert!(!caps.json_mode);
+        assert!(!caps.system_prompt);
+    }
+
+    // ====================================================================
+    // NEW: HuggingFace base_url construction
+    // ====================================================================
+
+    #[test]
+    fn test_huggingface_base_url() {
+        let provider = HuggingFaceInferenceProvider::new("gpt2");
+        assert_eq!(
+            provider.base_url(),
+            "https://api-inference.huggingface.co/models/gpt2"
+        );
+    }
+
+    #[test]
+    fn test_huggingface_base_url_with_model_change() {
+        let provider = HuggingFaceInferenceProvider::new("gpt2")
+            .with_model("meta-llama/Llama-2-7b");
+        assert_eq!(
+            provider.base_url(),
+            "https://api-inference.huggingface.co/models/meta-llama/Llama-2-7b"
+        );
+    }
+
+    // ====================================================================
+    // NEW: DiscoveryConfig full field coverage
+    // ====================================================================
+
+    #[test]
+    fn test_discovery_config_all_defaults() {
+        let config = DiscoveryConfig::default();
+        assert!(config.check_ollama);
+        assert!(config.check_lm_studio);
+        assert!(config.check_text_gen_webui);
+        assert!(config.check_kobold_cpp);
+        assert_eq!(config.ollama_url, "http://localhost:11434");
+        assert_eq!(config.lm_studio_url, "http://localhost:1234");
+        assert_eq!(config.text_gen_webui_url, "http://localhost:5000");
+        assert_eq!(config.kobold_cpp_url, "http://localhost:5001");
+        assert_eq!(config.timeout, Duration::from_secs(5));
+    }
+
+    #[test]
+    fn test_discovery_config_clone() {
+        let config = DiscoveryConfig::default();
+        let cloned = config.clone();
+        assert_eq!(config.ollama_url, cloned.ollama_url);
+        assert_eq!(config.check_ollama, cloned.check_ollama);
+        assert_eq!(config.timeout, cloned.timeout);
+    }
+
+    #[test]
+    fn test_discovery_config_debug() {
+        let config = DiscoveryConfig::default();
+        let debug_str = format!("{:?}", config);
+        assert!(debug_str.contains("DiscoveryConfig"));
+        assert!(debug_str.contains("11434"));
+    }
+
+    // ====================================================================
+    // NEW: build_messages helper (Ollama, LmStudio, TextGenWebUI, OpenAI)
+    // ====================================================================
+
+    #[test]
+    fn test_ollama_build_messages_with_system_prompt() {
+        let provider = OllamaProvider::new("http://localhost:11434");
+        let msgs = vec![ChatMessage::user("Hello")];
+        let result = provider.build_messages(&msgs, "You are helpful.");
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0]["role"], "system");
+        assert_eq!(result[0]["content"], "You are helpful.");
+        assert_eq!(result[1]["role"], "user");
+        assert_eq!(result[1]["content"], "Hello");
+    }
+
+    #[test]
+    fn test_ollama_build_messages_empty_system_prompt() {
+        let provider = OllamaProvider::new("http://localhost:11434");
+        let msgs = vec![ChatMessage::user("Hi")];
+        let result = provider.build_messages(&msgs, "");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0]["role"], "user");
+    }
+
+    #[test]
+    fn test_ollama_build_messages_mixed_roles() {
+        let provider = OllamaProvider::new("http://localhost:11434");
+        let msgs = vec![
+            ChatMessage::user("Q1"),
+            ChatMessage::assistant("A1"),
+            ChatMessage::user("Q2"),
+        ];
+        let result = provider.build_messages(&msgs, "Sys");
+        assert_eq!(result.len(), 4); // system + 3 messages
+        assert_eq!(result[1]["role"], "user");
+        assert_eq!(result[2]["role"], "assistant");
+        assert_eq!(result[3]["role"], "user");
+    }
+
+    #[test]
+    fn test_ollama_build_messages_no_messages() {
+        let provider = OllamaProvider::new("http://localhost:11434");
+        let result = provider.build_messages(&[], "System");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0]["role"], "system");
+    }
+
+    #[test]
+    fn test_lm_studio_build_messages_with_system_prompt() {
+        let provider = LmStudioProvider::new("http://localhost:1234");
+        let msgs = vec![ChatMessage::user("Test")];
+        let result = provider.build_messages(&msgs, "Be concise.");
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0]["role"], "system");
+        assert_eq!(result[0]["content"], "Be concise.");
+    }
+
+    #[test]
+    fn test_openai_compatible_build_messages() {
+        let provider = OpenAICompatibleProvider::new("test", "http://x");
+        let msgs = vec![
+            ChatMessage::user("Hello"),
+            ChatMessage::assistant("Hi there"),
+        ];
+        let result = provider.build_messages(&msgs, "System prompt");
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0]["role"], "system");
+        assert_eq!(result[1]["role"], "user");
+        assert_eq!(result[2]["role"], "assistant");
+    }
+
+    // ====================================================================
+    // NEW: KoboldCpp format_prompt
+    // ====================================================================
+
+    #[test]
+    fn test_kobold_format_prompt_with_system() {
+        let provider = KoboldCppProvider::new("http://localhost:5001");
+        let msgs = vec![ChatMessage::user("Hello there")];
+        let result = provider.format_prompt(&msgs, "Be nice.");
+        assert!(result.starts_with("System: Be nice.\n\n"));
+        assert!(result.contains("User: Hello there\n\n"));
+        assert!(result.ends_with("Assistant:"));
+    }
+
+    #[test]
+    fn test_kobold_format_prompt_no_system() {
+        let provider = KoboldCppProvider::new("http://localhost:5001");
+        let msgs = vec![ChatMessage::user("Hi")];
+        let result = provider.format_prompt(&msgs, "");
+        assert!(!result.contains("System:"));
+        assert!(result.starts_with("User: Hi\n\n"));
+        assert!(result.ends_with("Assistant:"));
+    }
+
+    #[test]
+    fn test_kobold_format_prompt_multi_turn() {
+        let provider = KoboldCppProvider::new("http://localhost:5001");
+        let msgs = vec![
+            ChatMessage::user("What is 2+2?"),
+            ChatMessage::assistant("4"),
+            ChatMessage::user("And 3+3?"),
+        ];
+        let result = provider.format_prompt(&msgs, "");
+        assert!(result.contains("User: What is 2+2?"));
+        assert!(result.contains("Assistant: 4"));
+        assert!(result.contains("User: And 3+3?"));
+        assert!(result.ends_with("Assistant:"));
+    }
+
+    // ====================================================================
+    // NEW: PromptToolFallback edge cases
+    // ====================================================================
+
+    #[test]
+    fn test_prompt_tool_fallback_parse_malformed_json() {
+        let response = r#"Here is some text with broken json: {"tool_call": {"name": "broken""#;
+        let calls = PromptToolFallback::parse_tool_calls_from_text(response);
+        assert!(calls.is_empty());
+    }
+
+    #[test]
+    fn test_prompt_tool_fallback_parse_json_without_tool_call_key() {
+        let response = r#"{"other_key": {"name": "not_a_tool"}}"#;
+        let calls = PromptToolFallback::parse_tool_calls_from_text(response);
+        assert!(calls.is_empty());
+    }
+
+    #[test]
+    fn test_prompt_tool_fallback_parse_tool_call_empty_arguments() {
+        let response = r#"{"tool_call": {"name": "ping", "arguments": {}}}"#;
+        let calls = PromptToolFallback::parse_tool_calls_from_text(response);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "ping");
+        assert!(calls[0].arguments.is_empty());
+    }
+
+    #[test]
+    fn test_prompt_tool_fallback_parse_tool_call_no_arguments_key() {
+        let response = r#"{"tool_call": {"name": "noop"}}"#;
+        let calls = PromptToolFallback::parse_tool_calls_from_text(response);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "noop");
+        assert!(calls[0].arguments.is_empty());
+    }
+
+    #[test]
+    fn test_prompt_tool_fallback_parse_numeric_argument() {
+        let response =
+            r#"{"tool_call": {"name": "set_temp", "arguments": {"value": 42, "unit": "C"}}}"#;
+        let calls = PromptToolFallback::parse_tool_calls_from_text(response);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].arguments.get("value").and_then(|v| v.as_i64()), Some(42));
+        assert_eq!(
+            calls[0].arguments.get("unit").and_then(|v| v.as_str()),
+            Some("C")
+        );
+    }
+
+    #[test]
+    fn test_prompt_tool_fallback_parse_nested_json_in_response() {
+        // Response that has non-tool-call JSON before the actual tool call
+        let response = r#"The config is {"model": "gpt-4"}. Now let me call the tool:
+{"tool_call": {"name": "lookup", "arguments": {"id": "abc"}}}"#;
+        let calls = PromptToolFallback::parse_tool_calls_from_text(response);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "lookup");
+    }
+
+    #[test]
+    fn test_prompt_tool_fallback_parse_escaped_quotes_in_args() {
+        let response =
+            r#"{"tool_call": {"name": "echo", "arguments": {"text": "hello \"world\""}}}"#;
+        let calls = PromptToolFallback::parse_tool_calls_from_text(response);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "echo");
+        assert!(calls[0].arguments.contains_key("text"));
+    }
+
+    #[test]
+    fn test_prompt_tool_fallback_incremental_ids() {
+        let response = r#"
+{"tool_call": {"name": "a", "arguments": {}}}
+{"tool_call": {"name": "b", "arguments": {}}}
+{"tool_call": {"name": "c", "arguments": {}}}
+"#;
+        let calls = PromptToolFallback::parse_tool_calls_from_text(response);
+        assert_eq!(calls.len(), 3);
+        assert_eq!(calls[0].id, "fallback_call_0");
+        assert_eq!(calls[1].id, "fallback_call_1");
+        assert_eq!(calls[2].id, "fallback_call_2");
+    }
+
+    // ====================================================================
+    // NEW: extract_json_object edge cases
+    // ====================================================================
+
+    #[test]
+    fn test_extract_json_object_simple() {
+        let result = PromptToolFallback::extract_json_object(r#"{"key": "value"}"#);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), r#"{"key": "value"}"#);
+    }
+
+    #[test]
+    fn test_extract_json_object_nested() {
+        let input = r#"{"outer": {"inner": 1}}"#;
+        let result = PromptToolFallback::extract_json_object(input);
+        assert_eq!(result.unwrap(), input);
+    }
+
+    #[test]
+    fn test_extract_json_object_empty_string() {
+        let result = PromptToolFallback::extract_json_object("");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_extract_json_object_not_starting_with_brace() {
+        let result = PromptToolFallback::extract_json_object("abc{\"key\":1}");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_extract_json_object_unbalanced() {
+        let result = PromptToolFallback::extract_json_object("{\"key\": \"val\"");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_extract_json_object_with_trailing_text() {
+        let result =
+            PromptToolFallback::extract_json_object(r#"{"a": 1} and some more text"#);
+        assert_eq!(result.unwrap(), r#"{"a": 1}"#);
+    }
+
+    #[test]
+    fn test_extract_json_object_brace_inside_string() {
+        let input = r#"{"msg": "has { and } inside"}"#;
+        let result = PromptToolFallback::extract_json_object(input);
+        assert_eq!(result.unwrap(), input);
+    }
+
+    // ====================================================================
+    // NEW: Perplexity and OpenRouter presets
+    // ====================================================================
+
+    #[test]
+    fn test_perplexity_preset() {
+        let provider = OpenAICompatibleProvider::perplexity();
+        assert_eq!(provider.name(), "Perplexity");
+        assert!(provider.base_url.contains("perplexity.ai"));
+    }
+
+    #[test]
+    fn test_openrouter_preset() {
+        let provider = OpenAICompatibleProvider::openrouter();
+        assert_eq!(provider.name(), "OpenRouter");
+        assert!(provider.base_url.contains("openrouter.ai"));
+    }
+
+    // ====================================================================
+    // NEW: ProviderCapabilities default
+    // ====================================================================
+
+    #[test]
+    fn test_provider_capabilities_default_all_false() {
+        let caps = ProviderCapabilities::default();
+        assert!(!caps.streaming);
+        assert!(!caps.tool_calling);
+        assert!(!caps.vision);
+        assert!(!caps.embeddings);
+        assert!(!caps.json_mode);
+        assert!(!caps.system_prompt);
+    }
+
+    // ====================================================================
+    // NEW: OpenAICompatible api_key handling
+    // ====================================================================
+
+    #[test]
+    fn test_openai_compatible_no_api_key_by_default() {
+        let provider = OpenAICompatibleProvider::new("test", "http://x");
+        assert!(provider.api_key.is_none());
+    }
+
+    #[test]
+    fn test_openai_compatible_with_api_key_chain() {
+        let provider = OpenAICompatibleProvider::new("test", "http://x")
+            .with_api_key("sk-abc123")
+            .with_timeout(Duration::from_secs(10));
+        assert_eq!(provider.api_key.as_deref(), Some("sk-abc123"));
+        assert_eq!(provider.timeout, Duration::from_secs(10));
+    }
+
+    // ====================================================================
+    // NEW: HuggingFace with_api_key and is_available
+    // ====================================================================
+
+    #[test]
+    fn test_huggingface_with_api_key() {
+        let provider = HuggingFaceInferenceProvider::new("gpt2").with_api_key("hf_token123");
+        assert_eq!(provider.api_key.as_deref(), Some("hf_token123"));
+    }
+
+    #[test]
+    fn test_huggingface_is_available_default_false() {
+        let provider = HuggingFaceInferenceProvider::new("gpt2");
+        // Not available by default since the AtomicBool is initialized to false
+        assert!(!provider.is_available());
+    }
+
+    // ====================================================================
+    // NEW: build_tool_prompt with multiple tools
+    // ====================================================================
+
+    #[test]
+    fn test_prompt_tool_fallback_build_prompt_multiple_tools() {
+        let tools = vec![
+            ToolDefinition::new("get_weather", "Get the weather"),
+            ToolDefinition::new("get_time", "Get the time"),
+            ToolDefinition::new("search", "Search the web"),
+        ];
+        let result = PromptToolFallback::build_tool_prompt("You are helpful.", &tools);
+        assert!(result.contains("get_weather"));
+        assert!(result.contains("get_time"));
+        assert!(result.contains("search"));
+        assert!(result.contains("Available tools:"));
+        assert!(result.contains("tool_call"));
+    }
+
+    // ====================================================================
+    // NEW: Ollama tool call response parsing — edge cases
+    // ====================================================================
+
+    #[test]
+    fn test_ollama_tool_call_response_no_tool_calls() {
+        let response_json: Value = serde_json::json!({
+            "message": {
+                "role": "assistant",
+                "content": "The weather is sunny."
+            },
+            "done": true
+        });
+
+        let tool_calls: Vec<ToolCall> = if let Some(tc_array) = response_json
+            .get("message")
+            .and_then(|m| m.get("tool_calls"))
+            .and_then(|t| t.as_array())
+        {
+            tc_array
+                .iter()
+                .enumerate()
+                .filter_map(|(i, tc)| {
+                    let function = tc.get("function")?;
+                    let name = function.get("name")?.as_str()?.to_string();
+                    let arguments: HashMap<String, Value> =
+                        if let Some(args_obj) = function.get("arguments") {
+                            serde_json::from_value(args_obj.clone()).unwrap_or_default()
+                        } else {
+                            HashMap::new()
+                        };
+                    Some(ToolCall {
+                        name,
+                        arguments,
+                        id: format!("ollama_call_{}", i),
+                    })
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        assert!(tool_calls.is_empty());
+    }
+
+    #[test]
+    fn test_ollama_tool_call_response_multiple_calls() {
+        let response_json: Value = serde_json::json!({
+            "message": {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "get_weather",
+                            "arguments": {"city": "London"}
+                        }
+                    },
+                    {
+                        "function": {
+                            "name": "get_time",
+                            "arguments": {"tz": "UTC"}
+                        }
+                    }
+                ]
+            },
+            "done": true
+        });
+
+        let tool_calls: Vec<ToolCall> = response_json
+            .get("message")
+            .and_then(|m| m.get("tool_calls"))
+            .and_then(|t| t.as_array())
+            .map(|tc_array| {
+                tc_array
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, tc)| {
+                        let function = tc.get("function")?;
+                        let name = function.get("name")?.as_str()?.to_string();
+                        let arguments: HashMap<String, Value> =
+                            if let Some(args_obj) = function.get("arguments") {
+                                serde_json::from_value(args_obj.clone()).unwrap_or_default()
+                            } else {
+                                HashMap::new()
+                            };
+                        Some(ToolCall {
+                            name,
+                            arguments,
+                            id: format!("ollama_call_{}", i),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        assert_eq!(tool_calls.len(), 2);
+        assert_eq!(tool_calls[0].name, "get_weather");
+        assert_eq!(tool_calls[0].id, "ollama_call_0");
+        assert_eq!(tool_calls[1].name, "get_time");
+        assert_eq!(tool_calls[1].id, "ollama_call_1");
+    }
+
+    #[test]
+    fn test_ollama_tool_call_arguments_as_json_string() {
+        // Some providers return arguments as a JSON string instead of an object
+        let response_json: Value = serde_json::json!({
+            "message": {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "calc",
+                            "arguments": "{\"expr\": \"2+2\"}"
+                        }
+                    }
+                ]
+            },
+            "done": true
+        });
+
+        let tc_array = response_json
+            .get("message")
+            .and_then(|m| m.get("tool_calls"))
+            .and_then(|t| t.as_array())
+            .unwrap();
+
+        let tc = &tc_array[0];
+        let function = tc.get("function").unwrap();
+        let name = function.get("name").unwrap().as_str().unwrap().to_string();
+        let arguments: HashMap<String, Value> =
+            if let Some(args_obj) = function.get("arguments") {
+                if let Some(s) = args_obj.as_str() {
+                    serde_json::from_str(s).unwrap_or_default()
+                } else {
+                    serde_json::from_value(args_obj.clone()).unwrap_or_default()
+                }
+            } else {
+                HashMap::new()
+            };
+
+        assert_eq!(name, "calc");
+        assert_eq!(
+            arguments.get("expr").and_then(|v| v.as_str()),
+            Some("2+2")
+        );
+    }
+
+    // ====================================================================
+    // NEW: discover_providers with all checks disabled
+    // ====================================================================
+
+    #[test]
+    fn test_discover_providers_all_disabled() {
+        let config = DiscoveryConfig {
+            check_ollama: false,
+            check_lm_studio: false,
+            check_text_gen_webui: false,
+            check_kobold_cpp: false,
+            ..DiscoveryConfig::default()
+        };
+        let providers = discover_providers(&config);
+        assert!(providers.is_empty());
+    }
+
+    // ====================================================================
+    // NEW: Provider name consistency
+    // ====================================================================
+
+    #[test]
+    fn test_all_provider_names_non_empty() {
+        assert!(!OllamaProvider::new("http://x").name().is_empty());
+        assert!(!LmStudioProvider::new("http://x").name().is_empty());
+        assert!(!TextGenWebUIProvider::new("http://x").name().is_empty());
+        assert!(!KoboldCppProvider::new("http://x").name().is_empty());
+        assert!(!OpenAICompatibleProvider::new("test", "http://x").name().is_empty());
+        assert!(!HuggingFaceInferenceProvider::new("gpt2").name().is_empty());
+    }
+
+    #[test]
+    fn test_provider_names_are_unique() {
+        let names = vec![
+            OllamaProvider::new("http://x").name().to_string(),
+            LmStudioProvider::new("http://x").name().to_string(),
+            TextGenWebUIProvider::new("http://x").name().to_string(),
+            KoboldCppProvider::new("http://x").name().to_string(),
+            HuggingFaceInferenceProvider::new("gpt2").name().to_string(),
+        ];
+        let unique: std::collections::HashSet<_> = names.iter().collect();
+        assert_eq!(names.len(), unique.len(), "All provider names must be unique");
+    }
+
+    // ====================================================================
+    // NEW: OpenAICompatible custom name propagation
+    // ====================================================================
+
+    #[test]
+    fn test_openai_compatible_custom_name() {
+        let provider = OpenAICompatibleProvider::new("my_custom_provider", "http://x");
+        assert_eq!(provider.name(), "my_custom_provider");
+    }
+
+    // ====================================================================
+    // NEW: ProviderCapabilities Clone and Debug
+    // ====================================================================
+
+    #[test]
+    fn test_provider_capabilities_clone() {
+        let caps = ProviderCapabilities {
+            streaming: true,
+            tool_calling: false,
+            vision: true,
+            embeddings: false,
+            json_mode: true,
+            system_prompt: false,
+        };
+        let cloned = caps.clone();
+        assert_eq!(caps.streaming, cloned.streaming);
+        assert_eq!(caps.tool_calling, cloned.tool_calling);
+        assert_eq!(caps.vision, cloned.vision);
+        assert_eq!(caps.embeddings, cloned.embeddings);
+        assert_eq!(caps.json_mode, cloned.json_mode);
+        assert_eq!(caps.system_prompt, cloned.system_prompt);
+    }
+
+    #[test]
+    fn test_provider_capabilities_debug() {
+        let caps = ProviderCapabilities {
+            streaming: true,
+            tool_calling: true,
+            vision: false,
+            embeddings: false,
+            json_mode: true,
+            system_prompt: true,
+        };
+        let debug_str = format!("{:?}", caps);
+        assert!(debug_str.contains("ProviderCapabilities"));
+        assert!(debug_str.contains("streaming: true"));
+        assert!(debug_str.contains("vision: false"));
+    }
 }
