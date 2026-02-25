@@ -137,7 +137,7 @@ browser = ["autonomous"]
 distributed-agents = ["autonomous", "distributed-network"]
 
 # AWS Bedrock provider: SigV4 authentication for Bedrock runtime API
-aws-bedrock = ["dep:hmac"]
+aws-bedrock = ["dep:hmac", "dep:sha2"]
 
 # pgvector: PostgreSQL vector database backend
 # Note: actual postgres connectivity is via ureq REST or user-supplied connection.
@@ -400,6 +400,30 @@ required-features = ["media-generation"]
 [[example]]
 name = "webrtc_demo"
 required-features = ["webrtc", "voice-agent"]
+
+[[example]]
+name = "butler_demo"
+required-features = ["butler"]
+
+[[example]]
+name = "browser_demo"
+required-features = ["browser"]
+
+[[example]]
+name = "distributed_agents_demo"
+required-features = ["distributed-agents"]
+
+[[example]]
+name = "devtools_demo"
+required-features = ["devtools"]
+
+[[example]]
+name = "bedrock_demo"
+required-features = ["aws-bedrock"]
+
+[[example]]
+name = "advanced_memory_demo"
+required-features = ["advanced-memory"]
 
 [dev-dependencies]
 tempfile = "3"
