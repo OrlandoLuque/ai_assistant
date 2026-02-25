@@ -504,7 +504,7 @@ impl CostMiddleware for DefaultCostMiddleware {
             .record(model, input_tokens, output_tokens, RequestType::Chat);
 
         // Return a clone of the most recently added entry.
-        self.dashboard.entries.last().unwrap().clone()
+        self.dashboard.entries.last().expect("just pushed entry via record()").clone()
     }
 }
 

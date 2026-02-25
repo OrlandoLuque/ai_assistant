@@ -487,8 +487,8 @@ impl ExecutionTrace {
         if self.steps.is_empty() {
             return Duration::ZERO;
         }
-        let first_ts = self.steps.first().unwrap().timestamp;
-        let last = self.steps.last().unwrap();
+        let first_ts = self.steps.first().expect("non-empty: checked above").timestamp;
+        let last = self.steps.last().expect("non-empty: checked above");
         let end = last.timestamp + last.duration_ms;
         Duration::from_millis(end.saturating_sub(first_ts))
     }

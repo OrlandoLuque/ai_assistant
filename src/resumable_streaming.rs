@@ -137,14 +137,14 @@ impl ResumableStream {
 
             // Evict old checkpoints if over limit
             while state.checkpoints.len() > self.config.max_checkpoints {
-                let oldest = *state.checkpoints.keys().next().unwrap();
+                let oldest = *state.checkpoints.keys().next().expect("non-empty: while loop guarantees len > max");
                 state.checkpoints.remove(&oldest);
             }
         }
 
         // Evict old chunks if over replay buffer limit
         while state.chunks.len() > self.config.max_replay_buffer {
-            let oldest = *state.chunks.keys().next().unwrap();
+            let oldest = *state.chunks.keys().next().expect("non-empty: while loop guarantees len > max");
             state.chunks.remove(&oldest);
         }
 

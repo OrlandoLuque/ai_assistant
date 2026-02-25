@@ -2237,7 +2237,7 @@ impl DiscourseChunker {
             if seg_text.len() < self.config.min_chunk_size && !merged.is_empty() {
                 // Merge with previous if coherence is above threshold
                 if coherence >= self.config.coherence_threshold {
-                    let last = merged.last_mut().unwrap();
+                    let last = merged.last_mut().expect("non-empty: checked on line above");
                     last.0.push_str(&seg_text);
                     last.2 = end;
                     // Keep the higher coherence
