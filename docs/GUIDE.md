@@ -136,6 +136,11 @@ This guide covers every feature in the `ai_assistant` crate. Each section explai
 128. [API Versioning](#128-api-versioning)
 129. [Structured Error Responses](#129-structured-error-responses)
 130. [Compressed Memory Snapshots](#130-compressed-memory-snapshots)
+131. [WebSocket Chat Endpoint](#131-websocket-chat-endpoint)
+132. [TLS / HTTPS (Native)](#132-tls--https-native)
+133. [OpenAPI Specification](#133-openapi-specification)
+134. [Server Plugin System](#134-server-plugin-system)
+135. [Server CLI Binary](#135-server-cli-binary)
 
 ---
 
@@ -7190,7 +7195,7 @@ assistant.load_with_checksum("memory/assistant_backup.json")
 
 ---
 
-## 61. WebSocket Chat Endpoint
+## 131. WebSocket Chat Endpoint
 
 The embedded HTTP server supports WebSocket connections for real-time chat with streaming responses.
 
@@ -7222,7 +7227,7 @@ ws.onmessage = (event) => {
 
 ---
 
-## 62. TLS / HTTPS (Native)
+## 132. TLS / HTTPS (Native)
 
 Enable native TLS termination with the `server-tls` feature flag.
 
@@ -7243,7 +7248,7 @@ let config = ServerConfig {
 
 ---
 
-## 63. OpenAPI Specification
+## 133. OpenAPI Specification
 
 The server auto-generates and serves an OpenAPI 3.0.0 spec at `/api/v1/openapi.json`.
 
@@ -7262,7 +7267,7 @@ println!("{}", serde_json::to_string_pretty(&spec).unwrap());
 
 ---
 
-## 64. Server Plugin System
+## 134. Server Plugin System
 
 Extend the HTTP server with plugins for logging, access control, and metrics.
 
@@ -7281,7 +7286,7 @@ pm.register(Box::new(MetricsCollectorPlugin::new()));
 
 ---
 
-## 65. Server CLI Binary
+## 135. Server CLI Binary
 
 Run the server from the command line with full configuration support.
 
