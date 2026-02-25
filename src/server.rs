@@ -1,25 +1,40 @@
-// server.rs — Lightweight embedded HTTP server for exposing the AI assistant as a REST API.
-//
-// Uses std::net::TcpListener with manual HTTP parsing — zero extra dependencies.
-// Intended for local development, inter-process communication, and simple integrations.
-//
-// Endpoints:
-//   GET  /health       — Health check
-//   GET  /models       — List available models
-//   POST /chat         — Send a message (non-streaming)
-//   POST /config       — Update configuration
-//   GET  /config       — Get current configuration
-//   GET  /metrics      — Prometheus-style metrics
-//
-// # Example
-//
-// ```rust,no_run
-// use ai_assistant::server::{ServerConfig, AiServer};
-//
-// let config = ServerConfig::default(); // localhost:8090
-// let server = AiServer::new(config);
-// server.run_blocking(); // blocks
-// ```
+//! Lightweight embedded HTTP server for exposing the AI assistant as a REST API.
+//!
+//! Uses `std::net::TcpListener` with manual HTTP/1.1 parsing — zero extra dependencies
+//! beyond the standard library. Intended for local development, inter-process communication,
+//! and simple integrations.
+//!
+//! ## Key types
+//!
+//! - [`ServerConfig`] — Server address, port, CORS, rate limiting, optional TLS
+//! - [`AiServer`] — The server instance; call [`AiServer::run_blocking`] to start
+//! - [`ServerMetrics`] — Prometheus-style counters (requests, latency, errors)
+//!
+//! ## Endpoints
+//!
+//! | Method | Path | Description |
+//! |--------|------|-------------|
+//! | GET | `/health` | Health check |
+//! | GET | `/models` | List available models |
+//! | POST | `/chat` | Send a message (non-streaming) |
+//! | POST | `/config` | Update configuration |
+//! | GET | `/config` | Get current configuration |
+//! | GET | `/metrics` | Prometheus-style metrics |
+//!
+//! ## Feature flags
+//!
+//! - Included in `full` (always compiled with default features)
+//! - `server-tls` — Enables HTTPS via rustls (opt-in, requires PEM cert/key files)
+//!
+//! ## Example
+//!
+//! ```rust,no_run
+//! use ai_assistant::server::{ServerConfig, AiServer};
+//!
+//! let config = ServerConfig::default(); // localhost:8090
+//! let server = AiServer::new(config);
+//! server.run_blocking(); // blocks
+//! ```
 
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, Read, Write};

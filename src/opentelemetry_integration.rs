@@ -1,11 +1,21 @@
-// opentelemetry_integration.rs — OpenTelemetry integration for AI operations tracing.
-//
-// Provides OTel-compatible tracing for AI operations: model calls, RAG queries,
-// tool invocations, and agent steps. Bridges the existing TelemetryEvent system
-// to OpenTelemetry spans and metrics.
-//
-// Requires the `otel` feature flag for actual OTel SDK integration.
-// Without the feature, provides a no-op tracer that records events locally.
+//! OpenTelemetry integration for AI operations tracing.
+//!
+//! Provides OTel-compatible tracing for AI operations: model calls, RAG queries,
+//! tool invocations, and agent steps. Bridges the existing [`TelemetryEvent`] system
+//! to OpenTelemetry spans and metrics following the GenAI semantic conventions.
+//!
+//! ## Key types
+//!
+//! - [`OtelTracer`] — Main tracer; create spans, record metrics, export traces
+//! - [`OtelSpan`] — Individual span with attributes, events, and timing
+//! - [`OtelMetrics`] — Histogram and counter aggregation for model performance
+//! - [`OtelConfig`] — Configuration for service name, endpoint, sampling
+//!
+//! ## Feature flags
+//!
+//! Always compiled (no feature gate). The module provides a local tracer that
+//! records events in-memory. An external OTel collector can be configured via
+//! [`OtelConfig`] for production export.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

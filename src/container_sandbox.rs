@@ -1,12 +1,21 @@
-// container_sandbox.rs — Container-based code sandbox with Docker isolation.
-//
-// Provides ContainerSandbox (wraps ContainerExecutor for Docker-based execution)
-// and ExecutionBackend (transparent fallback between container and process isolation).
-//
-// Requires the `containers` feature flag.
-//
-// The ContainerSandbox offers the same interface as CodeSandbox but executes
-// code inside Docker containers for real process/filesystem/network isolation.
+//! Container-based code sandbox with Docker isolation.
+//!
+//! Provides [`ContainerSandbox`] (wraps `ContainerExecutor` for Docker-based execution)
+//! and [`ExecutionBackend`] (transparent fallback between container and process isolation).
+//!
+//! The `ContainerSandbox` offers the same interface as `CodeSandbox` but executes
+//! code inside Docker containers for real process, filesystem, and network isolation.
+//!
+//! ## Key types
+//!
+//! - [`ContainerSandbox`] — Docker-based code execution sandbox
+//! - [`ExecutionBackend`] — Enum dispatching to container or process backend
+//! - [`ContainerSandboxConfig`] — Image, timeout, resource limits, network access
+//!
+//! ## Feature flags
+//!
+//! Requires the `containers` feature flag (not in `full` by default).
+//! Needs Docker installed and running on the host.
 
 use std::collections::HashMap;
 use std::time::Duration;
