@@ -29,8 +29,6 @@
     - feature_matrix.html                                 (v15: v7+v8 — Server hardening (auth middleware, CORS, correlation IDs, graceful shutdown, Prometheus /metrics, request limits, TLS config), error context enrichment (ContextualError + ResultExt), prelude module, config hot-reload (ConfigWatcher), Dockerfile, memory persistence (save/load, AutoPersistenceConfig, snapshots, rotation), output PII guard, output toxicity guard, provider-level structured logging, module-level logging (assistant, cloud_connectors, mcp_client). 4882 tests, 232 source files)
     - feature_matrix_2026-02-24_1030_pre-v9-update.html  (v15 snapshot before v9 additions)
     - feature_matrix.html                                 (v16: v9 — SSE Streaming (POST /chat/stream, token-by-token), Response Compression (gzip via flate2), Server Rate Limiting (ServerRateLimiter, 429 responses), API Versioning (/api/v1/ prefix routes), Audit Logging (AuditLog, security event tracking), Structured Errors (JSON error format with codes), Feature Integration (generate_with_grammar, send_message_with_approval, MCP/distillation methods), Compressed Snapshots (gzip memory persistence, checksum verification). 5034 tests, 232 source files)
-    - feature_matrix_2026-02-24_2200_pre-v11-update.html (v16 snapshot before v11 additions)
-    - feature_matrix.html                                 (v17: v10+v11 — Test depth (rag_pipeline 7→36, entities 7→32, document_parsing +12 synthetic ZIP), 9 new examples (workflows, prompt-signatures, a2a, distillation, hitl, constrained-decoding, voice-agent, media-generation, webrtc), WebRTC re-exports, docs updates (CONCEPTS sections 142-147, AGENT_SYSTEM_DESIGN sections 48-51). 5156 tests, 285 source files, 31 examples)
 -->
 <html lang="es">
 <head>
@@ -734,7 +732,7 @@
 <body>
 
 <h1>AI Assistant &mdash; Matriz Casos de Uso vs Tecnolog&iacute;as</h1>
-<p class="subtitle">v17 (2026-02-24) &mdash; 5156 tests | 16 benchmarks | 31 examples | 285 source files | 0 warnings &mdash; Haz clic en cualquier celda para editarla.</p>
+<p class="subtitle">v16 (2026-02-24) &mdash; 5034 tests | 6 benchmarks | 20 examples | 232 source files | 0 warnings &mdash; Haz clic en cualquier celda para editarla.</p>
 
 <div class="legend">
   <div class="legend-item"><div class="legend-dot" style="background:var(--core)"></div>Core (siempre activo)</div>
@@ -959,9 +957,7 @@
     <li><code>feature_matrix_2026-02-24_1200_pre-v8-update.html</code> &mdash; v14 snapshot antes de v8</li>
     <li><code>feature_matrix.html</code> &mdash; v15: v7+v8 — Server hardening (auth middleware Bearer+API Key, configurable CORS, X-Request-Id correlation IDs, graceful shutdown, Prometheus /metrics, request limits, TLS config struct), error context enrichment (ContextualError + ResultExt), prelude module, config hot-reload (ConfigWatcher), Dockerfile + .dockerignore, memory persistence (save_to_file/load_from_file, AutoPersistenceConfig with snapshots and rotation), output PII guard, output toxicity guard, provider-level structured logging, module-level logging (assistant, cloud_connectors, mcp_client). 4882 tests, 232 source files, 0 warnings</li>
     <li><code>feature_matrix_2026-02-24_1030_pre-v9-update.html</code> &mdash; v15 snapshot antes de v9</li>
-    <li><code>feature_matrix.html</code> &mdash; v16: v9 — SSE Streaming (POST /chat/stream, token-by-token delivery), Response Compression (gzip via flate2, Accept-Encoding negotiation), Server Rate Limiting (ServerRateLimiter, per-minute limits, 429 responses), API Versioning (/api/v1/ prefix routes, backward compatible), Audit Logging (AuditLog, security event tracking, thread-safe), Structured Errors (JSON error format with error codes), Feature Integration (generate_with_grammar, send_message_with_approval, MCP/distillation methods), Compressed Snapshots (gzip memory persistence, checksum verification). 5034 tests, 232 source files, 0 warnings</li>
-    <li><code>feature_matrix_2026-02-24_2200_pre-v11-update.html</code> &mdash; v16 snapshot antes de v11</li>
-    <li><code>feature_matrix.html</code> &mdash; v17 (actual): v10+v11 — Test depth (rag_pipeline 7&rarr;36, entities 7&rarr;32, document_parsing +12 synthetic ZIP), 9 new examples (workflows, prompt-signatures, a2a, distillation, hitl, constrained-decoding, voice-agent, media-generation, webrtc), WebRTC re-exports, docs (CONCEPTS sections 142-147, AGENT_SYSTEM_DESIGN sections 48-51, GUIDE.md renumbering). 5156 tests, 285 source files, 31 examples, 16 benchmarks, 0 warnings</li>
+    <li><code>feature_matrix.html</code> &mdash; v16 (actual): v9 — SSE Streaming (POST /chat/stream, token-by-token delivery), Response Compression (gzip via flate2, Accept-Encoding negotiation), Server Rate Limiting (ServerRateLimiter, per-minute limits, 429 responses), API Versioning (/api/v1/ prefix routes, backward compatible), Audit Logging (AuditLog, security event tracking, thread-safe), Structured Errors (JSON error format with error codes), Feature Integration (generate_with_grammar, send_message_with_approval, MCP/distillation methods), Compressed Snapshots (gzip memory persistence, checksum verification). 5034 tests, 232 source files, 0 warnings</li>
   </ul>
   <p><strong>Pol&iacute;tica de backups:</strong> antes de cambios significativos, crear copia con formato <code>feature_matrix_YYYY-MM-DD_HHMM_descripcion.html</code>.</p>
 
