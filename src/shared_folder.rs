@@ -9,6 +9,7 @@
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
+#[cfg(feature = "cloud-connectors")]
 use crate::cloud_connectors::{CloudStorage, ListOptions};
 
 /// A shared folder between host and Docker containers.
@@ -200,6 +201,7 @@ impl SharedFolder {
 
     /// Sync all files from the shared folder to a cloud storage backend.
     /// Returns the number of files uploaded.
+    #[cfg(feature = "cloud-connectors")]
     pub fn sync_to_cloud(&self, storage: &dyn CloudStorage, prefix: &str) -> Result<usize> {
         let files = self.list_files()?;
         let mut count = 0;
@@ -219,6 +221,7 @@ impl SharedFolder {
 
     /// Sync files from cloud storage into the shared folder.
     /// Returns the number of files downloaded.
+    #[cfg(feature = "cloud-connectors")]
     pub fn sync_from_cloud(&self, storage: &dyn CloudStorage, prefix: &str) -> Result<usize> {
         let list = storage.list(&ListOptions {
             prefix: Some(prefix.to_string()),
@@ -256,6 +259,7 @@ impl SharedFolder {
     }
 
     /// Guess MIME content type from file extension.
+    #[cfg(feature = "cloud-connectors")]
     fn guess_content_type(filename: &str) -> Option<String> {
         let ext = filename.rsplit('.').next()?.to_lowercase();
         match ext.as_str() {
@@ -298,8 +302,11 @@ impl Drop for SharedFolder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "cloud-connectors")]
     use crate::cloud_connectors::{CloudObject, ListResult};
+    #[cfg(feature = "cloud-connectors")]
     use std::collections::HashMap;
+    #[cfg(feature = "cloud-connectors")]
     use std::sync::Mutex;
 
     /// Helper: create a unique temp directory for a test.
@@ -325,10 +332,12 @@ mod tests {
     // Mock cloud storage for sync tests
     // ========================================================================
 
+    #[cfg(feature = "cloud-connectors")]
     struct MockCloudStorage {
         files: Mutex<HashMap<String, Vec<u8>>>,
     }
 
+    #[cfg(feature = "cloud-connectors")]
     impl MockCloudStorage {
         fn new() -> Self {
             Self {
@@ -337,6 +346,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "cloud-connectors")]
     impl CloudStorage for MockCloudStorage {
         fn list(&self, options: &ListOptions) -> Result<ListResult> {
             let files = self.files.lock().unwrap();
@@ -622,6 +632,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "cloud-connectors")]
     fn test_guess_content_type() {
         // Known types
         assert_eq!(
@@ -724,6 +735,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "cloud-connectors")]
     fn test_sync_to_cloud_mock() {
         let dir = test_dir("sync_to_cloud");
         let folder = SharedFolder::new(&dir).unwrap();
@@ -762,6 +774,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "cloud-connectors")]
     fn test_sync_from_cloud_mock() {
         let dir = test_dir("sync_from_cloud");
         let folder = SharedFolder::new(&dir).unwrap();
@@ -785,6 +798,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "cloud-connectors")]
     fn test_sync_to_cloud_empty_folder() {
         let dir = test_dir("sync_empty");
         let folder = SharedFolder::new(&dir).unwrap();

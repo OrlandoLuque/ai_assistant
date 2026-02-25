@@ -25,7 +25,8 @@ exclude = [
 default = ["full"]
 
 # === Core Features (minimal) ===
-# Basic assistant functionality with providers
+# Marker feature for basic assistant functionality with providers.
+# No cfg gates — core modules are always compiled. Used for dependency grouping.
 core = []
 
 # === Optional Feature Groups ===

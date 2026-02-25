@@ -1722,8 +1722,10 @@ pub use aws_auth::{
 // PGVECTOR BACKEND
 // =============================================================================
 
+#[cfg(feature = "vector-pgvector")]
 pub mod vector_db_pgvector;
 
+#[cfg(feature = "vector-pgvector")]
 pub use vector_db_pgvector::{PgVectorConfig, PgVectorDb};
 
 // =============================================================================
@@ -1758,8 +1760,10 @@ pub use code_sandbox::{
 // CLOUD CONNECTORS (S3 + Google Drive)
 // =============================================================================
 
+#[cfg(feature = "cloud-connectors")]
 pub mod cloud_connectors;
 
+#[cfg(feature = "cloud-connectors")]
 pub use cloud_connectors::{
     AzureBlobOperation, AzureBlobRequest, CloudObject, CloudStorage, GcsOperation, GcsRequest,
     GoogleDriveClient, GoogleDriveConfig, ListOptions, ListResult, S3Client, S3Config, S3Operation,
