@@ -1861,4 +1861,978 @@ mod tests {
             "Should have collected errors from first attempt"
         );
     }
+
+    // ---- NEW TESTS (24+) ----
+
+    #[test]
+    fn test_schema_property_number_constructor() {
+        let prop = SchemaProperty::number();
+        assert_eq!(prop.schema_type, SchemaType::Number);
+        assert!(prop.description.is_none());
+        assert!(prop.minimum.is_none());
+        assert!(prop.maximum.is_none());
+        assert!(prop.items.is_none());
+        assert!(prop.properties.is_none());
+    }
+
+    #[test]
+    fn test_schema_property_integer_constructor() {
+        let prop = SchemaProperty::integer();
+        assert_eq!(prop.schema_type, SchemaType::Integer);
+        assert!(prop.enum_values.is_none());
+        assert!(prop.default.is_none());
+    }
+
+    #[test]
+    fn test_schema_property_boolean_constructor() {
+        let prop = SchemaProperty::boolean();
+        assert_eq!(prop.schema_type, SchemaType::Boolean);
+        assert!(prop.pattern.is_none());
+        assert!(prop.items.is_none());
+    }
+
+    #[test]
+    fn test_schema_property_array_constructor() {
+        let items = SchemaProperty::string();
+        let prop = SchemaProperty::array(items);
+        assert_eq!(prop.schema_type, SchemaType::Array);
+        assert!(prop.items.is_some());
+        assert_eq!(prop.items.as_ref().unwrap().schema_type, SchemaType::String);
+        assert!(prop.properties.is_none());
+    }
+
+    #[test]
+    fn test_schema_property_object_constructor() {
+        let prop = SchemaProperty::object();
+        assert_eq!(prop.schema_type, SchemaType::Object);
+        assert!(prop.properties.is_some());
+        assert!(prop.properties.as_ref().unwrap().is_empty());
+        assert!(prop.required.is_some());
+        assert!(prop.required.as_ref().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_schema_property_with_enum() {
+        let prop =
+            SchemaProperty::string().with_enum(vec!["a".to_string(), "b".to_string()]);
+        assert_eq!(
+            prop.enum_values,
+            Some(vec!["a".to_string(), "b".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_schema_property_with_default() {
+        let prop = SchemaProperty::string().with_default(serde_json::json!("hello"));
+        assert_eq!(prop.default, Some(serde_json::json!("hello")));
+    }
+
+    #[test]
+    fn test_schema_property_with_pattern() {
+        let prop = SchemaProperty::string().with_pattern(r"^\d{3}-\d{4}$");
+        assert_eq!(prop.pattern, Some(r"^\d{3}-\d{4}$".to_string()));
+    }
+
+    #[test]
+    fn test_schema_property_with_property_on_non_object() {
+        // with_property on a string property should be a no-op since properties is None
+        let prop =
+            SchemaProperty::string().with_property("child", SchemaProperty::integer());
+        assert!(prop.properties.is_none());
+    }
+
+    #[test]
+    fn test_schema_property_with_required_on_non_object() {
+        // with_required on a non-object should be a no-op since required is None
+        let prop = SchemaProperty::string().with_required("field");
+        assert!(prop.required.is_none());
+    }
+
+    #[test]
+    fn test_validation_number_min_max() {
+        let schema = JsonSchema::new("test").with_property(
+            "score",
+            SchemaProperty::number().with_minimum(0.0).with_maximum(100.0),
+        );
+
+        let valid = serde_json::json!({ "score": 50.5 });
+        assert!(SchemaValidator::validate(&valid, &schema).valid);
+
+        let too_low = serde_json::json!({ "score": -1.0 });
+        let result = SchemaValidator::validate(&too_low, &schema);
+        assert!(!result.valid);
+        assert!(result.errors[0].message.contains("minimum"));
+
+        let too_high = serde_json::json!({ "score": 150.0 });
+        let result = SchemaValidator::validate(&too_high, &schema);
+        assert!(!result.valid);
+        assert!(result.errors[0].message.contains("maximum"));
+    }
+
+    #[test]
+    fn test_validation_string_length_constraints() {
+        let schema = JsonSchema::new("test").with_property(
+            "code",
+            SchemaProperty::string().with_min_length(3).with_max_length(10),
+        );
+
+        let valid = serde_json::json!({ "code": "ABC123" });
+        assert!(SchemaValidator::validate(&valid, &schema).valid);
+
+        let too_short = serde_json::json!({ "code": "AB" });
+        let result = SchemaValidator::validate(&too_short, &schema);
+        assert!(!result.valid);
+        assert!(result.errors[0].message.contains("minimum"));
+
+        let too_long = serde_json::json!({ "code": "ABCDEFGHIJK" });
+        let result = SchemaValidator::validate(&too_long, &schema);
+        assert!(!result.valid);
+        assert!(result.errors[0].message.contains("maximum"));
+    }
+
+    #[test]
+    fn test_validation_array_length_constraints() {
+        let schema = JsonSchema::new("test").with_property(
+            "tags",
+            SchemaProperty::array(SchemaProperty::string())
+                .with_min_length(1)
+                .with_max_length(3),
+        );
+
+        let valid = serde_json::json!({ "tags": ["a", "b"] });
+        assert!(SchemaValidator::validate(&valid, &schema).valid);
+
+        let too_few = serde_json::json!({ "tags": [] });
+        let result = SchemaValidator::validate(&too_few, &schema);
+        assert!(!result.valid);
+        assert!(result.errors[0].message.contains("minimum"));
+
+        let too_many = serde_json::json!({ "tags": ["a", "b", "c", "d"] });
+        let result = SchemaValidator::validate(&too_many, &schema);
+        assert!(!result.valid);
+        assert!(result.errors[0].message.contains("maximum"));
+    }
+
+    #[test]
+    fn test_validation_array_item_types() {
+        let schema = JsonSchema::new("test").with_property(
+            "nums",
+            SchemaProperty::array(SchemaProperty::integer()),
+        );
+
+        let valid = serde_json::json!({ "nums": [1, 2, 3] });
+        assert!(SchemaValidator::validate(&valid, &schema).valid);
+
+        // Array with a wrong-typed item
+        let invalid = serde_json::json!({ "nums": [1, "two", 3] });
+        let result = SchemaValidator::validate(&invalid, &schema);
+        assert!(!result.valid);
+        assert!(result.errors[0].path.contains("[1]"));
+    }
+
+    #[test]
+    fn test_validation_boolean_type() {
+        let schema = JsonSchema::new("test")
+            .with_property("active", SchemaProperty::boolean());
+
+        let valid = serde_json::json!({ "active": true });
+        assert!(SchemaValidator::validate(&valid, &schema).valid);
+
+        let invalid = serde_json::json!({ "active": "yes" });
+        assert!(!SchemaValidator::validate(&invalid, &schema).valid);
+    }
+
+    #[test]
+    fn test_validation_null_type() {
+        let schema = JsonSchema::new("test").with_property(
+            "nothing",
+            SchemaProperty {
+                schema_type: SchemaType::Null,
+                description: None,
+                enum_values: None,
+                default: None,
+                minimum: None,
+                maximum: None,
+                min_length: None,
+                max_length: None,
+                pattern: None,
+                items: None,
+                properties: None,
+                required: None,
+            },
+        );
+
+        let valid = serde_json::json!({ "nothing": null });
+        assert!(SchemaValidator::validate(&valid, &schema).valid);
+
+        let invalid = serde_json::json!({ "nothing": 0 });
+        assert!(!SchemaValidator::validate(&invalid, &schema).valid);
+    }
+
+    #[test]
+    fn test_validation_nested_object() {
+        let inner = SchemaProperty::object()
+            .with_property("street", SchemaProperty::string())
+            .with_required("street");
+
+        let schema = JsonSchema::new("test")
+            .with_property("address", inner)
+            .with_required("address");
+
+        let valid = serde_json::json!({
+            "address": { "street": "123 Main St" }
+        });
+        assert!(SchemaValidator::validate(&valid, &schema).valid);
+
+        // Missing required nested field
+        let invalid = serde_json::json!({
+            "address": { "city": "Boston" }
+        });
+        let result = SchemaValidator::validate(&invalid, &schema);
+        assert!(!result.valid);
+        assert!(result.errors.iter().any(|e| e.path.contains("street")));
+    }
+
+    #[test]
+    fn test_validation_integer_rejects_float() {
+        let schema = JsonSchema::new("test")
+            .with_property("count", SchemaProperty::integer());
+
+        // 3.5 is a float, not an integer
+        let invalid = serde_json::json!({ "count": 3.5 });
+        let result = SchemaValidator::validate(&invalid, &schema);
+        assert!(!result.valid);
+    }
+
+    #[test]
+    fn test_validation_error_display() {
+        let err = ValidationError {
+            path: "$.name".to_string(),
+            message: "Required property missing".to_string(),
+        };
+        let display = format!("{}", err);
+        assert_eq!(display, "$.name: Required property missing");
+    }
+
+    #[test]
+    fn test_structured_output_error_display() {
+        let gen = StructuredOutputError::GenerationFailed("timeout".to_string());
+        assert_eq!(format!("{}", gen), "Generation failed: timeout");
+
+        let parse = StructuredOutputError::ParseFailed("unexpected token".to_string());
+        assert_eq!(format!("{}", parse), "Parse failed: unexpected token");
+
+        let val = StructuredOutputError::ValidationFailed("missing field".to_string());
+        assert_eq!(format!("{}", val), "Validation failed: missing field");
+
+        let ext = StructuredOutputError::ExtractionFailed("no content".to_string());
+        assert_eq!(format!("{}", ext), "Extraction failed: no content");
+    }
+
+    #[test]
+    fn test_schema_type_serde_roundtrip() {
+        let types = vec![
+            SchemaType::String,
+            SchemaType::Number,
+            SchemaType::Integer,
+            SchemaType::Boolean,
+            SchemaType::Array,
+            SchemaType::Object,
+            SchemaType::Null,
+        ];
+        for st in &types {
+            let json = serde_json::to_string(st).unwrap();
+            let parsed: SchemaType = serde_json::from_str(&json).unwrap();
+            assert_eq!(*st, parsed);
+        }
+    }
+
+    #[test]
+    fn test_extract_json_from_generic_code_block() {
+        let input = "Result:\n```\n{\"a\": 1}\n```\nEnd";
+        let result = extract_json(input);
+        assert_eq!(result, r#"{"a": 1}"#);
+    }
+
+    #[test]
+    fn test_extract_json_raw_array() {
+        let input = "Here is the list: [1, 2, 3] done";
+        let result = extract_json(input);
+        assert_eq!(result, "[1, 2, 3]");
+    }
+
+    #[test]
+    fn test_extract_json_no_json_returns_original() {
+        let input = "No JSON here at all";
+        let result = extract_json(input);
+        assert_eq!(result, "No JSON here at all");
+    }
+
+    #[test]
+    fn test_extract_json_from_response_array() {
+        let input = "Here: [1, 2, 3] done.";
+        let extracted = extract_json_from_response(input);
+        assert!(extracted.is_some());
+        assert_eq!(extracted.unwrap(), "[1, 2, 3]");
+    }
+
+    #[test]
+    fn test_extract_json_from_response_no_json() {
+        let input = "This text has no JSON at all.";
+        assert!(extract_json_from_response(input).is_none());
+    }
+
+    #[test]
+    fn test_extract_json_from_text_direct_parse() {
+        let input = r#"{"key": "value"}"#;
+        let result = extract_json_from_text(input);
+        assert_eq!(result, Some(r#"{"key": "value"}"#.to_string()));
+    }
+
+    #[test]
+    fn test_extract_json_from_text_no_json() {
+        let input = "plain text without any brackets";
+        assert!(extract_json_from_text(input).is_none());
+    }
+
+    #[test]
+    fn test_find_balanced_nested_braces() {
+        let input = r#"prefix {"a": {"b": "c"}} suffix"#;
+        let result = find_balanced(input, '{', '}');
+        assert_eq!(result, Some(r#"{"a": {"b": "c"}}"#));
+    }
+
+    #[test]
+    fn test_find_balanced_with_escaped_quotes() {
+        let input = r#"{"msg": "say \"hello\""}"#;
+        let result = find_balanced(input, '{', '}');
+        assert_eq!(result, Some(r#"{"msg": "say \"hello\""}"#));
+    }
+
+    #[test]
+    fn test_find_balanced_no_match() {
+        assert!(find_balanced("no braces here", '{', '}').is_none());
+    }
+
+    #[test]
+    fn test_find_balanced_unbalanced() {
+        // Opening brace without matching close
+        assert!(find_balanced("{unclosed", '{', '}').is_none());
+    }
+
+    #[test]
+    fn test_schema_builder_entity_extraction() {
+        let schema = SchemaBuilder::entity_extraction();
+        assert_eq!(schema.name, "entity_extraction");
+        let props = schema.root.properties.as_ref().unwrap();
+        assert!(props.contains_key("entities"));
+        let entities_prop = &props["entities"];
+        assert_eq!(entities_prop.schema_type, SchemaType::Array);
+        assert!(entities_prop.items.is_some());
+    }
+
+    #[test]
+    fn test_schema_builder_summary() {
+        let schema = SchemaBuilder::summary();
+        assert_eq!(schema.name, "summary");
+        let props = schema.root.properties.as_ref().unwrap();
+        assert!(props.contains_key("summary"));
+        assert!(props.contains_key("key_points"));
+        assert!(props.contains_key("title"));
+        let req = schema.root.required.as_ref().unwrap();
+        assert!(req.contains(&"summary".to_string()));
+        assert!(req.contains(&"key_points".to_string()));
+    }
+
+    #[test]
+    fn test_schema_builder_translation() {
+        let schema = SchemaBuilder::translation();
+        assert_eq!(schema.name, "translation");
+        let props = schema.root.properties.as_ref().unwrap();
+        assert!(props.contains_key("original_language"));
+        assert!(props.contains_key("target_language"));
+        assert!(props.contains_key("translation"));
+        assert!(props.contains_key("alternatives"));
+        let req = schema.root.required.as_ref().unwrap();
+        assert!(req.contains(&"translation".to_string()));
+    }
+
+    #[test]
+    fn test_schema_builder_question_answer() {
+        let schema = SchemaBuilder::question_answer();
+        assert_eq!(schema.name, "question_answer");
+        let props = schema.root.properties.as_ref().unwrap();
+        assert!(props.contains_key("answer"));
+        assert!(props.contains_key("confidence"));
+        assert!(props.contains_key("sources"));
+        assert!(props.contains_key("follow_up_questions"));
+    }
+
+    #[test]
+    fn test_schema_builder_classification() {
+        let cats = vec!["tech".to_string(), "sports".to_string()];
+        let schema = SchemaBuilder::classification(cats.clone());
+        assert_eq!(schema.name, "classification");
+        let props = schema.root.properties.as_ref().unwrap();
+        let cat_prop = &props["category"];
+        assert_eq!(cat_prop.enum_values.as_ref().unwrap(), &cats);
+    }
+
+    #[test]
+    fn test_generator_default() {
+        let gen = StructuredOutputGenerator::default();
+        assert!(gen.get_schema("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_generator_get_schema_not_found() {
+        let gen = StructuredOutputGenerator::new();
+        assert!(gen.get_schema("missing").is_none());
+        assert!(gen.generate_prompt("missing", "hello").is_none());
+    }
+
+    #[test]
+    fn test_generator_parse_response_valid() {
+        let mut gen = StructuredOutputGenerator::new();
+        gen.register_schema(
+            JsonSchema::new("item")
+                .with_property("name", SchemaProperty::string())
+                .with_required("name"),
+        );
+
+        let result = gen
+            .parse_response("item", r#"{"name": "widget"}"#)
+            .unwrap();
+        assert!(result.valid);
+        assert_eq!(result.value.unwrap()["name"], "widget");
+    }
+
+    #[test]
+    fn test_generator_parse_response_schema_not_found() {
+        let gen = StructuredOutputGenerator::new();
+        let result = gen.parse_response("missing", r#"{"a":1}"#);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not found"));
+    }
+
+    #[test]
+    fn test_generator_parse_response_invalid_json() {
+        let mut gen = StructuredOutputGenerator::new();
+        gen.register_schema(JsonSchema::new("item"));
+        let result = gen.parse_response("item", "not json at all");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("JSON parse error"));
+    }
+
+    #[test]
+    fn test_parse_with_hints_success() {
+        let mut gen = StructuredOutputGenerator::new();
+        gen.register_schema(
+            JsonSchema::new("item")
+                .with_property("x", SchemaProperty::integer())
+                .with_required("x"),
+        );
+
+        let result = gen.parse_with_hints("item", r#"{"x": 42}"#);
+        assert!(result.success);
+        assert!(result.value.is_some());
+        assert!(result.retry_prompt.is_none());
+        assert!(result.errors.is_empty());
+    }
+
+    #[test]
+    fn test_parse_with_hints_schema_not_found() {
+        let gen = StructuredOutputGenerator::new();
+        let result = gen.parse_with_hints("missing", r#"{"x": 1}"#);
+        assert!(!result.success);
+        assert!(result.errors[0].contains("Schema not found"));
+        assert!(result.retry_prompt.is_none());
+    }
+
+    #[test]
+    fn test_parse_with_hints_invalid_json() {
+        let mut gen = StructuredOutputGenerator::new();
+        gen.register_schema(JsonSchema::new("item"));
+        let result = gen.parse_with_hints("item", "garbage text");
+        assert!(!result.success);
+        assert!(result.retry_prompt.is_some());
+        let retry = result.retry_prompt.unwrap();
+        assert!(retry.contains("Could not parse"));
+    }
+
+    #[test]
+    fn test_parse_with_hints_validation_failure() {
+        let mut gen = StructuredOutputGenerator::new();
+        gen.register_schema(
+            JsonSchema::new("item")
+                .with_property("x", SchemaProperty::integer())
+                .with_required("x"),
+        );
+
+        // Valid JSON but missing required field
+        let result = gen.parse_with_hints("item", r#"{"y": 1}"#);
+        assert!(!result.success);
+        assert!(result.retry_prompt.is_some());
+        let retry = result.retry_prompt.unwrap();
+        assert!(retry.contains("validation errors"));
+    }
+
+    #[test]
+    fn test_json_schema_to_prompt() {
+        let schema = JsonSchema::new("demo")
+            .with_description("A demo schema")
+            .with_property("val", SchemaProperty::string());
+
+        let prompt = schema.to_prompt();
+        assert!(prompt.contains("Respond with a JSON object"));
+        assert!(prompt.contains("```json"));
+        assert!(prompt.contains("Respond ONLY with valid JSON"));
+        assert!(prompt.contains("demo"));
+    }
+
+    #[test]
+    fn test_json_schema_to_openai_format() {
+        let schema = JsonSchema::new("test_fmt")
+            .with_property("a", SchemaProperty::string());
+
+        let fmt = schema.to_openai_format();
+        assert_eq!(fmt["type"], "json_schema");
+        assert_eq!(fmt["json_schema"]["name"], "test_fmt");
+        assert_eq!(fmt["json_schema"]["strict"], true);
+    }
+
+    #[test]
+    fn test_structured_output_request_defaults() {
+        let schema = JsonSchema::new("req_test");
+        let req = StructuredOutputRequest::new(schema);
+        assert_eq!(
+            *req.strategy(),
+            StructuredOutputStrategy::PromptEngineering
+        );
+    }
+
+    #[test]
+    fn test_structured_output_request_builder_methods() {
+        let schema = JsonSchema::new("req_test");
+        let req = StructuredOutputRequest::new(schema)
+            .with_strategy(StructuredOutputStrategy::OpenAiNative)
+            .with_max_retries(5)
+            .strict(false);
+
+        assert_eq!(*req.strategy(), StructuredOutputStrategy::OpenAiNative);
+        let fmt = req.to_openai_response_format();
+        assert_eq!(fmt["json_schema"]["strict"], false);
+    }
+
+    #[test]
+    fn test_structured_output_request_auto_strategy() {
+        let schema = JsonSchema::new("s");
+        let req = StructuredOutputRequest::new(schema).auto_strategy("openai");
+        assert_eq!(*req.strategy(), StructuredOutputStrategy::OpenAiNative);
+
+        let schema2 = JsonSchema::new("s2");
+        let req2 = StructuredOutputRequest::new(schema2).auto_strategy("anthropic");
+        assert_eq!(*req2.strategy(), StructuredOutputStrategy::AnthropicToolUse);
+
+        let schema3 = JsonSchema::new("s3");
+        let req3 = StructuredOutputRequest::new(schema3).auto_strategy("ollama");
+        assert_eq!(
+            *req3.strategy(),
+            StructuredOutputStrategy::PromptEngineering
+        );
+
+        // Case-insensitive
+        let schema4 = JsonSchema::new("s4");
+        let req4 = StructuredOutputRequest::new(schema4).auto_strategy("GROQ");
+        assert_eq!(*req4.strategy(), StructuredOutputStrategy::OpenAiNative);
+    }
+
+    #[test]
+    fn test_anthropic_tool_params() {
+        let schema = JsonSchema::new("my_tool").with_description("Do stuff");
+        let req = StructuredOutputRequest::new(schema)
+            .with_strategy(StructuredOutputStrategy::AnthropicToolUse);
+
+        let (tools, tool_choice) = req.to_anthropic_tool_params();
+        assert!(tools.is_array());
+        assert_eq!(tools[0]["name"], "my_tool");
+        assert_eq!(tools[0]["description"], "Do stuff");
+        assert_eq!(tool_choice["type"], "tool");
+        assert_eq!(tool_choice["name"], "my_tool");
+    }
+
+    #[test]
+    fn test_anthropic_tool_params_no_description() {
+        let schema = JsonSchema::new("no_desc");
+        let req = StructuredOutputRequest::new(schema);
+        let (tools, _) = req.to_anthropic_tool_params();
+        assert_eq!(
+            tools[0]["description"],
+            "Generate structured output matching the schema"
+        );
+    }
+
+    #[test]
+    fn test_extract_from_anthropic_response_success() {
+        let schema = JsonSchema::new("t")
+            .with_property("val", SchemaProperty::string())
+            .with_required("val");
+        let req = StructuredOutputRequest::new(schema);
+
+        let response = serde_json::json!({
+            "content": [
+                {
+                    "type": "tool_use",
+                    "name": "t",
+                    "input": { "val": "hello" }
+                }
+            ]
+        });
+
+        let result = req.extract_from_anthropic_response(&response);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap()["val"], "hello");
+    }
+
+    #[test]
+    fn test_extract_from_anthropic_response_no_content() {
+        let schema = JsonSchema::new("t");
+        let req = StructuredOutputRequest::new(schema);
+
+        let response = serde_json::json!({"data": "nope"});
+        let result = req.extract_from_anthropic_response(&response);
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(err.contains("Extraction failed"));
+    }
+
+    #[test]
+    fn test_extract_from_anthropic_response_no_tool_use_block() {
+        let schema = JsonSchema::new("t");
+        let req = StructuredOutputRequest::new(schema);
+
+        let response = serde_json::json!({
+            "content": [
+                { "type": "text", "text": "Hello" }
+            ]
+        });
+        let result = req.extract_from_anthropic_response(&response);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_extract_from_anthropic_response_missing_input() {
+        let schema = JsonSchema::new("t");
+        let req = StructuredOutputRequest::new(schema);
+
+        let response = serde_json::json!({
+            "content": [
+                { "type": "tool_use", "name": "t" }
+            ]
+        });
+        let result = req.extract_from_anthropic_response(&response);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_enforcement_config_default() {
+        let cfg = EnforcementConfig::default();
+        assert_eq!(cfg.max_retries, 3);
+        assert!(cfg.include_response_format);
+        assert!(cfg.include_schema_in_prompt);
+        assert!(cfg.feedback_on_error);
+    }
+
+    #[test]
+    fn test_enforcer_build_response_format_param_with_schema() {
+        let mut gen = StructuredOutputGenerator::new();
+        gen.register_schema(
+            JsonSchema::new("item")
+                .with_property("a", SchemaProperty::string()),
+        );
+        let enforcer = StructuredOutputEnforcer::new(gen, EnforcementConfig::default());
+
+        let param = enforcer.build_response_format_param("item");
+        assert!(param.is_some());
+        let val = param.unwrap();
+        assert_eq!(val["type"], "json_schema");
+    }
+
+    #[test]
+    fn test_enforcer_build_response_format_param_no_schema() {
+        let gen = StructuredOutputGenerator::new();
+        let enforcer = StructuredOutputEnforcer::new(gen, EnforcementConfig::default());
+
+        let param = enforcer.build_response_format_param("missing");
+        assert!(param.is_some());
+        assert_eq!(param.unwrap()["type"], "json_object");
+    }
+
+    #[test]
+    fn test_enforcer_build_response_format_param_disabled() {
+        let gen = StructuredOutputGenerator::new();
+        let config = EnforcementConfig {
+            include_response_format: false,
+            ..Default::default()
+        };
+        let enforcer = StructuredOutputEnforcer::new(gen, config);
+
+        assert!(enforcer.build_response_format_param("any").is_none());
+    }
+
+    #[test]
+    fn test_enforcer_constrained_prompt_missing_schema() {
+        let gen = StructuredOutputGenerator::new();
+        let enforcer = StructuredOutputEnforcer::new(gen, EnforcementConfig::default());
+
+        assert!(enforcer
+            .build_constrained_prompt("nonexistent", "hello")
+            .is_none());
+    }
+
+    #[test]
+    fn test_enforcer_constrained_prompt_schema_not_in_prompt() {
+        let mut gen = StructuredOutputGenerator::new();
+        gen.register_schema(
+            JsonSchema::new("item")
+                .with_property("x", SchemaProperty::integer()),
+        );
+        let config = EnforcementConfig {
+            include_schema_in_prompt: false,
+            ..Default::default()
+        };
+        let enforcer = StructuredOutputEnforcer::new(gen, config);
+
+        let prompt = enforcer.build_constrained_prompt("item", "Give me an item");
+        assert!(prompt.is_some());
+        let p = prompt.unwrap();
+        // Should still contain JSON instruction but is based on user prompt only
+        assert!(p.contains("Give me an item"));
+        assert!(p.contains("JSON"));
+    }
+
+    #[test]
+    fn test_enforcer_build_retry_prompt() {
+        let mut gen = StructuredOutputGenerator::new();
+        gen.register_schema(
+            JsonSchema::new("item")
+                .with_property("name", SchemaProperty::string())
+                .with_required("name"),
+        );
+        let enforcer = StructuredOutputEnforcer::new(gen, EnforcementConfig::default());
+
+        let retry = enforcer.build_retry_prompt(
+            "item",
+            "Give me an item",
+            "bad response",
+            &["missing name".to_string()],
+        );
+        assert!(retry.contains("Give me an item"));
+        assert!(retry.contains("bad response"));
+        assert!(retry.contains("missing name"));
+        assert!(retry.contains("correct these errors"));
+    }
+
+    #[test]
+    fn test_enforcer_enforce_schema_not_found() {
+        let gen = StructuredOutputGenerator::new();
+        let enforcer = StructuredOutputEnforcer::new(gen, EnforcementConfig::default());
+
+        let result = enforcer.enforce("missing", "test", &|_| "{}".to_string());
+        assert!(!result.success);
+        assert!(result.errors.iter().any(|e| e.contains("not found")));
+        assert_eq!(result.attempts, 1);
+    }
+
+    #[test]
+    fn test_enforcer_enforce_exhausts_retries() {
+        let mut gen = StructuredOutputGenerator::new();
+        gen.register_schema(
+            JsonSchema::new("item")
+                .with_property("name", SchemaProperty::string())
+                .with_required("name"),
+        );
+        let config = EnforcementConfig {
+            max_retries: 2,
+            ..Default::default()
+        };
+        let enforcer = StructuredOutputEnforcer::new(gen, config);
+
+        // Always return invalid response (missing required 'name')
+        let result = enforcer.enforce("item", "test", &|_| r#"{"other": 1}"#.to_string());
+        assert!(!result.success);
+        assert!(result.value.is_none());
+        assert_eq!(result.attempts, 2);
+        assert!(!result.errors.is_empty());
+    }
+
+    #[test]
+    fn test_structured_request_prompt_no_examples() {
+        let schema = JsonSchema::new("simple")
+            .with_property("a", SchemaProperty::string());
+        let req = StructuredRequest::new(schema).with_prompt("Do something");
+
+        let prompt = req.build_prompt();
+        assert!(prompt.contains("Do something"));
+        assert!(!prompt.contains("Examples:"));
+        assert!(prompt.contains("Respond ONLY with valid JSON"));
+    }
+
+    #[test]
+    fn test_structured_request_schema_accessor() {
+        let schema = JsonSchema::new("accessor_test");
+        let req = StructuredRequest::new(schema);
+        assert_eq!(req.schema().name, "accessor_test");
+        assert_eq!(req.max_retries(), 3); // default
+    }
+
+    #[test]
+    fn test_structured_output_strategy_equality() {
+        assert_eq!(
+            StructuredOutputStrategy::OpenAiNative,
+            StructuredOutputStrategy::OpenAiNative
+        );
+        assert_ne!(
+            StructuredOutputStrategy::OpenAiNative,
+            StructuredOutputStrategy::AnthropicToolUse
+        );
+        assert_ne!(
+            StructuredOutputStrategy::AnthropicToolUse,
+            StructuredOutputStrategy::PromptEngineering
+        );
+    }
+
+    #[test]
+    fn test_execute_openai_native_strategy() {
+        let schema = JsonSchema::new("exec")
+            .with_property("x", SchemaProperty::integer())
+            .with_required("x");
+        let req = StructuredOutputRequest::new(schema)
+            .with_strategy(StructuredOutputStrategy::OpenAiNative);
+
+        let result = req.execute(
+            &|response_format, _anthropic, _prompt| {
+                // Verify response_format is provided
+                assert!(response_format.is_some());
+                Ok(r#"{"x": 42}"#.to_string())
+            },
+            "Give me x",
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap()["x"], 42);
+    }
+
+    #[test]
+    fn test_execute_anthropic_strategy() {
+        let schema = JsonSchema::new("exec_ant")
+            .with_property("y", SchemaProperty::string())
+            .with_required("y");
+        let req = StructuredOutputRequest::new(schema)
+            .with_strategy(StructuredOutputStrategy::AnthropicToolUse);
+
+        let result = req.execute(
+            &|_rf, anthropic_params, _prompt| {
+                // Verify anthropic params are provided
+                assert!(anthropic_params.is_some());
+                // Return an Anthropic-style tool_use response
+                Ok(serde_json::json!({
+                    "content": [{
+                        "type": "tool_use",
+                        "name": "exec_ant",
+                        "input": { "y": "hello" }
+                    }]
+                })
+                .to_string())
+            },
+            "Give me y",
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap()["y"], "hello");
+    }
+
+    #[test]
+    fn test_execute_prompt_engineering_strategy() {
+        let schema = JsonSchema::new("exec_pe")
+            .with_property("z", SchemaProperty::boolean())
+            .with_required("z");
+        let req = StructuredOutputRequest::new(schema)
+            .with_strategy(StructuredOutputStrategy::PromptEngineering)
+            .with_max_retries(1);
+
+        let result = req.execute(
+            &|rf, ant, _prompt| {
+                // Neither response_format nor anthropic params
+                assert!(rf.is_none());
+                assert!(ant.is_none());
+                Ok(r#"{"z": true}"#.to_string())
+            },
+            "Give me z",
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap()["z"], true);
+    }
+
+    #[test]
+    fn test_execute_generation_failure() {
+        let schema = JsonSchema::new("fail");
+        let req = StructuredOutputRequest::new(schema)
+            .with_strategy(StructuredOutputStrategy::OpenAiNative);
+
+        let result = req.execute(
+            &|_, _, _| Err("network timeout".to_string()),
+            "prompt",
+        );
+
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(err.contains("Generation failed"));
+    }
+
+    #[test]
+    fn test_validation_result_success_and_failure() {
+        let success = ValidationResult::success(serde_json::json!({"ok": true}));
+        assert!(success.valid);
+        assert!(success.errors.is_empty());
+        assert!(success.value.is_some());
+
+        let failure = ValidationResult::failure(vec![ValidationError {
+            path: "$".to_string(),
+            message: "bad".to_string(),
+        }]);
+        assert!(!failure.valid);
+        assert_eq!(failure.errors.len(), 1);
+        assert!(failure.value.is_none());
+    }
+
+    #[test]
+    fn test_enforcer_validate_and_extract_no_schema() {
+        let gen = StructuredOutputGenerator::new();
+        let enforcer = StructuredOutputEnforcer::new(gen, EnforcementConfig::default());
+
+        // Schema not registered — should still return parsed value
+        let result = enforcer.validate_and_extract("unknown", r#"{"a": 1}"#);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap()["a"], 1);
+    }
+
+    #[test]
+    fn test_find_balanced_braces_inside_strings() {
+        // Braces inside JSON string values should be ignored
+        let input = r#"{"msg": "use {braces} freely"}"#;
+        let result = find_balanced(input, '{', '}');
+        assert_eq!(result, Some(r#"{"msg": "use {braces} freely"}"#));
+    }
+
+    #[test]
+    fn test_extract_json_from_response_generic_code_block() {
+        let markdown = "```python\n{\"key\": \"val\"}\n```";
+        let extracted = extract_json_from_response(markdown);
+        assert!(extracted.is_some());
+        let parsed: serde_json::Value =
+            serde_json::from_str(extracted.unwrap()).unwrap();
+        assert_eq!(parsed["key"], "val");
+    }
 }
