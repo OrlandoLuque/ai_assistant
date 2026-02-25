@@ -425,6 +425,18 @@ required-features = ["aws-bedrock"]
 name = "advanced_memory_demo"
 required-features = ["advanced-memory"]
 
+[[example]]
+name = "security_demo"
+required-features = ["security"]
+
+[[example]]
+name = "analytics_demo"
+required-features = ["analytics"]
+
+[[example]]
+name = "vision_demo"
+required-features = ["vision"]
+
 [dev-dependencies]
 tempfile = "3"
 criterion = { version = "0.5", features = ["html_reports"] }
