@@ -1,12 +1,21 @@
-// unified_tools.rs — Unified tool system merging tools.rs, tool_use.rs,
-// tool_calling.rs, and function_calling.rs into one coherent API.
-//
-// Best of each:
-// - Error handling from tool_use.rs (typed ToolError enum)
-// - Parameter schema from function_calling.rs (nested types, ranges, enums)
-// - Multi-format parsing from tool_calling.rs (JSON, [TOOL:], XML)
-// - Provider plugin system from tools.rs (ProviderPlugin trait)
-// - Builder pattern from function_calling.rs (fluent API)
+//! Unified tool system for LLM function calling and tool invocation.
+//!
+//! Merges capabilities from multiple subsystems into a single coherent API:
+//! typed error handling, nested parameter schemas with ranges and enums,
+//! multi-format response parsing (JSON, `[TOOL:]`, XML), provider plugins,
+//! and a fluent builder pattern for tool registration.
+//!
+//! ## Key types
+//!
+//! - [`ToolRegistry`] — Central registry for available tools
+//! - [`ToolCall`] — A parsed tool invocation (name + arguments)
+//! - [`ToolResult`] — Execution result (success/error) returned to the LLM
+//! - [`ToolSchema`] — JSON Schema description of a tool's parameters
+//! - [`ToolError`] — Typed error enum for tool execution failures
+//!
+//! ## Feature flags
+//!
+//! Requires the `tools` feature flag (included in `full`).
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;

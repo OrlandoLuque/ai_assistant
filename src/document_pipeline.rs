@@ -1,9 +1,19 @@
-// document_pipeline.rs — Container-based document creation and conversion pipeline.
-//
-// Uses Docker containers with tools like Pandoc, LibreOffice, and wkhtmltopdf
-// to create PDFs, DOCX, PPTX, etc. from Markdown/HTML content.
-//
-// Feature-gated behind `containers` (gate applied in lib.rs, not here).
+//! Container-based document creation and conversion pipeline.
+//!
+//! Uses Docker containers with Pandoc, LibreOffice, and wkhtmltopdf to create
+//! PDFs, DOCX, PPTX, and other document formats from Markdown/HTML content.
+//!
+//! ## Key types
+//!
+//! - [`DocumentPipeline`] — Orchestrates container-based document creation
+//! - [`CreateRequest`] — Describes what to create (format, content, template)
+//! - [`ConversionResult`] — Output bytes, format, and metadata
+//! - [`PipelineConfig`] — Timeout, temp directory, container image overrides
+//!
+//! ## Feature flags
+//!
+//! Requires the `containers` feature flag (not in `full` by default).
+//! Needs Docker installed and running on the host.
 
 use std::collections::HashMap;
 use std::path::PathBuf;

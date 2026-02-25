@@ -1,10 +1,21 @@
-// cloud_connectors.rs — Cloud storage connectors for S3 and Google Drive.
-//
-// Provides a unified CloudStorage trait with implementations for:
-// - Amazon S3 (using AWS SigV4 authentication from aws_auth module)
-// - Google Drive (using OAuth2 Bearer token with REST API v3)
-//
-// Both implementations use ureq for HTTP requests.
+//! Cloud storage connectors for Amazon S3 and Google Drive.
+//!
+//! Provides a unified [`CloudStorage`] trait with concrete implementations for:
+//! - **Amazon S3** — AWS SigV4 authentication via the `aws_auth` module
+//! - **Google Drive** — OAuth2 Bearer token with REST API v3
+//!
+//! Both implementations use `ureq` for HTTP requests (no async runtime needed).
+//!
+//! ## Key types
+//!
+//! - [`CloudStorage`] — Trait: `list`, `get`, `put`, `delete` operations
+//! - [`S3Client`] / [`S3Config`] — S3 connector with region and credentials
+//! - [`GoogleDriveClient`] / [`GoogleDriveConfig`] — Google Drive connector
+//! - [`StorageConnector`] — Enum dispatching to any backend
+//!
+//! ## Feature flags
+//!
+//! Requires the `cloud-connectors` feature flag (not in `full` by default).
 
 use anyhow::{Context, Result};
 use std::collections::HashMap;
