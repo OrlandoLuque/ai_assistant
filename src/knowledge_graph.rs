@@ -3350,4 +3350,680 @@ mod tests {
         assert!(query_entities.iter().any(|e| e == "python"));
         assert!(query_entities.iter().any(|e| e == "javascript"));
     }
+
+    // ========================================================================
+    // Entity CRUD advanced (6 tests)
+    // ========================================================================
+
+    #[test]
+    fn test_entity_metadata() {
+        let config = KnowledgeGraphConfig::default();
+        let store = KnowledgeGraphStore::in_memory(config).unwrap();
+
+        let id = store
+            .get_or_create_entity("TestOrg", EntityType::Organization, &[])
+            .unwrap();
+        let entity = store.get_entity(id).unwrap().unwrap();
+        // Default metadata should be an empty HashMap (stored as "{}" in DB)
+        assert!(entity.metadata.is_empty());
+        // Verify metadata is indeed a HashMap<String, String>
+        let expected: HashMap<String, String> = HashMap::new();
+        assert_eq!(entity.metadata, expected);
+        // Entity name and type preserved
+        assert_eq!(entity.name, "TestOrg");
+        assert_eq!(entity.entity_type, EntityType::Organization);
+    }
+
+    #[test]
+    fn test_entity_type_all_returns_seven() {
+        let all = EntityType::all();
+        assert_eq!(all.len(), 7);
+        assert!(all.contains(&EntityType::Organization));
+        assert!(all.contains(&EntityType::Product));
+        assert!(all.contains(&EntityType::Person));
+        assert!(all.contains(&EntityType::Location));
+        assert!(all.contains(&EntityType::Concept));
+        assert!(all.contains(&EntityType::Event));
+        assert!(all.contains(&EntityType::Other));
+    }
+
+    #[test]
+    fn test_find_entity_id_not_found() {
+        let config = KnowledgeGraphConfig::default();
+        let store = KnowledgeGraphStore::in_memory(config).unwrap();
+
+        let result = store.find_entity_id("nonexistent_entity").unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_get_entity_by_name() {
+        let config = KnowledgeGraphConfig::default();
+        let store = KnowledgeGraphStore::in_memory(config).unwrap();
+
+        store
+            .get_or_create_entity("Alice", EntityType::Person, &[])
+            .unwrap();
+
+        let entity = store.get_entity_by_name("Alice").unwrap();
+        assert!(entity.is_some());
+        let entity = entity.unwrap();
+        assert_eq!(entity.name, "Alice");
+        assert_eq!(entity.entity_type, EntityType::Person);
+    }
+
+    #[test]
+    fn test_get_entity_by_name_not_found() {
+        let config = KnowledgeGraphConfig::default();
+        let store = KnowledgeGraphStore::in_memory(config).unwrap();
+
+        let result = store.get_entity_by_name("ghost_entity").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_entity_aliases_resolve() {
+        let config = KnowledgeGraphConfig::default();
+        let store = KnowledgeGraphStore::in_memory(config).unwrap();
+
+        let id = store
+            .get_or_create_entity(
+                "Microsoft",
+                EntityType::Organization,
+                &["MSFT".to_string(), "MS".to_string()],
+            )
+            .unwrap();
+
+        // Should find by canonical name
+        assert_eq!(store.find_entity_id("Microsoft").unwrap(), Some(id));
+        // Should find by alias
+        assert_eq!(store.find_entity_id("MSFT").unwrap(), Some(id));
+        assert_eq!(store.find_entity_id("MS").unwrap(), Some(id));
+        // get_entity_by_name via alias should also resolve
+        let entity = store.get_entity_by_name("MSFT").unwrap();
+        assert!(entity.is_some());
+        assert_eq!(entity.unwrap().name, "Microsoft");
+    }
+
+    // ========================================================================
+    // Relation management (5 tests)
+    // ========================================================================
+
+    #[test]
+    fn test_relation_confidence_range() {
+        let config = KnowledgeGraphConfig::default();
+        let store = KnowledgeGraphStore::in_memory(config).unwrap();
+
+        let a = store
+            .get_or_create_entity("X", EntityType::Organization, &[])
+            .unwrap();
+        let b = store
+            .get_or_create_entity("Y", EntityType::Product, &[])
+            .unwrap();
+
+        // Confidence 0.0 should succeed
+        let r1 = store.add_relation(a, b, "zero_conf", 0.0, None, None);
+        assert!(r1.is_ok());
+
+        // Confidence 1.0 should succeed
+        let c = store
+            .get_or_create_entity("Z", EntityType::Product, &[])
+            .unwrap();
+        let r2 = store.add_relation(a, c, "full_conf", 1.0, None, None);
+        assert!(r2.is_ok());
+    }
+
+    #[test]
+    fn test_get_relations_from_depth_zero() {
+        let (store, a, _b, _c, _d, _e) = create_test_graph();
+
+        // depth=0 means the loop runs 0 times => no relations collected
+        let relations = store.get_relations_from(a, 0).unwrap();
+        assert!(
+            relations.is_empty(),
+            "depth=0 should return no relations, got {}",
+            relations.len()
+        );
+    }
+
+    #[test]
+    fn test_get_relations_from_depth_two() {
+        let (store, a, _b, _c, _d, _e) = create_test_graph();
+
+        // depth=2 should traverse A->B and B->C (2 hops)
+        let relations = store.get_relations_from(a, 2).unwrap();
+        assert!(
+            relations.len() >= 2,
+            "depth=2 should find at least 2 relations, got {}",
+            relations.len()
+        );
+
+        // Verify we have both direct and indirect relations
+        let rel_types: Vec<&str> = relations.iter().map(|r| r.relation_type.as_str()).collect();
+        assert!(
+            rel_types.contains(&"manufactures"),
+            "Should contain direct 'manufactures' relation"
+        );
+        assert!(
+            rel_types.contains(&"uses"),
+            "Should contain indirect 'uses' relation from second hop"
+        );
+    }
+
+    #[test]
+    fn test_relation_with_evidence() {
+        let config = KnowledgeGraphConfig::default();
+        let store = KnowledgeGraphStore::in_memory(config).unwrap();
+
+        let a = store
+            .get_or_create_entity("CompanyA", EntityType::Organization, &[])
+            .unwrap();
+        let b = store
+            .get_or_create_entity("ProductB", EntityType::Product, &[])
+            .unwrap();
+
+        let evidence_text = "CompanyA announced ProductB at the 2026 conference.";
+        let rel_id = store
+            .add_relation(a, b, "announced", 0.95, Some(evidence_text), None)
+            .unwrap();
+        assert!(rel_id > 0);
+
+        // Verify evidence persists via list_all_relations (returns relation data)
+        let all_rels = store.list_all_relations().unwrap();
+        assert_eq!(all_rels.len(), 1);
+        assert_eq!(all_rels[0].3, "announced");
+    }
+
+    #[test]
+    fn test_multiple_relations_between_same_entities() {
+        let config = KnowledgeGraphConfig::default();
+        let store = KnowledgeGraphStore::in_memory(config).unwrap();
+
+        let a = store
+            .get_or_create_entity("Org1", EntityType::Organization, &[])
+            .unwrap();
+        let b = store
+            .get_or_create_entity("Prod1", EntityType::Product, &[])
+            .unwrap();
+
+        // Add two different relation types between same pair
+        store
+            .add_relation(a, b, "manufactures", 0.9, None, None)
+            .unwrap();
+        store
+            .add_relation(a, b, "designs", 0.85, None, None)
+            .unwrap();
+
+        let all_rels = store.list_all_relations().unwrap();
+        assert_eq!(
+            all_rels.len(),
+            2,
+            "Two different relation_types between same pair should both persist"
+        );
+        let types: Vec<&str> = all_rels.iter().map(|r| r.3.as_str()).collect();
+        assert!(types.contains(&"manufactures"));
+        assert!(types.contains(&"designs"));
+    }
+
+    // ========================================================================
+    // Chunk operations (4 tests)
+    // ========================================================================
+
+    #[test]
+    fn test_add_chunk_returns_id() {
+        let config = KnowledgeGraphConfig::default();
+        let store = KnowledgeGraphStore::in_memory(config).unwrap();
+
+        let chunk_id = store.add_chunk("doc1", "This is chunk content.", 0).unwrap();
+        assert!(chunk_id > 0, "add_chunk should return a positive id");
+    }
+
+    #[test]
+    fn test_link_entity_to_chunk() {
+        let config = KnowledgeGraphConfig::default();
+        let store = KnowledgeGraphStore::in_memory(config).unwrap();
+
+        let entity_id = store
+            .get_or_create_entity("TestEntity", EntityType::Concept, &[])
+            .unwrap();
+        let chunk_id = store
+            .add_chunk("doc1", "TestEntity is mentioned here.", 0)
+            .unwrap();
+
+        store
+            .link_entity_to_chunk(entity_id, chunk_id, Some(0), Some("TestEntity is mentioned"))
+            .unwrap();
+
+        let chunks = store.get_chunks_for_entities(&[entity_id]).unwrap();
+        assert_eq!(chunks.len(), 1);
+        assert!(chunks[0].content.contains("TestEntity is mentioned here"));
+    }
+
+    #[test]
+    fn test_get_chunks_for_multiple_entities() {
+        let config = KnowledgeGraphConfig::default();
+        let store = KnowledgeGraphStore::in_memory(config).unwrap();
+
+        let e1 = store
+            .get_or_create_entity("Entity1", EntityType::Person, &[])
+            .unwrap();
+        let e2 = store
+            .get_or_create_entity("Entity2", EntityType::Location, &[])
+            .unwrap();
+
+        let c1 = store.add_chunk("doc1", "Chunk about Entity1.", 0).unwrap();
+        let c2 = store.add_chunk("doc1", "Chunk about Entity2.", 1).unwrap();
+
+        store.link_entity_to_chunk(e1, c1, None, None).unwrap();
+        store.link_entity_to_chunk(e2, c2, None, None).unwrap();
+
+        let chunks = store.get_chunks_for_entities(&[e1, e2]).unwrap();
+        assert_eq!(
+            chunks.len(),
+            2,
+            "Should retrieve chunks for both entities"
+        );
+    }
+
+    #[test]
+    fn test_chunk_position_preserved() {
+        let config = KnowledgeGraphConfig::default();
+        let store = KnowledgeGraphStore::in_memory(config).unwrap();
+
+        let c0 = store.add_chunk("doc1", "First chunk.", 0).unwrap();
+        let c1 = store.add_chunk("doc1", "Second chunk.", 1).unwrap();
+        let c2 = store.add_chunk("doc1", "Third chunk.", 2).unwrap();
+
+        // Verify all are different IDs (unique content)
+        assert_ne!(c0, c1);
+        assert_ne!(c1, c2);
+        assert_ne!(c0, c2);
+
+        // Link an entity to all chunks to verify retrieval with position metadata
+        let eid = store
+            .get_or_create_entity("Marker", EntityType::Concept, &[])
+            .unwrap();
+        store.link_entity_to_chunk(eid, c0, None, None).unwrap();
+        store.link_entity_to_chunk(eid, c1, None, None).unwrap();
+        store.link_entity_to_chunk(eid, c2, None, None).unwrap();
+
+        let chunks = store.get_chunks_for_entities(&[eid]).unwrap();
+        assert_eq!(chunks.len(), 3);
+        // Each chunk should have a position metadata entry
+        for chunk in &chunks {
+            assert!(
+                chunk.metadata.contains_key("position"),
+                "Chunk should have 'position' in metadata"
+            );
+        }
+    }
+
+    // ========================================================================
+    // GraphQuery builder (5 tests)
+    // ========================================================================
+
+    #[test]
+    fn test_graph_query_where_contains_generates_like() {
+        let sql = GraphQuery::new()
+            .match_node("n", None)
+            .where_contains("n.name", "Aegis")
+            .to_sql();
+
+        assert!(
+            sql.contains("LIKE"),
+            "where_contains should generate LIKE clause, got: {}",
+            sql
+        );
+        assert!(
+            sql.contains("Aegis"),
+            "SQL should contain the search value"
+        );
+    }
+
+    #[test]
+    fn test_graph_query_where_gt_generates_comparison() {
+        let sql = GraphQuery::new()
+            .match_node("n", None)
+            .where_gt("n.confidence", 0.5)
+            .to_sql();
+
+        assert!(
+            sql.contains(">"),
+            "where_gt should generate > clause, got: {}",
+            sql
+        );
+        assert!(
+            sql.contains("0.5"),
+            "SQL should contain the threshold value"
+        );
+    }
+
+    #[test]
+    fn test_graph_query_skip_and_limit() {
+        let sql = GraphQuery::new()
+            .match_node("n", None)
+            .skip(10)
+            .limit(5)
+            .to_sql();
+
+        assert!(
+            sql.contains("LIMIT 5"),
+            "Should contain LIMIT 5, got: {}",
+            sql
+        );
+        assert!(
+            sql.contains("OFFSET 10"),
+            "Should contain OFFSET 10, got: {}",
+            sql
+        );
+    }
+
+    #[test]
+    fn test_graph_query_order_by_descending() {
+        let sql = GraphQuery::new()
+            .match_node("n", None)
+            .order_by("n.name", false)
+            .to_sql();
+
+        assert!(
+            sql.contains("ORDER BY"),
+            "Should contain ORDER BY, got: {}",
+            sql
+        );
+        assert!(
+            sql.contains("DESC"),
+            "ascending=false should generate DESC, got: {}",
+            sql
+        );
+    }
+
+    #[test]
+    fn test_graph_query_match_path() {
+        let sql = GraphQuery::new()
+            .match_node("src", Some("organization"))
+            .match_path("src", "dst", 3)
+            .to_sql();
+
+        assert!(
+            sql.contains("max_hops=3"),
+            "match_path should encode max_hops in SQL comment, got: {}",
+            sql
+        );
+        assert!(
+            sql.contains("path_r"),
+            "match_path should use path_r alias for relation join, got: {}",
+            sql
+        );
+    }
+
+    // ========================================================================
+    // KnowledgeGraph high-level (4 tests)
+    // ========================================================================
+
+    #[test]
+    fn test_graph_in_memory_empty() {
+        let config = KnowledgeGraphConfig::default();
+        let graph = KnowledgeGraph::in_memory(config).unwrap();
+
+        let stats = graph.stats().unwrap();
+        assert_eq!(stats.total_entities, 0);
+        assert_eq!(stats.total_relations, 0);
+        assert_eq!(stats.total_chunks, 0);
+        assert_eq!(stats.total_mentions, 0);
+    }
+
+    #[test]
+    fn test_graph_chunk_text_sizes() {
+        let mut config = KnowledgeGraphConfig::default();
+        config.chunk_size = 50;
+        config.chunk_overlap = 10;
+        let graph = KnowledgeGraph::in_memory(config).unwrap();
+
+        // Generate text longer than one chunk
+        let text = "A".repeat(120);
+        let chunks = graph.chunk_text(&text);
+
+        assert!(
+            chunks.len() >= 2,
+            "120 chars with chunk_size=50 should produce at least 2 chunks, got {}",
+            chunks.len()
+        );
+        // Each chunk should not exceed chunk_size
+        for (i, chunk) in chunks.iter().enumerate() {
+            assert!(
+                chunk.len() <= 50,
+                "Chunk {} has len {} which exceeds chunk_size 50",
+                i,
+                chunk.len()
+            );
+        }
+    }
+
+    #[test]
+    fn test_graph_clear_resets_stats() {
+        let config = KnowledgeGraphConfig::default();
+        let graph = KnowledgeGraph::in_memory(config).unwrap();
+
+        // Add some data directly via the store
+        let eid = graph
+            .store
+            .get_or_create_entity("ClearTest", EntityType::Concept, &[])
+            .unwrap();
+        let cid = graph
+            .store
+            .add_chunk("doc1", "Some content for clear test.", 0)
+            .unwrap();
+        graph
+            .store
+            .link_entity_to_chunk(eid, cid, None, None)
+            .unwrap();
+
+        let stats_before = graph.stats().unwrap();
+        assert!(stats_before.total_entities > 0);
+
+        graph.clear().unwrap();
+
+        let stats_after = graph.stats().unwrap();
+        assert_eq!(stats_after.total_entities, 0);
+        assert_eq!(stats_after.total_relations, 0);
+        assert_eq!(stats_after.total_chunks, 0);
+        assert_eq!(stats_after.total_mentions, 0);
+    }
+
+    #[test]
+    fn test_graph_export_json_structure() {
+        let config = KnowledgeGraphConfig::default();
+        let graph = KnowledgeGraph::in_memory(config).unwrap();
+
+        graph
+            .store
+            .get_or_create_entity("ExportEntity", EntityType::Organization, &[])
+            .unwrap();
+
+        let json = graph.export_json().unwrap();
+
+        assert!(
+            json.get("entities").is_some(),
+            "Export JSON should have 'entities' key"
+        );
+        assert!(
+            json.get("relations").is_some(),
+            "Export JSON should have 'relations' key"
+        );
+        assert!(
+            json.get("stats").is_some(),
+            "Export JSON should have 'stats' key"
+        );
+
+        let entities = json["entities"].as_array().unwrap();
+        assert_eq!(entities.len(), 1);
+        assert_eq!(entities[0]["name"], "ExportEntity");
+    }
+
+    // ========================================================================
+    // Graph algorithms (4 tests)
+    // ========================================================================
+
+    #[test]
+    fn test_shortest_path_unconnected_returns_none() {
+        let (store, _a, _b, _c, _d, e) = create_test_graph();
+
+        // E is isolated (no outgoing or incoming relations in create_test_graph)
+        // A->B->C->D chain, E is disconnected
+        let path = GraphAlgorithms::shortest_path(&store, e, _a).unwrap();
+        assert_eq!(
+            path, None,
+            "Should return None when no path exists between unconnected entities"
+        );
+    }
+
+    #[test]
+    fn test_all_paths_max_depth() {
+        let (store, a, b, _c, _d, _e) = create_test_graph();
+
+        // With max_depth=1, only direct paths A->B should be found
+        let paths = GraphAlgorithms::all_paths(&store, a, b, 1).unwrap();
+        assert!(
+            !paths.is_empty(),
+            "Should find at least the direct path A->B"
+        );
+        for path in &paths {
+            assert!(
+                path.len() <= 2,
+                "max_depth=1 should limit path length to at most 2 nodes, got {}",
+                path.len()
+            );
+        }
+    }
+
+    #[test]
+    fn test_degree_centrality_values() {
+        let (store, a, b, c, d, e) = create_test_graph();
+
+        let (in_deg, out_deg) = GraphAlgorithms::degree_centrality(&store).unwrap();
+
+        // A has outgoing: A->B (out=1), no incoming (in=0)
+        assert_eq!(*out_deg.get(&a).unwrap_or(&0), 1);
+        assert_eq!(*in_deg.get(&a).unwrap_or(&0), 0);
+
+        // B has incoming: A->B (in=1), outgoing: B->C (out=1)
+        assert_eq!(*in_deg.get(&b).unwrap_or(&0), 1);
+        assert_eq!(*out_deg.get(&b).unwrap_or(&0), 1);
+
+        // C has incoming: B->C (in=1), outgoing: C->D (out=1)
+        assert_eq!(*in_deg.get(&c).unwrap_or(&0), 1);
+        assert_eq!(*out_deg.get(&c).unwrap_or(&0), 1);
+
+        // D has incoming: C->D (in=1), no outgoing (out=0)
+        assert_eq!(*in_deg.get(&d).unwrap_or(&0), 1);
+        assert_eq!(*out_deg.get(&d).unwrap_or(&0), 0);
+
+        // E is isolated: in=0, out=0
+        assert_eq!(*in_deg.get(&e).unwrap_or(&0), 0);
+        assert_eq!(*out_deg.get(&e).unwrap_or(&0), 0);
+    }
+
+    #[test]
+    fn test_connected_components_two_groups() {
+        let config = KnowledgeGraphConfig::default();
+        let store = KnowledgeGraphStore::in_memory(config).unwrap();
+
+        // Group 1: X -> Y
+        let x = store
+            .get_or_create_entity("X", EntityType::Organization, &[])
+            .unwrap();
+        let y = store
+            .get_or_create_entity("Y", EntityType::Product, &[])
+            .unwrap();
+        store.add_relation(x, y, "related", 0.9, None, None).unwrap();
+
+        // Group 2: P -> Q (disconnected from group 1)
+        let p = store
+            .get_or_create_entity("P", EntityType::Person, &[])
+            .unwrap();
+        let q = store
+            .get_or_create_entity("Q", EntityType::Location, &[])
+            .unwrap();
+        store.add_relation(p, q, "located_in", 0.8, None, None).unwrap();
+
+        let components = GraphAlgorithms::connected_components(&store).unwrap();
+
+        // X and Y should share a component, P and Q should share a different one
+        assert_eq!(
+            components.get(&x),
+            components.get(&y),
+            "X and Y should be in the same component"
+        );
+        assert_eq!(
+            components.get(&p),
+            components.get(&q),
+            "P and Q should be in the same component"
+        );
+        assert_ne!(
+            components.get(&x),
+            components.get(&p),
+            "Group 1 and Group 2 should be in different components"
+        );
+    }
+
+    // ========================================================================
+    // Builder pattern (4 tests)
+    // ========================================================================
+
+    #[test]
+    fn test_builder_with_config() {
+        let mut custom_config = KnowledgeGraphConfig::default();
+        custom_config.max_traversal_depth = 5;
+        custom_config.chunk_size = 500;
+
+        let graph = KnowledgeGraphBuilder::new()
+            .with_config(custom_config)
+            .build_in_memory()
+            .unwrap();
+
+        // The graph should use the custom config values
+        assert_eq!(graph.config.max_traversal_depth, 5);
+        assert_eq!(graph.config.chunk_size, 500);
+    }
+
+    #[test]
+    fn test_builder_add_entity() {
+        let graph = KnowledgeGraphBuilder::new()
+            .add_entity("BuilderOrg", EntityType::Organization)
+            .build_in_memory()
+            .unwrap();
+
+        let entity = graph.store.get_entity_by_name("BuilderOrg").unwrap();
+        assert!(entity.is_some(), "Entity added via builder should exist");
+        assert_eq!(entity.unwrap().entity_type, EntityType::Organization);
+    }
+
+    #[test]
+    fn test_builder_add_alias() {
+        let graph = KnowledgeGraphBuilder::new()
+            .add_entity("CanonicalName", EntityType::Person)
+            .add_alias("Alias1", "CanonicalName")
+            .build_in_memory()
+            .unwrap();
+
+        // The alias should resolve to the canonical entity
+        let by_alias = graph.store.find_entity_id("Alias1").unwrap();
+        let by_canonical = graph.store.find_entity_id("CanonicalName").unwrap();
+        assert!(by_alias.is_some(), "Alias should resolve to an entity");
+        assert_eq!(
+            by_alias, by_canonical,
+            "Alias should resolve to the same entity as canonical name"
+        );
+    }
+
+    #[test]
+    fn test_builder_default_builds_empty() {
+        let graph = KnowledgeGraphBuilder::new().build_in_memory().unwrap();
+
+        let stats = graph.stats().unwrap();
+        assert_eq!(stats.total_entities, 0);
+        assert_eq!(stats.total_relations, 0);
+        assert_eq!(stats.total_chunks, 0);
+        assert_eq!(stats.total_mentions, 0);
+    }
 }
