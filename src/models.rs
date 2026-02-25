@@ -308,15 +308,15 @@ impl ModelRegistry {
                 let cost_a = a
                     .capabilities
                     .as_ref()
-                    .unwrap()
+                    .expect("guaranteed by filter: capabilities is Some")
                     .input_cost_per_million
-                    .unwrap();
+                    .expect("guaranteed by filter: input_cost_per_million is Some");
                 let cost_b = b
                     .capabilities
                     .as_ref()
-                    .unwrap()
+                    .expect("guaranteed by filter: capabilities is Some")
                     .input_cost_per_million
-                    .unwrap();
+                    .expect("guaranteed by filter: input_cost_per_million is Some");
                 cost_a
                     .partial_cmp(&cost_b)
                     .unwrap_or(std::cmp::Ordering::Equal)

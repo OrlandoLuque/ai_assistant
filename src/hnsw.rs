@@ -177,7 +177,7 @@ impl HnswIndex {
             return;
         }
 
-        let entry = self.entry_point.unwrap();
+        let entry = self.entry_point.expect("entry_point guaranteed by early return above");
 
         // Navigate from top layer to the node's insertion layer
         let mut current = entry;
@@ -230,7 +230,7 @@ impl HnswIndex {
             return Vec::new();
         }
 
-        let entry = self.entry_point.unwrap();
+        let entry = self.entry_point.expect("entry_point guaranteed by is_none check above");
 
         // Navigate from top to layer 1
         let mut current = entry;
@@ -273,7 +273,7 @@ impl HnswIndex {
             return Vec::new();
         }
 
-        let entry = self.entry_point.unwrap();
+        let entry = self.entry_point.expect("entry_point guaranteed by is_none check above");
 
         // Navigate from top to layer 1
         let mut current = entry;
