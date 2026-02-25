@@ -162,7 +162,6 @@ pub fn normalize_text(text: &str) -> String {
 }
 
 /// Extract the first heading (h1-h6) text from an HTML/XHTML document.
-#[allow(dead_code)]
 pub(crate) fn extract_first_heading(html: &str) -> Option<String> {
     let heading_re = Regex::new(r"(?is)<h[1-6][^>]*>(.*?)</h[1-6]>").expect("valid regex");
     if let Some(caps) = heading_re.captures(html) {

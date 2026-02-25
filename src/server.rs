@@ -469,7 +469,6 @@ impl StructuredError {
 /// When the request count exceeds `requests_per_minute` within the current
 /// window, `check_rate_limit()` returns `false` and the server should
 /// respond with 429 Too Many Requests.
-#[allow(dead_code)]
 pub struct ServerRateLimiter {
     /// Maximum number of requests allowed per 60-second window.
     pub requests_per_minute: u32,
@@ -488,7 +487,6 @@ impl std::fmt::Debug for ServerRateLimiter {
     }
 }
 
-#[allow(dead_code)]
 impl ServerRateLimiter {
     /// Create a new rate limiter with the given requests-per-minute cap.
     pub fn new(requests_per_minute: u32) -> Self {
@@ -531,7 +529,6 @@ impl ServerRateLimiter {
 // ============================================================================
 
 /// Compress `data` with gzip using `flate2`.
-#[allow(dead_code)]
 fn compress_gzip(data: &[u8]) -> Vec<u8> {
     use flate2::write::GzEncoder;
     use flate2::Compression;
@@ -544,7 +541,6 @@ fn compress_gzip(data: &[u8]) -> Vec<u8> {
 /// Conditionally compress `body` if the client sent `Accept-Encoding: gzip`.
 ///
 /// Returns `(body_bytes, was_compressed)`.
-#[allow(dead_code)]
 fn maybe_compress_response(body: &str, accept_encoding: Option<&str>) -> (Vec<u8>, bool) {
     if let Some(enc) = accept_encoding {
         if enc.contains("gzip") {
@@ -563,7 +559,6 @@ fn maybe_compress_response(body: &str, accept_encoding: Option<&str>) -> (Vec<u8
 ///
 /// The response simulates streaming by splitting the LLM response into
 /// individual word tokens and sending each as an SSE `data:` event.
-#[allow(dead_code)]
 fn handle_chat_stream(
     request: &HttpRequest,
     assistant: &Arc<Mutex<AiAssistant>>,
@@ -634,7 +629,6 @@ fn handle_chat_stream(
 
 /// Format SSE data into a full SSE HTTP response (used by `handle_chat_stream`
 /// when the stream is produced successfully).
-#[allow(dead_code)]
 fn build_sse_response(sse_body: &str, extra_headers: &str) -> String {
     format!(
         "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\n{}Content-Length: {}\r\n\r\n{}",

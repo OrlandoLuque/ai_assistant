@@ -394,7 +394,6 @@ impl ExecutionReplay {
     }
 
     /// The agent id associated with this replay.
-    #[allow(dead_code)]
     pub fn agent_id(&self) -> &str {
         &self.agent_id
     }

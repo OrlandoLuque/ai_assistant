@@ -1916,7 +1916,6 @@ impl HierarchicalRouter {
 mod tests {
     use super::*;
 
-    #[allow(dead_code)]
     struct MockLlm;
     impl LlmGenerate for MockLlm {
         fn generate(&self, _prompt: &str, _max_tokens: usize) -> Result<String, String> {

@@ -2094,7 +2094,6 @@ impl std::fmt::Debug for ResilientProviderRegistry {
 // ============================================================================
 
 /// Audit entry recording a single LLM provider call.
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct AuditEntry {
     pub timestamp: std::time::SystemTime,
@@ -2108,7 +2107,6 @@ pub struct AuditEntry {
 }
 
 /// Aggregate statistics from audit log entries.
-#[allow(dead_code)]
 pub struct AuditSummary {
     pub total_calls: usize,
     pub successful: usize,
@@ -2121,13 +2119,11 @@ pub struct AuditSummary {
 }
 
 /// Provider wrapper that logs every LLM call to an in-memory audit log.
-#[allow(dead_code)]
 pub struct AuditedProvider {
     audit_log: std::sync::Arc<std::sync::Mutex<Vec<AuditEntry>>>,
     max_entries: usize,
 }
 
-#[allow(dead_code)]
 impl AuditedProvider {
     pub fn new(max_entries: usize) -> Self {
         Self {
