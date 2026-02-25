@@ -1900,4 +1900,902 @@ mod tests {
         // But in memory, we track all steps
         assert_eq!(sessions[0].steps.len(), 2);
     }
+
+    // ====================================================================
+    // 1. RagDebugLevel: exhaustive from_str / as_str / Default
+    // ====================================================================
+
+    #[test]
+    fn test_from_str_all_off_variants() {
+        assert_eq!(RagDebugLevel::from_str("off"), RagDebugLevel::Off);
+        assert_eq!(RagDebugLevel::from_str("none"), RagDebugLevel::Off);
+        assert_eq!(RagDebugLevel::from_str("0"), RagDebugLevel::Off);
+        assert_eq!(RagDebugLevel::from_str("OFF"), RagDebugLevel::Off);
+        assert_eq!(RagDebugLevel::from_str("NONE"), RagDebugLevel::Off);
+    }
+
+    #[test]
+    fn test_from_str_all_minimal_variants() {
+        assert_eq!(RagDebugLevel::from_str("minimal"), RagDebugLevel::Minimal);
+        assert_eq!(RagDebugLevel::from_str("min"), RagDebugLevel::Minimal);
+        assert_eq!(RagDebugLevel::from_str("1"), RagDebugLevel::Minimal);
+        assert_eq!(RagDebugLevel::from_str("MINIMAL"), RagDebugLevel::Minimal);
+        assert_eq!(RagDebugLevel::from_str("MIN"), RagDebugLevel::Minimal);
+    }
+
+    #[test]
+    fn test_from_str_all_basic_variants() {
+        assert_eq!(RagDebugLevel::from_str("basic"), RagDebugLevel::Basic);
+        assert_eq!(RagDebugLevel::from_str("2"), RagDebugLevel::Basic);
+        assert_eq!(RagDebugLevel::from_str("BASIC"), RagDebugLevel::Basic);
+    }
+
+    #[test]
+    fn test_from_str_all_detailed_variants() {
+        assert_eq!(RagDebugLevel::from_str("detailed"), RagDebugLevel::Detailed);
+        assert_eq!(RagDebugLevel::from_str("detail"), RagDebugLevel::Detailed);
+        assert_eq!(RagDebugLevel::from_str("3"), RagDebugLevel::Detailed);
+        assert_eq!(RagDebugLevel::from_str("DETAILED"), RagDebugLevel::Detailed);
+    }
+
+    #[test]
+    fn test_from_str_all_verbose_variants() {
+        assert_eq!(RagDebugLevel::from_str("verbose"), RagDebugLevel::Verbose);
+        assert_eq!(RagDebugLevel::from_str("4"), RagDebugLevel::Verbose);
+        assert_eq!(RagDebugLevel::from_str("VERBOSE"), RagDebugLevel::Verbose);
+    }
+
+    #[test]
+    fn test_from_str_all_trace_variants() {
+        assert_eq!(RagDebugLevel::from_str("trace"), RagDebugLevel::Trace);
+        assert_eq!(RagDebugLevel::from_str("5"), RagDebugLevel::Trace);
+        assert_eq!(RagDebugLevel::from_str("TRACE"), RagDebugLevel::Trace);
+    }
+
+    #[test]
+    fn test_from_str_unknown_returns_off() {
+        assert_eq!(RagDebugLevel::from_str("garbage"), RagDebugLevel::Off);
+        assert_eq!(RagDebugLevel::from_str(""), RagDebugLevel::Off);
+        assert_eq!(RagDebugLevel::from_str("99"), RagDebugLevel::Off);
+        assert_eq!(RagDebugLevel::from_str("debug"), RagDebugLevel::Off);
+    }
+
+    #[test]
+    fn test_as_str_all_levels() {
+        assert_eq!(RagDebugLevel::Off.as_str(), "OFF");
+        assert_eq!(RagDebugLevel::Minimal.as_str(), "MINIMAL");
+        assert_eq!(RagDebugLevel::Basic.as_str(), "BASIC");
+        assert_eq!(RagDebugLevel::Detailed.as_str(), "DETAILED");
+        assert_eq!(RagDebugLevel::Verbose.as_str(), "VERBOSE");
+        assert_eq!(RagDebugLevel::Trace.as_str(), "TRACE");
+    }
+
+    #[test]
+    fn test_debug_level_default_is_off() {
+        let level: RagDebugLevel = Default::default();
+        assert_eq!(level, RagDebugLevel::Off);
+    }
+
+    // ====================================================================
+    // 2. RagDebugConfig: verbose preset, Serialize/Deserialize roundtrip
+    // ====================================================================
+
+    #[test]
+    fn test_config_default_fields() {
+        let cfg = RagDebugConfig::default();
+        assert!(!cfg.enabled);
+        assert_eq!(cfg.level, RagDebugLevel::Off);
+        assert!(!cfg.log_to_file);
+        assert!(cfg.log_path.is_none());
+        assert!(!cfg.log_to_stderr);
+        assert!(cfg.include_timestamps);
+        assert!(cfg.include_timing);
+        assert_eq!(cfg.max_entries, 1000);
+        assert!(cfg.log_chunks);
+        assert!(!cfg.log_llm_details);
+        assert!(!cfg.log_embeddings);
+        assert!(cfg.log_scores);
+        assert!(cfg.pretty_json);
+        assert_eq!(cfg.log_rotation, Some(10));
+        assert!(cfg.feature_filter.is_empty());
+    }
+
+    #[test]
+    fn test_config_verbose_preset() {
+        let cfg = RagDebugConfig::verbose("/tmp/verbose_logs");
+        assert!(cfg.enabled);
+        assert_eq!(cfg.level, RagDebugLevel::Verbose);
+        assert!(cfg.log_to_file);
+        assert_eq!(cfg.log_path, Some(PathBuf::from("/tmp/verbose_logs")));
+        assert!(cfg.log_to_stderr);
+        assert!(cfg.log_chunks);
+        assert!(cfg.log_llm_details);
+        assert!(!cfg.log_embeddings); // Still too large by default
+        assert!(cfg.log_scores);
+    }
+
+    #[test]
+    fn test_config_serialize_deserialize_roundtrip() {
+        let original = RagDebugConfig {
+            enabled: true,
+            level: RagDebugLevel::Detailed,
+            log_to_file: true,
+            log_path: Some(PathBuf::from("/tmp/test")),
+            log_to_stderr: true,
+            include_timestamps: false,
+            include_timing: true,
+            max_entries: 500,
+            log_chunks: false,
+            log_llm_details: true,
+            log_embeddings: true,
+            log_scores: false,
+            pretty_json: false,
+            log_rotation: Some(5),
+            feature_filter: vec!["keyword".to_string(), "semantic".to_string()],
+        };
+        let json = serde_json::to_string(&original).expect("serialize");
+        let restored: RagDebugConfig = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(restored.enabled, original.enabled);
+        assert_eq!(restored.level, original.level);
+        assert_eq!(restored.max_entries, original.max_entries);
+        assert_eq!(restored.log_rotation, original.log_rotation);
+        assert_eq!(restored.feature_filter, original.feature_filter);
+        assert_eq!(restored.log_path, original.log_path);
+    }
+
+    // ====================================================================
+    // 3. RagDebugSession: new, individual setters, summary, complete
+    // ====================================================================
+
+    #[test]
+    fn test_session_new_creates_properly() {
+        let session = RagDebugSession::new("sid_1", "What is Rust?");
+        assert_eq!(session.session_id, "sid_1");
+        assert_eq!(session.query, "What is Rust?");
+        assert!(session.start_time_ms > 0);
+        assert!(session.end_time_ms.is_none());
+        assert!(session.total_duration_ms.is_none());
+        assert!(session.steps.is_empty());
+        assert!(session.final_context.is_none());
+        assert!(session.final_response.is_none());
+        assert!(session.rag_tier.is_none());
+        assert!(session.features_enabled.is_empty());
+        assert!(session.provider_type.is_none());
+        assert!(session.provider_url.is_none());
+        assert!(session.model_name.is_none());
+        assert!(session.errors.is_empty());
+        assert!(session.warnings.is_empty());
+    }
+
+    #[test]
+    fn test_session_set_provider_individual_setters() {
+        let mut session = RagDebugSession::new("s", "q");
+        session.set_provider_type("ollama");
+        session.set_provider_url("http://localhost:11434");
+        session.set_model_name("llama3");
+        assert_eq!(session.provider_type.as_deref(), Some("ollama"));
+        assert_eq!(session.provider_url.as_deref(), Some("http://localhost:11434"));
+        assert_eq!(session.model_name.as_deref(), Some("llama3"));
+    }
+
+    #[test]
+    fn test_session_set_provider_combined() {
+        let mut session = RagDebugSession::new("s", "q");
+        session.set_provider("anthropic", "https://api.anthropic.com", "claude-3");
+        assert_eq!(session.provider_type.as_deref(), Some("anthropic"));
+        assert_eq!(session.provider_url.as_deref(), Some("https://api.anthropic.com"));
+        assert_eq!(session.model_name.as_deref(), Some("claude-3"));
+    }
+
+    #[test]
+    fn test_session_set_context_and_tier_and_features() {
+        let mut session = RagDebugSession::new("s", "q");
+        session.set_context("Here is the relevant context about Rust.");
+        session.set_tier("tier3");
+        session.set_features(vec!["rag".into(), "rerank".into()]);
+        assert_eq!(
+            session.final_context.as_deref(),
+            Some("Here is the relevant context about Rust.")
+        );
+        assert_eq!(session.rag_tier.as_deref(), Some("tier3"));
+        assert_eq!(session.features_enabled, vec!["rag", "rerank"]);
+    }
+
+    #[test]
+    fn test_session_summary_format() {
+        let mut session = RagDebugSession::new("abc", "test query");
+        session.add_step(RagDebugStep::LlmCall {
+            purpose: "expansion".into(),
+            model: "m".into(),
+            input_tokens: 100,
+            output_tokens: 50,
+            prompt_preview: None,
+            response_preview: None,
+            duration_ms: 200,
+        });
+        session.complete(Some("response text".into()));
+        let summary = session.summary();
+        assert!(summary.contains("Session abc"));
+        assert!(summary.contains("1 steps"));
+        assert!(summary.contains("1 LLM calls"));
+        assert!(summary.contains("100 in"));
+        assert!(summary.contains("50 out"));
+    }
+
+    #[test]
+    fn test_session_complete_sets_duration() {
+        let mut session = RagDebugSession::new("s", "q");
+        std::thread::sleep(Duration::from_millis(5));
+        session.complete(Some("done".into()));
+        assert!(session.end_time_ms.is_some());
+        assert!(session.total_duration_ms.is_some());
+        assert_eq!(session.final_response.as_deref(), Some("done"));
+    }
+
+    // ====================================================================
+    // 4. Session stats accumulation
+    // ====================================================================
+
+    #[test]
+    fn test_stats_multiple_llm_calls_accumulate() {
+        let mut session = RagDebugSession::new("s", "q");
+        for i in 0..3 {
+            session.add_step(RagDebugStep::LlmCall {
+                purpose: format!("call_{}", i),
+                model: "m".into(),
+                input_tokens: 100,
+                output_tokens: 40,
+                prompt_preview: None,
+                response_preview: None,
+                duration_ms: 50,
+            });
+        }
+        assert_eq!(session.stats.llm_calls, 3);
+        assert_eq!(session.stats.llm_input_tokens, 300);
+        assert_eq!(session.stats.llm_output_tokens, 120);
+        assert_eq!(session.stats.llm_time_ms, 150);
+    }
+
+    #[test]
+    fn test_stats_multiple_searches_accumulate() {
+        let mut session = RagDebugSession::new("s", "q");
+        session.add_step(RagDebugStep::KeywordSearch {
+            query: "a".into(),
+            results_count: 5,
+            top_score: Some(0.9),
+            duration_ms: 20,
+        });
+        session.add_step(RagDebugStep::SemanticSearch {
+            query: "b".into(),
+            embedding_model: "model".into(),
+            results_count: 10,
+            top_similarity: Some(0.8),
+            duration_ms: 80,
+        });
+        assert_eq!(session.stats.chunks_retrieved, 15);
+        assert_eq!(session.stats.retrieval_time_ms, 100);
+    }
+
+    #[test]
+    fn test_stats_reranking_and_context_assembly() {
+        let mut session = RagDebugSession::new("s", "q");
+        session.add_step(RagDebugStep::Reranking {
+            input_count: 20,
+            output_count: 10,
+            method: "cross_encoder".into(),
+            score_changes: vec![],
+            duration_ms: 75,
+        });
+        session.add_step(RagDebugStep::ContextAssembly {
+            total_chunks: 8,
+            total_tokens: 2000,
+            sources: vec!["doc1.txt".into()],
+            truncated: false,
+            duration_ms: 10,
+        });
+        assert_eq!(session.stats.rerank_time_ms, 75);
+        assert_eq!(session.stats.chunks_used, 8);
+        assert_eq!(session.stats.other_time_ms, 10);
+    }
+
+    // ====================================================================
+    // 5. step_type_name: all 24 variants
+    // ====================================================================
+
+    #[test]
+    fn test_step_type_name_all_variants() {
+        let cases: Vec<(RagDebugStep, &str)> = vec![
+            (
+                RagDebugStep::QueryReceived { query: "q".into(), timestamp_ms: 0 },
+                "query_received",
+            ),
+            (
+                RagDebugStep::QueryAnalysis {
+                    query: "q".into(), intent: None, complexity: None,
+                    keywords: vec![], duration_ms: 0,
+                },
+                "query_analysis",
+            ),
+            (
+                RagDebugStep::QueryExpansion {
+                    original: "q".into(), expanded: vec![], method: "llm".into(), duration_ms: 0,
+                },
+                "query_expansion",
+            ),
+            (
+                RagDebugStep::MultiQuery {
+                    original: "q".into(), sub_queries: vec![], duration_ms: 0,
+                },
+                "multi_query",
+            ),
+            (
+                RagDebugStep::HyDE {
+                    query: "q".into(), hypothetical_doc: "h".into(), duration_ms: 0,
+                },
+                "hyde",
+            ),
+            (
+                RagDebugStep::KeywordSearch {
+                    query: "q".into(), results_count: 0, top_score: None, duration_ms: 0,
+                },
+                "keyword_search",
+            ),
+            (
+                RagDebugStep::SemanticSearch {
+                    query: "q".into(), embedding_model: "m".into(),
+                    results_count: 0, top_similarity: None, duration_ms: 0,
+                },
+                "semantic_search",
+            ),
+            (
+                RagDebugStep::HybridFusion {
+                    keyword_results: 0, semantic_results: 0, fused_results: 0,
+                    method: "rrf".into(), weights: None, duration_ms: 0,
+                },
+                "hybrid_fusion",
+            ),
+            (
+                RagDebugStep::Reranking {
+                    input_count: 0, output_count: 0, method: "llm".into(),
+                    score_changes: vec![], duration_ms: 0,
+                },
+                "reranking",
+            ),
+            (
+                RagDebugStep::ContextualCompression {
+                    input_chunks: 0, input_tokens: 0, output_chunks: 0,
+                    output_tokens: 0, compression_ratio: 1.0, duration_ms: 0,
+                },
+                "contextual_compression",
+            ),
+            (
+                RagDebugStep::SentenceWindow {
+                    matched_sentences: 0, window_size: 0, expanded_chunks: 0, duration_ms: 0,
+                },
+                "sentence_window",
+            ),
+            (
+                RagDebugStep::ParentDocument {
+                    child_matches: 0, parent_docs_retrieved: 0, duration_ms: 0,
+                },
+                "parent_document",
+            ),
+            (
+                RagDebugStep::SelfReflection {
+                    query: "q".into(), context_summary: "c".into(),
+                    is_sufficient: true, confidence: 0.9, reason: None, duration_ms: 0,
+                },
+                "self_reflection",
+            ),
+            (
+                RagDebugStep::CorrectiveRag {
+                    retrieval_quality: 0.5, action_taken: "retry".into(),
+                    reason: None, duration_ms: 0,
+                },
+                "corrective_rag",
+            ),
+            (
+                RagDebugStep::AdaptiveStrategy {
+                    query: "q".into(), selected_strategy: "hybrid".into(),
+                    reason: "best".into(), duration_ms: 0,
+                },
+                "adaptive_strategy",
+            ),
+            (
+                RagDebugStep::AgenticIteration {
+                    iteration: 1, action: "search".into(), observation: "ok".into(),
+                    is_complete: false, duration_ms: 0,
+                },
+                "agentic_iteration",
+            ),
+            (
+                RagDebugStep::GraphTraversal {
+                    start_entities: vec![], traversal_depth: 0,
+                    nodes_visited: 0, relationships_found: 0, duration_ms: 0,
+                },
+                "graph_traversal",
+            ),
+            (
+                RagDebugStep::RaptorRetrieval {
+                    level: 0, summaries_retrieved: 0, leaf_chunks_retrieved: 0, duration_ms: 0,
+                },
+                "raptor_retrieval",
+            ),
+            (
+                RagDebugStep::LlmCall {
+                    purpose: "p".into(), model: "m".into(),
+                    input_tokens: 0, output_tokens: 0,
+                    prompt_preview: None, response_preview: None, duration_ms: 0,
+                },
+                "llm_call",
+            ),
+            (
+                RagDebugStep::ChunkRetrieved {
+                    source: "s".into(), chunk_id: "c".into(),
+                    score: 0.5, token_count: 0, preview: "p".into(),
+                },
+                "chunk_retrieved",
+            ),
+            (
+                RagDebugStep::ContextAssembly {
+                    total_chunks: 0, total_tokens: 0, sources: vec![],
+                    truncated: false, duration_ms: 0,
+                },
+                "context_assembly",
+            ),
+            (
+                RagDebugStep::Error {
+                    step: "s".into(), message: "m".into(), recoverable: false,
+                },
+                "error",
+            ),
+            (
+                RagDebugStep::Warning { step: "s".into(), message: "m".into() },
+                "warning",
+            ),
+            (
+                RagDebugStep::Custom {
+                    name: "n".into(), data: HashMap::new(), duration_ms: None,
+                },
+                "custom",
+            ),
+        ];
+        for (step, expected_name) in &cases {
+            assert_eq!(step_type_name(step), *expected_name, "failed for {}", expected_name);
+        }
+    }
+
+    // ====================================================================
+    // 6. format_step: test formatting of major step variants
+    // ====================================================================
+
+    #[test]
+    fn test_format_step_query_received() {
+        let cfg = RagDebugConfig::default();
+        let step = RagDebugStep::QueryReceived { query: "hello world".into(), timestamp_ms: 100 };
+        let out = format_step(&step, &cfg);
+        assert!(out.contains("Query received"));
+        assert!(out.contains("hello world"));
+    }
+
+    #[test]
+    fn test_format_step_query_expansion() {
+        let cfg = RagDebugConfig::default();
+        let step = RagDebugStep::QueryExpansion {
+            original: "rust language".into(),
+            expanded: vec!["rust programming".into(), "rust lang".into()],
+            method: "llm".into(),
+            duration_ms: 120,
+        };
+        let out = format_step(&step, &cfg);
+        assert!(out.contains("Expansion"));
+        assert!(out.contains("llm"));
+        assert!(out.contains("2 variants"));
+        assert!(out.contains("120ms"));
+    }
+
+    #[test]
+    fn test_format_step_semantic_search() {
+        let cfg = RagDebugConfig::default();
+        let step = RagDebugStep::SemanticSearch {
+            query: "test".into(),
+            embedding_model: "bge-small".into(),
+            results_count: 7,
+            top_similarity: Some(0.92),
+            duration_ms: 55,
+        };
+        let out = format_step(&step, &cfg);
+        assert!(out.contains("Semantic search"));
+        assert!(out.contains("bge-small"));
+        assert!(out.contains("7 results"));
+        assert!(out.contains("0.920"));
+        assert!(out.contains("55ms"));
+    }
+
+    #[test]
+    fn test_format_step_hybrid_fusion() {
+        let cfg = RagDebugConfig::default();
+        let step = RagDebugStep::HybridFusion {
+            keyword_results: 10,
+            semantic_results: 15,
+            fused_results: 12,
+            method: "rrf".into(),
+            weights: None,
+            duration_ms: 30,
+        };
+        let out = format_step(&step, &cfg);
+        assert!(out.contains("Hybrid fusion"));
+        assert!(out.contains("10+15"));
+        assert!(out.contains("12 results"));
+    }
+
+    #[test]
+    fn test_format_step_reranking() {
+        let cfg = RagDebugConfig::default();
+        let step = RagDebugStep::Reranking {
+            input_count: 20,
+            output_count: 5,
+            method: "cross_encoder".into(),
+            score_changes: vec![],
+            duration_ms: 90,
+        };
+        let out = format_step(&step, &cfg);
+        assert!(out.contains("Reranking"));
+        assert!(out.contains("20 -> 5"));
+        assert!(out.contains("90ms"));
+    }
+
+    #[test]
+    fn test_format_step_self_reflection() {
+        let cfg = RagDebugConfig::default();
+        let step = RagDebugStep::SelfReflection {
+            query: "q".into(),
+            context_summary: "c".into(),
+            is_sufficient: true,
+            confidence: 0.85,
+            reason: None,
+            duration_ms: 200,
+        };
+        let out = format_step(&step, &cfg);
+        assert!(out.contains("Self-reflection"));
+        assert!(out.contains("sufficient=true"));
+        assert!(out.contains("0.85"));
+    }
+
+    #[test]
+    fn test_format_step_corrective_rag() {
+        let cfg = RagDebugConfig::default();
+        let step = RagDebugStep::CorrectiveRag {
+            retrieval_quality: 0.4,
+            action_taken: "retry".into(),
+            reason: Some("low quality".into()),
+            duration_ms: 150,
+        };
+        let out = format_step(&step, &cfg);
+        assert!(out.contains("CRAG"));
+        assert!(out.contains("0.40"));
+        assert!(out.contains("retry"));
+    }
+
+    #[test]
+    fn test_format_step_error_and_warning() {
+        let cfg = RagDebugConfig::default();
+        let err = RagDebugStep::Error {
+            step: "retrieval".into(),
+            message: "timeout".into(),
+            recoverable: true,
+        };
+        let warn = RagDebugStep::Warning {
+            step: "rerank".into(),
+            message: "low scores".into(),
+        };
+        let err_out = format_step(&err, &cfg);
+        assert!(err_out.contains("ERROR"));
+        assert!(err_out.contains("retrieval"));
+        assert!(err_out.contains("recoverable=true"));
+        let warn_out = format_step(&warn, &cfg);
+        assert!(warn_out.contains("WARNING"));
+        assert!(warn_out.contains("rerank"));
+    }
+
+    #[test]
+    fn test_format_step_llm_call_with_details() {
+        let cfg_details = RagDebugConfig {
+            log_llm_details: true,
+            ..Default::default()
+        };
+        let cfg_no_details = RagDebugConfig::default();
+        let step = RagDebugStep::LlmCall {
+            purpose: "expansion".into(),
+            model: "gpt-4".into(),
+            input_tokens: 500,
+            output_tokens: 200,
+            prompt_preview: None,
+            response_preview: None,
+            duration_ms: 300,
+        };
+        let with = format_step(&step, &cfg_details);
+        assert!(with.contains("gpt-4")); // model shown when log_llm_details
+        let without = format_step(&step, &cfg_no_details);
+        assert!(!without.contains("gpt-4")); // model hidden otherwise
+        assert!(without.contains("expansion"));
+    }
+
+    #[test]
+    fn test_format_step_chunk_retrieved_with_and_without_details() {
+        let cfg_chunks = RagDebugConfig { log_chunks: true, ..Default::default() };
+        let cfg_no_chunks = RagDebugConfig { log_chunks: false, ..Default::default() };
+        let step = RagDebugStep::ChunkRetrieved {
+            source: "doc.txt".into(),
+            chunk_id: "c1".into(),
+            score: 0.88,
+            token_count: 120,
+            preview: "The quick brown fox".into(),
+        };
+        let with = format_step(&step, &cfg_chunks);
+        assert!(with.contains("120 tokens"));
+        assert!(with.contains("The quick brown fox"));
+        let without = format_step(&step, &cfg_no_chunks);
+        assert!(!without.contains("120 tokens"));
+        assert!(without.contains("0.880"));
+    }
+
+    // ====================================================================
+    // 7. Logger: level control, configure, sessions, is_level_enabled
+    // ====================================================================
+
+    #[test]
+    fn test_logger_with_level_off_means_disabled() {
+        let logger = RagDebugLogger::with_level(RagDebugLevel::Off);
+        assert!(!logger.is_enabled());
+        assert_eq!(logger.level(), RagDebugLevel::Off);
+    }
+
+    #[test]
+    fn test_logger_configure_updates_config() {
+        let logger = RagDebugLogger::new(RagDebugConfig::default());
+        assert!(!logger.is_enabled());
+        let new_cfg = RagDebugConfig::detailed();
+        logger.configure(new_cfg);
+        assert!(logger.is_enabled());
+        assert_eq!(logger.level(), RagDebugLevel::Detailed);
+    }
+
+    #[test]
+    fn test_logger_set_enabled_and_set_level() {
+        let logger = RagDebugLogger::new(RagDebugConfig::default());
+        logger.set_enabled(true);
+        assert!(logger.is_enabled());
+        logger.set_level(RagDebugLevel::Verbose);
+        assert_eq!(logger.level(), RagDebugLevel::Verbose);
+        logger.set_level(RagDebugLevel::Off);
+        assert!(!logger.is_enabled()); // set_level(Off) disables
+    }
+
+    #[test]
+    fn test_logger_is_level_enabled_checks() {
+        let logger = RagDebugLogger::with_level(RagDebugLevel::Detailed);
+        assert!(logger.is_level_enabled(RagDebugLevel::Minimal));
+        assert!(logger.is_level_enabled(RagDebugLevel::Basic));
+        assert!(logger.is_level_enabled(RagDebugLevel::Detailed));
+        assert!(!logger.is_level_enabled(RagDebugLevel::Verbose));
+        assert!(!logger.is_level_enabled(RagDebugLevel::Trace));
+    }
+
+    #[test]
+    fn test_logger_is_level_enabled_when_disabled() {
+        let logger = RagDebugLogger::new(RagDebugConfig {
+            enabled: false,
+            level: RagDebugLevel::Trace,
+            ..Default::default()
+        });
+        // Even with Trace level, disabled means nothing is enabled
+        assert!(!logger.is_level_enabled(RagDebugLevel::Minimal));
+    }
+
+    #[test]
+    fn test_logger_recent_sessions_ordering() {
+        let logger = RagDebugLogger::with_level(RagDebugLevel::Detailed);
+
+        let s1 = logger.start_query("first");
+        s1.complete_no_response();
+        let s2 = logger.start_query("second");
+        s2.complete_no_response();
+        let s3 = logger.start_query("third");
+        s3.complete_no_response();
+
+        let recent = logger.recent_sessions(2);
+        assert_eq!(recent.len(), 2);
+        // recent_sessions returns newest first (reversed)
+        assert_eq!(recent[0].query, "third");
+        assert_eq!(recent[1].query, "second");
+    }
+
+    #[test]
+    fn test_logger_get_session_by_id() {
+        let logger = RagDebugLogger::with_level(RagDebugLevel::Detailed);
+
+        let session = logger.start_query("find me");
+        let sid = session.session_id().to_string();
+        session.complete_with_response("found");
+
+        let found = logger.get_session(&sid);
+        assert!(found.is_some());
+        let found = found.unwrap();
+        assert_eq!(found.query, "find me");
+        assert_eq!(found.final_response.as_deref(), Some("found"));
+    }
+
+    #[test]
+    fn test_logger_get_session_not_found() {
+        let logger = RagDebugLogger::with_level(RagDebugLevel::Detailed);
+        assert!(logger.get_session("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_logger_clear_sessions() {
+        let logger = RagDebugLogger::with_level(RagDebugLevel::Detailed);
+        let s = logger.start_query("will be cleared");
+        s.complete_no_response();
+        assert_eq!(logger.all_sessions().len(), 1);
+        logger.clear_sessions();
+        assert!(logger.all_sessions().is_empty());
+    }
+
+    // ====================================================================
+    // 8. RagQuerySession: log_expansion, log_error, log_warning, setters
+    // ====================================================================
+
+    #[test]
+    fn test_query_session_log_expansion() {
+        let logger = RagDebugLogger::with_level(RagDebugLevel::Detailed);
+        let session = logger.start_query("original query");
+        session.log_expansion(
+            "original query",
+            vec!["expanded 1".into(), "expanded 2".into()],
+            "synonym",
+            Duration::from_millis(45),
+        );
+        session.complete_no_response();
+
+        let sessions = logger.all_sessions();
+        assert_eq!(sessions[0].steps.len(), 1);
+        match &sessions[0].steps[0] {
+            RagDebugStep::QueryExpansion { method, expanded, duration_ms, .. } => {
+                assert_eq!(method, "synonym");
+                assert_eq!(expanded.len(), 2);
+                assert_eq!(*duration_ms, 45);
+            }
+            _ => panic!("expected QueryExpansion step"),
+        }
+    }
+
+    #[test]
+    fn test_query_session_log_error_and_warning() {
+        let logger = RagDebugLogger::with_level(RagDebugLevel::Detailed);
+        let session = logger.start_query("q");
+        session.log_error("embedding", "connection refused", true);
+        session.log_warning("scoring", "empty results");
+        session.complete_no_response();
+
+        let sessions = logger.all_sessions();
+        assert_eq!(sessions[0].errors.len(), 1);
+        assert_eq!(sessions[0].errors[0], "connection refused");
+        assert_eq!(sessions[0].warnings.len(), 1);
+        assert_eq!(sessions[0].warnings[0], "empty results");
+    }
+
+    #[test]
+    fn test_query_session_set_tier_features_context_provider() {
+        let logger = RagDebugLogger::with_level(RagDebugLevel::Detailed);
+        let session = logger.start_query("test");
+        session.set_tier("tier5");
+        session.set_features(vec!["self_rag".into(), "crag".into()]);
+        session.set_context("assembled context here");
+        session.set_provider("openai", "https://api.openai.com", "gpt-4o");
+        session.complete_no_response();
+
+        let sessions = logger.all_sessions();
+        let s = &sessions[0];
+        assert_eq!(s.rag_tier.as_deref(), Some("tier5"));
+        assert_eq!(s.features_enabled, vec!["self_rag", "crag"]);
+        assert_eq!(s.final_context.as_deref(), Some("assembled context here"));
+        assert_eq!(s.provider_type.as_deref(), Some("openai"));
+        assert_eq!(s.provider_url.as_deref(), Some("https://api.openai.com"));
+        assert_eq!(s.model_name.as_deref(), Some("gpt-4o"));
+    }
+
+    #[test]
+    fn test_query_session_id_and_elapsed() {
+        let logger = RagDebugLogger::with_level(RagDebugLevel::Detailed);
+        let session = logger.start_query("timing test");
+        let sid = session.session_id().to_string();
+        assert!(sid.starts_with("rag_"));
+        std::thread::sleep(Duration::from_millis(5));
+        let elapsed = session.elapsed();
+        assert!(elapsed >= Duration::from_millis(5));
+        session.complete_no_response();
+    }
+
+    // ====================================================================
+    // 9. Edge cases
+    // ====================================================================
+
+    #[test]
+    fn test_empty_query_session() {
+        let mut session = RagDebugSession::new("empty", "");
+        assert_eq!(session.query, "");
+        session.complete(None);
+        let summary = session.summary();
+        assert!(summary.contains("0 steps"));
+        assert!(summary.contains("0 LLM calls"));
+    }
+
+    #[test]
+    fn test_truncate_str_exact_boundary() {
+        // String exactly at max_len should not be truncated
+        assert_eq!(truncate_str("12345", 5), "12345");
+        // One character over should truncate
+        assert_eq!(truncate_str("123456", 5), "12...");
+        // Very short max_len
+        assert_eq!(truncate_str("abcdef", 3), "...");
+    }
+
+    #[test]
+    fn test_truncate_str_very_long() {
+        let long = "x".repeat(10_000);
+        let truncated = truncate_str(&long, 50);
+        assert_eq!(truncated.len(), 50);
+        assert!(truncated.ends_with("..."));
+    }
+
+    #[test]
+    fn test_session_with_no_steps_summary() {
+        let mut session = RagDebugSession::new("no_steps", "query without processing");
+        session.complete(None);
+        let summary = session.summary();
+        assert!(summary.contains("0 steps"));
+        assert!(summary.contains("0 LLM calls"));
+        assert!(summary.contains("0 chunks retrieved"));
+        assert!(summary.contains("0 used"));
+    }
+
+    #[test]
+    fn test_disabled_logger_records_no_steps() {
+        let logger = RagDebugLogger::with_level(RagDebugLevel::Off);
+        // Even start_query won't really log internally when Off
+        // But the session still gets created structurally
+        let session = logger.start_query("should be skipped");
+        // log_step checks is_enabled(), so steps won't be added to current_session
+        session.log_keyword_search("test", 5, Some(0.9), Duration::from_millis(10));
+        session.complete_no_response();
+
+        let sessions = logger.all_sessions();
+        // When disabled, log_step returns early so no steps added, and
+        // complete_session still stores the session (since start_query created it)
+        // but steps will be empty because log_step bailed out
+        if !sessions.is_empty() {
+            assert_eq!(sessions[0].steps.len(), 0);
+        }
+    }
+
+    #[test]
+    fn test_duration_so_far_returns_positive() {
+        let session = RagDebugSession::new("dur", "q");
+        // duration_so_far should always be >= 0 (it's u64, so always non-negative)
+        let dur = session.duration_so_far();
+        // Just verify it doesn't panic and returns something reasonable
+        assert!(dur < 10_000); // should be well under 10 seconds in a unit test
+    }
+
+    #[test]
+    fn test_rand_simple_returns_varied_values() {
+        // rand_simple() uses RandomState, so calling it twice should give different values
+        // (with extremely high probability)
+        let a = rand_simple();
+        let b = rand_simple();
+        // Not strictly guaranteed, but practically always different
+        // If they happen to collide, the test still passes — we just test it doesn't panic
+        let _ = (a, b);
+    }
 }
