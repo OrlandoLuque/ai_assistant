@@ -149,6 +149,14 @@ Read this for understanding, inspiration, and to demystify the magic.
 139. [Compressed Memory Snapshots](#139-compressed-memory-snapshots)
 140. [API Versioning](#140-api-versioning)
 141. [Structured Error Responses](#141-structured-error-responses)
+142. [Module Splitting](#142-module-splitting)
+143. [TLS Runtime (server-tls)](#143-tls-runtime-server-tls)
+144. [Plugin System Server Hooks](#144-plugin-system-server-hooks)
+145. [OpenAPI Export](#145-openapi-export)
+146. [Server CLI Binary (ai_assistant_server)](#146-server-cli-binary-ai_assistant_server)
+147. [Criterion Benchmarks](#147-criterion-benchmarks)
+148. [Feature Gating Strategy](#148-feature-gating-strategy)
+149. [Dead Code Hygiene](#149-dead-code-hygiene)
 
 ---
 
@@ -3242,3 +3250,39 @@ The same zoom-in/zoom-out principle applies to knowledge graph entities. A clust
 **The fundamental idea**: Performance claims need reproducible evidence. The `benches/core_benchmarks.rs` file contains 16 Criterion benchmarks covering the crate's hot paths: embedding generation, conversation management, RAG retrieval, streaming token dispatch, provider routing, config parsing, cosine similarity, guardrail evaluation, HTML processing, rate limiter throughput, WebSocket frame encoding, gzip compression, text transformation, JSON serialization, intent classification, and context window management. Running `cargo bench --features full` produces statistical reports with confidence intervals, and Criterion automatically detects regressions between runs.
 
 **Feature flag**: `full`
+
+---
+
+## 148. Feature Gating Strategy
+
+**The fundamental idea**: A large crate with dozens of capabilities must let consumers pay only for what they use. Cargo feature flags control which modules are compiled, but the gating must be deliberate — too coarse and users pull in unwanted dependencies; too fine and the combinatorial explosion of feature combinations becomes untestable. ai_assistant organises its ~45 real feature flags (excluding `default` and `full`) into three tiers:
+
+1. **Always-compiled (core modules)** — Modules like `config`, `models`, `messages`, `session`, `context`, `security`, `analysis`, `formatting`, `templates`, `export`, `streaming`, `memory`, `tools`, and `cost` are unconditionally compiled. They form the foundation every consumer needs. The `core` feature flag exists as an intentional *marker* — it activates no conditional code but serves as a semantic tag that other features can depend on (e.g., `rag = ["core"]`).
+
+2. **Feature-gated (most modules)** — Modules like `rag`, `multi-agent`, `autonomous`, `distributed`, `p2p`, `browser`, `voice-agent`, `media-generation`, `webrtc`, etc. are wrapped in `#[cfg(feature = "...")]` at the module declaration in `lib.rs`. Their types, impls, and tests only exist when the feature is active. This keeps compile times manageable and binary size proportional to what is used.
+
+3. **Opt-in heavy dependencies** — Some modules pull in heavyweight crates (e.g., `vector-pgvector` pulls in a PostgreSQL client, `server-tls` pulls in rustls). These are always behind explicit feature flags so consumers who never use PostgreSQL or TLS never pay the compilation cost.
+
+**v12 corrections**: The `cloud_connectors` module (cloud provider configuration presets) and the `vector_db_pgvector` module (PostgreSQL-backed vector storage) were previously compiled unconditionally despite being logically optional. v12 wraps them with `#[cfg(feature = "cloud-connectors")]` and `#[cfg(feature = "vector-pgvector")]` respectively, so they now correctly participate in the gating system. Their dependency chains — for example, `containers` depends on `shared_folder` which depends on `cloud-connectors` — are declared in `Cargo.toml` so enabling a high-level feature automatically enables its prerequisites.
+
+**Feature flag**: core (always available)
+
+---
+
+## 149. Dead Code Hygiene
+
+**The fundamental idea**: `#[allow(dead_code)]` annotations silence the compiler's unused-code warning, but every such annotation is technical debt — it masks code that might genuinely be unreachable. Periodically auditing these annotations prevents rot.
+
+Dead code in a feature-gated crate falls into distinct categories:
+
+1. **Feature-gated code** — A struct field or method is used only when a specific feature is active. When compiling with a reduced feature set, the compiler reports it as dead. The correct fix is `#[cfg(feature = "...")]` on the field or method, not `#[allow(dead_code)]`. If the field is part of a serialized format (JSON, binary) removing it would break wire compatibility, so `#[allow(dead_code)]` is the correct choice.
+
+2. **Stored-but-unread fields** — Configuration structs often store fields that are written by the constructor and read only by methods in other modules or by serialization. The compiler cannot see cross-module reads through trait objects, so it flags the field. If the field is genuinely part of the public API or the serialized representation, `#[allow(dead_code)]` is legitimate.
+
+3. **Test-only functions** — Helper functions used exclusively in `#[cfg(test)]` blocks are dead from the compiler's perspective when compiling without tests. These should be moved inside the `#[cfg(test)]` module.
+
+4. **False positives** — Fields or functions that the compiler flags but that are genuinely read through indirect paths (trait impls, macro expansions, FFI). These are the minority but they exist.
+
+**The v12 audit process**: Every `#[allow(dead_code)]` annotation was examined. If the code was truly dead (e.g., a field written but never read, a function never called), the annotation was removed and the underlying code was either deleted, moved into a `#[cfg(test)]` block, or refactored to be used. If the annotation was legitimate (feature-gated serialization field, cross-module trait usage), it was kept. This reduced the count from 54 to 37 across the entire codebase.
+
+**Feature flag**: core (always available)

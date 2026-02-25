@@ -54,6 +54,14 @@
 41. [Phase 11 — UI Framework Hooks & Agent Graph Visualization](#41-phase-11--ui-framework-hooks--agent-graph-visualization)
 42. [v2 Phase 1 — Provider Ecosystem Expansion](#42-v2-phase-1--provider-ecosystem-expansion)
 43. [v2 Phases 2-3 — Async Parity + Advanced Evaluation](#43-v2-phases-2-3--async-parity--advanced-evaluation)
+45. [Server API Architecture (v9)](#45-server-api-architecture-v9)
+46. [Feature Integration Pattern (v9)](#46-feature-integration-pattern-v9)
+47. [Memory Persistence Architecture (v9)](#47-memory-persistence-architecture-v9)
+48. [Module Splitting Architecture (v10)](#48-module-splitting-architecture-v10)
+49. [TLS Integration Architecture (v10)](#49-tls-integration-architecture-v10)
+50. [WebSocket Chat Architecture (v10)](#50-websocket-chat-architecture-v10)
+51. [Plugin System Architecture (v10)](#51-plugin-system-architecture-v10)
+52. [Arquitectura de Feature Gating Condicional (v12)](#52-arquitectura-de-feature-gating-condicional-v12)
 
 ---
 
@@ -8183,3 +8191,73 @@ El `PluginManager` se invoca en dos puntos del pipeline HTTP:
 2. **Post-handler**: `dispatch_response()` ejecuta `on_response` en todos los plugins con el status code y duracion de la request.
 
 Adicionalmente, `dispatch_event()` permite notificar eventos arbitrarios (startup, shutdown, config changes) a todos los plugins registrados.
+
+---
+
+## 52. Arquitectura de Feature Gating Condicional (v12)
+
+> Fecha: 2026-02-25
+
+### Resumen
+
+El crate utiliza feature flags de Cargo para controlar que modulos se compilan. En v12 se corrigieron dos modulos que se compilaban incondicionalmente cuando deberian haber estado detras de `#[cfg(feature)]`: `cloud_connectors` y `vector_db_pgvector`.
+
+### Como Funciona `cfg(feature)` para Aislamiento de Modulos
+
+En `lib.rs`, cada modulo opcional se declara con una guarda condicional:
+
+```rust
+#[cfg(feature = "cloud-connectors")]
+pub mod cloud_connectors;
+
+#[cfg(feature = "vector-pgvector")]
+pub mod vector_db_pgvector;
+```
+
+Cuando el feature flag no esta activo, el modulo completo (tipos, impls, tests) no existe desde el punto de vista del compilador. Esto garantiza:
+
+1. **Aislamiento de compilacion** — El codigo no se compila, no genera warnings, no incrementa el tamano del binario.
+2. **Aislamiento de dependencias** — Si el modulo depende de crates externos pesados (p.ej. un cliente PostgreSQL), esas dependencias solo se descargan y compilan cuando el feature esta activo.
+3. **Claridad semantica** — Un consumidor del crate sabe exactamente que esta activando.
+
+### Cadenas de Dependencia entre Features
+
+Los feature flags no son independientes. Algunos features activan otros:
+
+```toml
+[features]
+containers = ["shared_folder"]
+shared_folder = ["cloud-connectors"]
+cloud-connectors = ["core"]
+```
+
+Esto significa que `cargo build --features containers` activa automaticamente `shared_folder` y `cloud-connectors`. El grafo de dependencias es un DAG (directed acyclic graph) declarado en `Cargo.toml`.
+
+### Dependencias Cross-Feature
+
+Algunos modulos necesitan tipos de otros modulos que pueden estar o no activos. El patron es:
+
+```rust
+// En un modulo que depende condicionalmente de otro
+#[cfg(feature = "cloud-connectors")]
+use crate::cloud_connectors::CloudConfig;
+```
+
+Si el modulo consumidor tambien esta detras de un feature flag que implica `cloud-connectors`, la dependencia siempre se satisface. Si no, se usa compilacion condicional para proporcionar un path alternativo o un stub minimo.
+
+### El Feature `core` como Marcador Intencional
+
+El feature `core` no activa ningun codigo condicional — ningun modulo tiene `#[cfg(feature = "core")]`. Existe como marcador semantico para que otros features puedan declarar dependencia sobre el (p.ej. `rag = ["core"]`). Esto documenta la intencion de que RAG depende de la funcionalidad base, aunque esa funcionalidad base se compila incondicionalmente.
+
+### Modulos Corregidos en v12
+
+| Modulo | Feature Flag | Antes (v11) | Despues (v12) |
+|--------|-------------|-------------|---------------|
+| `cloud_connectors` | `cloud-connectors` | Compilacion incondicional | `#[cfg(feature = "cloud-connectors")]` |
+| `vector_db_pgvector` | `vector-pgvector` | Compilacion incondicional | `#[cfg(feature = "vector-pgvector")]` |
+
+### Impacto
+
+- Consumidores que no usan cloud presets ni PostgreSQL vector DB ya no compilan esos modulos.
+- El tamano del binario con features minimos se reduce.
+- La superficie de warnings y dead-code se reduce porque el compilador ya no ve codigo que solo es relevante para features no activos.

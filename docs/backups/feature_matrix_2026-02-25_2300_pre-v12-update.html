@@ -31,8 +31,6 @@
     - feature_matrix.html                                 (v16: v9 — SSE Streaming (POST /chat/stream, token-by-token), Response Compression (gzip via flate2), Server Rate Limiting (ServerRateLimiter, 429 responses), API Versioning (/api/v1/ prefix routes), Audit Logging (AuditLog, security event tracking), Structured Errors (JSON error format with codes), Feature Integration (generate_with_grammar, send_message_with_approval, MCP/distillation methods), Compressed Snapshots (gzip memory persistence, checksum verification). 5034 tests, 232 source files)
     - feature_matrix_2026-02-24_2200_pre-v11-update.html (v16 snapshot before v11 additions)
     - feature_matrix.html                                 (v17: v10+v11 — Test depth (rag_pipeline 7→36, entities 7→32, document_parsing +12 synthetic ZIP), 9 new examples (workflows, prompt-signatures, a2a, distillation, hitl, constrained-decoding, voice-agent, media-generation, webrtc), WebRTC re-exports, docs updates (CONCEPTS sections 142-147, AGENT_SYSTEM_DESIGN sections 48-51). 5156 tests, 285 source files, 31 examples)
-    - feature_matrix_2026-02-25_pre-v12-update.html       (v17 snapshot before v12 additions)
-    - feature_matrix.html                                 (v18: v12 — Feature gating (cloud-connectors, vector-pgvector now properly cfg-gated), dead code audit (54→37 #[allow(dead_code)]), +194 tests (rag_debug 11→63, structured 16→93, provider_plugins 22→87), 6 new examples (butler, browser, distributed-agents, devtools, bedrock, advanced-memory), aws-bedrock dep:sha2 fix, GUIDE.md section renumbering (61-65→131-135). 5350 tests, 285 source files, 37 examples, 16 benchmarks, 0 warnings)
 -->
 <html lang="es">
 <head>
@@ -736,7 +734,7 @@
 <body>
 
 <h1>AI Assistant &mdash; Matriz Casos de Uso vs Tecnolog&iacute;as</h1>
-<p class="subtitle">v18 (2026-02-25) &mdash; 5350 tests | 16 benchmarks | 37 examples | 285 source files | 0 warnings &mdash; Haz clic en cualquier celda para editarla.</p>
+<p class="subtitle">v17 (2026-02-24) &mdash; 5156 tests | 16 benchmarks | 31 examples | 285 source files | 0 warnings &mdash; Haz clic en cualquier celda para editarla.</p>
 
 <div class="legend">
   <div class="legend-item"><div class="legend-dot" style="background:var(--core)"></div>Core (siempre activo)</div>
@@ -963,9 +961,7 @@
     <li><code>feature_matrix_2026-02-24_1030_pre-v9-update.html</code> &mdash; v15 snapshot antes de v9</li>
     <li><code>feature_matrix.html</code> &mdash; v16: v9 — SSE Streaming (POST /chat/stream, token-by-token delivery), Response Compression (gzip via flate2, Accept-Encoding negotiation), Server Rate Limiting (ServerRateLimiter, per-minute limits, 429 responses), API Versioning (/api/v1/ prefix routes, backward compatible), Audit Logging (AuditLog, security event tracking, thread-safe), Structured Errors (JSON error format with error codes), Feature Integration (generate_with_grammar, send_message_with_approval, MCP/distillation methods), Compressed Snapshots (gzip memory persistence, checksum verification). 5034 tests, 232 source files, 0 warnings</li>
     <li><code>feature_matrix_2026-02-24_2200_pre-v11-update.html</code> &mdash; v16 snapshot antes de v11</li>
-    <li><code>feature_matrix.html</code> &mdash; v17: v10+v11 — Test depth (rag_pipeline 7&rarr;36, entities 7&rarr;32, document_parsing +12 synthetic ZIP), 9 new examples (workflows, prompt-signatures, a2a, distillation, hitl, constrained-decoding, voice-agent, media-generation, webrtc), WebRTC re-exports, docs (CONCEPTS sections 142-147, AGENT_SYSTEM_DESIGN sections 48-51, GUIDE.md renumbering). 5156 tests, 285 source files, 31 examples, 16 benchmarks, 0 warnings</li>
-    <li><code>feature_matrix_2026-02-25_pre-v12-update.html</code> &mdash; v17 snapshot before v12 additions</li>
-    <li><code>feature_matrix.html</code> &mdash; v18 (actual): v12 — Feature gating (cloud-connectors, vector-pgvector properly cfg-gated), dead code audit (54&rarr;37 #[allow(dead_code)]), +194 tests (rag_debug 11&rarr;63, structured 16&rarr;93, provider_plugins 22&rarr;87), 6 new examples (butler, browser, distributed-agents, devtools, bedrock, advanced-memory), aws-bedrock dep:sha2 fix, GUIDE.md section renumbering (61-65&rarr;131-135). 5350 tests, 285 source files, 37 examples, 16 benchmarks, 0 warnings</li>
+    <li><code>feature_matrix.html</code> &mdash; v17 (actual): v10+v11 — Test depth (rag_pipeline 7&rarr;36, entities 7&rarr;32, document_parsing +12 synthetic ZIP), 9 new examples (workflows, prompt-signatures, a2a, distillation, hitl, constrained-decoding, voice-agent, media-generation, webrtc), WebRTC re-exports, docs (CONCEPTS sections 142-147, AGENT_SYSTEM_DESIGN sections 48-51, GUIDE.md renumbering). 5156 tests, 285 source files, 31 examples, 16 benchmarks, 0 warnings</li>
   </ul>
   <p><strong>Pol&iacute;tica de backups:</strong> antes de cambios significativos, crear copia con formato <code>feature_matrix_YYYY-MM-DD_HHMM_descripcion.html</code>.</p>
 
