@@ -5755,4 +5755,536 @@ ws ::= " "*"#;
         // Verify special characters are preserved
         assert!(arr[0]["input"].as_str().unwrap().contains("quotes"));
     }
+
+    // =========================================================================
+    // Knowledge Context Advanced Tests
+    // =========================================================================
+
+    #[test]
+    fn test_knowledge_context_append_multiple_all_present() {
+        let mut ai = AiAssistant::new();
+        ai.append_knowledge_context("Chapter 1: Introduction");
+        ai.append_knowledge_context("Chapter 2: Methods");
+        ai.append_knowledge_context("Chapter 3: Results");
+
+        let ctx = ai.get_knowledge_context();
+        assert!(ctx.contains("Chapter 1: Introduction"));
+        assert!(ctx.contains("Chapter 2: Methods"));
+        assert!(ctx.contains("Chapter 3: Results"));
+        // All three must be present simultaneously
+        assert_eq!(ctx.matches("Chapter").count(), 3);
+    }
+
+    #[test]
+    fn test_knowledge_context_size_matches_byte_length() {
+        let mut ai = AiAssistant::new();
+        let content = "Knowledge about Rust programming language features";
+        ai.set_knowledge_context(content);
+        assert_eq!(ai.knowledge_context_size(), content.len());
+        assert_eq!(ai.knowledge_context_size(), content.as_bytes().len());
+    }
+
+    #[test]
+    fn test_knowledge_context_clear_resets_size_to_zero() {
+        let mut ai = AiAssistant::new();
+        ai.set_knowledge_context("Some important data that takes up space");
+        assert!(ai.knowledge_context_size() > 0);
+
+        ai.clear_knowledge_context();
+        assert_eq!(ai.knowledge_context_size(), 0);
+    }
+
+    #[test]
+    fn test_knowledge_context_overwrite_replaces_completely() {
+        let mut ai = AiAssistant::new();
+        ai.set_knowledge_context("Original content");
+        ai.set_knowledge_context("Replacement content");
+        assert_eq!(ai.get_knowledge_context(), "Replacement content");
+        assert!(!ai.get_knowledge_context().contains("Original"));
+    }
+
+    #[test]
+    fn test_knowledge_context_append_preserves_separator() {
+        let mut ai = AiAssistant::new();
+        ai.append_knowledge_context("AAA");
+        ai.append_knowledge_context("BBB");
+        // Separator is \n\n between non-empty parts
+        assert_eq!(ai.get_knowledge_context(), "AAA\n\nBBB");
+        // Size should account for the separator bytes
+        assert_eq!(ai.knowledge_context_size(), "AAA\n\nBBB".len());
+    }
+
+    // =========================================================================
+    // Conversation Management Advanced Tests
+    // =========================================================================
+
+    #[test]
+    fn test_message_count_increments_with_pushes() {
+        let mut ai = AiAssistant::new();
+        for i in 0..5 {
+            ai.conversation
+                .push(ChatMessage::user(&format!("Message {}", i)));
+        }
+        assert_eq!(ai.message_count(), 5);
+    }
+
+    #[test]
+    fn test_clear_conversation_resets_count_to_zero() {
+        let mut ai = AiAssistant::new();
+        ai.conversation.push(ChatMessage::user("Hello"));
+        ai.conversation.push(ChatMessage::assistant("Hi!"));
+        ai.conversation.push(ChatMessage::user("How are you?"));
+        assert_eq!(ai.message_count(), 3);
+
+        ai.clear_conversation();
+        assert_eq!(ai.message_count(), 0);
+        assert!(ai.get_display_messages().is_empty());
+    }
+
+    #[test]
+    fn test_get_display_messages_returns_all_pushed() {
+        let mut ai = AiAssistant::new();
+        ai.conversation.push(ChatMessage::user("First"));
+        ai.conversation.push(ChatMessage::assistant("Second"));
+        ai.conversation.push(ChatMessage::user("Third"));
+
+        let msgs = ai.get_display_messages();
+        assert_eq!(msgs.len(), 3);
+        assert_eq!(msgs[0].content, "First");
+        assert_eq!(msgs[1].content, "Second");
+        assert_eq!(msgs[2].content, "Third");
+    }
+
+    #[test]
+    fn test_conversation_with_mixed_roles() {
+        let mut ai = AiAssistant::new();
+        ai.conversation.push(ChatMessage::system("System instruction"));
+        ai.conversation.push(ChatMessage::user("User question"));
+        ai.conversation
+            .push(ChatMessage::assistant("Assistant answer"));
+
+        assert_eq!(ai.message_count(), 3);
+        assert_eq!(ai.get_display_messages()[0].role, "system");
+        assert_eq!(ai.get_display_messages()[1].role, "user");
+        assert_eq!(ai.get_display_messages()[2].role, "assistant");
+    }
+
+    #[test]
+    fn test_clear_conversation_also_clears_current_response() {
+        let mut ai = AiAssistant::new();
+        ai.conversation.push(ChatMessage::user("Test"));
+        ai.current_response = "partial response".to_string();
+
+        ai.clear_conversation();
+        assert!(ai.current_response.is_empty());
+    }
+
+    #[test]
+    fn test_is_generating_false_initially() {
+        let ai = AiAssistant::new();
+        assert!(!ai.is_generating);
+    }
+
+    // =========================================================================
+    // Session Management Tests
+    // =========================================================================
+
+    #[test]
+    fn test_get_sessions_empty_initially() {
+        let ai = AiAssistant::new();
+        assert!(ai.get_sessions().is_empty());
+    }
+
+    #[test]
+    fn test_delete_session_removes_from_store() {
+        let mut ai = AiAssistant::new();
+        ai.new_session();
+        let session_id = ai.current_session.as_ref().unwrap().id.clone();
+        ai.conversation.push(ChatMessage::user("test msg"));
+        ai.save_current_session();
+
+        let count_before = ai.get_sessions().len();
+        assert!(count_before >= 1);
+
+        ai.delete_session(&session_id);
+        // After deleting the current session, it should be None
+        assert!(ai.current_session.is_none());
+        assert!(ai.conversation.is_empty());
+    }
+
+    #[test]
+    fn test_delete_session_nonexistent_does_not_panic() {
+        let mut ai = AiAssistant::new();
+        // Should not panic when deleting a session that doesn't exist
+        ai.delete_session("nonexistent-session-id");
+        assert!(ai.get_sessions().is_empty());
+    }
+
+    #[test]
+    fn test_load_session_restores_messages() {
+        let mut ai = AiAssistant::new();
+        ai.new_session();
+        let session_id = ai.current_session.as_ref().unwrap().id.clone();
+        ai.conversation.push(ChatMessage::user("remember me"));
+        ai.conversation
+            .push(ChatMessage::assistant("I will remember"));
+        ai.save_current_session();
+
+        // Start a new session (clears conversation)
+        ai.new_session();
+        assert!(ai.conversation.is_empty());
+
+        // Load the old session
+        ai.load_session(&session_id);
+        assert_eq!(ai.conversation.len(), 2);
+        assert_eq!(ai.conversation[0].content, "remember me");
+        assert_eq!(ai.conversation[1].content, "I will remember");
+    }
+
+    #[test]
+    fn test_session_notes_set_without_session_is_noop() {
+        let mut ai = AiAssistant::new();
+        assert!(ai.current_session.is_none());
+        // Setting notes without a session should not panic
+        ai.set_session_notes("These notes go nowhere");
+        // And reading still returns empty
+        assert_eq!(ai.get_session_notes(), "");
+    }
+
+    // =========================================================================
+    // Context and Model Sizing Tests
+    // =========================================================================
+
+    #[test]
+    fn test_detect_model_context_size_returns_positive() {
+        let mut ai = AiAssistant::new();
+        let size = ai.detect_model_context_size();
+        // Should always return a positive value (fallback default)
+        assert!(size > 0);
+    }
+
+    #[test]
+    fn test_context_cache_invalidation_clears_detected() {
+        let mut ai = AiAssistant::new();
+        // Force a detection to populate the cache
+        let _ = ai.detect_model_context_size();
+        assert!(ai.detected_context_size.is_some());
+        assert!(ai.detected_context_model.is_some());
+
+        ai.invalidate_context_cache();
+        assert!(ai.detected_context_size.is_none());
+        assert!(ai.detected_context_model.is_none());
+    }
+
+    #[test]
+    fn test_calculate_context_usage_empty_conversation() {
+        let ai = AiAssistant::new();
+        let usage = ai.calculate_context_usage("");
+        // With no messages and no knowledge, usage should be minimal
+        assert!(usage.conversation_tokens == 0 || usage.conversation_tokens < 10);
+        assert_eq!(usage.knowledge_tokens, 0);
+    }
+
+    #[test]
+    fn test_should_summarize_few_messages_returns_false() {
+        let mut ai = AiAssistant::new();
+        // With only 4 messages (< 6 threshold), should not summarize
+        ai.conversation.push(ChatMessage::user("A"));
+        ai.conversation.push(ChatMessage::assistant("B"));
+        ai.conversation.push(ChatMessage::user("C"));
+        ai.conversation.push(ChatMessage::assistant("D"));
+        assert!(!ai.should_summarize("some knowledge context"));
+    }
+
+    #[test]
+    fn test_get_effective_max_history_positive() {
+        let ai = AiAssistant::new();
+        let max_history = ai.get_effective_max_history("");
+        // Should always return at least 4 (the minimum clamp)
+        assert!(max_history >= 4);
+    }
+
+    // =========================================================================
+    // Notes Management Tests
+    // =========================================================================
+
+    #[test]
+    fn test_global_notes_default_is_empty_string() {
+        let ai = AiAssistant::new();
+        assert_eq!(ai.get_global_notes(), "");
+        assert!(ai.get_global_notes().is_empty());
+    }
+
+    #[test]
+    fn test_global_notes_set_then_overwrite() {
+        let mut ai = AiAssistant::new();
+        ai.set_global_notes("First draft");
+        assert_eq!(ai.get_global_notes(), "First draft");
+
+        ai.set_global_notes("Final version");
+        assert_eq!(ai.get_global_notes(), "Final version");
+        assert!(!ai.get_global_notes().contains("First draft"));
+    }
+
+    #[test]
+    fn test_session_notes_default_empty_with_session() {
+        let mut ai = AiAssistant::new();
+        ai.new_session();
+        // A fresh session should have empty notes
+        assert_eq!(ai.get_session_notes(), "");
+    }
+
+    #[test]
+    fn test_session_notes_persist_across_save_load() {
+        let mut ai = AiAssistant::new();
+        ai.new_session();
+        ai.set_session_notes("Remember: user prefers concise answers");
+        let session_id = ai.current_session.as_ref().unwrap().id.clone();
+        ai.save_current_session();
+
+        // Create new session, then load the old one
+        ai.new_session();
+        ai.load_session(&session_id);
+
+        // Notes should be restored via the session's context_notes field
+        // (load_session restores the full ChatSession object)
+        if let Some(ref session) = ai.current_session {
+            assert_eq!(session.context_notes, "Remember: user prefers concise answers");
+        }
+    }
+
+    // =========================================================================
+    // Fallback Providers Advanced Tests
+    // =========================================================================
+
+    #[test]
+    fn test_fallback_active_false_by_default() {
+        let ai = AiAssistant::new();
+        assert!(!ai.fallback_active());
+        assert!(!ai.fallback_enabled);
+        assert!(ai.fallback_providers.is_empty());
+    }
+
+    #[test]
+    fn test_enable_disable_fallback_toggling() {
+        let mut ai = AiAssistant::new();
+        ai.configure_fallback(vec![(AiProvider::Ollama, "llama3".into())]);
+
+        ai.enable_fallback();
+        assert!(ai.fallback_active());
+
+        ai.disable_fallback();
+        assert!(!ai.fallback_active());
+
+        ai.enable_fallback();
+        assert!(ai.fallback_active());
+    }
+
+    #[test]
+    fn test_configure_fallback_with_three_providers() {
+        let mut ai = AiAssistant::new();
+        ai.configure_fallback(vec![
+            (AiProvider::LMStudio, "model-a".into()),
+            (AiProvider::Ollama, "model-b".into()),
+            (AiProvider::OpenAI, "gpt-4".into()),
+        ]);
+        ai.enable_fallback();
+        assert!(ai.fallback_active());
+        assert_eq!(ai.fallback_providers.len(), 3);
+    }
+
+    #[test]
+    fn test_fallback_reconfigure_replaces_providers() {
+        let mut ai = AiAssistant::new();
+        ai.configure_fallback(vec![
+            (AiProvider::Ollama, "model-a".into()),
+            (AiProvider::LMStudio, "model-b".into()),
+        ]);
+        assert_eq!(ai.fallback_providers.len(), 2);
+
+        // Reconfigure with a single provider
+        ai.configure_fallback(vec![(AiProvider::OpenAI, "gpt-4o".into())]);
+        assert_eq!(ai.fallback_providers.len(), 1);
+    }
+
+    // =========================================================================
+    // RAG Feature-Gated Tests
+    // =========================================================================
+
+    #[cfg(feature = "rag")]
+    #[test]
+    fn test_has_rag_false_initially() {
+        let ai = AiAssistant::new();
+        assert!(!ai.has_rag());
+    }
+
+    #[cfg(feature = "rag")]
+    #[test]
+    fn test_init_rag_creates_db() {
+        let dir = std::env::temp_dir().join(format!("test_rag_init_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let db_path = dir.join("test.db");
+
+        let mut ai = AiAssistant::new();
+        assert!(!ai.has_rag());
+        let result = ai.init_rag(&db_path);
+        assert!(result.is_ok());
+        assert!(ai.has_rag());
+        assert!(ai.is_rag_initialized());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(feature = "rag")]
+    #[test]
+    fn test_set_user_id_and_get() {
+        let mut ai = AiAssistant::new();
+        assert_eq!(ai.get_user_id(), "default");
+
+        ai.set_user_id("orlando");
+        assert_eq!(ai.get_user_id(), "orlando");
+    }
+
+    #[cfg(feature = "rag")]
+    #[test]
+    fn test_register_knowledge_document_marks_pending() {
+        let mut ai = AiAssistant::new();
+        assert!(!ai.has_pending_documents());
+
+        ai.register_knowledge_document("guide", "# Guide\nSome content here");
+        assert!(ai.has_pending_documents());
+    }
+
+    #[cfg(feature = "rag")]
+    #[test]
+    fn test_pending_document_count_tracks_registrations() {
+        let mut ai = AiAssistant::new();
+        assert_eq!(ai.pending_document_count(), 0);
+
+        ai.register_knowledge_document("doc1", "Content 1");
+        ai.register_knowledge_document("doc2", "Content 2");
+        ai.register_knowledge_document("doc3", "Content 3");
+        assert_eq!(ai.pending_document_count(), 3);
+    }
+
+    // =========================================================================
+    // Metrics Tests
+    // =========================================================================
+
+    #[test]
+    fn test_export_metrics_json_is_valid_json() {
+        let mut ai = AiAssistant::new();
+        ai.start_message_tracking();
+        ai.finish_message_tracking(50);
+
+        let json = ai.export_metrics_json();
+        let parsed: Result<serde_json::Value, _> = serde_json::from_str(&json);
+        assert!(parsed.is_ok(), "Metrics JSON with data should be valid JSON");
+    }
+
+    #[test]
+    fn test_reset_metrics_clears_all_message_metrics() {
+        let mut ai = AiAssistant::new();
+        ai.start_message_tracking();
+        ai.finish_message_tracking(100);
+        ai.start_message_tracking();
+        ai.finish_message_tracking(200);
+        assert_eq!(ai.get_message_metrics().len(), 2);
+
+        ai.reset_metrics("fresh-session");
+        assert!(ai.get_message_metrics().is_empty());
+    }
+
+    #[test]
+    fn test_get_session_metrics_zero_values_on_new() {
+        let ai = AiAssistant::new();
+        let metrics = ai.get_session_metrics();
+        assert_eq!(metrics.message_count, 0);
+        assert_eq!(metrics.total_input_tokens, 0);
+        assert_eq!(metrics.total_output_tokens, 0);
+        assert_eq!(metrics.avg_response_time_ms, 0.0);
+    }
+
+    // =========================================================================
+    // Adaptive Thinking Advanced Tests
+    // =========================================================================
+
+    #[test]
+    fn test_classify_query_question_returns_strategy() {
+        let ai = AiAssistant::new();
+        let strategy = ai.classify_query("What is Rust and why should I use it?");
+        // A question should produce a valid strategy with reasonable temperature
+        assert!(strategy.temperature >= 0.0);
+        assert!(strategy.temperature <= 2.0);
+    }
+
+    #[test]
+    fn test_classify_query_code_returns_strategy() {
+        let ai = AiAssistant::new();
+        let strategy = ai.classify_query("Write a function to sort a vector of integers in Rust");
+        // Code queries should produce a valid strategy
+        assert!(strategy.temperature >= 0.0);
+        assert!(strategy.temperature <= 2.0);
+    }
+
+    // =========================================================================
+    // Constructor and Default State Tests
+    // =========================================================================
+
+    #[test]
+    fn test_default_trait_creates_same_as_new() {
+        let ai_new = AiAssistant::new();
+        let ai_default = AiAssistant::default();
+        // Both should have same initial state
+        assert_eq!(ai_new.message_count(), ai_default.message_count());
+        assert_eq!(ai_new.is_generating, ai_default.is_generating);
+        assert_eq!(ai_new.system_prompt(), ai_default.system_prompt());
+    }
+
+    #[test]
+    fn test_with_system_prompt_uses_custom_prompt() {
+        let ai = AiAssistant::with_system_prompt("You are a pirate assistant. Say arr!");
+        assert_eq!(ai.system_prompt(), "You are a pirate assistant. Say arr!");
+    }
+
+    #[test]
+    fn test_set_system_prompt_changes_prompt() {
+        let mut ai = AiAssistant::new();
+        let original = ai.system_prompt().to_string();
+        ai.set_system_prompt("New custom prompt");
+        assert_eq!(ai.system_prompt(), "New custom prompt");
+        assert_ne!(ai.system_prompt(), &original);
+    }
+
+    #[test]
+    fn test_initial_state_no_current_session() {
+        let ai = AiAssistant::new();
+        assert!(ai.current_session.is_none());
+        assert!(ai.conversation.is_empty());
+        assert!(ai.current_response.is_empty());
+        assert!(!ai.is_generating);
+        assert!(!ai.is_fetching_models);
+        assert!(!ai.is_summarizing);
+    }
+
+    #[test]
+    fn test_initial_available_models_empty() {
+        let ai = AiAssistant::new();
+        assert!(ai.available_models.is_empty());
+    }
+
+    #[test]
+    fn test_detected_context_size_none_initially() {
+        let ai = AiAssistant::new();
+        assert!(ai.detected_context_size.is_none());
+        assert!(ai.detected_context_model.is_none());
+    }
+
+    #[test]
+    fn test_adaptive_thinking_disabled_by_default() {
+        let ai = AiAssistant::new();
+        assert!(!ai.adaptive_thinking.enabled);
+        assert!(ai.last_thinking_strategy.is_none());
+        assert!(ai.last_thinking_result.is_none());
+    }
 }
