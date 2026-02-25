@@ -1430,4 +1430,548 @@ mod tests {
         assert_eq!(gate.get_approved().len(), 1);
         assert_eq!(gate.get_approved()[0].name, "safe_tool");
     }
+
+    // ====================================================================
+    // New Tests — ToolDefinition
+    // ====================================================================
+
+    #[test]
+    fn test_tool_definition_with_category() {
+        let tool = ToolDefinition::new("search", "Search the web").with_category("internet");
+        assert_eq!(tool.category, Some("internet".to_string()));
+    }
+
+    #[test]
+    fn test_tool_definition_to_openai_function() {
+        let tool = ToolDefinition::new("greet", "Greet user").with_parameter(ToolParameter {
+            name: "name".to_string(),
+            param_type: ParameterType::String,
+            description: "User name".to_string(),
+            required: true,
+            default: None,
+            enum_values: None,
+        });
+
+        let func = tool.to_openai_function();
+        assert_eq!(func["name"], "greet");
+        assert_eq!(func["description"], "Greet user");
+        assert_eq!(func["parameters"]["type"], "object");
+        assert!(func["parameters"]["properties"]["name"].is_object());
+        assert_eq!(func["parameters"]["required"][0], "name");
+    }
+
+    #[test]
+    fn test_tool_definition_multiple_parameters() {
+        let tool = ToolDefinition::new("multi", "Multi-param tool")
+            .with_parameter(ToolParameter {
+                name: "text".to_string(),
+                param_type: ParameterType::String,
+                description: "Text input".to_string(),
+                required: true,
+                default: None,
+                enum_values: None,
+            })
+            .with_parameter(ToolParameter {
+                name: "count".to_string(),
+                param_type: ParameterType::Integer,
+                description: "Repetition count".to_string(),
+                required: false,
+                default: None,
+                enum_values: None,
+            })
+            .with_parameter(ToolParameter {
+                name: "verbose".to_string(),
+                param_type: ParameterType::Boolean,
+                description: "Verbose output".to_string(),
+                required: false,
+                default: None,
+                enum_values: None,
+            });
+
+        assert_eq!(tool.parameters.len(), 3);
+        assert_eq!(tool.parameters[0].param_type, ParameterType::String);
+        assert_eq!(tool.parameters[1].param_type, ParameterType::Integer);
+        assert_eq!(tool.parameters[2].param_type, ParameterType::Boolean);
+    }
+
+    #[test]
+    fn test_tool_definition_enabled_default() {
+        let tool = ToolDefinition::new("default_tool", "Should be enabled");
+        assert!(tool.enabled);
+    }
+
+    #[test]
+    fn test_tool_parameter_enum_values() {
+        let param = ToolParameter {
+            name: "color".to_string(),
+            param_type: ParameterType::String,
+            description: "Pick a color".to_string(),
+            required: true,
+            default: None,
+            enum_values: Some(vec![
+                "red".to_string(),
+                "green".to_string(),
+                "blue".to_string(),
+            ]),
+        };
+
+        let enums = param.enum_values.expect("enum_values should be Some");
+        assert_eq!(enums.len(), 3);
+        assert!(enums.contains(&"red".to_string()));
+        assert!(enums.contains(&"green".to_string()));
+        assert!(enums.contains(&"blue".to_string()));
+    }
+
+    // ====================================================================
+    // New Tests — ToolCall Accessors
+    // ====================================================================
+
+    #[test]
+    fn test_tool_call_get_string() {
+        let mut args = HashMap::new();
+        args.insert("msg".to_string(), Value::String("hello".to_string()));
+        let call = ToolCall::new("test", args);
+
+        assert_eq!(call.get_string("msg"), Some("hello".to_string()));
+        assert_eq!(call.get_string("missing"), None);
+    }
+
+    #[test]
+    fn test_tool_call_get_number() {
+        let mut args = HashMap::new();
+        args.insert("value".to_string(), serde_json::json!(3.14));
+        let call = ToolCall::new("test", args);
+
+        let num = call.get_number("value").expect("should get number");
+        assert!((num - 3.14).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_tool_call_get_integer() {
+        let mut args = HashMap::new();
+        args.insert("count".to_string(), serde_json::json!(42));
+        let call = ToolCall::new("test", args);
+
+        assert_eq!(call.get_integer("count"), Some(42));
+    }
+
+    #[test]
+    fn test_tool_call_get_bool() {
+        let mut args = HashMap::new();
+        args.insert("flag".to_string(), serde_json::json!(true));
+        let call = ToolCall::new("test", args);
+
+        assert_eq!(call.get_bool("flag"), Some(true));
+    }
+
+    #[test]
+    fn test_tool_call_get_missing_key() {
+        let call = ToolCall::new("test", HashMap::new());
+
+        assert_eq!(call.get_string("nope"), None);
+        assert_eq!(call.get_number("nope"), None);
+        assert_eq!(call.get_integer("nope"), None);
+        assert_eq!(call.get_bool("nope"), None);
+    }
+
+    #[test]
+    fn test_tool_call_new_generates_id() {
+        let call = ToolCall::new("test", HashMap::new());
+        assert!(!call.id.is_empty());
+        // UUID format: 8-4-4-4-12 hex digits
+        assert!(call.id.len() >= 32);
+    }
+
+    // ====================================================================
+    // New Tests — ToolResult
+    // ====================================================================
+
+    #[test]
+    fn test_tool_result_success() {
+        let result = ToolResult::success("call-1", "my_tool", "all good");
+        assert!(result.success);
+        assert_eq!(result.content, "all good");
+        assert_eq!(result.call_id, "call-1");
+        assert_eq!(result.tool_name, "my_tool");
+        assert!(result.error.is_none());
+    }
+
+    #[test]
+    fn test_tool_result_success_with_data() {
+        let data = serde_json::json!({"key": "value"});
+        let result = ToolResult::success_with_data("call-2", "data_tool", "done", data.clone());
+        assert!(result.success);
+        assert_eq!(result.data, Some(data));
+    }
+
+    #[test]
+    fn test_tool_result_error() {
+        let result = ToolResult::error("call-3", "bad_tool", "something broke");
+        assert!(!result.success);
+        assert_eq!(result.error, Some("something broke".to_string()));
+        assert!(result.content.contains("Error"));
+    }
+
+    #[test]
+    fn test_tool_result_fields() {
+        let data = serde_json::json!({"x": 1});
+        let result = ToolResult::success_with_data("id-99", "tool_x", "content here", data.clone());
+        assert_eq!(result.call_id, "id-99");
+        assert_eq!(result.tool_name, "tool_x");
+        assert!(result.success);
+        assert_eq!(result.content, "content here");
+        assert_eq!(result.data, Some(data));
+        assert!(result.error.is_none());
+    }
+
+    // ====================================================================
+    // New Tests — ToolRegistry Advanced
+    // ====================================================================
+
+    #[test]
+    fn test_registry_unregister() {
+        let mut registry = ToolRegistry::new();
+        let tool = ToolDefinition::new("temp", "Temporary tool");
+        registry.register(tool, |call| {
+            ToolResult::success(&call.id, &call.name, "ok")
+        });
+        assert!(registry.get_tool("temp").is_some());
+
+        registry.unregister("temp");
+        assert!(registry.get_tool("temp").is_none());
+    }
+
+    #[test]
+    fn test_registry_get_tools_list() {
+        let mut registry = ToolRegistry::new();
+        registry.register_tool(ToolDefinition::new("a", "Tool A"));
+        registry.register_tool(ToolDefinition::new("b", "Tool B"));
+        registry.register_tool(ToolDefinition::new("c", "Tool C"));
+
+        let tools = registry.get_tools();
+        assert_eq!(tools.len(), 3);
+    }
+
+    #[test]
+    fn test_registry_enabled_disabled() {
+        let mut registry = ToolRegistry::new();
+        registry.register_tool(ToolDefinition::new("vis", "Visible"));
+        registry.register_tool(ToolDefinition::new("hid", "Hidden"));
+
+        assert!(registry.set_enabled("hid", false));
+
+        let enabled = registry.get_enabled_tools();
+        assert_eq!(enabled.len(), 1);
+        assert_eq!(enabled[0].name, "vis");
+    }
+
+    #[test]
+    fn test_registry_set_enabled_missing_tool() {
+        let mut registry = ToolRegistry::new();
+        assert!(!registry.set_enabled("nonexistent", true));
+    }
+
+    #[test]
+    fn test_registry_execute_missing_tool() {
+        let registry = ToolRegistry::new();
+        let call = ToolCall::new("ghost", HashMap::new());
+        let result = registry.execute(&call);
+        assert!(!result.success);
+        assert!(result.error.is_some());
+        assert!(result.error.unwrap().contains("not found"));
+    }
+
+    #[test]
+    fn test_registry_to_openai_functions() {
+        let mut registry = ToolRegistry::new();
+        registry.register_tool(ToolDefinition::new("func_a", "Function A"));
+        registry.register_tool(ToolDefinition::new("func_b", "Function B"));
+
+        let functions = registry.to_openai_functions();
+        assert_eq!(functions.len(), 2);
+        // Each should have "name" key
+        for func in &functions {
+            assert!(func["name"].is_string());
+        }
+    }
+
+    #[test]
+    fn test_registry_parse_tool_calls_empty() {
+        let response = serde_json::json!({"content": "Hello"});
+        let calls = ToolRegistry::parse_tool_calls(&response);
+        assert!(calls.is_empty());
+    }
+
+    // ====================================================================
+    // New Tests — ProviderRegistry
+    // ====================================================================
+
+    #[test]
+    fn test_provider_registry_new() {
+        let registry = ProviderRegistry::new();
+        assert!(registry.list().is_empty());
+    }
+
+    #[test]
+    fn test_provider_registry_list_empty() {
+        let registry = ProviderRegistry::new();
+        let providers = registry.list();
+        assert!(providers.is_empty());
+    }
+
+    #[test]
+    fn test_provider_capabilities_default() {
+        let caps = ProviderCapabilities::default();
+        assert!(!caps.streaming);
+        assert!(!caps.tool_calling);
+        assert!(!caps.vision);
+        assert!(!caps.embeddings);
+        assert!(!caps.json_mode);
+        assert!(!caps.system_prompt);
+    }
+
+    #[test]
+    fn test_provider_registry_set_default_missing() {
+        let mut registry = ProviderRegistry::new();
+        assert!(!registry.set_default("nonexistent_provider"));
+    }
+
+    #[test]
+    fn test_provider_registry_get_default_none() {
+        let registry = ProviderRegistry::new();
+        assert!(registry.get_default().is_none());
+    }
+
+    // ====================================================================
+    // New Tests — ToolChain Advanced
+    // ====================================================================
+
+    #[test]
+    fn test_tool_chain_step_count() {
+        let mut chain = ToolChain::new("big_chain", "Three steps");
+        chain.add_step(ToolChainStep::new("step_a"));
+        chain.add_step(ToolChainStep::new("step_b"));
+        chain.add_step(ToolChainStep::new("step_c"));
+        assert_eq!(chain.step_count(), 3);
+    }
+
+    #[test]
+    fn test_tool_chain_empty_validation() {
+        let registry = create_chain_test_registry();
+        let chain = ToolChain::new("empty_chain", "No steps");
+        assert!(chain.validate(&registry).is_ok());
+    }
+
+    #[test]
+    fn test_tool_chain_literal_argument() {
+        let registry = create_chain_test_registry();
+
+        let step = ToolChainStep::new("add")
+            .with_arg("a", ArgumentSource::Literal(serde_json::json!(100.0)))
+            .with_arg("b", ArgumentSource::Literal(serde_json::json!(200.0)));
+
+        let mut chain = ToolChain::new("literal_chain", "Literal args");
+        chain.add_step(step);
+
+        let result = chain.execute(&registry, serde_json::json!({}));
+        assert!(result.success);
+        assert!(result.steps[0].output.content.contains("300"));
+    }
+
+    #[test]
+    fn test_tool_chain_extract_field_transform() {
+        let registry = create_chain_test_registry();
+
+        let step = ToolChainStep::new("add")
+            .with_arg("a", ArgumentSource::Literal(serde_json::json!(7.0)))
+            .with_arg("b", ArgumentSource::Literal(serde_json::json!(3.0)))
+            .with_transform(OutputTransform::ExtractField("result".to_string()));
+
+        let mut chain = ToolChain::new("extract_chain", "Extract field");
+        chain.add_step(step);
+
+        let result = chain.execute(&registry, serde_json::json!({}));
+        assert!(result.success);
+        // Final output should be the extracted field value (10.0), not the full object
+        let final_out = result.final_output.expect("should have final output");
+        assert_eq!(final_out.as_f64(), Some(10.0));
+    }
+
+    #[test]
+    fn test_tool_chain_template_transform() {
+        let registry = create_chain_test_registry();
+
+        let step = ToolChainStep::new("add")
+            .with_arg("a", ArgumentSource::Literal(serde_json::json!(4.0)))
+            .with_arg("b", ArgumentSource::Literal(serde_json::json!(6.0)))
+            .with_transform(OutputTransform::Template(
+                "The answer is {result}".to_string(),
+            ));
+
+        let mut chain = ToolChain::new("template_chain", "Template transform");
+        chain.add_step(step);
+
+        let result = chain.execute(&registry, serde_json::json!({}));
+        assert!(result.success);
+        let final_out = result.final_output.expect("should have final output");
+        let s = final_out.as_str().expect("should be string");
+        assert!(s.contains("The answer is"));
+        assert!(s.contains("10"));
+    }
+
+    // ====================================================================
+    // New Tests — ToolValidator Advanced
+    // ====================================================================
+
+    #[test]
+    fn test_validator_pattern_regex() {
+        let mut validator = ToolValidator::new();
+        validator.add_rule("email", ValidationType::Pattern("@".to_string()));
+
+        // Contains @: passes
+        let mut args = HashMap::new();
+        args.insert(
+            "email".to_string(),
+            Value::String("user@example.com".to_string()),
+        );
+        assert!(validator.validate(&args).is_ok());
+
+        // Does not contain @: fails
+        let mut args2 = HashMap::new();
+        args2.insert(
+            "email".to_string(),
+            Value::String("no-at-sign".to_string()),
+        );
+        let err = validator.validate(&args2).unwrap_err();
+        assert_eq!(err.len(), 1);
+        assert!(err[0].contains("pattern"));
+    }
+
+    #[test]
+    fn test_validator_one_of() {
+        let mut validator = ToolValidator::new();
+        validator.add_rule(
+            "size",
+            ValidationType::OneOf(vec![
+                "small".to_string(),
+                "medium".to_string(),
+                "large".to_string(),
+            ]),
+        );
+
+        // Valid value
+        let mut args = HashMap::new();
+        args.insert("size".to_string(), Value::String("medium".to_string()));
+        assert!(validator.validate(&args).is_ok());
+
+        // Invalid value
+        let mut args2 = HashMap::new();
+        args2.insert("size".to_string(), Value::String("huge".to_string()));
+        let err = validator.validate(&args2).unwrap_err();
+        assert_eq!(err.len(), 1);
+        assert!(err[0].contains("must be one of"));
+    }
+
+    #[test]
+    fn test_validator_multiple_rules() {
+        let mut validator = ToolValidator::new();
+        validator.add_rule("name", ValidationType::Required);
+        validator.add_rule("age", ValidationType::MinValue(0.0));
+        validator.add_rule("score", ValidationType::MaxValue(100.0));
+
+        // Two violations: name missing and score too high
+        let mut args = HashMap::new();
+        args.insert("age".to_string(), serde_json::json!(25));
+        args.insert("score".to_string(), serde_json::json!(150));
+
+        let err = validator.validate(&args).unwrap_err();
+        assert_eq!(err.len(), 2);
+    }
+
+    #[test]
+    fn test_validator_empty_passes() {
+        let validator = ToolValidator::new();
+        let args = HashMap::new();
+        assert!(validator.validate(&args).is_ok());
+
+        let mut args2 = HashMap::new();
+        args2.insert("anything".to_string(), Value::String("value".to_string()));
+        assert!(validator.validate(&args2).is_ok());
+    }
+
+    // ====================================================================
+    // New Tests — ApprovalGate Advanced
+    // ====================================================================
+
+    #[test]
+    fn test_approval_gate_get_approved_empty() {
+        let gate = ApprovalGate::new();
+        assert!(gate.get_approved().is_empty());
+    }
+
+    #[test]
+    fn test_approval_gate_pending_count_lifecycle() {
+        let mut gate = ApprovalGate::new();
+
+        let call1 = ToolCall::new("tool_a", HashMap::new());
+        let call2 = ToolCall::new("tool_b", HashMap::new());
+        let call3 = ToolCall::new("tool_c", HashMap::new());
+
+        let id1 = gate.request_approval(call1);
+        let id2 = gate.request_approval(call2);
+        let _id3 = gate.request_approval(call3);
+
+        assert_eq!(gate.pending_count(), 3);
+
+        gate.approve(&id1);
+        assert_eq!(gate.pending_count(), 2);
+
+        gate.deny(&id2, "rejected");
+        assert_eq!(gate.pending_count(), 1);
+
+        assert_eq!(gate.get_approved().len(), 1);
+    }
+
+    #[test]
+    fn test_approval_gate_multiple_auto_approve() {
+        let mut gate = ApprovalGate::new();
+        gate.auto_approve("safe_a");
+        gate.auto_approve("safe_b");
+
+        let call_a = ToolCall::new("safe_a", HashMap::new());
+        let call_b = ToolCall::new("safe_b", HashMap::new());
+        let call_c = ToolCall::new("unsafe_c", HashMap::new());
+
+        let _id_a = gate.request_approval(call_a);
+        let _id_b = gate.request_approval(call_b);
+        let _id_c = gate.request_approval(call_c);
+
+        // safe_a and safe_b auto-approved, unsafe_c still pending
+        assert_eq!(gate.pending_count(), 1);
+        assert_eq!(gate.get_approved().len(), 2);
+    }
+
+    // ====================================================================
+    // New Tests — Edge Cases
+    // ====================================================================
+
+    #[test]
+    fn test_tool_call_empty_arguments() {
+        let call = ToolCall::new("empty_tool", HashMap::new());
+        assert_eq!(call.name, "empty_tool");
+        assert!(call.arguments.is_empty());
+        assert!(!call.id.is_empty());
+    }
+
+    #[test]
+    fn test_parameter_type_eq() {
+        assert_eq!(ParameterType::String, ParameterType::String);
+        assert_eq!(ParameterType::Number, ParameterType::Number);
+        assert_eq!(ParameterType::Integer, ParameterType::Integer);
+        assert_eq!(ParameterType::Boolean, ParameterType::Boolean);
+        assert_eq!(ParameterType::Array, ParameterType::Array);
+        assert_eq!(ParameterType::Object, ParameterType::Object);
+        assert_ne!(ParameterType::String, ParameterType::Number);
+        assert_ne!(ParameterType::Integer, ParameterType::Boolean);
+    }
 }
