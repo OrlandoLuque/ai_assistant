@@ -437,6 +437,18 @@ required-features = ["analytics"]
 name = "vision_demo"
 required-features = ["vision"]
 
+[[example]]
+name = "adapters_demo"
+required-features = ["adapters"]
+
+[[example]]
+name = "eval_demo"
+required-features = ["eval"]
+
+[[example]]
+name = "code_sandbox_demo"
+required-features = ["code-sandbox"]
+
 [dev-dependencies]
 tempfile = "3"
 criterion = { version = "0.5", features = ["html_reports"] }
