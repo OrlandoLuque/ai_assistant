@@ -1173,4 +1173,428 @@ mod tests {
             "Topic 'ships' should be detected with 2+ keyword matches",
         );
     }
+
+    // ========================================================================
+    // New tests: Sentiment enum
+    // ========================================================================
+
+    #[test]
+    fn test_sentiment_enum_scores() {
+        // Each variant must return a score within [-1.0, 1.0]
+        assert!((Sentiment::VeryPositive.score() - 1.0).abs() < f32::EPSILON);
+        assert!((Sentiment::Positive.score() - 0.5).abs() < f32::EPSILON);
+        assert!((Sentiment::Neutral.score() - 0.0).abs() < f32::EPSILON);
+        assert!((Sentiment::Negative.score() - (-0.5)).abs() < f32::EPSILON);
+        assert!((Sentiment::VeryNegative.score() - (-1.0)).abs() < f32::EPSILON);
+
+        // All scores are in range
+        for variant in &[
+            Sentiment::VeryPositive,
+            Sentiment::Positive,
+            Sentiment::Neutral,
+            Sentiment::Negative,
+            Sentiment::VeryNegative,
+        ] {
+            let s = variant.score();
+            assert!((-1.0..=1.0).contains(&s), "Score {} out of range for {:?}", s, variant);
+        }
+    }
+
+    #[test]
+    fn test_sentiment_enum_emoji() {
+        // Every variant returns a non-empty emoji string
+        for variant in &[
+            Sentiment::VeryPositive,
+            Sentiment::Positive,
+            Sentiment::Neutral,
+            Sentiment::Negative,
+            Sentiment::VeryNegative,
+        ] {
+            let emoji = variant.emoji();
+            assert!(!emoji.is_empty(), "Emoji should be non-empty for {:?}", variant);
+        }
+
+        // Distinct variants have distinct emojis
+        assert_ne!(Sentiment::VeryPositive.emoji(), Sentiment::Neutral.emoji());
+        assert_ne!(Sentiment::Positive.emoji(), Sentiment::Negative.emoji());
+    }
+
+    #[test]
+    fn test_sentiment_from_score_boundaries() {
+        // Exact boundary values
+        assert_eq!(Sentiment::from_score(1.0), Sentiment::VeryPositive);
+        assert_eq!(Sentiment::from_score(0.6), Sentiment::VeryPositive);
+        assert_eq!(Sentiment::from_score(0.5), Sentiment::Positive);
+        assert_eq!(Sentiment::from_score(0.2), Sentiment::Positive);
+        assert_eq!(Sentiment::from_score(0.0), Sentiment::Neutral);
+        assert_eq!(Sentiment::from_score(-0.19), Sentiment::Neutral);
+        assert_eq!(Sentiment::from_score(-0.2), Sentiment::Negative);
+        assert_eq!(Sentiment::from_score(-0.5), Sentiment::Negative);
+        assert_eq!(Sentiment::from_score(-0.6), Sentiment::VeryNegative);
+        assert_eq!(Sentiment::from_score(-1.0), Sentiment::VeryNegative);
+    }
+
+    #[test]
+    fn test_sentiment_display() {
+        // Display impl produces human-readable strings
+        assert_eq!(format!("{}", Sentiment::VeryPositive), "Very Positive");
+        assert_eq!(format!("{}", Sentiment::Positive), "Positive");
+        assert_eq!(format!("{}", Sentiment::Neutral), "Neutral");
+        assert_eq!(format!("{}", Sentiment::Negative), "Negative");
+        assert_eq!(format!("{}", Sentiment::VeryNegative), "Very Negative");
+
+        // Display output is non-empty for all variants
+        for variant in &[
+            Sentiment::VeryPositive,
+            Sentiment::Positive,
+            Sentiment::Neutral,
+            Sentiment::Negative,
+            Sentiment::VeryNegative,
+        ] {
+            let display = format!("{}", variant);
+            assert!(!display.is_empty(), "Display should be non-empty for {:?}", variant);
+        }
+    }
+
+    // ========================================================================
+    // New tests: SentimentAnalyzer
+    // ========================================================================
+
+    #[test]
+    fn test_sentiment_analyzer_default() {
+        // Default::default() creates a valid analyzer identical to new()
+        let from_default: SentimentAnalyzer = Default::default();
+        let from_new = SentimentAnalyzer::new();
+
+        // Both should be functional and produce the same results
+        let text = "This is a great and wonderful day";
+        let result_default = from_default.analyze_message(text);
+        let result_new = from_new.analyze_message(text);
+
+        assert!((result_default.score - result_new.score).abs() < f32::EPSILON);
+        assert_eq!(result_default.sentiment, result_new.sentiment);
+    }
+
+    #[test]
+    fn test_analyze_message_positive() {
+        let analyzer = SentimentAnalyzer::new();
+
+        let result = analyzer.analyze_message("This is excellent and amazing work! I love it!");
+        assert!(result.score > 0.0, "Score should be positive, got {}", result.score);
+        assert!(
+            matches!(result.sentiment, Sentiment::Positive | Sentiment::VeryPositive),
+            "Expected Positive or VeryPositive, got {:?}",
+            result.sentiment,
+        );
+        assert!(
+            !result.positive_indicators.is_empty(),
+            "Should have positive indicators",
+        );
+    }
+
+    #[test]
+    fn test_analyze_message_negative() {
+        let analyzer = SentimentAnalyzer::new();
+
+        let result = analyzer.analyze_message("This is terrible and awful. I hate this broken thing.");
+        assert!(result.score < 0.0, "Score should be negative, got {}", result.score);
+        assert!(
+            matches!(result.sentiment, Sentiment::Negative | Sentiment::VeryNegative),
+            "Expected Negative or VeryNegative, got {:?}",
+            result.sentiment,
+        );
+        assert!(
+            !result.negative_indicators.is_empty(),
+            "Should have negative indicators",
+        );
+    }
+
+    #[test]
+    fn test_analyze_message_neutral() {
+        let analyzer = SentimentAnalyzer::new();
+
+        let result = analyzer.analyze_message("The sky is blue today.");
+        assert_eq!(result.sentiment, Sentiment::Neutral);
+        assert!(
+            result.score.abs() < 0.3,
+            "Neutral text should have near-zero score, got {}",
+            result.score,
+        );
+    }
+
+    #[test]
+    fn test_analyze_message_empty() {
+        let analyzer = SentimentAnalyzer::new();
+
+        // Empty string should not panic and should be neutral
+        let result = analyzer.analyze_message("");
+        assert_eq!(result.sentiment, Sentiment::Neutral);
+        assert!((result.score - 0.0).abs() < f32::EPSILON);
+        assert!(result.positive_indicators.is_empty());
+        assert!(result.negative_indicators.is_empty());
+    }
+
+    #[test]
+    fn test_analyze_message_confidence() {
+        let analyzer = SentimentAnalyzer::new();
+
+        // Confidence should always be between 0.0 and 1.0
+        let texts = [
+            "",
+            "hello",
+            "This is great!",
+            "terrible horrible awful broken",
+            "The cat sat on the mat.",
+        ];
+
+        for text in &texts {
+            let result = analyzer.analyze_message(text);
+            assert!(
+                (0.0..=1.0).contains(&result.confidence),
+                "Confidence {} out of range for text: {:?}",
+                result.confidence,
+                text,
+            );
+        }
+    }
+
+    #[test]
+    fn test_analyze_conversation_empty() {
+        let analyzer = SentimentAnalyzer::new();
+
+        // Empty messages slice should not panic
+        let result = analyzer.analyze_conversation(&[]);
+        assert_eq!(result.overall.sentiment, Sentiment::Neutral);
+        assert!((result.overall.score - 0.0).abs() < f32::EPSILON);
+        assert_eq!(result.trend, SentimentTrend::Stable);
+        assert!(result.message_sentiments.is_empty());
+    }
+
+    #[test]
+    fn test_analyze_conversation_multi_turn() {
+        let analyzer = SentimentAnalyzer::new();
+
+        let messages = vec![
+            ChatMessage::user("I'm having a problem with this error."),
+            ChatMessage::assistant("Let me help you debug that issue."),
+            ChatMessage::user("That fixed it! Thank you, that was perfect!"),
+            ChatMessage::assistant("You're welcome! Glad it worked."),
+        ];
+
+        let result = analyzer.analyze_conversation(&messages);
+
+        // Should have one sentiment per message
+        assert_eq!(result.message_sentiments.len(), 4);
+
+        // Overall should be valid
+        assert!((-1.0..=1.0).contains(&result.overall.score));
+        assert!((-1.0..=1.0).contains(&result.user_sentiment.score));
+
+        // Trend should be one of the valid variants
+        assert!(matches!(
+            result.trend,
+            SentimentTrend::Improving | SentimentTrend::Stable | SentimentTrend::Declining
+        ));
+    }
+
+    // ========================================================================
+    // New tests: TopicDetector
+    // ========================================================================
+
+    #[test]
+    fn test_topic_detector_add_remove() {
+        let mut detector = TopicDetector::new();
+
+        // Add a custom topic
+        detector.add_topic("custom_topic", vec!["alpha", "beta", "gamma"]);
+
+        // Verify topic can be detected
+        let messages = vec![ChatMessage::user("Testing alpha and beta parameters together.")];
+        let topics = detector.detect_topics(&messages);
+        assert!(
+            topics.iter().any(|t| t.name == "custom_topic"),
+            "Custom topic should be detected, but got topics: {:?}",
+            topics.iter().map(|t| &t.name).collect::<Vec<_>>(),
+        );
+
+        // Remove the topic
+        detector.remove_topic("custom_topic");
+
+        // Topic should no longer be detected
+        let topics_after = detector.detect_topics(&messages);
+        assert!(
+            !topics_after.iter().any(|t| t.name == "custom_topic"),
+            "Removed topic should not be detected",
+        );
+    }
+
+    #[test]
+    fn test_topic_detector_custom_topics() {
+        let mut detector = TopicDetector::new();
+
+        detector.add_topic("machine_learning", vec!["neural", "network", "training", "model", "dataset"]);
+
+        let messages = vec![
+            ChatMessage::user("I need help training a neural network model."),
+            ChatMessage::assistant("What dataset are you using for training?"),
+        ];
+
+        let topics = detector.detect_topics(&messages);
+        let ml_topic = topics.iter().find(|t| t.name == "machine_learning");
+        assert!(ml_topic.is_some(), "machine_learning topic should be detected");
+
+        let ml = ml_topic.unwrap();
+        assert!(ml.relevance > 0.0, "Relevance should be positive");
+        assert!(!ml.keywords.is_empty(), "Should have matched keywords");
+        assert!(!ml.message_indices.is_empty(), "Should have message indices");
+    }
+
+    #[test]
+    fn test_get_main_topic() {
+        let detector = TopicDetector::new();
+
+        // Messages heavily about programming
+        let messages = vec![
+            ChatMessage::user("I have a bug in my code and the function crashes."),
+            ChatMessage::assistant("Let me look at the error in your debug output."),
+            ChatMessage::user("The compile error is in the test method."),
+        ];
+
+        let main_topic = detector.get_main_topic(&messages);
+        assert!(main_topic.is_some(), "Should detect at least one topic");
+
+        let main = main_topic.unwrap();
+        // The main topic should have positive relevance
+        assert!(main.relevance > 0.0, "Main topic should have positive relevance");
+
+        // The main topic's relevance should be >= all other detected topics
+        let all_topics = detector.detect_topics(&messages);
+        for topic in &all_topics {
+            assert!(
+                main.relevance >= topic.relevance - f32::EPSILON,
+                "Main topic relevance ({}) should be >= other topic relevance ({})",
+                main.relevance,
+                topic.relevance,
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_key_terms() {
+        let detector = TopicDetector::new();
+
+        let text = "rust rust rust python python java";
+        let terms = detector.extract_key_terms(text, 3);
+
+        assert!(!terms.is_empty(), "Should extract at least one term");
+
+        // "rust" appears 3 times and should be first
+        assert_eq!(terms[0].0, "rust");
+        assert_eq!(terms[0].1, 3);
+
+        // "python" appears 2 times and should be second
+        assert_eq!(terms[1].0, "python");
+        assert_eq!(terms[1].1, 2);
+
+        // Results should be sorted by frequency (descending)
+        for window in terms.windows(2) {
+            assert!(
+                window[0].1 >= window[1].1,
+                "Terms should be sorted by frequency descending",
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_key_terms_empty() {
+        let detector = TopicDetector::new();
+
+        // Empty text should return empty vec
+        let terms = detector.extract_key_terms("", 5);
+        assert!(terms.is_empty(), "Empty text should produce no key terms");
+
+        // Text with only stop words should also return empty
+        let terms_stop = detector.extract_key_terms("the a an is are", 5);
+        assert!(
+            terms_stop.is_empty(),
+            "Text with only stop words should produce no key terms",
+        );
+    }
+
+    // ========================================================================
+    // New tests: SummaryConfig and SessionSummarizer
+    // ========================================================================
+
+    #[test]
+    fn test_session_summarizer_config() {
+        let config = SummaryConfig::default();
+
+        // Default config should have sensible values
+        assert!(config.enabled, "Default config should be enabled");
+        assert!(
+            config.trigger_message_count > 0,
+            "trigger_message_count should be positive",
+        );
+        assert!(
+            config.max_summary_tokens > 0,
+            "max_summary_tokens should be positive",
+        );
+        assert!(config.include_topics, "Default should include topics");
+        assert!(config.include_sentiment, "Default should include sentiment");
+
+        // Check the specific default values
+        assert_eq!(config.trigger_message_count, 10);
+        assert_eq!(config.max_summary_tokens, 500);
+    }
+
+    #[test]
+    fn test_session_summarizer_empty() {
+        let summarizer = SessionSummarizer::new(SummaryConfig::default());
+
+        // Summarize empty messages should not panic
+        let summary = summarizer.summarize(&[]);
+        assert_eq!(summary.message_count, 0);
+        assert!(!summary.summary.is_empty(), "Summary text should not be empty even for empty input");
+        assert_eq!(summary.sentiment, Sentiment::Neutral);
+        assert!(summary.key_points.is_empty());
+        assert!(summary.topics.is_empty());
+        assert!(summary.user_questions.is_empty());
+        assert!(summary.solutions_provided.is_empty());
+    }
+
+    #[test]
+    fn test_should_summarize_threshold() {
+        let config = SummaryConfig {
+            enabled: true,
+            trigger_message_count: 5,
+            max_summary_tokens: 500,
+            include_topics: true,
+            include_sentiment: true,
+        };
+        let summarizer = SessionSummarizer::new(config);
+
+        // Below threshold
+        assert!(!summarizer.should_summarize(0), "0 messages: should not summarize");
+        assert!(!summarizer.should_summarize(1), "1 message: should not summarize");
+        assert!(!summarizer.should_summarize(4), "4 messages: should not summarize");
+
+        // At and above threshold
+        assert!(summarizer.should_summarize(5), "5 messages: should summarize");
+        assert!(summarizer.should_summarize(10), "10 messages: should summarize");
+        assert!(summarizer.should_summarize(100), "100 messages: should summarize");
+
+        // Disabled config should never trigger
+        let disabled_config = SummaryConfig {
+            enabled: false,
+            trigger_message_count: 5,
+            max_summary_tokens: 500,
+            include_topics: true,
+            include_sentiment: true,
+        };
+        let disabled_summarizer = SessionSummarizer::new(disabled_config);
+        assert!(
+            !disabled_summarizer.should_summarize(100),
+            "Disabled summarizer should never trigger",
+        );
+    }
 }
