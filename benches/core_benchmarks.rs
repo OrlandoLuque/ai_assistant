@@ -7,6 +7,15 @@ use ai_assistant::{
     GuardrailPipeline, HtmlExtractionConfig, HtmlExtractor, IntentClassifier, PatternGuard,
     PromptShortener, RequestSigner, SentimentAnalyzer, ServerRateLimiter, SignatureAlgorithm,
     TemplateCategory, TextTransformer, Transform, WsFrame,
+    // v14 benchmark imports
+    ChunkingConfig, SmartChunker,
+    RagDb, KnowledgeChunk, KnowledgeUsage,
+    EmbeddingConfig, LocalEmbedder,
+    HnswConfig, HnswIndex,
+    KnowledgeGraphStore, KnowledgeGraphConfig, KGEntityType,
+    parse_tool_calls,
+    PiiDetector, PiiConfig,
+    JsonSchema, SchemaProperty,
 };
 
 fn bench_intent_classification(c: &mut Criterion) {
@@ -288,6 +297,321 @@ fn bench_context_window_trim(c: &mut Criterion) {
     });
 }
 
+// ---------------------------------------------------------------------------
+// v14 benchmarks (17-28): RAG, embeddings, vector, knowledge graph, tools, PII
+// ---------------------------------------------------------------------------
+
+fn bench_smart_chunker(c: &mut Criterion) {
+    let chunker = SmartChunker::new(ChunkingConfig::default());
+
+    let document = "Rust is a systems programming language focused on safety and performance. \
+        It achieves memory safety without garbage collection through its ownership system. \
+        Each value in Rust has a single owner, and when that owner goes out of scope, the \
+        value is automatically dropped. This prevents common bugs like use-after-free and \
+        double-free errors at compile time rather than runtime.\n\n\
+        The borrow checker is the key component of the Rust compiler that enforces ownership \
+        rules. It statically analyzes code to ensure that references do not outlive the data \
+        they point to, and that mutable references are exclusive. This eliminates data races \
+        and memory safety issues without runtime overhead.\n\n\
+        Traits in Rust are similar to interfaces in other languages but more powerful. They \
+        enable polymorphism, operator overloading, and generic programming. Trait objects allow \
+        for dynamic dispatch when needed, while monomorphization provides zero-cost abstractions \
+        for generics at compile time.";
+
+    c.bench_function("smart_chunker_1k_chars", |b| {
+        b.iter(|| {
+            let _ = chunker.chunk(&document);
+        });
+    });
+}
+
+fn bench_rag_fts_search(c: &mut Criterion) {
+    // Build a temp RAG DB and populate it with 100 documents
+    let tmp = std::env::temp_dir().join("bench_rag_fts.db");
+    let db = RagDb::open(&tmp).expect("open RAG DB");
+
+    for i in 0..100 {
+        let source = format!("doc_{}", i);
+        let content = format!(
+            "Document {} discusses topic {} which covers aspects of machine learning, \
+             natural language processing, and computer vision applied to real-world \
+             problems in healthcare, finance, and autonomous systems. Keywords: \
+             transformer, attention, gradient, backpropagation, neural network.",
+            i,
+            i % 10
+        );
+        let _ = db.index_document(&source, &content);
+    }
+
+    c.bench_function("rag_fts_search_100_docs", |b| {
+        b.iter(|| {
+            let _ = db.search_knowledge("machine learning transformer attention", 2000, 10);
+        });
+    });
+}
+
+fn bench_rag_build_context(c: &mut Criterion) {
+    // Pre-create a batch of KnowledgeChunks
+    let chunks: Vec<KnowledgeChunk> = (0..20)
+        .map(|i| KnowledgeChunk {
+            id: i,
+            source: format!("source_{}", i % 5),
+            section: format!("section_{}", i),
+            content: format!(
+                "This is chunk {} containing relevant information about the query topic. \
+                 It includes details about implementation, architecture, and design patterns \
+                 used in production systems.",
+                i
+            ),
+            token_count: 50,
+        })
+        .collect();
+
+    c.bench_function("rag_build_context_20_chunks", |b| {
+        b.iter(|| {
+            let _ = KnowledgeUsage::from_chunks("machine learning query", &chunks);
+        });
+    });
+}
+
+fn bench_cosine_similarity_multi_dim(c: &mut Criterion) {
+    // 1536-dimension vectors (OpenAI ada-002 embedding size)
+    let a: Vec<f32> = (0..1536).map(|i| (i as f32 * 0.001).sin()).collect();
+    let b: Vec<f32> = (0..1536).map(|i| (i as f32 * 0.002).cos()).collect();
+
+    c.bench_function("cosine_similarity_1536d", |b_iter| {
+        b_iter.iter(|| {
+            let _ = ai_assistant::cosine_similarity(&a, &b);
+        });
+    });
+}
+
+fn bench_hnsw_vector_search(c: &mut Criterion) {
+    let config = HnswConfig {
+        m: 16,
+        m_max: 32,
+        ef_construction: 100,
+        ef_search: 50,
+        ..HnswConfig::default()
+    };
+    let mut index = HnswIndex::new(config);
+
+    // Insert 1000 128-dim vectors
+    for i in 0..1000 {
+        let vec: Vec<f32> = (0..128)
+            .map(|d| ((i * 128 + d) as f32 * 0.01).sin())
+            .collect();
+        index.insert(
+            &format!("vec_{}", i),
+            vec,
+            serde_json::json!({"idx": i}),
+        );
+    }
+
+    let query: Vec<f32> = (0..128).map(|d| (d as f32 * 0.05).cos()).collect();
+
+    c.bench_function("hnsw_search_1k_vectors_128d", |b| {
+        b.iter(|| {
+            let _ = index.search(&query, 10);
+        });
+    });
+}
+
+fn bench_knowledge_graph_traversal(c: &mut Criterion) {
+    let config = KnowledgeGraphConfig::default();
+    let store = KnowledgeGraphStore::in_memory(config)
+        .expect("create in-memory knowledge graph store");
+
+    // Build a graph with 100 nodes and ~200 edges
+    let mut entity_ids = Vec::new();
+    for i in 0..100 {
+        let id = store
+            .get_or_create_entity(
+                &format!("Entity_{}", i),
+                KGEntityType::Concept,
+                &[],
+            )
+            .expect("create entity");
+        entity_ids.push(id);
+    }
+
+    // Connect each node to 2 neighbors (chain + skip)
+    for i in 0..100 {
+        let next = (i + 1) % 100;
+        let skip = (i + 7) % 100;
+        let _ = store.add_relation(
+            entity_ids[i],
+            entity_ids[next],
+            "relates_to",
+            0.9,
+            None,
+            None,
+        );
+        let _ = store.add_relation(
+            entity_ids[i],
+            entity_ids[skip],
+            "connects_to",
+            0.8,
+            None,
+            None,
+        );
+    }
+
+    c.bench_function("knowledge_graph_query_relations_100", |b| {
+        b.iter(|| {
+            // Traverse from entity 0 with depth 2
+            let _ = store.get_relations_from(entity_ids[0], 2);
+        });
+    });
+}
+
+fn bench_tool_call_parsing(c: &mut Criterion) {
+    let response_json = r#"```json
+{"name": "search", "arguments": {"query": "Rust programming", "limit": 10}}
+```
+
+Based on the search results, here is some information.
+
+```tool
+{"name": "calculate", "arguments": {"expression": "2 + 2 * 3"}}
+```"#;
+
+    c.bench_function("tool_call_parsing_markdown", |b| {
+        b.iter(|| {
+            let _ = parse_tool_calls(response_json);
+        });
+    });
+}
+
+fn bench_pii_detection(c: &mut Criterion) {
+    let detector = PiiDetector::new(PiiConfig::default());
+
+    let text = "Please contact John Smith at john.smith@example.com or call 555-123-4567. \
+        His SSN is 123-45-6789 and he lives at 123 Main Street, Springfield, IL 62701. \
+        Credit card: 4111-1111-1111-1111. IP address: 192.168.1.100. \
+        Meeting scheduled for tomorrow at the office. No PII in this last sentence.";
+
+    c.bench_function("pii_detection_1k_chars", |b| {
+        b.iter(|| {
+            let _ = detector.detect(text);
+        });
+    });
+}
+
+fn bench_embedding_train_and_embed(c: &mut Criterion) {
+    let config = EmbeddingConfig {
+        dimensions: 128,
+        min_word_freq: 1,
+        max_vocab_size: 5000,
+        use_subwords: false,
+        ngram_range: (1, 2),
+    };
+    let mut embedder = LocalEmbedder::new(config);
+
+    let docs = vec![
+        "Rust is a systems programming language focused on safety and concurrency.",
+        "Python is widely used for machine learning and data science applications.",
+        "JavaScript runs in the browser and on the server with Node.js runtime.",
+        "Go was designed at Google for scalable network services and cloud infrastructure.",
+        "TypeScript adds static typing to JavaScript for better developer experience.",
+    ];
+    embedder.train(&docs);
+
+    c.bench_function("embedding_generate_128d", |b| {
+        b.iter(|| {
+            let _ = embedder.embed("systems programming language safety performance");
+        });
+    });
+}
+
+fn bench_json_schema_validation(c: &mut Criterion) {
+    // Build a complex schema
+    let schema = JsonSchema::new("UserProfile")
+        .with_description("A user profile object")
+        .with_property(
+            "name",
+            SchemaProperty::string().with_description("Full name"),
+        )
+        .with_property(
+            "age",
+            SchemaProperty::integer()
+                .with_minimum(0.0)
+                .with_maximum(150.0),
+        )
+        .with_property(
+            "email",
+            SchemaProperty::string().with_pattern(r"^[a-zA-Z0-9+_.-]+@[a-zA-Z0-9.-]+$"),
+        )
+        .with_property(
+            "tags",
+            SchemaProperty::array(SchemaProperty::string()),
+        )
+        .with_property("address", SchemaProperty::object());
+
+    c.bench_function("json_schema_to_prompt", |b| {
+        b.iter(|| {
+            let _ = schema.to_prompt();
+        });
+    });
+}
+
+fn bench_embedding_batch(c: &mut Criterion) {
+    let config = EmbeddingConfig {
+        dimensions: 128,
+        min_word_freq: 1,
+        max_vocab_size: 5000,
+        use_subwords: false,
+        ngram_range: (1, 2),
+    };
+    let mut embedder = LocalEmbedder::new(config);
+
+    let docs = vec![
+        "Machine learning models require large datasets for training.",
+        "Neural networks use backpropagation to update weights.",
+        "Transfer learning allows reusing pretrained model weights.",
+        "Attention mechanisms improve sequence-to-sequence models.",
+        "Reinforcement learning agents learn from environment rewards.",
+    ];
+    embedder.train(&docs);
+
+    let queries: Vec<&str> = vec![
+        "deep learning neural network training",
+        "natural language processing transformers",
+        "computer vision image classification",
+        "reinforcement learning policy gradient",
+        "generative adversarial networks",
+    ];
+
+    c.bench_function("embedding_batch_5x128d", |b| {
+        b.iter(|| {
+            let _ = embedder.embed_batch(&queries);
+        });
+    });
+}
+
+fn bench_rag_index_document(c: &mut Criterion) {
+    let content = "Artificial intelligence (AI) refers to the simulation of human intelligence \
+        in machines that are programmed to think and learn. The field encompasses machine learning, \
+        neural networks, natural language processing, computer vision, and robotics. Modern AI \
+        systems can perform tasks such as image recognition, speech processing, decision making, \
+        and language translation with increasing accuracy. Deep learning, a subset of machine \
+        learning, uses multi-layered neural networks to learn complex patterns from large datasets. \
+        Transformer architectures have revolutionized NLP tasks including text generation, \
+        summarization, and question answering. ";
+
+    // Use an atomic counter to give each iteration a unique source name
+    let counter = std::sync::atomic::AtomicU64::new(0);
+    let tmp = std::env::temp_dir().join("bench_rag_index.db");
+    let db = RagDb::open(&tmp).expect("open RAG DB");
+
+    c.bench_function("rag_index_document_2k_chars", |b| {
+        b.iter(|| {
+            let n = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let _ = db.index_document(&format!("bench_doc_{}", n), &content.repeat(3));
+        });
+    });
+}
+
 criterion_group!(
     benches,
     // Original 6
@@ -297,7 +621,7 @@ criterion_group!(
     bench_sentiment_analysis,
     bench_sha256_signing,
     bench_template_rendering,
-    // New 10
+    // v12 benchmarks (7-16)
     bench_cosine_similarity,
     bench_guardrail_check,
     bench_html_extract_text,
@@ -308,5 +632,18 @@ criterion_group!(
     bench_json_serialize,
     bench_intent_classify_single,
     bench_context_window_trim,
+    // v14 benchmarks (17-28)
+    bench_smart_chunker,
+    bench_rag_fts_search,
+    bench_rag_build_context,
+    bench_cosine_similarity_multi_dim,
+    bench_hnsw_vector_search,
+    bench_knowledge_graph_traversal,
+    bench_tool_call_parsing,
+    bench_pii_detection,
+    bench_embedding_train_and_embed,
+    bench_json_schema_validation,
+    bench_embedding_batch,
+    bench_rag_index_document,
 );
 criterion_main!(benches);
