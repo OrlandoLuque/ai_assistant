@@ -449,6 +449,21 @@ required-features = ["eval"]
 name = "code_sandbox_demo"
 required-features = ["code-sandbox"]
 
+[[example]]
+name = "advanced_streaming_demo"
+required-features = ["advanced-streaming"]
+
+[[example]]
+name = "integrity_check_demo"
+
+[[example]]
+name = "vector_pgvector_demo"
+required-features = ["vector-pgvector"]
+
+[[example]]
+name = "cloud_connectors_demo"
+required-features = ["cloud-connectors"]
+
 [dev-dependencies]
 tempfile = "3"
 criterion = { version = "0.5", features = ["html_reports"] }
