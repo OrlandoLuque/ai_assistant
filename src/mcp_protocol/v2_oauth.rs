@@ -578,3 +578,462 @@ impl DynamicClientRegistration {
         Ok((client_id, client_secret))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -----------------------------------------------------------------------
+    // Helper: create a default test config
+    // -----------------------------------------------------------------------
+    fn test_config() -> McpV2OAuthConfig {
+        McpV2OAuthConfig {
+            authorization_endpoint: "https://auth.example.com/authorize".to_string(),
+            token_endpoint: "https://auth.example.com/token".to_string(),
+            client_id: Some("test-client-id".to_string()),
+            client_secret: Some("test-client-secret".to_string()),
+            scopes: vec!["mcp:tools".to_string(), "mcp:resources".to_string()],
+            redirect_uri: "http://localhost:8080/callback".to_string(),
+        }
+    }
+
+    // =======================================================================
+    // SHA-256 + Base64url (4 tests)
+    // =======================================================================
+
+    #[test]
+    fn test_sha256_known_vector() {
+        // SHA-256 of empty string
+        let empty_hash = sha256_hash(b"");
+        let expected_empty: [u8; 32] = [
+            0xe3, 0xb0, 0xc4, 0x42, 0x98, 0xfc, 0x1c, 0x14,
+            0x9a, 0xfb, 0xf4, 0xc8, 0x99, 0x6f, 0xb9, 0x24,
+            0x27, 0xae, 0x41, 0xe4, 0x64, 0x9b, 0x93, 0x4c,
+            0xa4, 0x95, 0x99, 0x1b, 0x78, 0x52, 0xb8, 0x55,
+        ];
+        assert_eq!(empty_hash, expected_empty, "SHA-256 of empty string mismatch");
+
+        // SHA-256 of "abc"
+        let abc_hash = sha256_hash(b"abc");
+        let expected_abc: [u8; 32] = [
+            0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea,
+            0x41, 0x41, 0x40, 0xde, 0x5d, 0xae, 0x22, 0x23,
+            0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c,
+            0xb4, 0x10, 0xff, 0x61, 0xf2, 0x00, 0x15, 0xad,
+        ];
+        assert_eq!(abc_hash, expected_abc, "SHA-256 of 'abc' mismatch");
+    }
+
+    #[test]
+    fn test_sha256_deterministic() {
+        let input = b"deterministic test input";
+        let hash1 = sha256_hash(input);
+        let hash2 = sha256_hash(input);
+        assert_eq!(hash1, hash2, "SHA-256 must be deterministic");
+    }
+
+    #[test]
+    fn test_base64url_encode_known() {
+        // Base64url of [0x00, 0x01, 0x02] = "AAEC"
+        let result = base64url_encode(&[0x00, 0x01, 0x02]);
+        assert_eq!(result, "AAEC");
+
+        // Base64url of "Hello" (0x48 0x65 0x6c 0x6c 0x6f) = "SGVsbG8"
+        let result2 = base64url_encode(b"Hello");
+        assert_eq!(result2, "SGVsbG8");
+
+        // Verify no padding characters are present
+        assert!(!result.contains('='), "base64url must not contain padding");
+        assert!(!result2.contains('='), "base64url must not contain padding");
+
+        // Verify no standard base64 characters (+, /) are used
+        assert!(!result2.contains('+'), "base64url must not contain '+'");
+        assert!(!result2.contains('/'), "base64url must not contain '/'");
+    }
+
+    #[test]
+    fn test_base64url_encode_empty() {
+        let result = base64url_encode(&[]);
+        assert_eq!(result, "", "base64url of empty input must be empty string");
+    }
+
+    // =======================================================================
+    // PKCE (4 tests)
+    // =======================================================================
+
+    #[test]
+    fn test_pkce_generate() {
+        let pkce = PkceChallenge::generate();
+        assert!(
+            pkce.verifier.len() >= 43,
+            "PKCE verifier must be at least 43 chars (RFC 7636), got {}",
+            pkce.verifier.len()
+        );
+        assert_eq!(pkce.method, "S256", "PKCE method must be S256");
+        assert!(!pkce.challenge.is_empty(), "PKCE challenge must be non-empty");
+    }
+
+    #[test]
+    fn test_pkce_generate_unique() {
+        let pkce1 = PkceChallenge::generate();
+        // Small sleep to ensure different time-based seed.
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let pkce2 = PkceChallenge::generate();
+        assert_ne!(
+            pkce1.verifier, pkce2.verifier,
+            "Two generated PKCE verifiers must be different"
+        );
+    }
+
+    #[test]
+    fn test_pkce_from_verifier() {
+        let verifier = "test_verifier_string";
+        let pkce = PkceChallenge::from_verifier(verifier);
+
+        assert_eq!(pkce.verifier, verifier);
+        assert_eq!(pkce.method, "S256");
+        assert!(!pkce.challenge.is_empty());
+
+        // The challenge must be base64url(sha256(verifier))
+        let expected = base64url_encode(&sha256_hash(verifier.as_bytes()));
+        assert_eq!(pkce.challenge, expected);
+    }
+
+    #[test]
+    fn test_pkce_challenge_is_sha256_of_verifier() {
+        // Use a different verifier to independently verify the relationship
+        let verifier = "another_test_verifier_1234567890abcdefghijklm";
+        let pkce = PkceChallenge::from_verifier(verifier);
+
+        let hash = sha256_hash(verifier.as_bytes());
+        let expected_challenge = base64url_encode(&hash);
+
+        assert_eq!(
+            pkce.challenge, expected_challenge,
+            "PKCE challenge must equal base64url(sha256(verifier))"
+        );
+    }
+
+    // =======================================================================
+    // OAuthConfig (2 tests)
+    // =======================================================================
+
+    #[test]
+    fn test_oauth_config_creation() {
+        let config = McpV2OAuthConfig {
+            authorization_endpoint: "https://auth.example.com/authorize".to_string(),
+            token_endpoint: "https://auth.example.com/token".to_string(),
+            client_id: Some("my-client".to_string()),
+            client_secret: Some("my-secret".to_string()),
+            scopes: vec!["openid".to_string(), "profile".to_string()],
+            redirect_uri: "http://localhost:3000/cb".to_string(),
+        };
+
+        assert_eq!(config.authorization_endpoint, "https://auth.example.com/authorize");
+        assert_eq!(config.token_endpoint, "https://auth.example.com/token");
+        assert_eq!(config.client_id, Some("my-client".to_string()));
+        assert_eq!(config.client_secret, Some("my-secret".to_string()));
+        assert_eq!(config.scopes, vec!["openid", "profile"]);
+        assert_eq!(config.redirect_uri, "http://localhost:3000/cb");
+    }
+
+    #[test]
+    fn test_oauth_config_serialization() {
+        let config = test_config();
+
+        // Serialize to JSON
+        let json = serde_json::to_string(&config).expect("Failed to serialize McpV2OAuthConfig");
+
+        // Deserialize back
+        let deserialized: McpV2OAuthConfig =
+            serde_json::from_str(&json).expect("Failed to deserialize McpV2OAuthConfig");
+
+        assert_eq!(config.authorization_endpoint, deserialized.authorization_endpoint);
+        assert_eq!(config.token_endpoint, deserialized.token_endpoint);
+        assert_eq!(config.client_id, deserialized.client_id);
+        assert_eq!(config.client_secret, deserialized.client_secret);
+        assert_eq!(config.scopes, deserialized.scopes);
+        assert_eq!(config.redirect_uri, deserialized.redirect_uri);
+    }
+
+    // =======================================================================
+    // OAuthTokenManager (5 tests)
+    // =======================================================================
+
+    #[test]
+    fn test_token_manager_new() {
+        let config = test_config();
+        let manager = OAuthTokenManager::new(config);
+        assert!(
+            manager.current_token().is_none(),
+            "New token manager must have no current token"
+        );
+    }
+
+    #[test]
+    fn test_get_authorization_url() {
+        let config = test_config();
+        let manager = OAuthTokenManager::new(config);
+        let (url, pkce) = manager.get_authorization_url();
+
+        // URL must contain required OAuth parameters
+        assert!(url.contains("response_type=code"), "URL must contain response_type=code");
+        assert!(url.contains("code_challenge="), "URL must contain code_challenge");
+        assert!(url.contains("code_challenge_method=S256"), "URL must contain code_challenge_method=S256");
+        assert!(url.contains("redirect_uri="), "URL must contain redirect_uri");
+        assert!(url.contains("client_id=test-client-id"), "URL must contain client_id");
+
+        // The URL must start with the configured authorization endpoint
+        assert!(
+            url.starts_with("https://auth.example.com/authorize?"),
+            "URL must start with authorization endpoint"
+        );
+
+        // The PKCE challenge in the URL must match the returned challenge
+        assert!(
+            url.contains(&pkce.challenge),
+            "URL must contain the PKCE challenge value"
+        );
+    }
+
+    #[test]
+    fn test_exchange_code() {
+        let config = test_config();
+        let mut manager = OAuthTokenManager::new(config);
+        let pkce = PkceChallenge::from_verifier("test_verifier_for_exchange_code");
+
+        // exchange_code will fail to reach the real server and fall back to simulated
+        let result = manager.exchange_code("test-auth-code", &pkce);
+        assert!(result.is_ok(), "exchange_code should succeed (via simulation fallback)");
+
+        let token = result.unwrap();
+        assert_eq!(token.access_token, "access-test-auth-code");
+        assert_eq!(token.token_type, "Bearer");
+        assert!(token.refresh_token.is_some());
+        assert!(token.expires_at.is_some());
+
+        // Token should now be stored in the manager
+        assert!(manager.current_token().is_some());
+    }
+
+    #[test]
+    fn test_refresh_token() {
+        let config = test_config();
+        let mut manager = OAuthTokenManager::new(config);
+
+        // Set a token with a refresh_token
+        let token = OAuthToken {
+            access_token: "old-access".to_string(),
+            token_type: "Bearer".to_string(),
+            expires_at: Some(chrono::Utc::now() - chrono::Duration::hours(1)),
+            refresh_token: Some("my-refresh-token".to_string()),
+            scope: Some("mcp:tools".to_string()),
+        };
+        manager.set_token(token);
+
+        // refresh_token will fail to reach the real server and fall back to simulated
+        let result = manager.refresh_token();
+        assert!(result.is_ok(), "refresh_token should succeed (via simulation fallback)");
+
+        let refreshed = result.unwrap();
+        assert_eq!(refreshed.access_token, "refreshed-my-refresh-token");
+        assert_eq!(refreshed.token_type, "Bearer");
+        assert!(refreshed.expires_at.is_some());
+
+        // Refreshing without a refresh token should fail
+        let mut manager2 = OAuthTokenManager::new(test_config());
+        manager2.set_token(OAuthToken {
+            access_token: "no-refresh".to_string(),
+            token_type: "Bearer".to_string(),
+            expires_at: None,
+            refresh_token: None,
+            scope: None,
+        });
+        let result2 = manager2.refresh_token();
+        assert!(result2.is_err(), "refresh_token without refresh token must fail");
+    }
+
+    #[test]
+    fn test_is_token_expired() {
+        let config = test_config();
+        let mut manager = OAuthTokenManager::new(config);
+
+        // No token -> expired
+        assert!(manager.is_token_expired(), "No token should be treated as expired");
+
+        // Token with future expiry -> not expired
+        let future_token = OAuthToken {
+            access_token: "future".to_string(),
+            token_type: "Bearer".to_string(),
+            expires_at: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
+            refresh_token: None,
+            scope: None,
+        };
+        manager.set_token(future_token);
+        assert!(!manager.is_token_expired(), "Future token should not be expired");
+
+        // Token with past expiry -> expired
+        let past_token = OAuthToken {
+            access_token: "past".to_string(),
+            token_type: "Bearer".to_string(),
+            expires_at: Some(chrono::Utc::now() - chrono::Duration::hours(1)),
+            refresh_token: None,
+            scope: None,
+        };
+        manager.set_token(past_token);
+        assert!(manager.is_token_expired(), "Past token should be expired");
+
+        // Token with no expiry -> never expires
+        let no_expiry_token = OAuthToken {
+            access_token: "no-expiry".to_string(),
+            token_type: "Bearer".to_string(),
+            expires_at: None,
+            refresh_token: None,
+            scope: None,
+        };
+        manager.set_token(no_expiry_token);
+        assert!(
+            !manager.is_token_expired(),
+            "Token with no expires_at should not be treated as expired"
+        );
+    }
+
+    // =======================================================================
+    // Token Management (2 tests)
+    // =======================================================================
+
+    #[test]
+    fn test_set_and_get_token() {
+        let config = test_config();
+        let mut manager = OAuthTokenManager::new(config);
+
+        // Initially no token
+        assert!(manager.current_token().is_none());
+
+        let token = OAuthToken {
+            access_token: "my-access-token".to_string(),
+            token_type: "Bearer".to_string(),
+            expires_at: Some(chrono::Utc::now() + chrono::Duration::hours(2)),
+            refresh_token: Some("my-refresh".to_string()),
+            scope: Some("mcp:tools mcp:resources".to_string()),
+        };
+        manager.set_token(token);
+
+        let retrieved = manager.current_token().expect("Token should be present after set_token");
+        assert_eq!(retrieved.access_token, "my-access-token");
+        assert_eq!(retrieved.token_type, "Bearer");
+        assert_eq!(retrieved.refresh_token, Some("my-refresh".to_string()));
+        assert_eq!(retrieved.scope, Some("mcp:tools mcp:resources".to_string()));
+    }
+
+    #[test]
+    fn test_get_valid_token_refreshes_expired() {
+        let config = test_config();
+        let mut manager = OAuthTokenManager::new(config);
+
+        // Set an expired token with a refresh_token
+        let expired_token = OAuthToken {
+            access_token: "expired-access".to_string(),
+            token_type: "Bearer".to_string(),
+            expires_at: Some(chrono::Utc::now() - chrono::Duration::hours(1)),
+            refresh_token: Some("auto-refresh-token".to_string()),
+            scope: Some("mcp:tools".to_string()),
+        };
+        manager.set_token(expired_token);
+
+        // get_valid_token should detect expiry and auto-refresh (via simulation fallback)
+        let result = manager.get_valid_token();
+        assert!(result.is_ok(), "get_valid_token should refresh an expired token");
+
+        let valid = result.unwrap();
+        assert_eq!(
+            valid.access_token, "refreshed-auto-refresh-token",
+            "Token should have been refreshed"
+        );
+        assert!(
+            !manager.is_token_expired(),
+            "After refresh, token should not be expired"
+        );
+    }
+
+    // =======================================================================
+    // AuthorizationServerMetadata + DynamicClientRegistration (2 tests)
+    // =======================================================================
+
+    #[test]
+    fn test_authorization_server_discover() {
+        // discover will fail to reach example.com and fall back to simulated
+        let result = AuthorizationServerMetadata::discover("https://example.com");
+        assert!(result.is_ok(), "discover should succeed (via simulation fallback)");
+
+        let metadata = result.unwrap();
+        assert!(!metadata.issuer.is_empty(), "issuer must be non-empty");
+        assert!(
+            !metadata.authorization_endpoint.is_empty(),
+            "authorization_endpoint must be non-empty"
+        );
+        assert!(!metadata.token_endpoint.is_empty(), "token_endpoint must be non-empty");
+        assert!(
+            metadata.authorization_endpoint.contains("example.com"),
+            "authorization_endpoint should reference the base URL"
+        );
+        assert!(
+            metadata.token_endpoint.contains("example.com"),
+            "token_endpoint should reference the base URL"
+        );
+        assert!(
+            !metadata.scopes_supported.is_empty(),
+            "simulated discovery should include supported scopes"
+        );
+    }
+
+    #[test]
+    fn test_dynamic_registration() {
+        // Valid registration
+        let result = DynamicClientRegistration::register(
+            "https://auth.example.com/register",
+            "my-app",
+            &["http://localhost:8080/callback".to_string()],
+        );
+        assert!(result.is_ok(), "register with valid args should succeed");
+        let (client_id, client_secret) = result.unwrap();
+        assert!(
+            client_id.contains("my-app"),
+            "client_id should incorporate the client name"
+        );
+        assert!(client_secret.is_some(), "client_secret should be present");
+
+        // Empty redirect_uris -> error
+        let result_empty = DynamicClientRegistration::register(
+            "https://auth.example.com/register",
+            "my-app",
+            &[],
+        );
+        assert!(
+            result_empty.is_err(),
+            "register with empty redirect_uris must fail"
+        );
+
+        // Empty endpoint -> error
+        let result_no_endpoint = DynamicClientRegistration::register(
+            "",
+            "my-app",
+            &["http://localhost/cb".to_string()],
+        );
+        assert!(
+            result_no_endpoint.is_err(),
+            "register with empty endpoint must fail"
+        );
+
+        // Empty client name -> error
+        let result_no_name = DynamicClientRegistration::register(
+            "https://auth.example.com/register",
+            "",
+            &["http://localhost/cb".to_string()],
+        );
+        assert!(
+            result_no_name.is_err(),
+            "register with empty client name must fail"
+        );
+    }
+}
