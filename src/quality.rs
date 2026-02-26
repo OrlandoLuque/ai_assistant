@@ -776,4 +776,227 @@ mod tests {
         score.overall = 0.3;
         assert_eq!(score.quality_level(), "Poor");
     }
+
+    #[test]
+    fn test_quality_score_default() {
+        let score = QualityScore::default();
+
+        assert_eq!(score.overall, 0.5);
+        assert_eq!(score.relevance, 0.5);
+        assert_eq!(score.coherence, 0.5);
+        assert_eq!(score.fluency, 0.5);
+        assert_eq!(score.completeness, 0.5);
+        assert_eq!(score.consistency, 0.5);
+        assert!(score.issues.is_empty());
+        assert!(score.strengths.is_empty());
+    }
+
+    #[test]
+    fn test_quality_score_calculate_overall() {
+        let mut score = QualityScore::default();
+        score.relevance = 1.0;
+        score.coherence = 0.8;
+        score.fluency = 0.9;
+        score.completeness = 0.7;
+        score.consistency = 0.6;
+
+        score.calculate_overall();
+
+        // Expected: 1.0*0.25 + 0.8*0.2 + 0.9*0.2 + 0.7*0.2 + 0.6*0.15
+        // = 0.25 + 0.16 + 0.18 + 0.14 + 0.09 = 0.82
+        let expected = 1.0 * 0.25 + 0.8 * 0.2 + 0.9 * 0.2 + 0.7 * 0.2 + 0.6 * 0.15;
+        assert!(
+            (score.overall - expected).abs() < 0.01,
+            "Expected overall ~{:.2}, got {:.2}",
+            expected,
+            score.overall
+        );
+    }
+
+    #[test]
+    fn test_quality_issue_type_descriptions() {
+        // All 14 variants (including Hallucination which is the 13th, 0-indexed)
+        let variants = [
+            QualityIssueType::Irrelevant,
+            QualityIssueType::Incomplete,
+            QualityIssueType::SelfContradiction,
+            QualityIssueType::FactualInconsistency,
+            QualityIssueType::GrammarError,
+            QualityIssueType::Repetition,
+            QualityIssueType::Verbose,
+            QualityIssueType::TerseResponse,
+            QualityIssueType::Unclear,
+            QualityIssueType::MissingInfo,
+            QualityIssueType::SafetyIssue,
+            QualityIssueType::CodeError,
+            QualityIssueType::Hallucination,
+        ];
+
+        assert_eq!(variants.len(), 13);
+        for variant in &variants {
+            let desc = variant.description();
+            assert!(!desc.is_empty(), "Description for {:?} should not be empty", variant);
+        }
+    }
+
+    #[test]
+    fn test_quality_config_default() {
+        let config = QualityConfig::default();
+
+        assert_eq!(config.min_response_length, 20);
+        assert_eq!(config.max_response_length, 10000);
+        assert!(config.check_repetition);
+        assert!(config.repetition_threshold > 0.0 && config.repetition_threshold < 1.0);
+        assert!(config.check_relevance);
+        assert!(config.check_code);
+        assert!(config.check_safety);
+    }
+
+    #[test]
+    fn test_analyze_long_response() {
+        let analyzer = QualityAnalyzer::new(QualityConfig::default());
+
+        let query = "How does memory management work in Rust?";
+        let response = "Rust uses a unique ownership system for memory management. \
+            Each value in Rust has an owner, and there can only be one owner at a time. \
+            When the owner goes out of scope, the value is dropped. Additionally, Rust \
+            provides borrowing through references, which allows you to access data without \
+            taking ownership. There are two types of references: immutable references (&T) \
+            and mutable references (&mut T). The borrow checker enforces rules at compile \
+            time to prevent data races and dangling references. Furthermore, Rust does not \
+            have a garbage collector, which means there is no runtime overhead for memory \
+            management. This makes Rust particularly suitable for systems programming where \
+            performance is critical. For example, you can create a String on the heap and \
+            move it between functions without copying the data.";
+
+        let score = analyzer.analyze(query, response, None);
+
+        assert!(
+            score.overall > 0.5,
+            "Long detailed response should score above 0.5, got {}",
+            score.overall
+        );
+        assert!(score.relevance > 0.5);
+        assert!(score.fluency > 0.5);
+    }
+
+    #[test]
+    fn test_analyze_empty_query() {
+        let analyzer = QualityAnalyzer::new(QualityConfig::default());
+
+        let query = "";
+        let response = "This is a response to an empty query that provides some content.";
+
+        // Should not panic
+        let score = analyzer.analyze(query, response, None);
+        assert!(score.overall >= 0.0 && score.overall <= 1.0);
+    }
+
+    #[test]
+    fn test_analyze_empty_response() {
+        let analyzer = QualityAnalyzer::new(QualityConfig::default());
+
+        let query = "What is Rust?";
+        let response = "";
+
+        let score = analyzer.analyze(query, response, None);
+
+        // Empty response should get low scores
+        assert!(
+            score.completeness < 0.5,
+            "Empty response should have low completeness, got {}",
+            score.completeness
+        );
+        assert!(score
+            .issues
+            .iter()
+            .any(|i| i.issue_type == QualityIssueType::TerseResponse));
+    }
+
+    #[test]
+    fn test_analyze_with_context() {
+        let analyzer = QualityAnalyzer::new(QualityConfig::default());
+
+        let query = "What color is the car?";
+        let context = "The car in the parking lot is bright red with chrome wheels.";
+        let response = "Based on the provided context, the car is bright red with chrome wheels.";
+
+        let score = analyzer.analyze(query, response, Some(context));
+
+        // With context, consistency should be high since response matches context
+        assert!(
+            score.consistency > 0.5,
+            "Response matching context should have good consistency, got {}",
+            score.consistency
+        );
+    }
+
+    #[test]
+    fn test_compare_responses_single() {
+        let query = "What is 2+2?";
+        let responses = ["The answer is 4. This is a basic arithmetic operation."];
+
+        let comparison = compare_responses(query, &responses, None);
+
+        assert_eq!(comparison.best_index, 0);
+        assert_eq!(comparison.scores.len(), 1);
+    }
+
+    #[test]
+    fn test_compare_responses_identical() {
+        let query = "What is Rust?";
+        let response = "Rust is a systems programming language focused on safety and performance.";
+        let responses = [response, response];
+
+        let comparison = compare_responses(query, &responses, None);
+
+        // Both should have the same score
+        let diff = (comparison.scores[0].overall - comparison.scores[1].overall).abs();
+        assert!(
+            diff < 0.01,
+            "Identical responses should have identical scores, diff={}",
+            diff
+        );
+    }
+
+    #[test]
+    fn test_quality_level_boundaries() {
+        let mut score = QualityScore::default();
+
+        // Test exact boundary at 0.9
+        score.overall = 0.9;
+        assert_eq!(score.quality_level(), "Excellent");
+
+        // Test just below 0.9
+        score.overall = 0.8999;
+        assert_eq!(score.quality_level(), "Good");
+
+        // Test exact boundary at 0.75
+        score.overall = 0.75;
+        assert_eq!(score.quality_level(), "Good");
+
+        // Test just below 0.75
+        score.overall = 0.7499;
+        assert_eq!(score.quality_level(), "Acceptable");
+
+        // Test exact boundary at 0.5
+        score.overall = 0.5;
+        assert_eq!(score.quality_level(), "Acceptable");
+
+        // Test just below 0.5
+        score.overall = 0.4999;
+        assert_eq!(score.quality_level(), "Poor");
+
+        // Test exact boundary at 0.25
+        score.overall = 0.25;
+        assert_eq!(score.quality_level(), "Poor");
+
+        // Test just below 0.25
+        score.overall = 0.2499;
+        assert_eq!(score.quality_level(), "Very Poor");
+
+        // Test zero
+        score.overall = 0.0;
+        assert_eq!(score.quality_level(), "Very Poor");
+    }
 }

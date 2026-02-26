@@ -1120,4 +1120,272 @@ mod tests {
         assert!(fallback.issues.is_empty());
         assert!(fallback.explanation.contains("Failed to parse"));
     }
+
+    #[test]
+    fn test_glossary_new_empty() {
+        let glossary = Glossary::new();
+        assert!(glossary.entries.is_empty());
+        assert!(glossary.source_language.is_none());
+        assert!(glossary.target_language.is_none());
+    }
+
+    #[test]
+    fn test_glossary_add_with_context() {
+        let mut glossary = Glossary::new();
+        glossary.add_with_context("engine", "motor", "mechanical component");
+
+        assert_eq!(glossary.entries.len(), 1);
+        let entry = &glossary.entries[0];
+        assert_eq!(entry.source, "engine");
+        assert_eq!(entry.target, "motor");
+        assert_eq!(entry.context, Some("mechanical component".to_string()));
+        assert!(!entry.case_sensitive);
+    }
+
+    #[test]
+    fn test_glossary_lookup_case_sensitivity() {
+        let mut glossary = Glossary::new();
+        glossary.add("Ship", "Nave");
+
+        // Case-insensitive by default: "ship" should match "Ship"
+        assert!(glossary.lookup("ship").is_some());
+        assert!(glossary.lookup("SHIP").is_some());
+        assert!(glossary.lookup("Ship").is_some());
+
+        // Now add a case-sensitive entry
+        glossary.entries.push(GlossaryEntry {
+            source: "API".to_string(),
+            target: "API".to_string(),
+            context: None,
+            case_sensitive: true,
+        });
+
+        // Case-sensitive: exact match only
+        assert!(glossary.lookup("API").is_some());
+        assert!(glossary.lookup("api").is_none()); // won't match case-sensitive "API"
+    }
+
+    #[test]
+    fn test_glossary_json_roundtrip() {
+        let mut glossary = Glossary::new();
+        glossary.source_language = Some("en".to_string());
+        glossary.target_language = Some("es".to_string());
+        glossary.add("computer", "ordenador");
+        glossary.add_with_context("mouse", "raton", "input device");
+
+        let json = glossary.to_json();
+        let restored = Glossary::from_json(&json).unwrap();
+
+        assert_eq!(restored.entries.len(), 2);
+        assert_eq!(restored.source_language, Some("en".to_string()));
+        assert_eq!(restored.target_language, Some("es".to_string()));
+        assert_eq!(restored.entries[0].source, "computer");
+        assert_eq!(restored.entries[0].target, "ordenador");
+        assert_eq!(restored.entries[1].source, "mouse");
+        assert_eq!(restored.entries[1].context, Some("input device".to_string()));
+    }
+
+    #[test]
+    fn test_config_default() {
+        let config = TranslationAnalysisConfig::default();
+
+        assert!(config.glossary.entries.is_empty());
+        assert!(config.min_severity > 0.0 && config.min_severity < 1.0);
+        assert!(config.check_numbers);
+        assert!(config.check_glossary);
+        assert!(config.check_completeness);
+        assert!(!config.check_register);
+        assert!(!config.enable_llm_analysis);
+        assert_eq!(config.max_segments, 0);
+    }
+
+    #[test]
+    fn test_analyzer_empty_texts() {
+        let analyzer = TranslationAnalyzer::new(TranslationAnalysisConfig::default());
+        let result = analyzer.analyze("", "");
+
+        // Empty texts should produce no alignments and no issues
+        assert_eq!(result.segments_analyzed, 0);
+        assert!(result.issues.is_empty());
+        assert_eq!(result.stats.source_words, 0);
+        assert_eq!(result.stats.target_words, 0);
+        // Quality score for 0 segments defaults to 1.0
+        assert_eq!(result.quality_score, 1.0);
+    }
+
+    #[test]
+    fn test_align_paragraphs_equal() {
+        let analyzer = TranslationAnalyzer::new(TranslationAnalysisConfig::default());
+
+        let source = "First paragraph.\n\nSecond paragraph.\n\nThird paragraph.";
+        let target = "Primer parrafo.\n\nSegundo parrafo.\n\nTercer parrafo.";
+
+        let alignments = analyzer.align_paragraphs(source, target);
+
+        assert_eq!(alignments.len(), 3);
+        for (i, seg) in alignments.iter().enumerate() {
+            assert_eq!(seg.index, i);
+            assert!(!seg.source.is_empty());
+            assert!(!seg.target.is_empty());
+            assert!(seg.confidence > 0.0);
+        }
+    }
+
+    #[test]
+    fn test_align_paragraphs_unequal() {
+        let analyzer = TranslationAnalyzer::new(TranslationAnalysisConfig::default());
+
+        let source = "Only one paragraph.";
+        let target = "Primer parrafo.\n\nSegundo parrafo.\n\nTercer parrafo.";
+
+        let alignments = analyzer.align_paragraphs(source, target);
+
+        // Should produce 3 segments (max of source and target paragraph counts)
+        assert_eq!(alignments.len(), 3);
+        // First segment has both source and target
+        assert!(!alignments[0].source.is_empty());
+        assert!(!alignments[0].target.is_empty());
+        // Extra target segments have empty source
+        assert!(alignments[1].source.is_empty());
+        assert!(alignments[2].source.is_empty());
+        // Empty source means confidence = 0.0
+        assert_eq!(alignments[1].confidence, 0.0);
+    }
+
+    #[test]
+    fn test_check_numbers_match() {
+        let mut config = TranslationAnalysisConfig::default();
+        config.check_numbers = true;
+        config.check_glossary = false;
+        config.check_completeness = false;
+
+        let analyzer = TranslationAnalyzer::new(config);
+
+        let source = "There are 42 items at 99.9% quality.";
+        let target = "Hay 42 elementos con 99.9% de calidad.";
+
+        let result = analyzer.analyze(source, target);
+
+        let number_issues: Vec<_> = result
+            .issues
+            .iter()
+            .filter(|i| i.issue_type == TranslationIssueType::NumberMismatch)
+            .collect();
+        assert!(
+            number_issues.is_empty(),
+            "Same numbers should not produce mismatch issues"
+        );
+    }
+
+    #[test]
+    fn test_check_numbers_different_formats() {
+        let mut config = TranslationAnalysisConfig::default();
+        config.check_numbers = true;
+        config.check_glossary = false;
+        config.check_completeness = false;
+
+        let analyzer = TranslationAnalyzer::new(config);
+
+        // "1,000" is extracted differently from "1000" by the regex:
+        // The regex \d+(?:\.\d+)?%? will extract "1" and "000" from "1,000"
+        // but "1000" from "1000", so this should show a mismatch.
+        let source = "The population is 1,000 people.";
+        let target = "La poblacion es de 1000 personas.";
+
+        let result = analyzer.analyze(source, target);
+
+        let number_issues: Vec<_> = result
+            .issues
+            .iter()
+            .filter(|i| i.issue_type == TranslationIssueType::NumberMismatch)
+            .collect();
+        // Different number representations cause mismatch detection
+        assert!(
+            !number_issues.is_empty(),
+            "Different number formats (1,000 vs 1000) should be flagged"
+        );
+    }
+
+    #[test]
+    fn test_check_completeness_equal_length() {
+        let mut config = TranslationAnalysisConfig::default();
+        config.check_numbers = false;
+        config.check_glossary = false;
+        config.check_completeness = true;
+
+        let analyzer = TranslationAnalyzer::new(config);
+
+        let source = "The quick brown fox jumps over the lazy dog near the river bank.";
+        let target = "El rapido zorro marron salta sobre el perro perezoso cerca del banco del rio.";
+
+        let result = analyzer.analyze(source, target);
+
+        let completeness_issues: Vec<_> = result
+            .issues
+            .iter()
+            .filter(|i| {
+                i.issue_type == TranslationIssueType::MissingContent
+                    || i.issue_type == TranslationIssueType::AddedContent
+            })
+            .collect();
+        assert!(
+            completeness_issues.is_empty(),
+            "Similar-length texts should not flag completeness issues, got {:?}",
+            completeness_issues
+        );
+    }
+
+    #[test]
+    fn test_detect_language_spanish() {
+        let analyzer = TranslationAnalyzer::new(TranslationAnalysisConfig::default());
+
+        let text = "Los ninos que juegan en las calles del pueblo por las tardes son muy felices.";
+        let lang = analyzer.detect_language(text);
+        assert_eq!(lang, Some("es".to_string()));
+    }
+
+    #[test]
+    fn test_detect_language_english() {
+        let analyzer = TranslationAnalyzer::new(TranslationAnalysisConfig::default());
+
+        let text = "The children that have been playing with the dog are not going to school today.";
+        let lang = analyzer.detect_language(text);
+        assert_eq!(lang, Some("en".to_string()));
+    }
+
+    #[test]
+    fn test_detect_language_chinese() {
+        let analyzer = TranslationAnalyzer::new(TranslationAnalysisConfig::default());
+
+        let text = "今天天气很好我们一起去公园散步吧";
+        let lang = analyzer.detect_language(text);
+        assert_eq!(lang, Some("zh".to_string()));
+    }
+
+    #[test]
+    fn test_issue_type_variants() {
+        // Verify all 8 TranslationIssueType variants exist and can be compared
+        let variants = vec![
+            TranslationIssueType::MissingContent,
+            TranslationIssueType::AddedContent,
+            TranslationIssueType::InconsistentTerminology,
+            TranslationIssueType::NumberMismatch,
+            TranslationIssueType::RegisterMismatch,
+            TranslationIssueType::Untranslated,
+            TranslationIssueType::FormattingDifference,
+            TranslationIssueType::PotentialMistranslation,
+        ];
+
+        assert_eq!(variants.len(), 8);
+        // Each variant should be distinct
+        for (i, v1) in variants.iter().enumerate() {
+            for (j, v2) in variants.iter().enumerate() {
+                if i == j {
+                    assert_eq!(v1, v2);
+                } else {
+                    assert_ne!(v1, v2);
+                }
+            }
+        }
+    }
 }

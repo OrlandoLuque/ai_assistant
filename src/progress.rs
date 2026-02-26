@@ -676,4 +676,182 @@ mod tests {
         assert!(p.remaining_ms.is_some());
         assert!(p.remaining_human().is_some());
     }
+
+    #[test]
+    fn test_progress_indeterminate() {
+        let p = Progress::indeterminate("loading");
+
+        assert_eq!(p.operation, "loading");
+        assert_eq!(p.current, 0);
+        assert_eq!(p.total, 0);
+        assert!(!p.is_complete);
+        assert!(!p.is_error);
+        assert_eq!(p.percentage(), 0);
+    }
+
+    #[test]
+    fn test_progress_complete_state() {
+        let p = Progress::complete("indexing");
+
+        assert_eq!(p.operation, "indexing");
+        assert!(p.is_complete);
+        assert!(!p.is_error);
+        assert_eq!(p.percentage(), 100);
+        assert_eq!(p.current, 1);
+        assert_eq!(p.total, 1);
+    }
+
+    #[test]
+    fn test_progress_error_state() {
+        let p = Progress::error("download", "connection refused");
+
+        assert_eq!(p.operation, "download");
+        assert!(p.is_error);
+        assert!(!p.is_complete);
+        assert_eq!(p.error_message, Some("connection refused".to_string()));
+    }
+
+    #[test]
+    fn test_progress_with_message_and_detail() {
+        let p = Progress::new("indexing", 5, 10)
+            .with_message("Processing files")
+            .with_detail("file_42.txt");
+
+        assert_eq!(p.message, "Processing files");
+        assert_eq!(p.detail, Some("file_42.txt".to_string()));
+        assert_eq!(p.percentage(), 50);
+    }
+
+    #[test]
+    fn test_progress_with_bytes() {
+        let p = Progress::new("upload", 0, 0).with_bytes(1536, 4096);
+
+        assert_eq!(p.bytes_processed, Some(1536));
+        assert_eq!(p.bytes_total, Some(4096));
+
+        let human = p.bytes_human().unwrap();
+        assert!(human.contains("KB"), "Expected KB format, got '{}'", human);
+
+        // Test MB range
+        let p2 = Progress::new("upload", 0, 0).with_bytes(5_242_880, 10_485_760);
+        let human2 = p2.bytes_human().unwrap();
+        assert!(human2.contains("MB"), "Expected MB format, got '{}'", human2);
+
+        // Test bytes range
+        let p3 = Progress::new("upload", 0, 0).with_bytes(512, 1024);
+        let human3 = p3.bytes_human().unwrap();
+        assert!(human3.contains("B"), "Expected B format, got '{}'", human3);
+
+        // Test GB range
+        let p4 = Progress::new("upload", 0, 0).with_bytes(2_147_483_648, 4_294_967_296);
+        let human4 = p4.bytes_human().unwrap();
+        assert!(human4.contains("GB"), "Expected GB format, got '{}'", human4);
+    }
+
+    #[test]
+    fn test_progress_elapsed_human() {
+        // Under a minute
+        let mut p = Progress::new("test", 0, 0);
+        p.elapsed_ms = 45_000; // 45 seconds
+        assert_eq!(p.elapsed_human(), "45s");
+
+        // Minutes
+        p.elapsed_ms = 125_000; // 2m 5s
+        assert_eq!(p.elapsed_human(), "2m 5s");
+
+        // Hours
+        p.elapsed_ms = 3_723_000; // 1h 2m
+        assert_eq!(p.elapsed_human(), "1h 2m");
+    }
+
+    #[test]
+    fn test_multi_progress_tracker() {
+        let tracker = MultiProgressTracker::new(None);
+
+        let handle1 = tracker.create_reporter("op1", 10);
+        let handle2 = tracker.create_reporter("op2", 20);
+
+        handle1.update(5, "halfway");
+        handle2.update(10, "halfway");
+
+        let all = tracker.get_all();
+        assert_eq!(all.len(), 2);
+
+        let overall = tracker.overall_progress();
+        assert_eq!(overall.current, 15); // 5 + 10
+        assert_eq!(overall.total, 30); // 10 + 20
+        assert!(!overall.is_complete);
+
+        // Complete both
+        handle1.complete("done");
+        handle2.complete("done");
+
+        let overall_after = tracker.overall_progress();
+        assert!(overall_after.is_complete);
+    }
+
+    #[test]
+    fn test_progress_callback_builder() {
+        let started = Arc::new(AtomicUsize::new(0));
+        let progressed = Arc::new(AtomicUsize::new(0));
+        let completed = Arc::new(AtomicUsize::new(0));
+        let errored = Arc::new(AtomicUsize::new(0));
+
+        let s = Arc::clone(&started);
+        let p = Arc::clone(&progressed);
+        let c = Arc::clone(&completed);
+        let e = Arc::clone(&errored);
+
+        let callback = ProgressCallbackBuilder::new()
+            .on_start(move |_op| {
+                s.fetch_add(1, Ordering::SeqCst);
+            })
+            .on_progress(move |_pct, _msg| {
+                p.fetch_add(1, Ordering::SeqCst);
+            })
+            .on_complete(move |_op, _dur| {
+                c.fetch_add(1, Ordering::SeqCst);
+            })
+            .on_error(move |_op, _err| {
+                e.fetch_add(1, Ordering::SeqCst);
+            })
+            .build();
+
+        // Trigger start (current=0, total>0)
+        callback(Progress::new("test", 0, 10));
+        assert_eq!(started.load(Ordering::SeqCst), 1);
+
+        // Trigger progress (current > 0, not complete, not error)
+        callback(Progress::new("test", 5, 10).with_message("half"));
+        assert_eq!(progressed.load(Ordering::SeqCst), 1);
+
+        // Trigger complete
+        callback(Progress::complete("test"));
+        assert_eq!(completed.load(Ordering::SeqCst), 1);
+
+        // Trigger error
+        callback(Progress::error("test", "something failed"));
+        assert_eq!(errored.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn test_logging_callback() {
+        // logging_callback should not panic when called
+        let cb = logging_callback("TEST");
+        cb(Progress::new("op", 5, 10).with_message("progress"));
+        cb(Progress::complete("op"));
+        // Error path uses log::error! which won't panic even without a logger
+        cb(Progress::error("op", "test error"));
+    }
+
+    #[test]
+    fn test_silent_callback() {
+        // silent_callback should not panic for any input
+        let cb = silent_callback();
+        cb(Progress::new("op", 0, 10));
+        cb(Progress::new("op", 5, 10).with_message("half"));
+        cb(Progress::complete("op").with_message("done"));
+        cb(Progress::error("op", "failure"));
+        cb(Progress::indeterminate("unknown"));
+    }
 }
