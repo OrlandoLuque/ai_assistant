@@ -1,8 +1,10 @@
-// events.rs — Event system for lifecycle hooks and monitoring
-//
-// Provides an event bus with typed events for all major AiAssistant operations.
-// Handlers implement the `EventHandler` trait and receive events synchronously
-// on the calling thread.
+//! Pub/sub event system for inter-module communication.
+//!
+//! Provides [`EventBus`], [`EventHandler`], [`EventFilter`], and [`AiEvent`] for
+//! typed lifecycle hooks and monitoring across all major `AiAssistant` operations.
+//! Handlers receive events synchronously on the calling thread.
+//!
+//! Part of the core feature set.
 
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};

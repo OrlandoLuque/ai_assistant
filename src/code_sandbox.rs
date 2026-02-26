@@ -1,10 +1,10 @@
-// code_sandbox.rs — Sandboxed code execution for AI agents.
-//
-// Provides isolated code execution environments for Python, JavaScript, and Bash.
-// Features: temp directory isolation, timeout enforcement, output capture,
-// environment sanitization, and dangerous command detection.
-//
-// Requires the `code-sandbox` feature flag.
+//! Sandboxed code execution environment for safe AI-generated code evaluation.
+//!
+//! Provides [`CodeSandbox`], [`SandboxConfig`], and [`ExecutionResult`] for running
+//! Python, JavaScript, and Bash in isolated environments with temp directory
+//! isolation, timeout enforcement, output capture, and dangerous command detection.
+//!
+//! Requires the `code-sandbox` feature flag.
 
 use std::collections::HashMap;
 use std::path::PathBuf;

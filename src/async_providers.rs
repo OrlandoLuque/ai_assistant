@@ -1,11 +1,10 @@
-// async_providers.rs — Async HTTP client and provider functions using reqwest + tokio.
-//
-// Gated behind `#[cfg(feature = "async-runtime")]`. Provides:
-// - `AsyncHttpClient` trait mirroring `HttpClient` but async
-// - `ReqwestClient` implementation using reqwest
-// - Async model fetching for all providers
-// - Async generation (non-streaming and streaming)
-// - Blocking bridge for calling async code from sync contexts
+//! Async HTTP provider implementations using reqwest and tokio.
+//!
+//! Provides [`ReqwestClient`] (implementing the [`AsyncHttpClient`] trait), async model
+//! fetching for all providers, async generation (streaming and non-streaming), and a
+//! blocking bridge for calling async code from synchronous contexts.
+//!
+//! Gated behind the `async-runtime` feature flag.
 
 use anyhow::{Context, Result};
 use serde_json::Value as JsonValue;

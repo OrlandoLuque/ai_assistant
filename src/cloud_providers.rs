@@ -1,12 +1,10 @@
-// cloud_providers.rs — Native cloud provider support for OpenAI and Anthropic APIs.
-//
-// Provides direct API integration with cloud LLM providers, requiring API keys.
-// Keys are resolved from AiConfig.api_key first, then environment variables
-// (OPENAI_API_KEY, ANTHROPIC_API_KEY).
-//
-// OpenAI uses standard /v1/chat/completions endpoint.
-// Anthropic uses /v1/messages with its own format (x-api-key header, different
-// message structure, system prompt as top-level parameter).
+//! Cloud-based LLM provider integrations (OpenAI, Anthropic, and others).
+//!
+//! Provides [`CloudProviderConfig`] and [`CloudProviderType`] for direct API
+//! integration with cloud LLM services. API keys are resolved from
+//! `AiConfig.api_key` first, then from environment variables.
+//!
+//! Gated behind the `cloud-providers` feature flag.
 
 use crate::config::{AiConfig, AiProvider};
 use crate::messages::ChatMessage;
