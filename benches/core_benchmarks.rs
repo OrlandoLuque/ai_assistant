@@ -16,7 +16,18 @@ use ai_assistant::{
     parse_tool_calls,
     PiiDetector, PiiConfig,
     JsonSchema, SchemaProperty,
+    // v15 benchmark imports
+    NeuralCrossEncoderReranker, RerankerConfig, RerankerPipeline, ScoredDocument,
+    SemanticCache, CacheConfig,
+    FullExport, ChatSession, UserPreferences, AiConfig,
+    ContextComposer, ContextSection,
 };
+
+#[cfg(feature = "constrained-decoding")]
+use ai_assistant::SchemaToGrammar;
+
+#[cfg(feature = "multi-agent")]
+use ai_assistant::{TaskDecomposer, DecompositionStrategy};
 
 fn bench_intent_classification(c: &mut Criterion) {
     let classifier = IntentClassifier::new();
@@ -612,6 +623,196 @@ fn bench_rag_index_document(c: &mut Criterion) {
     });
 }
 
+// ---------------------------------------------------------------------------
+// v15 benchmarks (29-34): constrained decoding, reranker, semantic cache,
+//                          persistence, multi-agent decomposition, context composer
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "constrained-decoding")]
+fn bench_constrained_decoding_grammar(c: &mut Criterion) {
+    // A JSON schema describing a simple user object
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "name": { "type": "string" },
+            "age": { "type": "integer" },
+            "email": { "type": "string" },
+            "active": { "type": "boolean" },
+            "tags": {
+                "type": "array",
+                "items": { "type": "string" }
+            }
+        },
+        "required": ["name", "age"]
+    });
+
+    // Compile the schema to a grammar once (validates the compilation itself).
+    let grammar = SchemaToGrammar::compile(&schema).expect("compile schema to grammar");
+
+    c.bench_function("constrained_decoding_grammar_compile", |b| {
+        b.iter(|| {
+            let _ = SchemaToGrammar::compile(&schema);
+        });
+    });
+
+    // Also benchmark GBNF serialisation of the compiled grammar
+    c.bench_function("constrained_decoding_grammar_to_gbnf", |b| {
+        b.iter(|| {
+            let _ = grammar.to_gbnf();
+        });
+    });
+}
+
+fn bench_reranker_score(c: &mut Criterion) {
+    let reranker = NeuralCrossEncoderReranker::default_scorer();
+    let pipeline = RerankerPipeline::new()
+        .add_stage(Box::new(reranker));
+    let config = RerankerConfig {
+        top_k: 5,
+        diversity_lambda: 0.5,
+        min_score: 0.0,
+    };
+
+    let docs: Vec<ScoredDocument> = vec![
+        ScoredDocument::new("Rust ownership system prevents memory leaks at compile time", 0.9, 0),
+        ScoredDocument::new("Python garbage collector handles memory management automatically", 0.85, 1),
+        ScoredDocument::new("The borrow checker enforces strict aliasing rules in Rust", 0.8, 2),
+        ScoredDocument::new("JavaScript uses a mark-and-sweep garbage collector for memory", 0.75, 3),
+        ScoredDocument::new("Rust traits are similar to interfaces in other languages", 0.7, 4),
+        ScoredDocument::new("Go goroutines provide lightweight concurrency primitives", 0.65, 5),
+        ScoredDocument::new("Async/await in Rust compiles to state machines for zero-cost futures", 0.6, 6),
+        ScoredDocument::new("C++ RAII pattern ensures resources are released when objects go out of scope", 0.55, 7),
+        ScoredDocument::new("Rust lifetimes ensure references never outlive the data they point to", 0.5, 8),
+        ScoredDocument::new("Java virtual machine performs just-in-time compilation for performance", 0.45, 9),
+    ];
+
+    c.bench_function("reranker_score_10_docs", |b| {
+        b.iter(|| {
+            let _ = pipeline.run("Rust memory safety and ownership", docs.clone(), &config);
+        });
+    });
+}
+
+fn bench_semantic_cache_lookup(c: &mut Criterion) {
+    let config = CacheConfig::default();
+    let mut cache = SemanticCache::new(config);
+
+    // Pre-populate the cache with 50 entries, each with a synthetic embedding
+    for i in 0..50 {
+        let query = format!("What is the meaning of concept number {} in machine learning?", i);
+        let model = "test-model";
+        let response = format!("Concept {} refers to an important topic in ML involving neural networks and transformers.", i);
+        let embedding: Vec<f32> = (0..128)
+            .map(|d| ((i * 128 + d) as f32 * 0.01).sin())
+            .collect();
+        cache.put_with_embedding(&query, model, &response, 50, embedding, Some("factual"));
+    }
+
+    // Query embedding that is similar to entry 25
+    let query_embedding: Vec<f32> = (0..128)
+        .map(|d| ((25 * 128 + d) as f32 * 0.01).sin() + 0.001)
+        .collect();
+
+    c.bench_function("semantic_cache_lookup_50_entries", |b| {
+        b.iter(|| {
+            let _ = cache.get_semantic(
+                "What is concept 25 in deep learning?",
+                "test-model",
+                &query_embedding,
+            );
+        });
+    });
+}
+
+fn bench_persistence_roundtrip(c: &mut Criterion) {
+    // Build a FullExport with a handful of sessions
+    let sessions: Vec<ChatSession> = (0..5)
+        .map(|i| {
+            let mut session = ChatSession::new(&format!("Benchmark Session {}", i));
+            for j in 0..20 {
+                let msg = if j % 2 == 0 {
+                    ChatMessage::user(&format!("User message {} in session {}", j, i))
+                } else {
+                    ChatMessage::assistant(&format!("Assistant response {} in session {} with enough content to be realistic.", j, i))
+                };
+                session.messages.push(msg);
+            }
+            session
+        })
+        .collect();
+
+    let preferences = UserPreferences::default();
+    let config = AiConfig::default();
+    let export = FullExport::new(sessions, preferences, config);
+
+    c.bench_function("persistence_roundtrip_5_sessions", |b| {
+        b.iter(|| {
+            let json = serde_json::to_string(&export).expect("serialize");
+            let _: FullExport = serde_json::from_str(&json).expect("deserialize");
+        });
+    });
+}
+
+#[cfg(feature = "multi-agent")]
+fn bench_multi_agent_decompose(c: &mut Criterion) {
+    let decomposer = TaskDecomposer::new(DecompositionStrategy::Functional);
+
+    let task_description = "Build a web application with user authentication, a REST API \
+        for data management, a PostgreSQL database layer, a React frontend with dashboard \
+        components, comprehensive unit and integration tests, CI/CD pipeline configuration, \
+        and deploy to a Kubernetes cluster with monitoring and alerting.";
+
+    c.bench_function("multi_agent_decompose_complex_task", |b| {
+        b.iter(|| {
+            let _ = decomposer.decompose(task_description);
+        });
+    });
+}
+
+fn bench_context_composer_build(c: &mut Criterion) {
+    let composer = ContextComposer::new(ContextComposer::default_config());
+
+    // Prepare content for each section
+    let system_prompt = "You are a helpful coding assistant specializing in Rust \
+        systems programming. Follow best practices for safety and performance.".to_string();
+
+    let rag_chunks = "## Retrieved Knowledge\n\
+        Chunk 1: Rust ownership ensures each value has exactly one owner at a time.\n\
+        Chunk 2: The borrow checker prevents data races at compile time.\n\
+        Chunk 3: Lifetimes annotate how long references remain valid.\n\
+        Chunk 4: Smart pointers like Box, Rc, and Arc provide heap allocation.\n\
+        Chunk 5: Traits enable polymorphism through static and dynamic dispatch.".to_string();
+
+    let conversation = "User: How does Rust handle memory safety?\n\
+        Assistant: Rust uses ownership, borrowing, and lifetimes to guarantee memory safety.\n\
+        User: Can you explain the borrow checker in more detail?\n\
+        Assistant: The borrow checker enforces rules: one mutable reference or many immutable.\n\
+        User: What about concurrent access to shared data?\n\
+        Assistant: Rust uses Send and Sync traits plus Arc<Mutex<T>> for safe concurrency.\n\
+        User: How do lifetimes work with structs?\n\
+        Assistant: Structs holding references need lifetime parameters.\n\
+        User: Show me an example of a lifetime annotation.".to_string();
+
+    let memory_context = "User prefers concise code examples. \
+        User is experienced with C++ and learning Rust. \
+        Previous topics: async/await, error handling, trait objects.".to_string();
+
+    let user_prompt = "Explain how to implement a thread-safe cache in Rust \
+        using Arc and RwLock, with lifetime considerations.".to_string();
+
+    c.bench_function("context_composer_build_5_sections", |b| {
+        b.iter(|| {
+            let mut sections = HashMap::new();
+            sections.insert(ContextSection::SystemPrompt, system_prompt.clone());
+            sections.insert(ContextSection::RagChunks, rag_chunks.clone());
+            sections.insert(ContextSection::Conversation, conversation.clone());
+            sections.insert(ContextSection::MemoryContext, memory_context.clone());
+            sections.insert(ContextSection::UserPrompt, user_prompt.clone());
+            let _ = composer.compose(sections);
+        });
+    });
+}
+
 criterion_group!(
     benches,
     // Original 6
@@ -645,5 +846,33 @@ criterion_group!(
     bench_json_schema_validation,
     bench_embedding_batch,
     bench_rag_index_document,
+    // v15 benchmarks (29-34)
+    bench_reranker_score,
+    bench_semantic_cache_lookup,
+    bench_persistence_roundtrip,
+    bench_context_composer_build,
 );
+
+#[cfg(feature = "constrained-decoding")]
+criterion_group!(
+    constrained_decoding_benches,
+    bench_constrained_decoding_grammar,
+);
+
+#[cfg(feature = "multi-agent")]
+criterion_group!(
+    multi_agent_benches,
+    bench_multi_agent_decompose,
+);
+
+#[cfg(all(feature = "constrained-decoding", feature = "multi-agent"))]
+criterion_main!(benches, constrained_decoding_benches, multi_agent_benches);
+
+#[cfg(all(feature = "constrained-decoding", not(feature = "multi-agent")))]
+criterion_main!(benches, constrained_decoding_benches);
+
+#[cfg(all(not(feature = "constrained-decoding"), feature = "multi-agent"))]
+criterion_main!(benches, multi_agent_benches);
+
+#[cfg(all(not(feature = "constrained-decoding"), not(feature = "multi-agent")))]
 criterion_main!(benches);
