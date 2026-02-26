@@ -6,16 +6,16 @@ The project has two testing layers:
 
 | Layer | Tests | Run Command |
 |-------|-------|-------------|
-| Unit tests (`#[test]`) | 5509 | `cargo test --lib --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools"` |
+| Unit tests (`#[test]`) | 5603 | `cargo test --lib --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools"` |
 | Integration tests | 38 | `cargo test --test integration_tests --features full` |
 | Test harness (CLI) | ~436 | `cargo run --bin ai_test_harness -- --all` (sin P2P) |
 | Distributed networking tests | 115 | `cargo test --features "full,distributed-network"` |
 | P2P tests | 32 | `cargo test --features "full,p2p" --lib -- p2p::` |
 | Autonomous agent tests | 255 | `cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents"` |
 | Test harness P2P categories | 16 | `cargo run --bin ai_test_harness --features "full,p2p" -- --category=p2p_nat` |
-| Benchmarks | 28 | `cargo bench --bench core_benchmarks --features full` |
+| Benchmarks | 34 | `cargo bench --bench core_benchmarks --features full` |
 
-**Total: 5,509 tests** (verified with `cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools" --lib`)
+**Total: 5,603 tests** (verified with `cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools" --lib`)
 
 ## Quick Start
 
@@ -337,3 +337,4 @@ The harness exits with code 1 if any test fails, making it suitable for CI pipel
 | v12 | 5,350 | +194 | 2026-02-25 |
 | v13 | 5,390 | +40 | 2026-02-25 |
 | v14 | 5,509 | +119 | 2026-02-26 |
+| v15 | 5,603 | +94 | 2026-02-26 |
