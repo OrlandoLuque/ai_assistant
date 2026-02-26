@@ -231,6 +231,15 @@ impl IntegrityChecker {
         }
     }
 
+    /// Calculate SHA256 hash of a file (used in release builds only)
+    #[allow(dead_code)]
+    fn calculate_sha256(&self, path: &Path) -> io::Result<String> {
+        let mut file = File::open(path)?;
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer)?;
+        Ok(sha256_hex(&buffer))
+    }
+
     /// Verify and abort if failed (for use in main())
     pub fn verify_or_abort(&self) {
         let result = self.verify();

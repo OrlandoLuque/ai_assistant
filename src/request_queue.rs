@@ -1,8 +1,9 @@
-// request_queue.rs — Priority request queue for multi-threaded AI assistant usage
-//
-// Provides a thread-safe priority queue for managing concurrent AI generation
-// requests. Higher-priority requests (system commands, cancellations) are
-// processed before normal user messages or background tasks.
+//! Priority-based request queuing with rate limiting and backpressure.
+//!
+//! Provides [`RequestQueue`], [`QueueConfig`], and [`PriorityRequest`] for
+//! thread-safe management of concurrent AI generation requests. Higher-priority
+//! requests (system commands, cancellations) are processed before normal user
+//! messages or background tasks.
 
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;

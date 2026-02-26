@@ -1,10 +1,10 @@
-// shared_folder.rs — Shared folder abstraction for host/container file sharing.
-//
-// Provides a SharedFolder that wraps a local directory which can be
-// bind-mounted into Docker containers. Supports cloud sync via the
-// CloudStorage trait from cloud_connectors.
-//
-// Feature-gated behind `containers` (gate applied in lib.rs, not here).
+//! Shared folder monitoring and synchronization for collaborative AI sessions.
+//!
+//! Provides [`SharedFolder`], [`FolderWatcher`], and [`SharedFolderConfig`] for
+//! wrapping a local directory that can be bind-mounted into Docker containers,
+//! with optional cloud sync via the `CloudStorage` trait.
+//!
+//! Feature-gated behind the `containers` feature flag (gate applied in `lib.rs`).
 
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};

@@ -1,7 +1,10 @@
-// aws_auth.rs — AWS Signature V4 authentication and Bedrock provider.
-//
-// Implements AWS SigV4 request signing from scratch using hmac + sha2.
-// Used by the Bedrock provider for Claude-on-AWS and other foundation models.
+//! AWS Signature V4 authentication for Amazon Bedrock.
+//!
+//! Provides [`AwsSigV4`], [`AwsCredentials`], [`SignedRequest`], and [`BedrockRequest`]
+//! for signing HTTP requests using AWS SigV4 (via hmac + sha2), enabling access to
+//! Claude-on-AWS and other foundation models through Amazon Bedrock.
+//!
+//! Gated behind the `aws-bedrock` feature flag.
 
 #[cfg(feature = "aws-bedrock")]
 use hmac::{Hmac, Mac};
