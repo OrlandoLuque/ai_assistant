@@ -117,6 +117,7 @@ impl std::fmt::Debug for NodeIdentity {
 ///
 /// Uses a self-signed CA to issue node certificates. All nodes in a cluster
 /// share the same CA certificate to verify each other (mutual TLS).
+#[derive(Debug)]
 pub struct CertificateManager;
 
 impl CertificateManager {
@@ -507,6 +508,7 @@ impl JoinToken {
 /// 3. Server verifies the HMAC using its knowledge of the client's public key
 ///
 /// This proves the client possesses the private key without exposing it.
+#[derive(Debug)]
 pub struct ChallengeResponse;
 
 impl ChallengeResponse {

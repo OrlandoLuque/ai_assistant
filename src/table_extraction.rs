@@ -769,17 +769,6 @@ impl TableExtractor {
         cleaned.is_empty() && trimmed.contains('-')
     }
 
-    /// Detect headers from the first row of data if not already set.
-    #[allow(dead_code)]
-    fn detect_headers(&self, rows: &mut Vec<Vec<TableCell>>) -> Vec<String> {
-        if self.config.first_row_is_header && !rows.is_empty() {
-            let first_row = rows.remove(0);
-            first_row.into_iter().map(|c| c.content).collect()
-        } else {
-            Vec::new()
-        }
-    }
-
     /// Check if a line looks like a Markdown table row (contains pipes).
     fn is_markdown_table_row(&self, line: &str) -> bool {
         let trimmed = line.trim();

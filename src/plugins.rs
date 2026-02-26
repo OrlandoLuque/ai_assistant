@@ -185,8 +185,6 @@ pub struct PluginInfo {
 pub struct PluginManager {
     plugins: Vec<(PluginInfo, Box<dyn Plugin>)>,
     context: PluginContext,
-    #[allow(dead_code)]
-    event_handlers: HashMap<String, Vec<usize>>,
 }
 
 impl PluginManager {
@@ -195,7 +193,6 @@ impl PluginManager {
         Self {
             plugins: Vec::new(),
             context: PluginContext::new(),
-            event_handlers: HashMap::new(),
         }
     }
 
@@ -204,7 +201,6 @@ impl PluginManager {
         Self {
             plugins: Vec::new(),
             context,
-            event_handlers: HashMap::new(),
         }
     }
 

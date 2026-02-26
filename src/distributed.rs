@@ -821,7 +821,7 @@ pub type ReduceFn = Arc<dyn Fn(&str, Vec<Vec<u8>>) -> ReduceOutput + Send + Sync
 pub type CombineFn = Arc<dyn Fn(&str, Vec<Vec<u8>>) -> Vec<u8> + Send + Sync>;
 
 /// Configuration for a MapReduce job
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct MapReduceConfig {
     /// Number of mapper workers
     pub num_mappers: usize,
