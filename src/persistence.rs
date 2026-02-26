@@ -1303,4 +1303,358 @@ mod tests {
             "should_backup must return false when enabled=false"
         );
     }
+
+    // ========================================================================
+    // New tests: comprehensive public API coverage
+    // ========================================================================
+
+    #[test]
+    fn test_backup_config_default() {
+        let config = BackupConfig::default();
+        assert!(config.enabled, "backups should be enabled by default");
+        assert!(
+            config.max_backups > 0,
+            "max_backups should be positive"
+        );
+        assert!(
+            config.interval_hours > 0,
+            "interval_hours should be positive"
+        );
+        assert!(
+            !config.timestamp_format.is_empty(),
+            "timestamp_format must not be empty"
+        );
+    }
+
+    #[test]
+    fn test_backup_delete() {
+        let dir = tempdir().unwrap();
+        let config = BackupConfig {
+            backup_dir: dir.path().join("backups"),
+            compress: false,
+            ..Default::default()
+        };
+        let mut manager = BackupManager::new(config);
+
+        let db_path = dir.path().join("test.db");
+        fs::write(&db_path, b"deletable content").unwrap();
+
+        let backup = manager.create_backup(&db_path).unwrap();
+        assert!(backup.path.exists(), "backup file should exist after create");
+
+        manager.delete_backup(&backup.path).unwrap();
+        assert!(
+            !backup.path.exists(),
+            "backup file should not exist after delete"
+        );
+    }
+
+    #[test]
+    fn test_backup_total_size() {
+        let dir = tempdir().unwrap();
+        let config = BackupConfig {
+            backup_dir: dir.path().join("backups"),
+            max_backups: 10,
+            compress: false,
+            ..Default::default()
+        };
+        let mut manager = BackupManager::new(config);
+
+        let db_path = dir.path().join("test.db");
+        fs::write(&db_path, b"some database content here").unwrap();
+
+        let b1 = manager.create_backup(&db_path).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let b2 = manager.create_backup(&db_path).unwrap();
+
+        let total = manager.total_backup_size().unwrap();
+        assert_eq!(
+            total,
+            b1.size_bytes + b2.size_bytes,
+            "total_backup_size should be sum of individual sizes"
+        );
+    }
+
+    #[test]
+    fn test_compaction_config_default() {
+        let config = CompactionConfig::default();
+        assert!(config.enabled, "compaction should be enabled by default");
+        assert!(
+            config.fragmentation_threshold > 0.0,
+            "fragmentation_threshold should be positive"
+        );
+        assert!(
+            config.min_interval_hours > 0,
+            "min_interval_hours should be positive"
+        );
+    }
+
+    #[test]
+    fn test_should_compact_threshold() {
+        let config = CompactionConfig {
+            enabled: true,
+            fragmentation_threshold: 25.0,
+            ..Default::default()
+        };
+        let compactor = DatabaseCompactor::new(config);
+
+        assert!(
+            !compactor.should_compact(10.0),
+            "should_compact must be false when fragmentation is below threshold"
+        );
+        assert!(
+            compactor.should_compact(30.0),
+            "should_compact must be true when fragmentation exceeds threshold"
+        );
+        assert!(
+            compactor.should_compact(25.0),
+            "should_compact must be true when fragmentation equals threshold"
+        );
+    }
+
+    #[test]
+    fn test_should_compact_disabled() {
+        let config = CompactionConfig {
+            enabled: false,
+            fragmentation_threshold: 25.0,
+            ..Default::default()
+        };
+        let compactor = DatabaseCompactor::new(config);
+
+        assert!(
+            !compactor.should_compact(99.0),
+            "should_compact must return false when enabled=false"
+        );
+    }
+
+    #[test]
+    fn test_migration_config_default() {
+        let config = MigrationConfig::default();
+        assert!(
+            config.min_messages > 0,
+            "min_messages should be positive"
+        );
+        assert!(
+            config.max_age_days > 0,
+            "max_age_days should be positive"
+        );
+        assert!(
+            config.index_for_search,
+            "index_for_search should be true by default"
+        );
+    }
+
+    #[test]
+    fn test_session_migrator_new() {
+        let config = MigrationConfig::default();
+        let _migrator = SessionMigrator::new(config);
+        // Successfully created - no panic
+    }
+
+    #[test]
+    fn test_full_export_roundtrip() {
+        let dir = tempdir().unwrap();
+        let export_path = dir.path().join("export.json");
+
+        let sessions = vec![crate::session::ChatSession::new("test session")];
+        let preferences = crate::session::UserPreferences::default();
+        let config = crate::config::AiConfig::default();
+
+        let export = FullExport::new(sessions, preferences, config);
+        assert!(!export.version.is_empty(), "version must not be empty");
+
+        // Write and read back
+        export.to_file(&export_path).unwrap();
+        assert!(export_path.exists(), "export file should exist");
+
+        let imported = FullExport::from_file(&export_path).unwrap();
+        assert_eq!(imported.version, export.version);
+        assert_eq!(imported.sessions.len(), 1);
+        assert_eq!(imported.sessions[0].name, "test session");
+    }
+
+    #[test]
+    fn test_full_export_compressed_roundtrip() {
+        let dir = tempdir().unwrap();
+        let export_path = dir.path().join("export.json.gz");
+
+        let sessions = vec![crate::session::ChatSession::new("compressed test")];
+        let preferences = crate::session::UserPreferences::default();
+        let config = crate::config::AiConfig::default();
+
+        let export = FullExport::new(sessions, preferences, config);
+        export.to_compressed_file(&export_path).unwrap();
+        assert!(export_path.exists(), "compressed export file should exist");
+
+        let imported = FullExport::from_compressed_file(&export_path).unwrap();
+        assert_eq!(imported.version, export.version);
+        assert_eq!(imported.sessions.len(), 1);
+        assert_eq!(imported.sessions[0].name, "compressed test");
+    }
+
+    #[cfg(feature = "rag")]
+    #[test]
+    fn test_persistent_cache_open() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("cache.db");
+        let config = PersistentCacheConfig::default();
+
+        let _cache = PersistentCache::open(&db_path, config).unwrap();
+        assert!(db_path.exists(), "cache database file should exist after open");
+    }
+
+    #[cfg(feature = "rag")]
+    #[test]
+    fn test_cache_set_get() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("cache.db");
+        let config = PersistentCacheConfig {
+            auto_cleanup: false,
+            ..Default::default()
+        };
+
+        let mut cache = PersistentCache::open(&db_path, config).unwrap();
+        cache.set("key1", &"hello world".to_string()).unwrap();
+
+        let value: Option<String> = cache.get("key1").unwrap();
+        assert_eq!(value, Some("hello world".to_string()));
+
+        let missing: Option<String> = cache.get("nonexistent").unwrap();
+        assert_eq!(missing, None, "missing key should return None");
+    }
+
+    #[cfg(feature = "rag")]
+    #[test]
+    fn test_cache_delete() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("cache.db");
+        let config = PersistentCacheConfig {
+            auto_cleanup: false,
+            ..Default::default()
+        };
+
+        let mut cache = PersistentCache::open(&db_path, config).unwrap();
+        cache.set("to_delete", &42i32).unwrap();
+
+        let deleted = cache.delete("to_delete").unwrap();
+        assert!(deleted, "delete should return true for existing key");
+
+        let value: Option<i32> = cache.get("to_delete").unwrap();
+        assert_eq!(value, None, "deleted key should return None");
+
+        let deleted_again = cache.delete("to_delete").unwrap();
+        assert!(!deleted_again, "delete should return false for missing key");
+    }
+
+    #[cfg(feature = "rag")]
+    #[test]
+    fn test_cache_exists() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("cache.db");
+        let config = PersistentCacheConfig {
+            auto_cleanup: false,
+            ..Default::default()
+        };
+
+        let mut cache = PersistentCache::open(&db_path, config).unwrap();
+        assert!(!cache.exists("key1").unwrap(), "key should not exist before set");
+
+        cache.set("key1", &"value").unwrap();
+        assert!(cache.exists("key1").unwrap(), "key should exist after set");
+    }
+
+    #[cfg(feature = "rag")]
+    #[test]
+    fn test_cache_clear() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("cache.db");
+        let config = PersistentCacheConfig {
+            auto_cleanup: false,
+            ..Default::default()
+        };
+
+        let mut cache = PersistentCache::open(&db_path, config).unwrap();
+        cache.set("a", &1i32).unwrap();
+        cache.set("b", &2i32).unwrap();
+        cache.set("c", &3i32).unwrap();
+
+        let deleted_count = cache.clear().unwrap();
+        assert_eq!(deleted_count, 3, "clear should delete all 3 entries");
+
+        let keys = cache.list_keys().unwrap();
+        assert!(keys.is_empty(), "no keys should remain after clear");
+    }
+
+    #[cfg(feature = "rag")]
+    #[test]
+    fn test_cache_list_keys() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("cache.db");
+        let config = PersistentCacheConfig {
+            auto_cleanup: false,
+            ..Default::default()
+        };
+
+        let mut cache = PersistentCache::open(&db_path, config).unwrap();
+        cache.set("alpha", &"a").unwrap();
+        cache.set("beta", &"b").unwrap();
+        cache.set("gamma", &"c").unwrap();
+
+        let keys = cache.list_keys().unwrap();
+        assert_eq!(keys.len(), 3, "should have 3 keys");
+        // Keys are returned sorted alphabetically
+        assert_eq!(keys[0], "alpha");
+        assert_eq!(keys[1], "beta");
+        assert_eq!(keys[2], "gamma");
+    }
+
+    #[cfg(feature = "rag")]
+    #[test]
+    fn test_cache_stats() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("cache.db");
+        let config = PersistentCacheConfig {
+            auto_cleanup: false,
+            ..Default::default()
+        };
+
+        let mut cache = PersistentCache::open(&db_path, config).unwrap();
+        cache.set("x", &"value_x").unwrap();
+        cache.set("y", &"value_y").unwrap();
+
+        let stats = cache.get_stats().unwrap();
+        assert_eq!(stats.total_entries, 2, "should have 2 entries");
+        assert_eq!(stats.valid_entries, 2, "both entries should be valid");
+        assert_eq!(stats.expired_entries, 0, "no entries should be expired");
+        assert!(stats.total_size_bytes > 0, "total size should be positive");
+    }
+
+    #[cfg(feature = "rag")]
+    #[test]
+    fn test_cache_entry_info() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("cache.db");
+        let config = PersistentCacheConfig {
+            auto_cleanup: false,
+            ..Default::default()
+        };
+
+        let mut cache = PersistentCache::open(&db_path, config).unwrap();
+        cache.set("info_key", &"some value").unwrap();
+
+        let info = cache.get_entry_info("info_key").unwrap();
+        assert!(info.is_some(), "entry info should exist for a set key");
+
+        let info = info.unwrap();
+        assert_eq!(info.key, "info_key");
+        assert!(info.size_bytes > 0, "entry should have positive size");
+        assert!(!info.created_at.is_empty(), "created_at should be set");
+        assert!(!info.expires_at.is_empty(), "expires_at should be set");
+
+        let missing_info = cache.get_entry_info("no_such_key").unwrap();
+        assert!(
+            missing_info.is_none(),
+            "entry info should be None for missing key"
+        );
+    }
 }

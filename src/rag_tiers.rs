@@ -1529,4 +1529,345 @@ mod tests {
         assert!((stats.cache_hit_rate() - 0.3).abs() < 0.001);
         assert!((stats.avg_llm_calls_per_query() - 2.0).abs() < 0.001);
     }
+
+    // ========================================================================
+    // New tests: comprehensive public API coverage
+    // ========================================================================
+
+    #[test]
+    fn test_all_tier_display_names() {
+        for tier in RagTier::all_tiers() {
+            let name = tier.display_name();
+            assert!(
+                !name.is_empty(),
+                "display_name() must be non-empty for {:?}",
+                tier
+            );
+        }
+    }
+
+    #[test]
+    fn test_all_tier_descriptions() {
+        for tier in RagTier::all_tiers() {
+            let desc = tier.description();
+            assert!(
+                !desc.is_empty(),
+                "description() must be non-empty for {:?}",
+                tier
+            );
+        }
+    }
+
+    #[test]
+    fn test_tier_to_features_disabled() {
+        let features = RagTier::Disabled.to_features();
+        assert_eq!(
+            features.enabled_count(),
+            0,
+            "Disabled tier must have zero features enabled"
+        );
+    }
+
+    #[test]
+    fn test_tier_to_features_full() {
+        let features = RagTier::Full.to_features();
+        assert_eq!(
+            features.enabled_count(),
+            20,
+            "Full tier must have all 20 features enabled"
+        );
+        assert!(features.fts_search);
+        assert!(features.semantic_search);
+        assert!(features.agentic_mode);
+        assert!(features.graph_rag);
+        assert!(features.raptor);
+        assert!(features.multimodal);
+    }
+
+    #[test]
+    fn test_rag_features_none() {
+        let features = RagFeatures::none();
+        assert_eq!(
+            features.enabled_count(),
+            0,
+            "none() must produce zero enabled features"
+        );
+        assert!(!features.fts_search);
+        assert!(!features.semantic_search);
+        assert!(!features.reranking);
+    }
+
+    #[test]
+    fn test_rag_features_all() {
+        let features = RagFeatures::all();
+        assert_eq!(
+            features.enabled_count(),
+            20,
+            "all() must produce exactly 20 enabled features"
+        );
+    }
+
+    #[test]
+    fn test_rag_features_enabled_count() {
+        let mut features = RagFeatures::none();
+        assert_eq!(features.enabled_count(), 0);
+
+        features.fts_search = true;
+        features.reranking = true;
+        features.graph_rag = true;
+        assert_eq!(
+            features.enabled_count(),
+            3,
+            "Exactly 3 features were enabled"
+        );
+    }
+
+    #[test]
+    fn test_config_effective_features_custom() {
+        let mut custom_features = RagFeatures::none();
+        custom_features.fts_search = true;
+        custom_features.semantic_search = true;
+        custom_features.contextual_compression = true;
+
+        let config = RagConfig::with_features(custom_features.clone());
+        assert!(config.use_custom_features);
+        assert_eq!(config.tier, RagTier::Custom);
+
+        let effective = config.effective_features();
+        assert!(effective.fts_search);
+        assert!(effective.semantic_search);
+        assert!(effective.contextual_compression);
+        assert!(!effective.reranking, "reranking was not enabled in custom");
+        assert_eq!(effective.enabled_count(), 3);
+    }
+
+    #[test]
+    fn test_config_estimate_calls_varies_by_tier() {
+        let disabled = RagConfig::with_tier(RagTier::Disabled);
+        let fast = RagConfig::with_tier(RagTier::Fast);
+        let enhanced = RagConfig::with_tier(RagTier::Enhanced);
+        let thorough = RagConfig::with_tier(RagTier::Thorough);
+
+        let (d_min, d_max) = disabled.estimate_extra_calls();
+        let (f_min, f_max) = fast.estimate_extra_calls();
+        let (e_min, e_max) = enhanced.estimate_extra_calls();
+        let (t_min, _t_max) = thorough.estimate_extra_calls();
+
+        // Disabled and Fast should have zero calls
+        assert_eq!(d_min, 0);
+        assert_eq!(d_max, Some(0));
+        assert_eq!(f_min, 0);
+        assert_eq!(f_max, Some(0));
+
+        // Enhanced should have more than Fast
+        assert!(e_min > f_min, "Enhanced min calls should exceed Fast");
+        assert!(e_max.unwrap() > 0);
+
+        // Thorough should have more than Enhanced
+        assert!(
+            t_min > e_min,
+            "Thorough min calls should exceed Enhanced"
+        );
+    }
+
+    #[test]
+    fn test_config_check_requirements_basic() {
+        let fast_config = RagConfig::with_tier(RagTier::Fast);
+        let reqs = fast_config.check_requirements();
+        // Fast tier only uses FTS, no special requirements other than SQLite
+        assert!(
+            !reqs.contains(&RagRequirement::EmbeddingModel),
+            "Fast tier should not require embedding model"
+        );
+        assert!(
+            !reqs.contains(&RagRequirement::GraphDatabase),
+            "Fast tier should not require graph database"
+        );
+    }
+
+    #[test]
+    fn test_config_check_requirements_graph() {
+        let graph_config = RagConfig::with_tier(RagTier::Graph);
+        let reqs = graph_config.check_requirements();
+        assert!(
+            reqs.contains(&RagRequirement::GraphDatabase),
+            "Graph tier must require GraphDatabase"
+        );
+        assert!(
+            reqs.contains(&RagRequirement::EmbeddingModel),
+            "Graph tier must require EmbeddingModel (has semantic_search)"
+        );
+    }
+
+    #[test]
+    fn test_hybrid_weights_balanced() {
+        let w = HybridWeights::balanced();
+        let sum = w.keyword + w.semantic + w.recency + w.priority;
+        assert!(
+            (sum - 1.0).abs() < 0.001,
+            "balanced() weights must sum to ~1.0, got {}",
+            sum
+        );
+        assert!(
+            (w.keyword - w.semantic).abs() < 0.001,
+            "balanced() should have equal keyword and semantic"
+        );
+    }
+
+    #[test]
+    fn test_hybrid_weights_keyword_heavy() {
+        let w = HybridWeights::keyword_heavy();
+        assert!(
+            w.keyword > w.semantic,
+            "keyword_heavy: keyword ({}) must dominate semantic ({})",
+            w.keyword,
+            w.semantic
+        );
+        let sum = w.keyword + w.semantic + w.recency + w.priority;
+        assert!(
+            (sum - 1.0).abs() < 0.001,
+            "keyword_heavy() weights must sum to ~1.0, got {}",
+            sum
+        );
+    }
+
+    #[test]
+    fn test_hybrid_weights_semantic_heavy() {
+        let w = HybridWeights::semantic_heavy();
+        assert!(
+            w.semantic > w.keyword,
+            "semantic_heavy: semantic ({}) must dominate keyword ({})",
+            w.semantic,
+            w.keyword
+        );
+        let sum = w.keyword + w.semantic + w.recency + w.priority;
+        assert!(
+            (sum - 1.0).abs() < 0.001,
+            "semantic_heavy() weights must sum to ~1.0, got {}",
+            sum
+        );
+    }
+
+    #[test]
+    fn test_hybrid_weights_normalize() {
+        let mut w = HybridWeights {
+            keyword: 3.0,
+            semantic: 5.0,
+            recency: 1.0,
+            priority: 1.0,
+        };
+        w.normalize();
+        let sum = w.keyword + w.semantic + w.recency + w.priority;
+        assert!(
+            (sum - 1.0).abs() < 0.001,
+            "After normalize(), sum must be ~1.0, got {}",
+            sum
+        );
+        // Semantic should still be the largest
+        assert!(w.semantic > w.keyword);
+        assert!(w.keyword > w.recency);
+    }
+
+    #[test]
+    fn test_rag_stats_summary() {
+        let mut stats = RagStats::default();
+        stats.record_query();
+        stats.record_llm_calls(3, 1000);
+        stats.record_retrieval(15, 8, 200);
+
+        let summary = stats.summary();
+        assert!(!summary.is_empty(), "summary() must return a non-empty string");
+        assert!(
+            summary.contains("1 queries"),
+            "summary should mention query count"
+        );
+        assert!(
+            summary.contains("3 LLM calls"),
+            "summary should mention LLM call count"
+        );
+    }
+
+    #[test]
+    fn test_rag_stats_feature_usage() {
+        let mut stats = RagStats::default();
+        stats.record_feature("reranking");
+        stats.record_feature("reranking");
+        stats.record_feature("query_expansion");
+
+        assert_eq!(
+            stats.feature_usage.get("reranking"),
+            Some(&2),
+            "reranking should have been recorded twice"
+        );
+        assert_eq!(
+            stats.feature_usage.get("query_expansion"),
+            Some(&1),
+            "query_expansion should have been recorded once"
+        );
+        assert_eq!(
+            stats.feature_usage.get("hyde"),
+            None,
+            "hyde was never recorded"
+        );
+    }
+
+    #[test]
+    fn test_requirement_display_names() {
+        let all_requirements = [
+            RagRequirement::EmbeddingModel,
+            RagRequirement::CrossEncoderModel,
+            RagRequirement::GraphDatabase,
+            RagRequirement::PreprocessedCorpus,
+            RagRequirement::VisionModel,
+            RagRequirement::SynonymDictionary,
+            RagRequirement::DocumentHierarchy,
+            RagRequirement::SentenceBoundaries,
+        ];
+
+        for req in &all_requirements {
+            let name = req.display_name();
+            assert!(
+                !name.is_empty(),
+                "display_name() must be non-empty for {:?}",
+                req
+            );
+            let desc = req.description();
+            assert!(
+                !desc.is_empty(),
+                "description() must be non-empty for {:?}",
+                req
+            );
+        }
+    }
+
+    #[test]
+    fn test_auto_select_speed_preference() {
+        let hints = TierSelectionHints {
+            preference: UserPreference::Speed,
+            has_embeddings: true,
+            ..Default::default()
+        };
+        let tier = auto_select_tier(&hints);
+        assert_eq!(
+            tier,
+            RagTier::Fast,
+            "Speed preference should select Fast tier"
+        );
+    }
+
+    #[test]
+    fn test_auto_select_quality_preference() {
+        // MaxQuality with embeddings available should select Thorough
+        let hints = TierSelectionHints {
+            preference: UserPreference::MaxQuality,
+            has_embeddings: true,
+            ..Default::default()
+        };
+        let tier = auto_select_tier(&hints);
+        assert_eq!(
+            tier,
+            RagTier::Thorough,
+            "MaxQuality preference with embeddings should select Thorough tier"
+        );
+    }
 }
