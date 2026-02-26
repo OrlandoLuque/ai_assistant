@@ -82,6 +82,7 @@ pub struct RegenerateResult {
 }
 
 /// Manager for conversation message operations
+#[derive(Debug)]
 pub struct MessageOperations;
 
 impl MessageOperations {

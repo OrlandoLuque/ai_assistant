@@ -191,8 +191,6 @@ pub struct InjectionDetector {
 }
 
 struct CompiledPattern {
-    #[allow(dead_code)]
-    name: String,
     regex: Regex,
     injection_type: InjectionType,
     severity: f64,
@@ -341,7 +339,7 @@ impl InjectionDetector {
 
     fn add_pattern(
         &mut self,
-        name: &str,
+        _name: &str,
         pattern: &str,
         injection_type: InjectionType,
         severity: f64,
@@ -350,7 +348,6 @@ impl InjectionDetector {
     ) {
         if let Ok(regex) = Regex::new(pattern) {
             self.patterns.push(CompiledPattern {
-                name: name.to_string(),
                 regex,
                 injection_type,
                 severity,

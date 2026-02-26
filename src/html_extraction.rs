@@ -643,36 +643,6 @@ impl HtmlExtractor {
     // Private methods
     // ========================================================================
 
-    /// Apply an extraction rule to get content matching the rule's selectors.
-    #[allow(dead_code)]
-    fn apply_rule(&self, html: &str, rule: &ExtractionRule) -> Option<String> {
-        let matches = self.match_elements(html, &rule.content_selector);
-        if matches.is_empty() {
-            return None;
-        }
-
-        let mut content = String::new();
-        for (_start, _end, matched_html) in &matches {
-            // Remove excluded elements
-            let mut cleaned = matched_html.clone();
-            for exclude in &rule.exclude_selectors {
-                let excluded = self.match_elements(&cleaned, exclude);
-                for (_es, _ee, exc_content) in excluded.iter().rev() {
-                    cleaned = cleaned.replace(exc_content, "");
-                }
-            }
-            content.push_str(&strip_tags(&cleaned));
-            content.push('\n');
-        }
-
-        let result = normalize_whitespace(&content);
-        if result.is_empty() {
-            None
-        } else {
-            Some(result)
-        }
-    }
-
     /// Remove <script> and <style> elements and their content.
     fn strip_scripts_and_styles(&self, html: &str) -> String {
         let script_re = Regex::new(r"(?is)<script[^>]*>.*?</script>").expect("valid regex");

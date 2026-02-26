@@ -98,6 +98,7 @@ pub struct RagQualityMetrics {
 }
 
 /// Live metrics tracker
+#[derive(Debug)]
 pub struct MetricsTracker {
     /// Metrics for each message in current session
     message_metrics: Vec<MessageMetrics>,
@@ -115,6 +116,7 @@ pub struct MetricsTracker {
 }
 
 /// Builder for tracking a single message's metrics
+#[derive(Debug)]
 pub struct MessageMetricsBuilder {
     start_time: Instant,
     first_token_time: Option<Instant>,

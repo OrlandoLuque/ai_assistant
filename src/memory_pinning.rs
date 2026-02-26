@@ -258,8 +258,6 @@ pub struct PinStats {
 pub struct AutoPinner {
     keywords: Vec<String>,
     importance_threshold: f64,
-    #[allow(dead_code)]
-    entity_types: Vec<String>,
 }
 
 impl AutoPinner {
@@ -273,7 +271,6 @@ impl AutoPinner {
                 "critical".to_string(),
             ],
             importance_threshold: 0.8,
-            entity_types: vec!["name".to_string(), "date".to_string(), "number".to_string()],
         }
     }
 

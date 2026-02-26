@@ -779,7 +779,7 @@ impl TextTransformer {
 }
 
 /// Builder for creating transformation pipelines
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct TransformPipeline {
     transforms: Vec<Transform>,
 }

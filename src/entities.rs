@@ -167,9 +167,6 @@ pub struct EntityExtractor {
     programming_languages: Vec<&'static str>,
     /// Common organization suffixes
     org_suffixes: Vec<&'static str>,
-    /// Common location indicators
-    #[allow(dead_code)]
-    location_indicators: Vec<&'static str>,
     /// Title prefixes that indicate a person
     person_titles: Vec<&'static str>,
 }
@@ -229,27 +226,6 @@ impl EntityExtractor {
                 "software",
                 "systems",
                 "solutions",
-            ],
-            location_indicators: vec![
-                "city",
-                "town",
-                "village",
-                "country",
-                "state",
-                "province",
-                "region",
-                "street",
-                "avenue",
-                "ave",
-                "road",
-                "rd",
-                "boulevard",
-                "blvd",
-                "north",
-                "south",
-                "east",
-                "west",
-                "central",
             ],
             person_titles: vec![
                 "mr", "mr.", "mrs", "mrs.", "ms", "ms.", "dr", "dr.", "prof", "prof.", "sir",

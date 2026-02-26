@@ -143,6 +143,7 @@ pub trait Evaluator: Send + Sync {
 }
 
 /// Basic text quality evaluator
+#[derive(Debug)]
 pub struct TextQualityEvaluator {
     min_length: usize,
     max_length: usize,
@@ -295,6 +296,7 @@ impl Evaluator for TextQualityEvaluator {
 }
 
 /// Relevance evaluator (compares response to prompt/reference)
+#[derive(Debug)]
 pub struct RelevanceEvaluator;
 
 impl RelevanceEvaluator {
@@ -374,6 +376,7 @@ impl Evaluator for RelevanceEvaluator {
 }
 
 /// Safety evaluator
+#[derive(Debug)]
 pub struct SafetyEvaluator {
     blocked_patterns: Vec<regex::Regex>,
     warning_patterns: Vec<regex::Regex>,
@@ -519,6 +522,7 @@ impl BenchmarkResult {
 }
 
 /// Benchmark runner
+#[derive(Debug)]
 pub struct Benchmarker {
     warmup_iterations: usize,
     test_iterations: usize,
@@ -1023,7 +1027,7 @@ mod duration_serde {
 use std::sync::Arc;
 
 /// Configuration for LLM-as-judge evaluation.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct LlmJudgeConfig {
     /// Metrics to evaluate (default: Relevance, Coherence, Helpfulness, Safety)
     pub metrics: Vec<MetricType>,
