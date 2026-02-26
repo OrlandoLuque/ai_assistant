@@ -611,4 +611,288 @@ mod tests {
 
         assert!(stat_issues > 0);
     }
+
+    #[test]
+    fn test_config_default() {
+        let config = HallucinationConfig::default();
+        assert!((config.min_claim_confidence - 0.7).abs() < f64::EPSILON);
+        assert!(config.check_contradictions);
+        assert!(config.check_unsupported_claims);
+        assert!(config.detect_hedging);
+        assert!(config.verify_against_sources);
+    }
+
+    #[test]
+    fn test_config_builder() {
+        let config = HallucinationConfigBuilder::new()
+            .min_confidence(0.9)
+            .check_contradictions(false)
+            .verify_sources(false)
+            .build();
+
+        assert!((config.min_claim_confidence - 0.9).abs() < f64::EPSILON);
+        assert!(!config.check_contradictions);
+        assert!(!config.verify_against_sources);
+        // Fields not set via builder should keep defaults
+        assert!(config.check_unsupported_claims);
+        assert!(config.detect_hedging);
+    }
+
+    #[test]
+    fn test_config_builder_default() {
+        let from_builder = HallucinationConfigBuilder::default().build();
+        let from_config = HallucinationConfig::default();
+
+        assert!(
+            (from_builder.min_claim_confidence - from_config.min_claim_confidence).abs()
+                < f64::EPSILON
+        );
+        assert_eq!(
+            from_builder.check_contradictions,
+            from_config.check_contradictions
+        );
+        assert_eq!(
+            from_builder.check_unsupported_claims,
+            from_config.check_unsupported_claims
+        );
+        assert_eq!(from_builder.detect_hedging, from_config.detect_hedging);
+        assert_eq!(
+            from_builder.verify_against_sources,
+            from_config.verify_against_sources
+        );
+    }
+
+    #[test]
+    fn test_hallucination_type_display_names() {
+        let variants = [
+            HallucinationType::FactualError,
+            HallucinationType::Contradiction,
+            HallucinationType::UnsupportedClaim,
+            HallucinationType::InventedEntity,
+            HallucinationType::MisAttribution,
+            HallucinationType::FabricatedQuote,
+            HallucinationType::IncorrectStatistic,
+            HallucinationType::Anachronism,
+        ];
+
+        for variant in &variants {
+            let name = variant.display_name();
+            assert!(!name.is_empty(), "{:?} should have a non-empty display name", variant);
+        }
+
+        // Verify all 8 variants produce unique names
+        let names: HashSet<_> = variants.iter().map(|v| v.display_name()).collect();
+        assert_eq!(names.len(), 8);
+    }
+
+    #[test]
+    fn test_detector_default() {
+        let detector = HallucinationDetector::default();
+        // Should be able to detect on simple text without panicking
+        let result = detector.detect("Hello world.", None);
+        assert_eq!(result.original, "Hello world.");
+    }
+
+    #[test]
+    fn test_detect_empty_text() {
+        let detector = HallucinationDetector::default();
+        let result = detector.detect("", None);
+
+        assert_eq!(result.original, "");
+        assert!(result.claims.is_empty());
+        assert!(result.detections.is_empty());
+        assert!(result.hedging_indicators.is_empty());
+        // Empty text has no claims, so reliability defaults to 1.0
+        assert!((result.reliability_score - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_detect_clean_text() {
+        let detector = HallucinationDetector::default();
+        // Use hedging language so claims are marked as supported
+        let result = detector.detect(
+            "I think the weather is nice today. It seems like a good day for a walk.",
+            None,
+        );
+
+        assert!(
+            result.reliability_score > 0.5,
+            "Clean hedging text should have reliability > 0.5, got {}",
+            result.reliability_score
+        );
+    }
+
+    #[test]
+    fn test_detect_with_context() {
+        let detector = HallucinationDetector::default();
+
+        let text = "Rust is a systems programming language focused on safety.";
+
+        // Without context: claims are unsupported
+        let result_no_ctx = detector.detect(text, None);
+
+        // With matching context: claims get context support
+        let result_with_ctx = detector.detect(
+            text,
+            Some("Rust is a systems programming language that focuses on safety and performance."),
+        );
+
+        // Context should reduce the number of unsupported-claim detections
+        let unsupported_no_ctx = result_no_ctx
+            .detections
+            .iter()
+            .filter(|d| d.hallucination_type == HallucinationType::UnsupportedClaim)
+            .count();
+        let unsupported_with_ctx = result_with_ctx
+            .detections
+            .iter()
+            .filter(|d| d.hallucination_type == HallucinationType::UnsupportedClaim)
+            .count();
+
+        assert!(
+            unsupported_with_ctx <= unsupported_no_ctx,
+            "Context should not increase unsupported claims: without={}, with={}",
+            unsupported_no_ctx,
+            unsupported_with_ctx
+        );
+    }
+
+    #[test]
+    fn test_add_known_facts() {
+        let mut detector = HallucinationDetector::default();
+
+        let mut facts = HashMap::new();
+        facts.insert("earth".to_string(), "The Earth orbits the Sun.".to_string());
+        facts.insert("water".to_string(), "Water boils at 100 degrees Celsius.".to_string());
+        detector.add_known_facts(facts);
+
+        // Text containing a known fact keyword should have that claim marked as supported
+        let result = detector.detect("The earth revolves around the Sun.", None);
+        let supported_count = result.claims.iter().filter(|c| c.supported).count();
+        assert!(
+            supported_count > 0,
+            "Claims matching known facts should be supported"
+        );
+    }
+
+    #[test]
+    fn test_reliability_score_range() {
+        let detector = HallucinationDetector::default();
+
+        let test_texts = [
+            "",
+            "Hello.",
+            "I think maybe possibly perhaps it could be true.",
+            "150% of people definitely always never agree.",
+            "The sky is blue. The sky is not blue. The ocean is deep. The ocean is not deep.",
+            "According to Dr. Fakenamerson, 200% of statistics are made up.",
+        ];
+
+        for text in &test_texts {
+            let result = detector.detect(text, None);
+            assert!(
+                result.reliability_score >= 0.0 && result.reliability_score <= 1.0,
+                "Reliability score for '{}' should be in [0.0, 1.0], got {}",
+                text,
+                result.reliability_score
+            );
+        }
+    }
+
+    #[test]
+    fn test_contradiction_detection() {
+        let detector = HallucinationDetector::default();
+        // Use sentences with enough overlapping words (>= 3) and opposing terms
+        let result = detector.detect(
+            "The system is always running fast. The system is never running fast.",
+            None,
+        );
+
+        let contradiction_count = result
+            .detections
+            .iter()
+            .filter(|d| d.hallucination_type == HallucinationType::Contradiction)
+            .count();
+
+        assert!(
+            contradiction_count > 0,
+            "Should detect contradiction between 'always' and 'never' statements"
+        );
+    }
+
+    #[test]
+    fn test_unsupported_claims() {
+        let config = HallucinationConfigBuilder::new()
+            .verify_sources(true)
+            .build();
+        let detector = HallucinationDetector::new(config);
+
+        // Factual claims without any context or known facts should be flagged
+        let result = detector.detect(
+            "The Glorbian Empire ruled the western territories for centuries.",
+            None,
+        );
+
+        let unsupported = result
+            .detections
+            .iter()
+            .filter(|d| d.hallucination_type == HallucinationType::UnsupportedClaim)
+            .count();
+
+        assert!(
+            unsupported > 0,
+            "Unverifiable factual claims should be flagged as unsupported"
+        );
+    }
+
+    #[test]
+    fn test_invented_entity() {
+        let detector = HallucinationDetector::default();
+
+        // Text with invented entities should produce unsupported claims at minimum
+        let result = detector.detect(
+            "Professor Xylonthax of the University of Zarbulonia published groundbreaking research.",
+            None,
+        );
+
+        // Without known facts, these entity claims should not be supported
+        let unsupported = result.claims.iter().filter(|c| !c.supported).count();
+        assert!(
+            unsupported > 0,
+            "Claims referencing invented entities should be unsupported"
+        );
+        assert!(result.unsupported_claims > 0);
+    }
+
+    #[test]
+    fn test_multiple_issues() {
+        let detector = HallucinationDetector::default();
+
+        // Text with multiple issues: suspicious statistic + contradiction + fabricated quote
+        let text = "200% of scientists agree on this topic. \
+                     The result is always positive. The result is never positive. \
+                     As the researcher noted, \"This completely fabricated statement is meant to test detection\" said Someone.";
+
+        let result = detector.detect(text, None);
+
+        // Should have multiple detections across different types
+        assert!(
+            result.detections.len() >= 2,
+            "Text with multiple issues should have at least 2 detections, got {}",
+            result.detections.len()
+        );
+
+        // Collect the types of detections found
+        let types: HashSet<_> = result
+            .detections
+            .iter()
+            .map(|d| d.hallucination_type)
+            .collect();
+
+        // Should detect at least the incorrect statistic
+        assert!(
+            types.contains(&HallucinationType::IncorrectStatistic),
+            "Should detect the 200% incorrect statistic"
+        );
+    }
 }
