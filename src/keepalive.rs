@@ -717,4 +717,137 @@ mod tests {
         assert_eq!(stats.connected, 1);
         assert_eq!(stats.disconnected, 1);
     }
+
+    #[test]
+    fn test_config_presets() {
+        let aggressive = KeepaliveConfig::aggressive();
+        assert_eq!(aggressive.heartbeat_interval, Duration::from_secs(10));
+        assert_eq!(aggressive.heartbeat_timeout, Duration::from_secs(2));
+        assert_eq!(aggressive.failure_threshold, 2);
+        assert_eq!(aggressive.reconnect_delay, Duration::from_secs(2));
+
+        let relaxed = KeepaliveConfig::relaxed();
+        assert_eq!(relaxed.heartbeat_interval, Duration::from_secs(60));
+        assert_eq!(relaxed.heartbeat_timeout, Duration::from_secs(10));
+        assert_eq!(relaxed.failure_threshold, 5);
+        assert_eq!(relaxed.reconnect_delay, Duration::from_secs(10));
+
+        // Aggressive should have shorter intervals than relaxed
+        assert!(aggressive.heartbeat_interval < relaxed.heartbeat_interval);
+        assert!(aggressive.failure_threshold < relaxed.failure_threshold);
+    }
+
+    #[test]
+    fn test_reconnect_attempts_and_limit() {
+        let config = KeepaliveConfig {
+            max_reconnect_attempts: 3,
+            ..Default::default()
+        };
+        let manager = KeepaliveManager::new(config);
+        manager.register("test", "http://localhost:8080");
+
+        // Attempts 1, 2, 3 should succeed
+        assert!(manager.attempt_reconnect("test"));
+        assert_eq!(manager.get_state("test"), Some(ConnectionState::Connecting));
+        assert!(manager.attempt_reconnect("test"));
+        assert!(manager.attempt_reconnect("test"));
+
+        // Attempt 4 should fail (exceeded max)
+        assert!(!manager.attempt_reconnect("test"));
+
+        // Reset counter allows reconnection again
+        manager.reset_reconnect_counter("test");
+        assert!(manager.attempt_reconnect("test"));
+
+        // Reconnecting non-existent provider returns false
+        assert!(!manager.attempt_reconnect("nonexistent"));
+    }
+
+    #[test]
+    fn test_mark_disconnected_and_attention_lists() {
+        let manager = KeepaliveManager::default();
+        manager.register("p1", "http://localhost:8080");
+        manager.register("p2", "http://localhost:8081");
+        manager.register("p3", "http://localhost:8082");
+
+        manager.mark_connected("p1");
+        manager.mark_connected("p2");
+        manager.mark_connected("p3");
+
+        // All healthy
+        let healthy = manager.healthy_connections();
+        assert_eq!(healthy.len(), 3);
+        assert!(manager.needs_attention().is_empty());
+
+        // Disconnect one
+        manager.mark_disconnected("p2", "network error");
+        assert_eq!(
+            manager.get_state("p2"),
+            Some(ConnectionState::Disconnected)
+        );
+
+        let needs = manager.needs_attention();
+        assert_eq!(needs.len(), 1);
+        assert!(needs.contains(&"p2".to_string()));
+
+        let healthy = manager.healthy_connections();
+        assert_eq!(healthy.len(), 2);
+        assert!(!healthy.contains(&"p2".to_string()));
+    }
+
+    #[test]
+    fn test_start_stop_and_handle() {
+        let manager = KeepaliveManager::default();
+        assert!(!manager.is_running());
+
+        let handle = manager.start();
+        assert!(manager.is_running());
+        assert!(handle.is_running());
+
+        handle.stop();
+        assert!(!manager.is_running());
+        assert!(!handle.is_running());
+
+        // Start again and stop via manager
+        let _handle2 = manager.start();
+        assert!(manager.is_running());
+        manager.stop();
+        assert!(!manager.is_running());
+    }
+
+    #[test]
+    fn test_degraded_state_on_high_latency() {
+        let config = KeepaliveConfig {
+            degraded_latency_ms: 100,
+            ..Default::default()
+        };
+        let manager = KeepaliveManager::new(config);
+        manager.register("test", "http://localhost:8080");
+        manager.mark_connected("test");
+        assert_eq!(manager.get_state("test"), Some(ConnectionState::Connected));
+
+        // High-latency heartbeat should transition to Degraded
+        manager.record_heartbeat(
+            "test",
+            HeartbeatResult {
+                success: true,
+                latency: Duration::from_millis(200),
+                error: None,
+                details: None,
+            },
+        );
+        assert_eq!(manager.get_state("test"), Some(ConnectionState::Degraded));
+
+        // Low-latency heartbeat should recover to Connected
+        manager.record_heartbeat(
+            "test",
+            HeartbeatResult {
+                success: true,
+                latency: Duration::from_millis(50),
+                error: None,
+                details: None,
+            },
+        );
+        assert_eq!(manager.get_state("test"), Some(ConnectionState::Connected));
+    }
 }

@@ -708,4 +708,140 @@ mod tests {
         assert!(!coding.is_empty());
         assert!(coding.iter().all(|e| e.category == ExampleCategory::Coding));
     }
+
+    #[test]
+    fn test_remove_example_and_get_by_tag() {
+        let mut manager = FewShotManager::new();
+
+        let id1 = manager.add_example(
+            Example::new("tagged input", "tagged output", ExampleCategory::Coding)
+                .with_tag("rust")
+                .with_tag("beginner"),
+        );
+        let _id2 = manager.add_example(
+            Example::new("another input", "another output", ExampleCategory::Coding)
+                .with_tag("rust"),
+        );
+
+        // get_by_tag should return both "rust" examples
+        let rust_examples = manager.get_by_tag("rust");
+        assert_eq!(rust_examples.len(), 2);
+
+        let beginner_examples = manager.get_by_tag("beginner");
+        assert_eq!(beginner_examples.len(), 1);
+
+        // Nonexistent tag returns empty
+        assert!(manager.get_by_tag("nonexistent").is_empty());
+
+        // Remove first example and verify indices are rebuilt
+        let removed = manager.remove_example(&id1);
+        assert!(removed.is_some());
+        assert_eq!(removed.unwrap().input, "tagged input");
+        assert_eq!(manager.len(), 1);
+
+        // Tag index should be rebuilt correctly
+        let rust_after = manager.get_by_tag("rust");
+        assert_eq!(rust_after.len(), 1);
+        assert!(manager.get_by_tag("beginner").is_empty());
+    }
+
+    #[test]
+    fn test_update_quality_and_effective_score() {
+        let mut manager = FewShotManager::new();
+        let id = manager.add_example(
+            Example::new("q", "a", ExampleCategory::Math).with_quality(0.8),
+        );
+
+        // effective_score = quality * success_rate; no uses => success_rate = 1.0
+        let example = manager.get_example(&id).unwrap();
+        assert!((example.effective_score() - 0.8).abs() < 0.001);
+
+        // Decrease quality via update
+        manager.update_quality(&id, -0.3);
+        let example = manager.get_example(&id).unwrap();
+        assert!((example.quality_score - 0.5).abs() < 0.001);
+
+        // Quality should clamp to 0.0 minimum
+        manager.update_quality(&id, -1.0);
+        let example = manager.get_example(&id).unwrap();
+        assert!((example.quality_score - 0.0).abs() < 0.001);
+
+        // Quality should clamp to 1.0 maximum
+        manager.update_quality(&id, 5.0);
+        let example = manager.get_example(&id).unwrap();
+        assert!((example.quality_score - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_stats_and_clear() {
+        let mut manager = FewShotManager::new();
+        assert!(manager.is_empty());
+        assert_eq!(manager.len(), 0);
+
+        let id1 = manager.add_example(
+            Example::new("q1", "a1", ExampleCategory::Math).with_quality(0.9),
+        );
+        manager.add_example(
+            Example::new("q2", "a2", ExampleCategory::Coding).with_quality(0.5),
+        );
+        manager.add_example(
+            Example::new("q3", "a3", ExampleCategory::Math).with_quality(0.85),
+        );
+
+        assert!(!manager.is_empty());
+        assert_eq!(manager.len(), 3);
+
+        // Record some usage
+        manager.record_usage(&id1, true);
+        manager.record_usage(&id1, false);
+
+        let stats = manager.stats();
+        assert_eq!(stats.total_examples, 3);
+        assert_eq!(stats.high_quality, 2); // 0.9 and 0.85 are >= 0.8
+        assert_eq!(stats.total_uses, 2);
+        assert_eq!(stats.total_successes, 1);
+        assert!((stats.overall_success_rate - 0.5).abs() < 0.001);
+        assert_eq!(*stats.by_category.get(&ExampleCategory::Math).unwrap(), 2);
+        assert_eq!(*stats.by_category.get(&ExampleCategory::Coding).unwrap(), 1);
+
+        // Clear everything
+        manager.clear();
+        assert!(manager.is_empty());
+        assert_eq!(manager.len(), 0);
+        assert!(manager.all_examples().is_empty());
+    }
+
+    #[test]
+    fn test_example_builder_with_tags_and_build_into() {
+        let mut manager = FewShotManager::new();
+
+        ExampleBuilder::new()
+            .add("simple q", "simple a", ExampleCategory::FactualQA)
+            .add_with_tags(
+                "tagged q",
+                "tagged a",
+                ExampleCategory::Coding,
+                &["python", "beginner"],
+            )
+            .add("another q", "another a", ExampleCategory::Translation)
+            .build_into(&mut manager);
+
+        assert_eq!(manager.len(), 3);
+
+        // Verify tag indexing from builder-created examples
+        let python = manager.get_by_tag("python");
+        assert_eq!(python.len(), 1);
+        assert_eq!(python[0].input, "tagged q");
+
+        // Verify category indexing
+        let coding = manager.get_by_category(ExampleCategory::Coding);
+        assert_eq!(coding.len(), 1);
+
+        // Also test standalone build() method
+        let examples = ExampleBuilder::new()
+            .add("x", "y", ExampleCategory::Creative)
+            .build();
+        assert_eq!(examples.len(), 1);
+        assert_eq!(examples[0].category, ExampleCategory::Creative);
+    }
 }

@@ -844,4 +844,92 @@ mod tests {
         assert_eq!(meta.parameter_count, Some(7_000_000_000));
         assert_eq!(meta.quantization, Some(QuantFormat::GGUF_Q4_K_M));
     }
+
+    #[test]
+    fn test_format_classification_gguf_and_gpu() {
+        // GGUF formats should be identified correctly
+        assert!(QuantFormat::GGUF_Q4_K_M.is_gguf());
+        assert!(QuantFormat::GGUF_Q8_0.is_gguf());
+        assert!(QuantFormat::GGUF_Q2_K.is_gguf());
+        assert!(!QuantFormat::FP16.is_gguf());
+        assert!(!QuantFormat::GPTQ_4bit_128g.is_gguf());
+        assert!(!QuantFormat::AWQ_4bit.is_gguf());
+
+        // GPU-required formats
+        assert!(QuantFormat::GPTQ_4bit_128g.requires_gpu());
+        assert!(QuantFormat::GPTQ_4bit_32g.requires_gpu());
+        assert!(QuantFormat::AWQ_4bit.requires_gpu());
+        assert!(QuantFormat::EXL2.requires_gpu());
+        assert!(!QuantFormat::GGUF_Q4_K_M.requires_gpu());
+        assert!(!QuantFormat::FP16.requires_gpu());
+    }
+
+    #[test]
+    fn test_hardware_profile_constructors() {
+        let nvidia = HardwareProfile::nvidia(8.0, 32.0);
+        assert_eq!(nvidia.vram_gb, 8.0);
+        assert_eq!(nvidia.ram_gb, 32.0);
+        assert!(nvidia.has_cuda);
+        assert!(!nvidia.has_metal);
+
+        let apple = HardwareProfile::apple_silicon(16.0);
+        assert_eq!(apple.ram_gb, 16.0);
+        // ~70% of unified memory for GPU
+        assert!((apple.vram_gb - 11.2).abs() < 0.01);
+        assert!(apple.has_metal);
+        assert!(!apple.has_cuda);
+        assert_eq!(apple.cpu_cores, 8);
+
+        let cpu = HardwareProfile::cpu_only(64.0, 16);
+        assert_eq!(cpu.ram_gb, 64.0);
+        assert_eq!(cpu.cpu_cores, 16);
+        assert_eq!(cpu.vram_gb, 0.0);
+        assert!(!cpu.has_cuda);
+        assert!(!cpu.has_metal);
+        assert!(!cpu.has_rocm);
+    }
+
+    #[test]
+    fn test_compare_formats() {
+        let detector = QuantizationDetector::new();
+
+        let comparison =
+            detector.compare_formats(&QuantFormat::GGUF_Q8_0, &QuantFormat::GGUF_Q4_K_M, ModelSize::Medium);
+
+        // Q8_0 has higher quality than Q4_K_M
+        assert!(comparison.quality_diff > 0.0);
+        // Q8_0 uses more memory than Q4_K_M
+        assert!(comparison.memory_diff_gb > 0.0);
+        // Q8_0 has more bits per weight
+        assert!(comparison.bits_diff > 0.0);
+        assert_eq!(comparison.format_a, QuantFormat::GGUF_Q8_0);
+        assert_eq!(comparison.format_b, QuantFormat::GGUF_Q4_K_M);
+    }
+
+    #[test]
+    fn test_detect_format_edge_cases_and_available_formats() {
+        let detector = QuantizationDetector::new();
+
+        // Unknown model name returns None
+        assert_eq!(detector.detect_format("some-random-model"), None);
+
+        // Bare .gguf extension defaults to Q4_K_M
+        assert_eq!(
+            detector.detect_format("model.gguf"),
+            Some(QuantFormat::GGUF_Q4_K_M)
+        );
+
+        // EXL2 detection
+        assert_eq!(
+            detector.detect_format("model-exl2-4.5bpw"),
+            Some(QuantFormat::EXL2)
+        );
+
+        // available_formats returns a sorted list by quality (descending)
+        let formats = detector.available_formats();
+        assert!(!formats.is_empty());
+        for i in 0..formats.len() - 1 {
+            assert!(formats[i].quality_retention() >= formats[i + 1].quality_retention());
+        }
+    }
 }
