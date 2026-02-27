@@ -723,4 +723,112 @@ mod tests {
         let count = new_store.import(&json).unwrap();
         assert_eq!(count, 1);
     }
+
+    #[test]
+    fn test_get_by_type_and_get_by_tag() {
+        let mut store = MemoryStore::new(MemoryConfig::default());
+
+        store.add(MemoryEntry::new("Fact alpha", MemoryType::Fact).with_tag("science"));
+        store.add(MemoryEntry::new("Goal beta", MemoryType::Goal).with_tag("science"));
+        store.add(MemoryEntry::new("Fact gamma", MemoryType::Fact).with_tag("history"));
+
+        // get_by_type should return only Facts
+        let facts = store.get_by_type(MemoryType::Fact);
+        assert_eq!(facts.len(), 2);
+        for f in &facts {
+            assert_eq!(f.memory_type, MemoryType::Fact);
+        }
+
+        // get_by_type for a type with no entries
+        let events = store.get_by_type(MemoryType::Event);
+        assert!(events.is_empty());
+
+        // get_by_tag should return matching tag
+        let science = store.get_by_tag("science");
+        assert_eq!(science.len(), 2);
+
+        let history = store.get_by_tag("history");
+        assert_eq!(history.len(), 1);
+
+        let unknown = store.get_by_tag("nonexistent");
+        assert!(unknown.is_empty());
+    }
+
+    #[test]
+    fn test_recall_marks_accessed_and_remove() {
+        let mut store = MemoryStore::new(MemoryConfig::default());
+
+        let id = store.add(MemoryEntry::new("Recall me", MemoryType::Fact));
+
+        // Initial recall_count is 0
+        assert_eq!(store.get(&id).unwrap().recall_count, 0);
+
+        // recall should increment recall_count
+        let recalled = store.recall(&id);
+        assert!(recalled.is_some());
+        assert_eq!(store.get(&id).unwrap().recall_count, 1);
+
+        // recall again
+        store.recall(&id);
+        assert_eq!(store.get(&id).unwrap().recall_count, 2);
+
+        // recall non-existent id returns None
+        assert!(store.recall("nonexistent_id").is_none());
+
+        // remove should return the entry and leave store empty
+        let removed = store.remove(&id);
+        assert!(removed.is_some());
+        assert_eq!(removed.unwrap().content, "Recall me");
+        assert!(store.get(&id).is_none());
+
+        // remove non-existent returns None
+        assert!(store.remove("nonexistent_id").is_none());
+    }
+
+    #[test]
+    fn test_working_memory_clear_and_entity_overflow() {
+        let mut wm = WorkingMemory::new();
+
+        // Set various fields
+        wm.set_topic("Testing");
+        wm.set_intent("verify overflow");
+        wm.note("key1", "value1");
+        wm.add_fact("fact1");
+
+        assert!(wm.current_topic.is_some());
+        assert!(wm.current_intent.is_some());
+        assert_eq!(wm.get_note("key1"), Some(&"value1".to_string()));
+
+        // Clear should reset everything
+        wm.clear();
+        assert!(wm.current_topic.is_none());
+        assert!(wm.current_intent.is_none());
+        assert!(wm.active_entities.is_empty());
+        assert!(wm.recent_facts.is_empty());
+        assert!(wm.scratch_pad.is_empty());
+
+        // Entity dedup: adding the same entity twice should not duplicate
+        wm.add_entity("duplicate");
+        wm.add_entity("duplicate");
+        assert_eq!(wm.active_entities.len(), 1);
+
+        // Entity overflow: adding >10 unique entities keeps only last 10
+        for i in 0..12 {
+            wm.add_entity(&format!("entity_{}", i));
+        }
+        assert_eq!(wm.active_entities.len(), 10);
+        // First entities (including "duplicate") should have been evicted
+        assert!(!wm.active_entities.contains(&"duplicate".to_string()));
+
+        // Fact overflow: adding >5 facts keeps only last 5
+        wm.recent_facts.clear();
+        for i in 0..7 {
+            wm.add_fact(&format!("fact_{}", i));
+        }
+        assert_eq!(wm.recent_facts.len(), 5);
+        // The first two facts should have been evicted
+        assert!(!wm.recent_facts.contains(&"fact_0".to_string()));
+        assert!(!wm.recent_facts.contains(&"fact_1".to_string()));
+        assert!(wm.recent_facts.contains(&"fact_6".to_string()));
+    }
 }

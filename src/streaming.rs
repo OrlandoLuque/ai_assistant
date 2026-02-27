@@ -715,4 +715,115 @@ mod tests {
         producer.join().unwrap();
         assert_eq!(received.len(), 100);
     }
+
+    #[test]
+    fn test_push_after_close_returns_closed_error() {
+        let buffer = StreamBuffer::new(1024);
+
+        // Push succeeds before close
+        assert!(buffer.try_push("before".to_string()).is_ok());
+        assert!(!buffer.is_closed());
+
+        // Close the buffer
+        buffer.close();
+        assert!(buffer.is_closed());
+
+        // Push should return Closed error
+        assert_eq!(
+            buffer.try_push("after".to_string()),
+            Err(StreamError::Closed)
+        );
+
+        // Existing data should still be readable
+        assert_eq!(buffer.try_pop(), Some("before".to_string()));
+        assert_eq!(buffer.try_pop(), None);
+    }
+
+    #[test]
+    fn test_chunker_exact_mode() {
+        let chunker = Chunker::new(5).exact();
+
+        let chunks = chunker.chunk("HelloWorld!");
+        // Exact mode splits at exactly 5 chars: "Hello", "World", "!"
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks[0], "Hello");
+        assert_eq!(chunks[1], "World");
+        assert_eq!(chunks[2], "!");
+
+        // Input shorter than chunk_size returns single chunk
+        let small = chunker.chunk("Hi");
+        assert_eq!(small.len(), 1);
+        assert_eq!(small[0], "Hi");
+
+        // Empty input
+        let empty = chunker.chunk("");
+        assert_eq!(empty.len(), 1);
+        assert_eq!(empty[0], "");
+    }
+
+    #[test]
+    fn test_fill_percentage_and_backpressure_active() {
+        // Buffer of 100 bytes with 75/25 water marks
+        let config = StreamingConfig {
+            buffer_size: 100,
+            high_water_mark: 75,
+            low_water_mark: 25,
+            ..Default::default()
+        };
+        let buffer = StreamBuffer::with_config(config);
+
+        // Empty buffer: 0% fill, no backpressure
+        assert!((buffer.fill_percentage() - 0.0).abs() < 0.01);
+        assert!(!buffer.is_backpressure_active());
+
+        // Push 50 bytes (50%) - below high water mark
+        buffer.try_push("a".repeat(50)).unwrap();
+        assert!((buffer.fill_percentage() - 50.0).abs() < 0.01);
+        assert!(!buffer.is_backpressure_active());
+
+        // Push 30 more bytes (80%) - above high water mark (75)
+        buffer.try_push("b".repeat(30)).unwrap();
+        assert!((buffer.fill_percentage() - 80.0).abs() < 0.01);
+        assert!(buffer.is_backpressure_active());
+    }
+
+    #[test]
+    fn test_stream_consumer_is_done_and_error_display() {
+        let config = StreamingConfig {
+            buffer_size: 1024,
+            ..Default::default()
+        };
+        let stream = BackpressureStream::new(config);
+        let producer = stream.producer();
+        let consumer = stream.consumer();
+
+        // Not done: stream is open
+        assert!(!consumer.is_done());
+
+        // Send data
+        producer.try_send("chunk1".to_string()).unwrap();
+        producer.try_send("chunk2".to_string()).unwrap();
+
+        // Not done: stream is open with data
+        assert!(!consumer.is_done());
+
+        // Close producer side
+        producer.close();
+
+        // Not done yet: stream is closed but has data
+        assert!(!consumer.is_done());
+
+        // Drain data
+        assert_eq!(consumer.try_recv(), Some("chunk1".to_string()));
+        assert_eq!(consumer.try_recv(), Some("chunk2".to_string()));
+
+        // Now done: closed and empty
+        assert!(consumer.is_done());
+
+        // Verify StreamError Display implementations
+        assert_eq!(StreamError::BufferFull.to_string(), "Stream buffer is full");
+        assert_eq!(StreamError::Closed.to_string(), "Stream is closed");
+        assert_eq!(StreamError::Timeout.to_string(), "Stream operation timed out");
+        assert_eq!(StreamError::Cancelled.to_string(), "Stream was cancelled");
+    }
 }

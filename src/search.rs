@@ -799,4 +799,64 @@ mod tests {
         assert_eq!(query.mode, SearchMode::Exact);
         assert_eq!(query.min_score, 0.5);
     }
+
+    #[test]
+    fn test_any_word_search() {
+        let mut searcher = ConversationSearcher::new();
+        searcher.index_messages(&create_test_messages(), None);
+
+        let query = SearchQuery::new("Rust Python").mode(SearchMode::AnyWord);
+        let results = searcher.search(&query);
+
+        // Should find messages containing "Rust" OR "Python"
+        assert!(!results.is_empty());
+
+        for result in &results {
+            let content_lower = result.message.content.to_lowercase();
+            assert!(
+                content_lower.contains("rust") || content_lower.contains("python"),
+                "Expected 'rust' or 'python' in: {}",
+                result.message.content
+            );
+        }
+
+        // Results with both words should score higher than those with one word
+        if results.len() >= 2 {
+            assert!(results[0].score >= results[results.len() - 1].score);
+        }
+    }
+
+    #[test]
+    fn test_assistant_only_search_and_clear() {
+        let mut searcher = ConversationSearcher::new();
+        searcher.index_messages(&create_test_messages(), Some("s1"));
+
+        // assistant_only filter: should only return assistant messages
+        let query = SearchQuery::new("keyword").assistant_only();
+        let results = searcher.search(&query);
+        for result in &results {
+            assert!(
+                !result.message.is_user(),
+                "Expected only assistant messages but got user message: {}",
+                result.message.content
+            );
+        }
+
+        // Verify stats before clear
+        let stats = searcher.stats();
+        assert!(stats.total_messages > 0);
+        assert!(stats.indexed_terms > 0);
+
+        // Clear the index and verify it is empty
+        searcher.clear();
+        let stats_after = searcher.stats();
+        assert_eq!(stats_after.total_messages, 0);
+        assert_eq!(stats_after.indexed_terms, 0);
+        assert_eq!(stats_after.unique_sessions, 0);
+
+        // Searching after clear should return no results
+        let query = SearchQuery::new("Rust");
+        let results = searcher.search(&query);
+        assert!(results.is_empty());
+    }
 }
