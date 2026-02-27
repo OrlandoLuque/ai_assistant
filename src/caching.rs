@@ -528,6 +528,7 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 // ============================================================================
 
 /// A cached LLM response entry.
+#[derive(Debug)]
 pub struct CachedLlmResponse {
     pub response: String,
     pub model: String,
@@ -537,6 +538,7 @@ pub struct CachedLlmResponse {
 }
 
 /// Statistics for the response cache middleware.
+#[derive(Debug)]
 pub struct CacheMiddlewareStats {
     pub entries: usize,
     pub hit_count: u64,
@@ -546,6 +548,7 @@ pub struct CacheMiddlewareStats {
 }
 
 /// Middleware that caches LLM responses keyed by normalized prompt fingerprint.
+#[derive(Debug)]
 pub struct ResponseCacheMiddleware {
     cache: std::collections::HashMap<String, CachedLlmResponse>,
     insertion_order: Vec<String>,
@@ -637,6 +640,7 @@ impl ResponseCacheMiddleware {
 // ============================================================================
 
 /// A usage record for cost tracking.
+#[derive(Debug)]
 pub struct UsageRecord {
     pub provider: String,
     pub model: String,
@@ -647,6 +651,7 @@ pub struct UsageRecord {
 }
 
 /// Budget alert triggered when spending exceeds threshold.
+#[derive(Debug)]
 pub struct BudgetCostAlert {
     pub message: String,
     pub current_spend: f64,
@@ -655,6 +660,7 @@ pub struct BudgetCostAlert {
 }
 
 /// Tracks LLM usage costs per provider, model, and session.
+#[derive(Debug)]
 pub struct CostTracker {
     records: Vec<UsageRecord>,
     budget_limit: Option<f64>,

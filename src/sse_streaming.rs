@@ -98,6 +98,7 @@ impl SseEvent {
 }
 
 /// SSE Stream reader
+#[derive(Debug)]
 pub struct SseReader<R: Read> {
     reader: BufReader<R>,
     last_event_id: Option<String>,
@@ -166,6 +167,7 @@ impl<R: Read> Iterator for SseReader<R> {
 }
 
 /// SSE Stream writer
+#[derive(Debug)]
 pub struct SseWriter {
     events: Vec<SseEvent>,
     event_counter: u64,
@@ -233,6 +235,7 @@ impl std::fmt::Display for SseError {
 impl std::error::Error for SseError {}
 
 /// SSE Client for consuming SSE streams
+#[derive(Debug)]
 pub struct SseClient {
     url: String,
     headers: HashMap<String, String>,
@@ -292,6 +295,16 @@ pub struct SseConnection {
     reader: Box<dyn Read + Send + Sync>,
     buffer: String,
     last_event_id: Option<String>,
+}
+
+impl std::fmt::Debug for SseConnection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SseConnection")
+            .field("reader", &"<dyn Read + Send + Sync>")
+            .field("buffer", &self.buffer)
+            .field("last_event_id", &self.last_event_id)
+            .finish()
+    }
 }
 
 impl SseConnection {
@@ -398,6 +411,7 @@ impl StreamChunk {
 }
 
 /// Stream text aggregator
+#[derive(Debug)]
 pub struct StreamAggregator {
     chunks: Vec<StreamChunk>,
     full_text: String,

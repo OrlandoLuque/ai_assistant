@@ -12,6 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 // =============================================================================
 
 /// Information about an agent node in the distributed network.
+#[derive(Debug)]
 pub struct AgentNodeInfo {
     pub node_id: NodeId,
     pub agent_profile: String,
@@ -22,6 +23,7 @@ pub struct AgentNodeInfo {
 }
 
 /// A task submitted for distributed execution.
+#[derive(Debug)]
 pub struct DistributedTask {
     pub id: String,
     pub description: String,
@@ -36,6 +38,7 @@ pub struct DistributedTask {
 }
 
 /// Status of a distributed task.
+#[derive(Debug)]
 pub enum TaskDistributionStatus {
     Queued,
     Assigned,
@@ -47,6 +50,7 @@ pub enum TaskDistributionStatus {
 
 /// A map-reduce style job that fans out work to multiple agents and then
 /// reduces the collected results with a single agent.
+#[derive(Debug)]
 pub struct MapReduceAgentJob {
     pub id: String,
     pub map_tasks: Vec<String>,
@@ -59,6 +63,7 @@ pub struct MapReduceAgentJob {
 }
 
 /// Status of a map-reduce agent job.
+#[derive(Debug)]
 pub enum MapReduceStatus {
     Pending,
     Mapping,
@@ -89,6 +94,7 @@ fn node_hex(id: &NodeId) -> String {
 // =============================================================================
 
 /// Manages distributed agent tasks, worker nodes, and map-reduce jobs.
+#[derive(Debug)]
 pub struct DistributedAgentManager {
     local_node_id: NodeId,
     tasks: HashMap<String, DistributedTask>,

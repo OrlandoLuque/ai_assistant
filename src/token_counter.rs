@@ -27,6 +27,7 @@ pub trait TokenCounter: Send + Sync {
 
 /// A fast, approximate token counter that delegates to
 /// [`crate::context::estimate_tokens`] (~3.5 chars/token).
+#[derive(Debug)]
 pub struct ApproximateCounter;
 
 impl ApproximateCounter {
@@ -295,6 +296,7 @@ const BPE_MERGES: &[MergeRule] = &[
 ///
 /// Uses the top ~200 most common BPE merge rules to approximate the
 /// token counts produced by GPT-4-class tokenizers (cl100k_base).
+#[derive(Debug)]
 pub struct BpeTokenCounter {
     /// Precomputed merge table: for each merge rule, the (left, right) byte
     /// sequences and the merged result.
@@ -388,6 +390,7 @@ impl TokenCounter for BpeTokenCounter {
 ///
 /// - OpenAI (`gpt-*`) and Anthropic (`claude-*`) models use [`BpeTokenCounter`]
 /// - Local / unknown models fall back to [`ApproximateCounter`]
+#[derive(Debug)]
 pub struct ProviderTokenCounter {
     bpe: BpeTokenCounter,
     approximate: ApproximateCounter,
@@ -425,6 +428,7 @@ impl ProviderTokenCounter {
 // =============================================================================
 
 /// Describes how to divide a total token budget across prompt sections.
+#[derive(Debug)]
 pub struct TokenBudget {
     /// Total tokens available.
     pub total: usize,

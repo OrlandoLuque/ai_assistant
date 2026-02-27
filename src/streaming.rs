@@ -63,6 +63,8 @@ impl Default for StreamingConfig {
 }
 
 /// Streaming buffer with backpressure support
+///
+/// Uses manual Debug impl because inner buffer contains Condvar which doesn't implement Debug.
 pub struct StreamBuffer {
     inner: Arc<StreamBufferInner>,
 }
@@ -298,6 +300,15 @@ impl Clone for StreamBuffer {
     }
 }
 
+impl std::fmt::Debug for StreamBuffer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StreamBuffer")
+            .field("len", &self.len())
+            .field("is_closed", &self.is_closed())
+            .finish()
+    }
+}
+
 /// Errors during streaming
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StreamError {
@@ -414,7 +425,17 @@ impl BackpressureStream<String> {
     }
 }
 
+impl<T> std::fmt::Debug for BackpressureStream<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BackpressureStream")
+            .field("buffer", &self.buffer)
+            .field("config", &self.config)
+            .finish()
+    }
+}
+
 /// Producer side of the stream
+#[derive(Debug)]
 pub struct StreamProducer {
     buffer: StreamBuffer,
     chunk_size: usize,
@@ -453,6 +474,7 @@ impl StreamProducer {
 }
 
 /// Consumer side of the stream
+#[derive(Debug)]
 pub struct StreamConsumer {
     buffer: StreamBuffer,
 }
@@ -497,6 +519,7 @@ impl Iterator for StreamConsumer {
 }
 
 /// Chunker for splitting large strings efficiently
+#[derive(Debug)]
 pub struct Chunker {
     chunk_size: usize,
     preserve_words: bool,
@@ -551,6 +574,7 @@ impl Chunker {
 }
 
 /// Rate-limited stream wrapper
+#[derive(Debug)]
 pub struct RateLimitedStream {
     buffer: StreamBuffer,
     tokens_per_second: f64,
