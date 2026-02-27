@@ -158,6 +158,15 @@ pub struct CoalescingStats {
     pub time_saved: Duration,
 }
 
+impl std::fmt::Debug for RequestCoalescer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RequestCoalescer")
+            .field("config", &self.config)
+            .field("pending_groups", &self.pending_count())
+            .finish()
+    }
+}
+
 impl RequestCoalescer {
     /// Create a new request coalescer
     pub fn new(config: CoalescingConfig) -> Self {
@@ -355,6 +364,7 @@ impl Default for RequestCoalescer {
 }
 
 /// Handle for a coalescing request
+#[derive(Debug)]
 pub struct CoalescingHandle {
     receiver: Option<std::sync::mpsc::Receiver<CoalescedResult>>,
     immediate_result: Option<CoalescedResult>,
@@ -400,6 +410,7 @@ impl CoalescingHandle {
 }
 
 /// Semantic coalescer that groups requests by similarity
+#[derive(Debug)]
 pub struct SemanticCoalescer {
     config: CoalescingConfig,
     pending: Arc<RwLock<Vec<CoalescableRequest>>>,
@@ -562,6 +573,7 @@ fn rand_u64() -> u64 {
 }
 
 /// Builder for creating coalescing configurations
+#[derive(Debug)]
 pub struct CoalescingConfigBuilder {
     config: CoalescingConfig,
 }

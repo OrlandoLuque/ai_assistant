@@ -59,6 +59,7 @@ pub struct BackupInfo {
 }
 
 /// Database backup manager
+#[derive(Debug)]
 pub struct BackupManager {
     config: BackupConfig,
     last_backup: Option<DateTime<Utc>>,
@@ -317,6 +318,7 @@ pub struct CompactionResult {
 }
 
 /// Database compactor for SQLite
+#[derive(Debug)]
 pub struct DatabaseCompactor {
     config: CompactionConfig,
     last_compaction: Option<DateTime<Utc>>,
@@ -490,6 +492,7 @@ pub struct MigrationResult {
 }
 
 /// Session migrator
+#[derive(Debug)]
 pub struct SessionMigrator {
     config: MigrationConfig,
 }
@@ -706,6 +709,17 @@ pub struct PersistentCache {
     conn: rusqlite::Connection,
     config: PersistentCacheConfig,
     last_cleanup: Option<DateTime<Utc>>,
+}
+
+#[cfg(feature = "rag")]
+impl std::fmt::Debug for PersistentCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PersistentCache")
+            .field("conn", &"<rusqlite::Connection>")
+            .field("config", &self.config)
+            .field("last_cleanup", &self.last_cleanup)
+            .finish()
+    }
 }
 
 #[cfg(feature = "rag")]

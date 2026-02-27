@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "eval")]
 use std::collections::HashMap;
 #[cfg(feature = "eval")]
+use std::fmt;
+#[cfg(feature = "eval")]
 use std::sync::{Arc, Mutex};
 #[cfg(feature = "eval")]
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -252,6 +254,7 @@ impl ExecutionFingerprint {
 
 /// Scores responses based on response latency.
 #[cfg(feature = "eval")]
+#[derive(Debug)]
 pub struct LatencyHook {
     pub max_acceptable_ms: u64,
 }
@@ -285,6 +288,7 @@ impl FeedbackHook for LatencyHook {
 
 /// Scores based on estimated token cost.
 #[cfg(feature = "eval")]
+#[derive(Debug)]
 pub struct CostHook {
     pub cost_per_token: f64,
     pub max_cost: f64,
@@ -323,6 +327,7 @@ impl FeedbackHook for CostHook {
 
 /// Scores relevance via TF-IDF cosine similarity between input and output.
 #[cfg(feature = "eval")]
+#[derive(Debug)]
 pub struct RelevanceHook;
 
 #[cfg(feature = "eval")]
@@ -425,6 +430,7 @@ impl FeedbackHook for RelevanceHook {
 
 /// Scores based on presence of toxic / blocked words.
 #[cfg(feature = "eval")]
+#[derive(Debug)]
 pub struct ToxicityHook {
     pub blocked_words: Vec<String>,
 }
@@ -478,6 +484,18 @@ pub struct OnlineEvaluator {
     sample_count: usize,
     /// Simple pseudo-random state for sampling decisions.
     rng_state: u64,
+}
+
+#[cfg(feature = "eval")]
+impl fmt::Debug for OnlineEvaluator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OnlineEvaluator")
+            .field("hooks_count", &self.hooks.len())
+            .field("alerts", &self.alerts)
+            .field("sampling", &self.sampling)
+            .field("sample_count", &self.sample_count)
+            .finish()
+    }
 }
 
 #[cfg(feature = "eval")]

@@ -18,6 +18,7 @@
 //! Needs Docker installed and running on the host.
 
 use std::collections::HashMap;
+use std::fmt;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -95,6 +96,16 @@ pub struct ContainerSandbox {
     warm_containers: HashMap<String, String>,
     /// Shared folder for file I/O
     shared_folder: Option<SharedFolder>,
+}
+
+impl fmt::Debug for ContainerSandbox {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ContainerSandbox")
+            .field("config", &self.config)
+            .field("warm_containers", &self.warm_containers)
+            .field("shared_folder", &"...")
+            .finish()
+    }
 }
 
 impl ContainerSandbox {
@@ -280,6 +291,15 @@ pub enum ExecutionBackend {
     Process(CodeSandbox),
 }
 
+impl fmt::Debug for ExecutionBackend {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ExecutionBackend::Container(_) => f.debug_tuple("Container").field(&"...").finish(),
+            ExecutionBackend::Process(_) => f.debug_tuple("Process").field(&"...").finish(),
+        }
+    }
+}
+
 impl ExecutionBackend {
     /// Auto-detect: use Container if Docker is available, else Process.
     pub fn auto() -> Self {
@@ -424,6 +444,7 @@ impl Default for SandboxSelectorConfig {
 }
 
 /// Podman container backend.
+#[derive(Debug)]
 pub struct PodmanBackend {
     available: bool,
 }
@@ -470,6 +491,7 @@ impl SandboxBackend for PodmanBackend {
 }
 
 /// WASM-based sandbox backend.
+#[derive(Debug)]
 pub struct WasmSandbox {
     available: bool,
     max_memory_bytes: u64,
@@ -530,6 +552,7 @@ impl SandboxBackend for WasmSandbox {
 }
 
 /// Process-level sandbox backend (no container isolation).
+#[derive(Debug)]
 pub struct ProcessSandbox {
     timeout_secs: u64,
 }
@@ -578,6 +601,15 @@ impl SandboxBackend for ProcessSandbox {
 pub struct SandboxSelector {
     backends: Vec<Box<dyn SandboxBackend>>,
     config: SandboxSelectorConfig,
+}
+
+impl fmt::Debug for SandboxSelector {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SandboxSelector")
+            .field("backend_count", &self.backends.len())
+            .field("config", &self.config)
+            .finish()
+    }
 }
 
 impl SandboxSelector {

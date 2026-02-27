@@ -155,6 +155,7 @@ pub enum DebugEventType {
 // =============================================================================
 
 /// Records agent execution events for later replay or analysis.
+#[derive(Debug)]
 pub struct ExecutionRecorder {
     events: Vec<DebugEvent>,
     recording: bool,
@@ -296,6 +297,7 @@ struct RecordingPayload {
 // =============================================================================
 
 /// Replays a recorded execution step by step.
+#[derive(Debug)]
 pub struct ExecutionReplay {
     events: Vec<DebugEvent>,
     current_index: usize,
@@ -415,6 +417,7 @@ pub struct StepProfile {
 }
 
 /// Collects per-step performance metrics during an agent run.
+#[derive(Debug)]
 pub struct PerformanceProfiler {
     step_metrics: Vec<StepProfile>,
     active: bool,
@@ -550,6 +553,7 @@ pub struct StateDiff {
 }
 
 /// Captures and compares agent state snapshots.
+#[derive(Debug)]
 pub struct StateInspector {
     snapshots: Vec<StateSnapshot>,
     max_snapshots: usize,
@@ -653,6 +657,7 @@ impl StateInspector {
 // =============================================================================
 
 /// Unified debugging facade that combines recording, profiling, state inspection, and breakpoints.
+#[derive(Debug)]
 pub struct AgentDebugger {
     config: DevToolsConfig,
     recorder: ExecutionRecorder,

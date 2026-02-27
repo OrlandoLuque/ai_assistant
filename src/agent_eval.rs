@@ -48,6 +48,7 @@ pub struct EvalTrajectoryStep {
 // ---------------------------------------------------------------------------
 
 /// Records agent steps during execution.
+#[derive(Debug)]
 pub struct TrajectoryRecorder {
     agent_id: String,
     steps: Vec<EvalTrajectoryStep>,
@@ -221,6 +222,7 @@ pub struct MetricsComparison {
 // ---------------------------------------------------------------------------
 
 /// Analyzes trajectories and computes metrics.
+#[derive(Debug)]
 pub struct TrajectoryAnalyzer {
     config: AnalyzerConfig,
 }
@@ -405,6 +407,7 @@ pub struct EvalReport {
 // ---------------------------------------------------------------------------
 
 /// Builds a complete `EvalReport` from a recorder and analyzer.
+#[derive(Debug)]
 pub struct ReportBuilder {
     analyzer: TrajectoryAnalyzer,
 }
@@ -495,6 +498,7 @@ pub struct ToolAccuracyMetrics {
 }
 
 /// Evaluates tool-call accuracy comparing expected calls against actual steps.
+#[derive(Debug)]
 pub struct ToolCallEvaluator {
     order_sensitive: bool,
 }

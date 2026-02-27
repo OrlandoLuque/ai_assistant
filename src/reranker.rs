@@ -4,6 +4,7 @@
 //! maximal marginal relevance (diversity), and cascade pipelines.
 
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
@@ -151,6 +152,14 @@ pub struct CrossEncoderReranker {
     scorer: Arc<dyn Fn(&str, &str) -> f64 + Send + Sync>,
 }
 
+impl fmt::Debug for CrossEncoderReranker {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CrossEncoderReranker")
+            .field("scorer", &"...")
+            .finish()
+    }
+}
+
 impl CrossEncoderReranker {
     /// Create a new cross-encoder reranker with a custom scoring function.
     pub fn new(scorer: Arc<dyn Fn(&str, &str) -> f64 + Send + Sync>) -> Self {
@@ -202,6 +211,7 @@ impl Reranker for CrossEncoderReranker {
 ///
 /// RRF score for document *d*: `sum over lists of 1 / (k + rank(d))`.
 /// Documents are matched across lists by their `content` string.
+#[derive(Debug)]
 pub struct ReciprocalRankFusion {
     /// The *k* constant that dampens the contribution of low ranks.
     k: usize,
@@ -266,6 +276,7 @@ impl Default for ReciprocalRankFusion {
 /// `argmax[ lambda * sim(query, d) - (1 - lambda) * max_over_selected( sim(d, d_sel) ) ]`
 ///
 /// Similarity is Jaccard over word sets.
+#[derive(Debug)]
 pub struct DiversityReranker {
     /// Balance between relevance (1.0) and diversity (0.0).
     lambda: f64,
@@ -357,6 +368,16 @@ pub struct CascadeReranker {
     second_pass: Option<Box<dyn Reranker>>,
 }
 
+impl fmt::Debug for CascadeReranker {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CascadeReranker")
+            .field("first_pass_top_k", &self.first_pass_top_k)
+            .field("has_first_pass", &self.first_pass.is_some())
+            .field("has_second_pass", &self.second_pass.is_some())
+            .finish()
+    }
+}
+
 impl CascadeReranker {
     /// Create a cascade reranker that retains `first_pass_top_k` documents
     /// after the first stage.
@@ -425,6 +446,14 @@ impl CascadeReranker {
 /// stage as input to the next.
 pub struct RerankerPipeline {
     stages: Vec<Box<dyn Reranker>>,
+}
+
+impl fmt::Debug for RerankerPipeline {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RerankerPipeline")
+            .field("stages_count", &self.stages.len())
+            .finish()
+    }
 }
 
 impl RerankerPipeline {

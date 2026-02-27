@@ -27,6 +27,7 @@
 //! ```
 
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -203,6 +204,17 @@ pub struct ProgressReporter {
     min_report_interval: Duration,
 }
 
+impl fmt::Debug for ProgressReporter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ProgressReporter")
+            .field("operation", &self.operation)
+            .field("total", &self.total)
+            .field("current", &self.current)
+            .field("has_callback", &self.callback.is_some())
+            .finish()
+    }
+}
+
 impl ProgressReporter {
     /// Create a new progress reporter
     pub fn new(callback: Option<ProgressCallback>) -> Self {
@@ -313,6 +325,15 @@ pub struct MultiProgressTracker {
     callback: Option<Arc<ProgressCallback>>,
 }
 
+impl fmt::Debug for MultiProgressTracker {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MultiProgressTracker")
+            .field("operations", &self.operations)
+            .field("has_callback", &self.callback.is_some())
+            .finish()
+    }
+}
+
 impl MultiProgressTracker {
     /// Create a new multi-operation tracker
     pub fn new(callback: Option<ProgressCallback>) -> Self {
@@ -379,6 +400,16 @@ pub struct OperationHandle {
     start_time: Instant,
 }
 
+impl fmt::Debug for OperationHandle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OperationHandle")
+            .field("index", &self.index)
+            .field("operation", &self.operation)
+            .field("total", &self.total)
+            .finish()
+    }
+}
+
 impl OperationHandle {
     /// Update progress
     pub fn update(&self, current: usize, message: impl Into<String>) {
@@ -442,6 +473,15 @@ struct AggregatorInner {
     completed_items: usize,
     failed_items: usize,
     start_time: Instant,
+}
+
+impl fmt::Debug for ProgressAggregator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ProgressAggregator")
+            .field("inner", &"...")
+            .field("has_callback", &self.callback.is_some())
+            .finish()
+    }
 }
 
 impl ProgressAggregator {
@@ -511,6 +551,17 @@ pub struct ProgressCallbackBuilder {
     on_progress: Option<Box<dyn Fn(u8, &str) + Send + Sync>>,
     on_complete: Option<Box<dyn Fn(&str, Duration) + Send + Sync>>,
     on_error: Option<Box<dyn Fn(&str, &str) + Send + Sync>>,
+}
+
+impl fmt::Debug for ProgressCallbackBuilder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ProgressCallbackBuilder")
+            .field("has_on_start", &self.on_start.is_some())
+            .field("has_on_progress", &self.on_progress.is_some())
+            .field("has_on_complete", &self.on_complete.is_some())
+            .field("has_on_error", &self.on_error.is_some())
+            .finish()
+    }
 }
 
 impl Default for ProgressCallbackBuilder {

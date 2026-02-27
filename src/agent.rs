@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::Arc;
 
 /// Agent state
@@ -52,6 +53,17 @@ pub struct AgentTool {
     pub parameters: HashMap<String, String>,
     /// The tool handler function
     handler: Arc<dyn Fn(&str) -> Result<String, String> + Send + Sync>,
+}
+
+impl fmt::Debug for AgentTool {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AgentTool")
+            .field("name", &self.name)
+            .field("description", &self.description)
+            .field("parameters", &self.parameters)
+            .field("handler", &"<Arc<dyn Fn>>")
+            .finish()
+    }
 }
 
 impl AgentTool {
@@ -172,6 +184,7 @@ pub struct AgentResult {
 }
 
 /// React-style agent (Reasoning + Acting)
+#[derive(Debug)]
 pub struct ReactAgent {
     /// Agent configuration
     config: AgentConfig,
@@ -372,6 +385,7 @@ impl ReactAgent {
 }
 
 /// Simple planning agent
+#[derive(Debug)]
 pub struct PlanningAgent {
     /// Agent configuration
     #[allow(dead_code)]
@@ -511,6 +525,7 @@ impl PlanStep {
 }
 
 /// Agent executor for running agents
+#[derive(Debug)]
 pub struct AgentExecutor {
     /// Maximum concurrent agents
     max_concurrent: usize,
@@ -554,6 +569,7 @@ pub trait AgentCallback: Send + Sync {
 }
 
 /// Logging callback implementation
+#[derive(Debug)]
 pub struct LoggingCallback {
     /// Whether verbose
     pub verbose: bool,

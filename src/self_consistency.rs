@@ -93,6 +93,7 @@ pub struct ConsistencyResult {
 }
 
 /// Self-consistency checker
+#[derive(Debug)]
 pub struct ConsistencyChecker {
     config: ConsistencyConfig,
 }
@@ -281,6 +282,7 @@ fn jaccard_similarity(a: &str, b: &str) -> f64 {
 }
 
 /// Voting-based consistency for categorical answers
+#[derive(Debug)]
 pub struct VotingConsistency {
     config: ConsistencyConfig,
 }
@@ -421,6 +423,7 @@ fn extract_categorical_answer(response: &str) -> String {
 }
 
 /// Builder for consistency configuration
+#[derive(Debug)]
 pub struct ConsistencyConfigBuilder {
     config: ConsistencyConfig,
 }
@@ -482,6 +485,7 @@ impl Default for ConsistencyConfigBuilder {
 }
 
 /// Aggregator for combining multiple consistency results
+#[derive(Debug)]
 pub struct ConsistencyAggregator {
     results: Vec<ConsistencyResult>,
 }
