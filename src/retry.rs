@@ -763,4 +763,36 @@ mod tests {
         let delay = config.calculate_delay(5);
         assert!(delay <= config.max_delay);
     }
+
+    #[test]
+    fn test_circuit_breaker_reset_and_failure_count() {
+        let mut cb = CircuitBreaker::new(2, Duration::from_millis(100));
+
+        // Initially closed with zero failures
+        assert_eq!(cb.state(), CircuitState::Closed);
+        assert_eq!(cb.failure_count(), 0);
+
+        // Record failures until circuit opens
+        cb.record_failure();
+        assert_eq!(cb.failure_count(), 1);
+        cb.record_failure();
+        assert_eq!(cb.failure_count(), 2);
+        assert_eq!(cb.state(), CircuitState::Open);
+
+        // should_allow returns false while open
+        assert!(!cb.should_allow());
+
+        // Reset should bring everything back to initial state
+        cb.reset();
+        assert_eq!(cb.state(), CircuitState::Closed);
+        assert_eq!(cb.failure_count(), 0);
+        assert!(cb.should_allow());
+
+        // After reset, circuit operates normally again
+        cb.record_failure();
+        assert_eq!(cb.state(), CircuitState::Closed);
+        assert_eq!(cb.failure_count(), 1);
+        cb.record_success();
+        assert_eq!(cb.failure_count(), 0);
+    }
 }

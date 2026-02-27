@@ -716,4 +716,126 @@ mod tests {
         assert!(config.use_semantic_matching);
         assert_eq!(config.similarity_threshold, 0.9);
     }
+
+    #[test]
+    fn test_semantic_coalescer_find_groups_with_embeddings() {
+        let config = CoalescingConfig {
+            similarity_threshold: 0.95,
+            max_batch_size: 10,
+            ..Default::default()
+        };
+        let coalescer = SemanticCoalescer::new(config);
+
+        // Two nearly identical embeddings (should group together)
+        let req1 = CoalescableRequest::new("Hello", "gpt-4")
+            .with_embedding(vec![1.0, 0.0, 0.0]);
+        let req2 = CoalescableRequest::new("Hi there", "gpt-4")
+            .with_embedding(vec![0.99, 0.1, 0.0]);
+
+        // Different embedding (should be separate group)
+        let req3 = CoalescableRequest::new("Goodbye", "gpt-4")
+            .with_embedding(vec![0.0, 0.0, 1.0]);
+
+        // Different model (should be separate group regardless of embedding)
+        let req4 = CoalescableRequest::new("Hello", "gpt-3.5")
+            .with_embedding(vec![1.0, 0.0, 0.0]);
+
+        coalescer.submit(req1);
+        coalescer.submit(req2);
+        coalescer.submit(req3);
+        coalescer.submit(req4);
+
+        let groups = coalescer.find_groups();
+        // req1 and req2 should be in one group (similar embeddings, same model),
+        // req3 in another (different embedding), req4 in another (different model)
+        assert_eq!(groups.len(), 3);
+
+        let stats = coalescer.stats();
+        assert_eq!(stats.total_requests, 4);
+    }
+
+    #[test]
+    fn test_process_pending_with_generate_error() {
+        let config = CoalescingConfig {
+            coalescing_window: Duration::from_millis(0),
+            cache_results: false,
+            ..Default::default()
+        };
+        let coalescer = RequestCoalescer::new(config);
+
+        let req = CoalescableRequest::new("Fail prompt", "model");
+        let _handle = coalescer.submit(req);
+
+        std::thread::sleep(Duration::from_millis(1));
+
+        // Generate function returns an error
+        let results = coalescer.process_pending(|_, _| Err("API unavailable".to_string()));
+
+        assert_eq!(results.len(), 1);
+        assert!(results[0].response.contains("Error:"));
+        assert!(results[0].response.contains("API unavailable"));
+        assert!(!results[0].from_cache);
+        assert!(results[0].generation_time.is_some());
+
+        let stats = coalescer.stats();
+        assert_eq!(stats.api_calls, 1);
+    }
+
+    #[test]
+    fn test_cosine_similarity_edge_cases() {
+        // Empty vectors
+        assert_eq!(cosine_similarity(&[], &[]), 0.0);
+
+        // Different lengths
+        assert_eq!(cosine_similarity(&[1.0, 0.0], &[1.0, 0.0, 0.0]), 0.0);
+
+        // Zero norm vector
+        assert_eq!(cosine_similarity(&[0.0, 0.0], &[1.0, 0.0]), 0.0);
+
+        // Opposite direction
+        let a = vec![1.0, 0.0, 0.0];
+        let b = vec![-1.0, 0.0, 0.0];
+        assert!((cosine_similarity(&a, &b) + 1.0).abs() < 0.001);
+
+        // Diagonal vectors
+        let c = vec![1.0, 1.0];
+        let d = vec![1.0, 1.0];
+        assert!((cosine_similarity(&c, &d) - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_clear_cache_and_has_pending() {
+        let config = CoalescingConfig {
+            coalescing_window: Duration::from_millis(0),
+            cache_results: true,
+            cache_ttl: Duration::from_secs(60),
+            ..Default::default()
+        };
+        let coalescer = RequestCoalescer::new(config);
+
+        // Initially no pending
+        assert!(!coalescer.has_pending());
+        assert_eq!(coalescer.pending_count(), 0);
+
+        // Submit and process to populate cache
+        let req = CoalescableRequest::new("cached prompt", "model");
+        let _handle = coalescer.submit(req);
+        assert!(coalescer.has_pending());
+
+        std::thread::sleep(Duration::from_millis(1));
+        coalescer.process_pending(|_, _| Ok("cached response".to_string()));
+
+        // Verify cache hit
+        let req2 = CoalescableRequest::new("cached prompt", "model");
+        let handle2 = coalescer.submit(req2);
+        assert!(handle2.is_ready());
+
+        // Clear cache
+        coalescer.clear_cache();
+
+        // After clearing, same request should NOT be a cache hit
+        let req3 = CoalescableRequest::new("cached prompt", "model");
+        let handle3 = coalescer.submit(req3);
+        assert!(!handle3.is_ready());
+    }
 }

@@ -737,4 +737,133 @@ mod tests {
         assert_eq!(optimizer.feedback_count(), 0);
         assert!(optimizer.feedback_history().is_empty());
     }
+
+    #[test]
+    fn test_auto_deactivation_of_poor_performers() {
+        let mut optimizer = PromptOptimizer::new(OptimizerConfig {
+            min_uses_for_selection: 5,
+            min_success_rate: 0.3,
+            exploration_rate: 0.0,
+            ..Default::default()
+        });
+
+        let id = optimizer.add_variant("poor", "Bad template: {query}");
+
+        // Variant starts active
+        assert!(optimizer.get_variant(&id).unwrap().active);
+
+        // Record 5 negative feedbacks (success_rate = 0.0, below 0.3 threshold)
+        for _ in 0..5 {
+            optimizer.record_feedback(&id, Feedback::negative().with_quality(0.1));
+        }
+
+        // After min_uses_for_selection uses with low success rate, should be deactivated
+        let variant = optimizer.get_variant(&id).unwrap();
+        assert!(!variant.active);
+        assert_eq!(variant.use_count, 5);
+        assert_eq!(variant.success_count, 0);
+        assert!((variant.success_rate() - 0.0).abs() < 0.001);
+
+        // Active variants should now be empty
+        assert!(optimizer.active_variants().is_empty());
+    }
+
+    #[test]
+    fn test_variant_apply_with_variables_and_effectiveness() {
+        let variant = PromptVariant::new("multi-var", "Hello {name}, your question about {topic} is: {query}");
+
+        // apply with HashMap of multiple variables
+        let mut vars = HashMap::new();
+        vars.insert("name".to_string(), "Alice".to_string());
+        vars.insert("topic".to_string(), "Rust".to_string());
+        vars.insert("query".to_string(), "How do lifetimes work?".to_string());
+
+        let result = variant.apply(&vars);
+        assert_eq!(result, "Hello Alice, your question about Rust is: How do lifetimes work?");
+
+        // estimate_tokens: rough estimate at len/4
+        let tokens = variant.estimate_tokens("test");
+        let filled = variant.apply_query("test");
+        assert_eq!(tokens, filled.len() / 4);
+
+        // effectiveness for unused variant: 0.5 success + 0.5 quality + exploration bonus
+        // success_rate=0.5 (neutral), avg_quality=0.5 (neutral), exploration_bonus=0.1
+        let eff = variant.effectiveness();
+        assert!((eff - 0.6).abs() < 0.001);
+
+        // comparison_report generation
+        let mut optimizer = PromptOptimizer::default();
+        let id = optimizer.add_variant("rpt", "Report {query}");
+        optimizer.record_feedback(&id, Feedback::positive().with_quality(0.9));
+
+        let report = optimizer.comparison_report();
+        assert_eq!(report.len(), 1);
+        assert_eq!(report[0].name, "rpt");
+        assert_eq!(report[0].use_count, 1);
+        assert!(report[0].active);
+        assert!(report[0].success_rate > 0.9);
+    }
+
+    #[test]
+    fn test_deactivate_reactivate_and_reset_stats() {
+        let mut optimizer = PromptOptimizer::new(OptimizerConfig {
+            exploration_rate: 0.0,
+            min_uses_for_selection: 0,
+            ..Default::default()
+        });
+
+        let id1 = optimizer.add_variant("v1", "Template 1: {query}");
+        let id2 = optimizer.add_variant("v2", "Template 2: {query}");
+
+        // Record some usage
+        for _ in 0..3 {
+            optimizer.record_feedback(&id1, Feedback::positive().with_quality(0.9).with_time(100).with_tokens(50));
+            optimizer.record_feedback(&id2, Feedback::positive().with_quality(0.5));
+        }
+
+        // Both active initially
+        assert_eq!(optimizer.active_variants().len(), 2);
+
+        // Deactivate v2
+        optimizer.deactivate(&id2);
+        assert!(!optimizer.get_variant(&id2).unwrap().active);
+        assert_eq!(optimizer.active_variants().len(), 1);
+
+        // Stats should reflect deactivation
+        let stats = optimizer.stats();
+        assert_eq!(stats.active_variants, 1);
+        assert_eq!(stats.total_uses, 6);
+
+        // Reactivate v2
+        optimizer.reactivate(&id2);
+        assert!(optimizer.get_variant(&id2).unwrap().active);
+        assert_eq!(optimizer.active_variants().len(), 2);
+
+        // Verify response time and token tracking on v1
+        let v1 = optimizer.get_variant(&id1).unwrap();
+        assert_eq!(v1.avg_response_time_ms, 100);
+        assert_eq!(v1.avg_tokens, 50);
+
+        // Reset stats
+        optimizer.reset_stats();
+
+        let v1_after = optimizer.get_variant(&id1).unwrap();
+        assert_eq!(v1_after.use_count, 0);
+        assert_eq!(v1_after.success_count, 0);
+        assert!((v1_after.quality_sum - 0.0).abs() < 0.001);
+        assert_eq!(v1_after.avg_response_time_ms, 0);
+        assert_eq!(v1_after.avg_tokens, 0);
+        assert!(v1_after.active); // reset_stats reactivates all variants
+        assert_eq!(optimizer.feedback_count(), 0);
+
+        // Also verify Feedback::with_rating builder
+        let fb = Feedback::positive().with_rating(4);
+        assert!(fb.success); // rating >= 3 means success
+        assert_eq!(fb.user_rating, Some(4));
+        assert!((fb.quality_score.unwrap() - 0.8).abs() < 0.001); // 4/5 = 0.8
+
+        let fb_low = Feedback::positive().with_rating(2);
+        assert!(!fb_low.success); // rating < 3 means not success
+        assert_eq!(fb_low.user_rating, Some(2));
+    }
 }
