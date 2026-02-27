@@ -410,4 +410,172 @@ mod tests {
 
         assert!(ranked[0].breakdown.relevance > ranked[1].breakdown.relevance);
     }
+
+    #[test]
+    fn test_candidate_new_defaults() {
+        let c = ResponseCandidate::new("hello world", "test-model");
+        assert_eq!(c.content, "hello world");
+        assert_eq!(c.model, "test-model");
+        assert_eq!(c.generation_time_ms, 0);
+        assert_eq!(c.token_count, 2); // "hello" "world"
+        assert!(c.metadata.is_empty());
+        assert!(!c.id.is_empty()); // UUID generated
+    }
+
+    #[test]
+    fn test_candidate_builder_chaining() {
+        let c = ResponseCandidate::new("content", "model")
+            .with_time(150)
+            .with_metadata("source", "cache")
+            .with_metadata("version", "2");
+        assert_eq!(c.generation_time_ms, 150);
+        assert_eq!(c.metadata.get("source").unwrap(), "cache");
+        assert_eq!(c.metadata.get("version").unwrap(), "2");
+        assert_eq!(c.metadata.len(), 2);
+    }
+
+    #[test]
+    fn test_ranking_criteria_defaults() {
+        let c = RankingCriteria::default();
+        let sum = c.relevance_weight + c.coherence_weight + c.completeness_weight
+            + c.conciseness_weight + c.safety_weight;
+        assert!((sum - 1.0).abs() < 1e-10, "default weights should sum to 1.0");
+        assert_eq!(c.preferred_length, 0);
+    }
+
+    #[test]
+    fn test_criteria_builder_all_setters() {
+        let ranker = RankingCriteriaBuilder::new()
+            .relevance_weight(0.5)
+            .coherence_weight(0.1)
+            .completeness_weight(0.1)
+            .conciseness_weight(0.1)
+            .safety_weight(0.2)
+            .preferred_length(100)
+            .build();
+        // Verify the ranker was created with custom criteria by ranking something
+        let candidates = vec![
+            ResponseCandidate::new("Relevant answer about Rust programming language.", "m"),
+        ];
+        let ranked = ranker.rank("Tell me about Rust", candidates);
+        assert_eq!(ranked.len(), 1);
+        assert!(ranked[0].score > 0.0);
+    }
+
+    #[test]
+    fn test_criteria_builder_default_impl() {
+        let _builder = RankingCriteriaBuilder::default();
+        // Should not panic — tests Default for RankingCriteriaBuilder
+    }
+
+    #[test]
+    fn test_coherence_quality_keywords() {
+        let ranker = ResponseRanker::default();
+        // Response with quality keywords should score higher on coherence
+        let good = ResponseCandidate::new(
+            "This works because the algorithm is efficient. Therefore it scales well. For example, sorting 1M items takes under a second.",
+            "m",
+        );
+        let plain = ResponseCandidate::new(
+            "It works. It scales. It is fast.",
+            "m",
+        );
+        let ranked = ranker.rank("How does it work?", vec![good, plain]);
+        assert!(ranked[0].breakdown.coherence > ranked[1].breakdown.coherence);
+    }
+
+    #[test]
+    fn test_completeness_how_question() {
+        let ranker = ResponseRanker::default();
+        let step_answer = ResponseCandidate::new(
+            "First, install the package. Then configure the settings. The step by step process ensures correctness.",
+            "m",
+        );
+        let vague_answer = ResponseCandidate::new(
+            "Just do it the normal way and it should be fine.",
+            "m",
+        );
+        let ranked = ranker.rank("How do I set up the project?", vec![step_answer, vague_answer]);
+        assert!(ranked[0].breakdown.completeness >= ranked[1].breakdown.completeness);
+    }
+
+    #[test]
+    fn test_safety_refusal_penalty() {
+        let ranker = ResponseRanker::default();
+        let helpful = ResponseCandidate::new(
+            "Here is a detailed explanation of the concept with examples and reasoning.",
+            "m",
+        );
+        let refusal = ResponseCandidate::new(
+            "I cannot help with that request as an AI.",
+            "m",
+        );
+        let ranked = ranker.rank("Explain this", vec![helpful, refusal]);
+        assert!(ranked[0].breakdown.safety > ranked[1].breakdown.safety);
+        assert!(ranked[1].breakdown.safety < 0.5); // refusal pattern detected
+    }
+
+    #[test]
+    fn test_rank_empty_candidates() {
+        let ranker = ResponseRanker::default();
+        let ranked = ranker.rank("query", vec![]);
+        assert!(ranked.is_empty());
+    }
+
+    #[test]
+    fn test_select_best_empty() {
+        let ranker = ResponseRanker::default();
+        assert!(ranker.select_best("query", vec![]).is_none());
+    }
+
+    #[test]
+    fn test_rank_single_candidate() {
+        let ranker = ResponseRanker::default();
+        let candidates = vec![ResponseCandidate::new("Only answer", "m")];
+        let ranked = ranker.rank("question", candidates);
+        assert_eq!(ranked.len(), 1);
+        assert_eq!(ranked[0].rank, 1);
+    }
+
+    #[test]
+    fn test_conciseness_preferred_length() {
+        let ranker = RankingCriteriaBuilder::new()
+            .preferred_length(10) // prefer ~10 words
+            .build();
+        let short = ResponseCandidate::new(
+            "Ten words is about right for this test case here.",
+            "m",
+        );
+        let long = ResponseCandidate::new(
+            &"word ".repeat(200),
+            "m",
+        );
+        let ranked = ranker.rank("q", vec![short, long]);
+        assert!(ranked[0].breakdown.conciseness > ranked[1].breakdown.conciseness);
+    }
+
+    #[test]
+    fn test_score_ranges_valid() {
+        let ranker = ResponseRanker::default();
+        let candidates = vec![
+            ResponseCandidate::new("Short", "m"),
+            ResponseCandidate::new(
+                "A medium-length response that provides some detail about the topic at hand.",
+                "m",
+            ),
+            ResponseCandidate::new(
+                &"Very long response. ".repeat(50),
+                "m",
+            ),
+        ];
+        let ranked = ranker.rank("Tell me about testing", candidates);
+        for r in &ranked {
+            assert!(r.breakdown.relevance >= 0.0 && r.breakdown.relevance <= 1.0);
+            assert!(r.breakdown.coherence >= 0.0 && r.breakdown.coherence <= 1.0);
+            assert!(r.breakdown.completeness >= 0.0 && r.breakdown.completeness <= 1.0);
+            assert!(r.breakdown.conciseness >= 0.0 && r.breakdown.conciseness <= 1.0);
+            assert!(r.breakdown.safety >= 0.0 && r.breakdown.safety <= 1.0);
+            assert!(r.score >= 0.0);
+        }
+    }
 }
