@@ -402,4 +402,204 @@ mod tests {
         manager.end_session("user1");
         assert!(manager.get_user_history("user1").is_some());
     }
+
+    #[test]
+    fn test_all_event_variants_recordable() {
+        let mut tracker = EngagementTracker::new("u");
+        let events = [
+            EngagementEvent::MessageSent,
+            EngagementEvent::MessageReceived,
+            EngagementEvent::QuestionAsked,
+            EngagementEvent::FollowUpQuestion,
+            EngagementEvent::TopicChange,
+            EngagementEvent::ClarificationRequest,
+            EngagementEvent::PositiveFeedback,
+            EngagementEvent::NegativeFeedback,
+            EngagementEvent::SessionStart,
+            EngagementEvent::SessionEnd,
+            EngagementEvent::LongPause,
+            EngagementEvent::QuickResponse,
+        ];
+        for e in events {
+            tracker.record_event(e);
+        }
+        // SessionStart is auto-recorded in new(), plus 12 explicit = at least 13 events
+        assert!(tracker.events.len() >= 13);
+    }
+
+    #[test]
+    fn test_event_counts_correct() {
+        let mut tracker = EngagementTracker::new("u");
+        tracker.record_event(EngagementEvent::MessageSent);
+        tracker.record_event(EngagementEvent::MessageSent);
+        tracker.record_event(EngagementEvent::MessageReceived);
+        let metrics = tracker.calculate_metrics();
+        // 2 sent + 1 received = 3 messages
+        assert_eq!(metrics.message_count, 3);
+    }
+
+    #[test]
+    fn test_record_event_with_metadata() {
+        let mut tracker = EngagementTracker::new("u");
+        let mut meta = HashMap::new();
+        meta.insert("source".to_string(), "keyboard".to_string());
+        tracker.record_event_with_metadata(EngagementEvent::MessageSent, meta);
+        // Verify event was recorded (should have SessionStart + MessageSent + possibly QuickResponse)
+        assert!(tracker.events.len() >= 2);
+    }
+
+    #[test]
+    fn test_record_topic_new_topic() {
+        let mut tracker = EngagementTracker::new("u");
+        tracker.record_topic("rust");
+        tracker.record_topic("python");
+        let metrics = tracker.calculate_metrics();
+        assert_eq!(metrics.topic_changes, 2);
+    }
+
+    #[test]
+    fn test_record_topic_repeated_no_change() {
+        let mut tracker = EngagementTracker::new("u");
+        tracker.record_topic("rust");
+        tracker.record_topic("rust"); // Same topic — should NOT count
+        tracker.record_topic("rust");
+        let metrics = tracker.calculate_metrics();
+        assert_eq!(metrics.topic_changes, 1); // Only 1 topic change
+    }
+
+    #[test]
+    fn test_engagement_score_range() {
+        let mut tracker = EngagementTracker::new("u");
+        for _ in 0..10 {
+            tracker.record_event(EngagementEvent::MessageSent);
+            tracker.record_event(EngagementEvent::MessageReceived);
+        }
+        let metrics = tracker.calculate_metrics();
+        assert!(metrics.engagement_score >= 0.0);
+        assert!(metrics.engagement_score <= 1.0);
+    }
+
+    #[test]
+    fn test_mixed_feedback_sentiment() {
+        let mut tracker = EngagementTracker::new("u");
+        tracker.record_feedback(true);  // +1
+        tracker.record_feedback(false); // -1
+        tracker.record_feedback(true);  // +1
+        let metrics = tracker.calculate_metrics();
+        // Weighted: 1*1 + (-1)*2 + 1*3 = 2, weights = 1+2+3 = 6, result = 0.33...
+        assert!(metrics.sentiment_trend > 0.0);
+    }
+
+    #[test]
+    fn test_all_negative_feedback_sentiment() {
+        let mut tracker = EngagementTracker::new("u");
+        tracker.record_feedback(false);
+        tracker.record_feedback(false);
+        let metrics = tracker.calculate_metrics();
+        assert!(metrics.sentiment_trend < 0.0);
+    }
+
+    #[test]
+    fn test_manager_multi_user() {
+        let mut manager = EngagementManager::new();
+
+        {
+            let t1 = manager.get_tracker("alice");
+            t1.record_event(EngagementEvent::MessageSent);
+        }
+        {
+            let t2 = manager.get_tracker("bob");
+            t2.record_event(EngagementEvent::QuestionAsked);
+        }
+
+        manager.end_session("alice");
+        manager.end_session("bob");
+
+        assert!(manager.get_user_history("alice").is_some());
+        assert!(manager.get_user_history("bob").is_some());
+        assert!(manager.get_user_history("charlie").is_none());
+    }
+
+    #[test]
+    fn test_user_trends_requires_two_sessions() {
+        let mut manager = EngagementManager::new();
+
+        // One session only
+        manager.get_tracker("u").record_event(EngagementEvent::MessageSent);
+        manager.end_session("u");
+        assert!(manager.calculate_user_trends("u").is_none());
+
+        // Second session
+        manager.get_tracker("u").record_event(EngagementEvent::MessageSent);
+        manager.end_session("u");
+        let trends = manager.calculate_user_trends("u");
+        assert!(trends.is_some());
+        assert_eq!(trends.unwrap().total_sessions, 2);
+    }
+
+    #[test]
+    fn test_user_trends_delta_calculation() {
+        let mut manager = EngagementManager::new();
+
+        // Session 1: 2 messages
+        {
+            let t = manager.get_tracker("u");
+            t.record_event(EngagementEvent::MessageSent);
+            t.record_event(EngagementEvent::MessageReceived);
+        }
+        manager.end_session("u");
+
+        // Session 2: 4 messages
+        {
+            let t = manager.get_tracker("u");
+            t.record_event(EngagementEvent::MessageSent);
+            t.record_event(EngagementEvent::MessageReceived);
+            t.record_event(EngagementEvent::MessageSent);
+            t.record_event(EngagementEvent::MessageReceived);
+        }
+        manager.end_session("u");
+
+        let trends = manager.calculate_user_trends("u").unwrap();
+        assert_eq!(trends.message_count_delta, 2); // 4 - 2 = 2
+        assert_eq!(trends.total_sessions, 2);
+        assert!(trends.avg_engagement > 0.0);
+    }
+
+    #[test]
+    fn test_empty_tracker_metrics() {
+        let tracker = EngagementTracker::new("u");
+        let metrics = tracker.calculate_metrics();
+        assert_eq!(metrics.message_count, 0);
+        assert_eq!(metrics.question_ratio, 0.0);
+        assert_eq!(metrics.follow_up_ratio, 0.0);
+        assert_eq!(metrics.topic_changes, 0);
+        assert_eq!(metrics.sentiment_trend, 0.0);
+    }
+
+    #[test]
+    fn test_depth_score_with_follow_ups() {
+        let mut tracker = EngagementTracker::new("u");
+        tracker.record_event(EngagementEvent::FollowUpQuestion);
+        tracker.record_event(EngagementEvent::FollowUpQuestion);
+        tracker.record_event(EngagementEvent::ClarificationRequest);
+        let metrics = tracker.calculate_metrics();
+        assert!(metrics.depth_score > 0.0);
+    }
+
+    #[test]
+    fn test_end_session_records_event() {
+        let mut tracker = EngagementTracker::new("u");
+        tracker.end_session();
+        let has_end = tracker
+            .events
+            .iter()
+            .any(|e| e.event == EngagementEvent::SessionEnd);
+        assert!(has_end);
+    }
+
+    #[test]
+    fn test_manager_default_impl() {
+        let _manager = EngagementManager::default();
+        // Should not panic
+    }
 }
