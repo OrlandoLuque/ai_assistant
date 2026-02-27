@@ -1,16 +1,19 @@
-// vector_db_pgvector.rs — PostgreSQL pgvector backend for vector storage.
-//
-// Provides a VectorDb implementation backed by PostgreSQL with the pgvector extension.
-// Requires the `vector-pgvector` feature flag and a PostgreSQL server with pgvector installed.
-//
-// SQL schema:
-//   CREATE EXTENSION IF NOT EXISTS vector;
-//   CREATE TABLE IF NOT EXISTS {table} (
-//       id TEXT PRIMARY KEY,
-//       vector vector({dim}),
-//       metadata JSONB NOT NULL DEFAULT '{}',
-//       timestamp BIGINT NOT NULL DEFAULT 0
-//   );
+//! PostgreSQL pgvector backend for vector storage.
+//!
+//! Provides a [`VectorDb`] implementation backed by PostgreSQL with the pgvector extension.
+//! Requires the `vector-pgvector` feature flag and a PostgreSQL server with pgvector installed.
+//!
+//! ## SQL schema
+//!
+//! ```sql
+//! CREATE EXTENSION IF NOT EXISTS vector;
+//! CREATE TABLE IF NOT EXISTS {table} (
+//!     id TEXT PRIMARY KEY,
+//!     vector vector({dim}),
+//!     metadata JSONB NOT NULL DEFAULT '{}',
+//!     timestamp BIGINT NOT NULL DEFAULT 0
+//! );
+//! ```
 
 use crate::error::{AiError, AiResult};
 use crate::vector_db::{BackendInfo, MetadataFilter, StoredVector, VectorDb, VectorSearchResult};

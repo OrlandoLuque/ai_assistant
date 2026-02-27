@@ -1,27 +1,68 @@
-//! AI Assistant library for local LLM integration
+//! AI Assistant library for local and cloud LLM integration.
 //!
-//! This crate provides a unified interface to connect to various local LLM providers
-//! like Ollama, LM Studio, text-generation-webui, Kobold.cpp, LocalAI, and any
-//! OpenAI-compatible API.
+//! This crate provides a unified interface to connect to various LLM providers:
+//! Ollama, LM Studio, text-generation-webui, Kobold.cpp, LocalAI, OpenAI,
+//! Anthropic, Google Gemini, AWS Bedrock, HuggingFace, and any OpenAI-compatible API.
 //!
 //! # Cargo Features
 //!
-//! This crate uses Cargo features to allow selective compilation:
+//! This crate uses Cargo features for selective compilation. Features in `full`
+//! are included when using `--features full`; others are opt-in.
 //!
-//! - `core` (default): Basic assistant functionality
-//! - `multi-agent`: Multi-agent orchestration and shared memory
-//! - `security`: Guardrails, PII detection, content moderation
-//! - `analytics`: Metrics, telemetry, engagement tracking
-//! - `vision`: Multimodal/vision support
-//! - `embeddings`: Local embeddings and vector database
-//! - `advanced-streaming`: SSE, WebSocket streaming
-//! - `adapters`: External API adapters (OpenAI, Anthropic, HuggingFace)
-//! - `tools`: Tool calling, MCP protocol, agentic loops
-//! - `documents`: Document parsing (EPUB, DOCX, HTML)
-//! - `eval`: Evaluation, benchmarking, fine-tuning
-//! - `rag`: SQLite FTS5-based knowledge base
-//! - `egui-widgets`: Pre-built egui widgets for chat UI
-//! - `full`: All features except egui-widgets
+//! ## Included in `full`
+//!
+//! | Feature | Description |
+//! |---------|-------------|
+//! | `core` | Basic assistant, providers, config, prompt management |
+//! | `multi-agent` | Multi-agent orchestration, shared memory, 5 roles |
+//! | `security` | Guardrails, PII detection, toxicity, attack detection |
+//! | `analytics` | Metrics, telemetry, engagement tracking |
+//! | `vision` | Multimodal/vision support |
+//! | `embeddings` | Local embeddings, neural cross-encoder, HNSW |
+//! | `advanced-streaming` | SSE, WebSocket RFC 6455, resumable streaming |
+//! | `adapters` | External API adapters (OpenAI, Anthropic, HuggingFace) |
+//! | `tools` | Tool calling, MCP protocol, agentic loops |
+//! | `documents` | Document parsing (EPUB, DOCX, HTML, PDF, feeds) |
+//! | `eval` | Evaluation, benchmarking, A/B testing |
+//! | `rag` | SQLite FTS5 knowledge base, encrypted packages |
+//! | `distributed` | DHT, CRDTs, MapReduce (parallel via rayon) |
+//! | `binary-storage` | Bincode + gzip for internal data |
+//! | `async-runtime` | Tokio + reqwest for async HTTP |
+//! | `advanced-memory` | Episodic, procedural, entity memory |
+//!
+//! ## Opt-in features (not in `full`)
+//!
+//! | Feature | Description |
+//! |---------|-------------|
+//! | `autonomous` | Autonomous agent: policy, sandbox, OS tools, profiles |
+//! | `scheduler` | Cron-like task scheduling + event triggers |
+//! | `butler` | Environment auto-detection and configuration |
+//! | `browser` | Chrome DevTools Protocol automation |
+//! | `distributed-agents` | Agents across distributed nodes |
+//! | `distributed-network` | QUIC transport, consistent hashing, replication |
+//! | `server-tls` | HTTPS for the embedded server (rustls) |
+//! | `containers` | Docker-based sandboxed execution |
+//! | `audio` | STT/TTS via cloud APIs |
+//! | `whisper-local` | Offline STT via whisper.cpp |
+//! | `workflows` | Event-driven workflow engine with checkpointing |
+//! | `prompt-signatures` | DSPy-style prompt optimization |
+//! | `a2a` | Google Agent-to-Agent protocol |
+//! | `voice-agent` | Real-time bidirectional audio streaming |
+//! | `media-generation` | Image/video generation (DALL-E, SD, Runway) |
+//! | `distillation` | Trajectory collection, dataset building |
+//! | `constrained-decoding` | Grammar-guided generation (GBNF, JSON Schema) |
+//! | `hitl` | Human-in-the-Loop approval gates |
+//! | `webrtc` | Real-time voice via SDP/ICE/RTP |
+//! | `devtools` | Agent debugging, profiling, replay |
+//! | `vector-lancedb` | LanceDB embedded vector database |
+//! | `vector-pgvector` | PostgreSQL pgvector SQL generation |
+//! | `cloud-connectors` | S3 and Google Drive integration |
+//! | `aws-bedrock` | AWS Bedrock SigV4 authentication |
+//! | `p2p` | Peer-to-peer networking with knowledge sharing |
+//! | `code-sandbox` | Isolated code execution for agents |
+//! | `integrity-check` | Binary integrity verification at startup |
+//! | `wasm` | WebAssembly support (web-sys/js-sys) |
+//! | `egui-widgets` | Pre-built egui widgets for chat UI |
 //!
 //! # Example
 //!
