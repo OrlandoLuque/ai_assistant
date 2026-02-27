@@ -20,6 +20,7 @@ use crate::tools::{ProviderCapabilities, ProviderPlugin, ToolCall, ToolDefinitio
 // ============================================================================
 
 /// Ollama provider plugin
+#[derive(Debug)]
 pub struct OllamaProvider {
     /// Base URL (e.g., http://localhost:11434)
     pub base_url: String,
@@ -348,6 +349,7 @@ impl ProviderPlugin for OllamaProvider {
 // ============================================================================
 
 /// LM Studio provider plugin (OpenAI-compatible API)
+#[derive(Debug)]
 pub struct LmStudioProvider {
     /// Base URL (e.g., http://localhost:1234)
     pub base_url: String,
@@ -552,6 +554,7 @@ impl ProviderPlugin for LmStudioProvider {
 // ============================================================================
 
 /// Text Generation WebUI (oobabooga) provider plugin
+#[derive(Debug)]
 pub struct TextGenWebUIProvider {
     /// Base URL (e.g., http://localhost:5000)
     pub base_url: String,
@@ -759,6 +762,7 @@ impl ProviderPlugin for TextGenWebUIProvider {
 /// This helper injects tool definitions into the system prompt and parses
 /// JSON-formatted tool calls from the LLM's text output. This allows any
 /// text-completion provider to participate in tool-calling workflows.
+#[derive(Debug)]
 pub struct PromptToolFallback;
 
 impl PromptToolFallback {
@@ -885,6 +889,7 @@ impl PromptToolFallback {
 // ============================================================================
 
 /// Kobold.cpp provider plugin
+#[derive(Debug)]
 pub struct KoboldCppProvider {
     /// Base URL (e.g., http://localhost:5001)
     pub base_url: String,
@@ -1075,6 +1080,7 @@ impl ProviderPlugin for KoboldCppProvider {
 // ============================================================================
 
 /// Generic OpenAI-compatible provider plugin
+#[derive(Debug)]
 pub struct OpenAICompatibleProvider {
     /// Provider name
     provider_name: String,
@@ -1600,6 +1606,7 @@ impl OpenAICompatibleProvider {
 ///
 /// Uses the HuggingFace Inference API for text generation and embeddings.
 /// API key from `HF_TOKEN` env var.
+#[derive(Debug)]
 pub struct HuggingFaceInferenceProvider {
     api_key: Option<String>,
     model: String,

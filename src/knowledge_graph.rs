@@ -78,6 +78,7 @@
 //! - `related_to`: General relationship
 
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
@@ -358,6 +359,19 @@ where
     custom_prompt: Option<String>,
 }
 
+impl<F> fmt::Debug for LlmEntityExtractor<F>
+where
+    F: Fn(&str, &str) -> Result<String> + Send + Sync,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LlmEntityExtractor")
+            .field("llm_fn", &"<Fn(&str, &str) -> Result<String>>")
+            .field("entity_types", &self.entity_types)
+            .field("custom_prompt", &self.custom_prompt)
+            .finish()
+    }
+}
+
 impl<F> LlmEntityExtractor<F>
 where
     F: Fn(&str, &str) -> Result<String> + Send + Sync,
@@ -597,6 +611,7 @@ where
 ///
 /// Uses regex patterns and a dictionary of known entities.
 /// Less accurate but much faster and doesn't require API calls.
+#[derive(Debug)]
 pub struct PatternEntityExtractor {
     /// Known entities by name
     known_entities: HashMap<String, EntityType>,
@@ -761,6 +776,15 @@ impl EntityExtractor for PatternEntityExtractor {
 pub struct KnowledgeGraphStore {
     conn: Mutex<Connection>,
     config: KnowledgeGraphConfig,
+}
+
+impl fmt::Debug for KnowledgeGraphStore {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("KnowledgeGraphStore")
+            .field("conn", &"<Mutex<Connection>>")
+            .field("config", &self.config)
+            .finish()
+    }
 }
 
 // Safety: We wrap Connection in Mutex, making it safe for concurrent access
@@ -1303,6 +1327,7 @@ impl KnowledgeGraphStore {
 /// High-level knowledge graph interface
 ///
 /// Combines storage, extraction, and querying into a single API.
+#[derive(Debug)]
 pub struct KnowledgeGraph {
     store: KnowledgeGraphStore,
     config: KnowledgeGraphConfig,
@@ -1605,6 +1630,15 @@ pub struct KnowledgeGraphCallback<'a> {
     extractor: &'a dyn EntityExtractor,
 }
 
+impl<'a> fmt::Debug for KnowledgeGraphCallback<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("KnowledgeGraphCallback")
+            .field("graph", &self.graph)
+            .field("extractor", &"<dyn EntityExtractor>")
+            .finish()
+    }
+}
+
 impl<'a> GraphCallback for KnowledgeGraphCallback<'a> {
     fn extract_entities(&self, text: &str) -> std::result::Result<Vec<String>, String> {
         self.extractor
@@ -1659,6 +1693,7 @@ impl<'a> GraphCallback for KnowledgeGraphCallback<'a> {
 // ============================================================================
 
 /// Builder for creating a KnowledgeGraph with common entity dictionaries
+#[derive(Debug)]
 pub struct KnowledgeGraphBuilder {
     config: KnowledgeGraphConfig,
     known_entities: Vec<(String, EntityType)>,
@@ -2159,6 +2194,7 @@ impl Default for GraphQuery {
 ///
 /// All algorithms load adjacency data from SQLite into memory, then compute
 /// in-memory for efficiency.
+#[derive(Debug)]
 pub struct GraphAlgorithms;
 
 impl GraphAlgorithms {

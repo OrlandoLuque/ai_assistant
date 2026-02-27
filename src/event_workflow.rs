@@ -107,6 +107,7 @@ mod inner {
     // ========================================================================
 
     /// Directed acyclic graph of workflow nodes connected by event types.
+    #[derive(Debug)]
     pub struct WorkflowGraph {
         nodes: HashMap<String, WorkflowNode>,
         /// event_type -> list of node IDs that handle that event type.
@@ -332,6 +333,7 @@ mod inner {
     }
 
     /// In-memory checkpoint store (for testing and lightweight usage).
+    #[derive(Debug)]
     pub struct InMemoryCheckpointer {
         data: Mutex<HashMap<String, Vec<WorkflowCheckpoint>>>,
     }
@@ -425,6 +427,17 @@ mod inner {
         checkpointer: Box<dyn Checkpointer>,
         breakpoints: Vec<WorkflowBreakpoint>,
         max_steps: usize,
+    }
+
+    impl fmt::Debug for WorkflowRunner {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("WorkflowRunner")
+                .field("graph", &self.graph)
+                .field("checkpointer", &"<dyn Checkpointer>")
+                .field("breakpoints", &self.breakpoints)
+                .field("max_steps", &self.max_steps)
+                .finish()
+        }
     }
 
     /// Result of a workflow execution.
@@ -991,6 +1004,19 @@ mod inner {
         durable_store: Mutex<HashMap<String, Vec<DurableCheckpoint>>>,
     }
 
+    impl fmt::Debug for DurableExecutor {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("DurableExecutor")
+                .field("runner", &self.runner)
+                .field("config", &self.config)
+                .field("checkpointer", &"<dyn Checkpointer>")
+                .field("execution_id", &self.execution_id)
+                .field("checkpoint_count", &self.checkpoint_count)
+                .field("durable_store", &self.durable_store)
+                .finish()
+        }
+    }
+
     impl DurableExecutor {
         /// Create a new durable executor wrapping the given runner.
         pub fn new(
@@ -1229,6 +1255,14 @@ mod inner {
     /// Detects and manages recovery of interrupted workflow executions.
     pub struct RecoveryManager {
         checkpointer: Box<dyn Checkpointer>,
+    }
+
+    impl fmt::Debug for RecoveryManager {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("RecoveryManager")
+                .field("checkpointer", &"<dyn Checkpointer>")
+                .finish()
+        }
     }
 
     impl RecoveryManager {

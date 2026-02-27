@@ -77,6 +77,7 @@ pub trait AsyncIterator {
 // ============================================================================
 
 /// State for blocking on a future
+#[derive(Debug)]
 struct BlockState<T> {
     result: Option<T>,
     waker: Option<Waker>,
@@ -84,6 +85,7 @@ struct BlockState<T> {
 }
 
 /// A handle to a spawned blocking task
+#[derive(Debug)]
 pub struct BlockingHandle<T> {
     state: Arc<Mutex<BlockState<T>>>,
 }
@@ -178,6 +180,7 @@ where
 // ============================================================================
 
 /// A future that yields control once and then completes
+#[derive(Debug)]
 pub struct YieldNow {
     yielded: bool,
 }
@@ -202,6 +205,7 @@ pub fn yield_now() -> YieldNow {
 }
 
 /// A future that completes after a delay
+#[derive(Debug)]
 pub struct Sleep {
     deadline: std::time::Instant,
 }
@@ -236,6 +240,7 @@ pub fn sleep(duration: Duration) -> Sleep {
 }
 
 /// A future that completes with a timeout
+#[derive(Debug)]
 pub struct Timeout<F> {
     future: F,
     deadline: std::time::Instant,
@@ -271,6 +276,7 @@ pub fn timeout<F: Future + Unpin>(duration: Duration, future: F) -> Timeout<F> {
 // ============================================================================
 
 /// An async-compatible channel sender
+#[derive(Debug)]
 pub struct AsyncSender<T> {
     tx: std::sync::mpsc::Sender<T>,
 }
@@ -291,6 +297,7 @@ impl<T> Clone for AsyncSender<T> {
 }
 
 /// An async-compatible channel receiver
+#[derive(Debug)]
 pub struct AsyncReceiver<T> {
     rx: Arc<Mutex<std::sync::mpsc::Receiver<T>>>,
 }
@@ -310,6 +317,7 @@ impl<T: Send + 'static> AsyncReceiver<T> {
 }
 
 /// Future for receiving from a channel
+#[derive(Debug)]
 pub struct RecvFuture<T> {
     rx: Arc<Mutex<std::sync::mpsc::Receiver<T>>>,
 }
@@ -354,6 +362,7 @@ pub fn async_channel<T: Send + 'static>() -> (AsyncSender<T>, AsyncReceiver<T>) 
 // ============================================================================
 
 /// Convert an iterator into an async stream
+#[derive(Debug)]
 pub struct AsyncStream<I> {
     iter: I,
 }
@@ -381,6 +390,7 @@ pub fn stream<I: Iterator + Unpin>(iter: I) -> AsyncStream<I> {
 // ============================================================================
 
 /// A simple async-compatible mutex
+#[derive(Debug)]
 pub struct AsyncMutex<T> {
     inner: Arc<Mutex<T>>,
 }
@@ -421,6 +431,7 @@ impl<T> Clone for AsyncMutex<T> {
 }
 
 /// Guard for AsyncMutex
+#[derive(Debug)]
 pub struct AsyncMutexGuard<'a, T> {
     guard: std::sync::MutexGuard<'a, T>,
 }

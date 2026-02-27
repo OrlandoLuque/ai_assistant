@@ -152,6 +152,7 @@ impl Default for QueryExpanderConfig {
 /// LLM-based query expansion
 ///
 /// Generates alternative phrasings of a query to improve recall.
+#[derive(Debug)]
 pub struct QueryExpander {
     config: QueryExpanderConfig,
 }
@@ -286,6 +287,7 @@ impl Default for MultiQueryConfig {
 }
 
 /// Decompose complex queries into simpler sub-queries
+#[derive(Debug)]
 pub struct MultiQueryDecomposer {
     config: MultiQueryConfig,
 }
@@ -425,6 +427,7 @@ impl Default for HydeConfig {
 ///
 /// Generates a hypothetical answer document, then uses its embedding
 /// for semantic search instead of the original query.
+#[derive(Debug)]
 pub struct HydeGenerator {
     config: HydeConfig,
 }
@@ -531,6 +534,7 @@ impl Default for LlmRerankerConfig {
 }
 
 /// LLM-based result reranking
+#[derive(Debug)]
 pub struct LlmReranker {
     config: LlmRerankerConfig,
 }
@@ -637,6 +641,7 @@ pub trait CrossEncoderScore {
 }
 
 /// Cross-encoder based reranking
+#[derive(Debug)]
 pub struct CrossEncoderReranker {
     top_k: usize,
 }
@@ -710,6 +715,7 @@ impl Default for RrfConfig {
 }
 
 /// Reciprocal Rank Fusion for combining multiple ranked lists
+#[derive(Debug)]
 pub struct RrfFusion {
     config: RrfConfig,
 }
@@ -804,6 +810,7 @@ impl Default for CompressionConfig {
 }
 
 /// Contextual compression - extracts only query-relevant parts
+#[derive(Debug)]
 pub struct ContextualCompressor {
     config: CompressionConfig,
 }
@@ -923,6 +930,7 @@ impl Default for SelfRagConfig {
 }
 
 /// Self-RAG evaluator for retrieval quality assessment
+#[derive(Debug)]
 pub struct SelfRagEvaluator {
     config: SelfRagConfig,
 }
@@ -1043,6 +1051,7 @@ impl Default for CragConfig {
 }
 
 /// Corrective RAG evaluator
+#[derive(Debug)]
 pub struct CragEvaluator {
     config: CragConfig,
 }
@@ -1148,6 +1157,7 @@ impl Default for AdaptiveStrategyConfig {
 }
 
 /// Adaptive strategy selector
+#[derive(Debug)]
 pub struct AdaptiveStrategySelector {
     config: AdaptiveStrategyConfig,
 }
@@ -1320,6 +1330,7 @@ pub trait GraphDatabase {
 }
 
 /// Graph RAG retriever (skeleton)
+#[derive(Debug)]
 pub struct GraphRagRetriever {
     config: GraphRagConfig,
 }
@@ -1412,6 +1423,7 @@ impl Default for RaptorConfig {
 }
 
 /// RAPTOR retriever (skeleton for hierarchical summarization)
+#[derive(Debug)]
 pub struct RaptorRetriever {
     config: RaptorConfig,
 }
@@ -1496,6 +1508,7 @@ impl Default for MmrConfig {
 }
 
 /// Scorer for MMR-based diversity-aware retrieval
+#[derive(Debug)]
 pub struct MmrScorer;
 
 impl MmrScorer {
@@ -1645,6 +1658,7 @@ impl MmrScorer {
 }
 
 /// Diversity-aware retriever using Maximal Marginal Relevance
+#[derive(Debug)]
 pub struct DiversityRetriever {
     config: MmrConfig,
 }
@@ -1773,6 +1787,7 @@ pub struct RagRoutingDecision {
 }
 
 /// Classifies query complexity using heuristics
+#[derive(Debug)]
 pub struct QueryClassifier;
 
 impl QueryClassifier {
@@ -1842,6 +1857,7 @@ impl QueryClassifier {
 }
 
 /// Hierarchical router that directs queries to appropriate retrievers
+#[derive(Debug)]
 pub struct HierarchicalRouter {
     config: RouterConfig,
     classifier: QueryClassifier,
