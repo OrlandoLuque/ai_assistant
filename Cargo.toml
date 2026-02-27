@@ -464,6 +464,22 @@ required-features = ["vector-pgvector"]
 name = "cloud_connectors_demo"
 required-features = ["cloud-connectors"]
 
+[[example]]
+name = "server_tls_demo"
+required-features = ["server-tls"]
+
+[[example]]
+name = "vector_lancedb_demo"
+required-features = ["vector-lancedb"]
+
+[[example]]
+name = "whisper_local_demo"
+required-features = ["whisper-local"]
+
+[[example]]
+name = "distributed_network_demo"
+required-features = ["distributed-network"]
+
 [dev-dependencies]
 tempfile = "3"
 criterion = { version = "0.5", features = ["html_reports"] }
