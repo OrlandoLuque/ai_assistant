@@ -112,7 +112,7 @@ impl ResumableStream {
     ///
     /// Returns the assigned sequence ID.
     pub fn push(&self, text: &str) -> u64 {
-        let mut state = self.state.lock().expect("resumable stream state lock");
+        let mut state = self.state.lock().expect("stream state lock in push");
         let seq_id = state.next_sequence_id;
         state.next_sequence_id += 1;
         state.last_activity = Instant::now();
@@ -153,7 +153,7 @@ impl ResumableStream {
 
     /// Signal that the producer has finished.
     pub fn finish(&self) {
-        let mut state = self.state.lock().expect("resumable stream state lock");
+        let mut state = self.state.lock().expect("stream state lock in finish");
         state.finished = true;
 
         // Create a final checkpoint
@@ -171,12 +171,12 @@ impl ResumableStream {
 
     /// Whether the producer has finished.
     pub fn is_finished(&self) -> bool {
-        self.state.lock().expect("resumable stream state lock").finished
+        self.state.lock().expect("stream state lock in is_finished").finished
     }
 
     /// Whether the stream is stale (no activity for `stale_timeout`).
     pub fn is_stale(&self) -> bool {
-        let state = self.state.lock().expect("resumable stream state lock");
+        let state = self.state.lock().expect("stream state lock in is_stale");
         state.last_activity.elapsed() > self.config.stale_timeout
     }
 
@@ -184,7 +184,7 @@ impl ResumableStream {
     ///
     /// Used to resume from the last received chunk (e.g. SSE `Last-Event-ID`).
     pub fn resume_from(&self, last_sequence_id: u64) -> Vec<StreamChunk> {
-        let state = self.state.lock().expect("resumable stream state lock");
+        let state = self.state.lock().expect("stream state lock in resume_from");
         state
             .chunks
             .range((
@@ -197,13 +197,13 @@ impl ResumableStream {
 
     /// Get a specific chunk by sequence ID.
     pub fn get_chunk(&self, sequence_id: u64) -> Option<StreamChunk> {
-        let state = self.state.lock().expect("resumable stream state lock");
+        let state = self.state.lock().expect("stream state lock in get_chunk");
         state.chunks.get(&sequence_id).cloned()
     }
 
     /// Get the latest checkpoint at or before the given sequence ID.
     pub fn checkpoint_at(&self, sequence_id: u64) -> Option<StreamCheckpoint> {
-        let state = self.state.lock().expect("resumable stream state lock");
+        let state = self.state.lock().expect("stream state lock in checkpoint_at");
         state
             .checkpoints
             .range(..=sequence_id)
@@ -213,7 +213,7 @@ impl ResumableStream {
 
     /// Get the latest checkpoint.
     pub fn latest_checkpoint(&self) -> Option<StreamCheckpoint> {
-        let state = self.state.lock().expect("resumable stream state lock");
+        let state = self.state.lock().expect("stream state lock in latest_checkpoint");
         state.checkpoints.values().next_back().cloned()
     }
 
@@ -221,24 +221,24 @@ impl ResumableStream {
     pub fn current_sequence_id(&self) -> u64 {
         self.state
             .lock()
-            .unwrap()
+            .expect("stream state lock in current_sequence_id")
             .next_sequence_id
             .saturating_sub(1)
     }
 
     /// Get the total accumulated text so far.
     pub fn accumulated_text(&self) -> String {
-        self.state.lock().expect("resumable stream state lock").accumulated_text.clone()
+        self.state.lock().expect("stream state lock in accumulated_text").accumulated_text.clone()
     }
 
     /// Get the number of chunks in the replay buffer.
     pub fn chunk_count(&self) -> usize {
-        self.state.lock().expect("resumable stream state lock").chunks.len()
+        self.state.lock().expect("stream state lock in chunk_count").chunks.len()
     }
 
     /// Get the number of checkpoints.
     pub fn checkpoint_count(&self) -> usize {
-        self.state.lock().expect("resumable stream state lock").checkpoints.len()
+        self.state.lock().expect("stream state lock in checkpoint_count").checkpoints.len()
     }
 
     /// Format a chunk as an SSE event.
