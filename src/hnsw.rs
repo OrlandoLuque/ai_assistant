@@ -52,9 +52,6 @@ pub struct HnswNode {
     pub timestamp: u64,
     /// Connections at each layer. connections[layer] = set of neighbor indices.
     connections: Vec<HashSet<usize>>,
-    /// The maximum layer this node exists on.
-    #[allow(dead_code)]
-    max_layer: usize,
     /// Tombstone flag for lazy deletion.
     deleted: bool,
 }
@@ -164,7 +161,6 @@ impl HnswIndex {
             metadata,
             timestamp: now,
             connections: (0..=level).map(|_| HashSet::new()).collect(),
-            max_layer: level,
             deleted: false,
         };
 

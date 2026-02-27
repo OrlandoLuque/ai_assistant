@@ -702,8 +702,6 @@ pub struct RagDebugLogger {
 /// An active session being logged
 struct ActiveSession {
     session: RagDebugSession,
-    #[allow(dead_code)]
-    start_instant: Instant,
 }
 
 impl Default for RagDebugLogger {
@@ -799,7 +797,6 @@ impl RagDebugLogger {
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = Some(ActiveSession {
             session: session.clone(),
-            start_instant: Instant::now(),
         });
 
         // Log start if enabled

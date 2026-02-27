@@ -1435,7 +1435,7 @@ fn parse_request(stream: &mut dyn Read, config: &ServerConfig) -> std::io::Resul
 /// Route a request using default `ServerConfig`.  Kept for backward
 /// compatibility and test convenience — production traffic goes through
 /// `route_request_with_config` via `handle_connection`.
-#[allow(dead_code)]
+#[cfg(test)]
 fn route_request(
     request: &HttpRequest,
     assistant: &Arc<Mutex<AiAssistant>>,

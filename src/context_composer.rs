@@ -988,11 +988,6 @@ impl ContextCompiler {
         best_idx
     }
 
-    /// Simple token estimation: characters / 4.
-    #[allow(dead_code)]
-    fn estimate_tokens(text: &str) -> usize {
-        text.len() / 4
-    }
 }
 
 // ---------------------------------------------------------------------------

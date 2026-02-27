@@ -142,7 +142,6 @@ impl ConnectionPool {
             return PooledConnectionGuard {
                 connection: Some(conn),
                 pool: self,
-                host: normalized_host,
             };
         }
 
@@ -155,7 +154,6 @@ impl ConnectionPool {
         PooledConnectionGuard {
             connection: Some(conn),
             pool: self,
-            host: normalized_host,
         }
     }
 
@@ -282,8 +280,6 @@ impl Default for ConnectionPool {
 pub struct PooledConnectionGuard<'a> {
     connection: Option<PooledConnection>,
     pool: &'a ConnectionPool,
-    #[allow(dead_code)]
-    host: String,
 }
 
 impl<'a> PooledConnectionGuard<'a> {

@@ -232,7 +232,7 @@ impl IntegrityChecker {
     }
 
     /// Calculate SHA256 hash of a file (used in release builds only)
-    #[allow(dead_code)]
+    #[cfg_attr(debug_assertions, allow(dead_code))]
     fn calculate_sha256(&self, path: &Path) -> io::Result<String> {
         let mut file = File::open(path)?;
         let mut buffer = Vec::new();
