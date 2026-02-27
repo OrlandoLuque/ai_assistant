@@ -185,6 +185,7 @@ impl Default for OtelConfig {
 ///
 /// Records spans for model calls, RAG queries, tool invocations, and agent steps.
 /// Without the `otel` feature, spans are recorded locally only.
+#[derive(Debug)]
 pub struct OtelTracer {
     config: OtelConfig,
     spans: Arc<Mutex<Vec<AiSpan>>>,
@@ -435,6 +436,7 @@ fn percentile(sorted: &[f64], p: f64) -> f64 {
 // ============================================================================
 
 /// Collects counters, gauges, and histograms for AI operation metrics.
+#[derive(Debug)]
 pub struct MetricsCollector {
     /// Monotonic counters (e.g., request counts)
     pub counters: HashMap<String, u64>,
@@ -555,6 +557,7 @@ pub enum ExportFormat {
 }
 
 /// Exports recorded spans in various formats (JSON, OTLP).
+#[derive(Debug)]
 pub struct SpanExporter {
     spans: Vec<AiSpan>,
     format: ExportFormat,
@@ -630,6 +633,7 @@ impl SpanExporter {
 
 /// Middleware that wraps OtelTracer and MetricsCollector to provide
 /// convenient before/after hooks for LLM and tool calls.
+#[derive(Debug)]
 pub struct TracingMiddleware {
     tracer: OtelTracer,
     metrics: MetricsCollector,
@@ -986,6 +990,7 @@ pub struct SpanTree {
 }
 
 /// Creates and manages hierarchical spans for multi-turn agent sessions.
+#[derive(Debug)]
 pub struct AgentTracer {
     /// All traces keyed by trace_id, each containing a list of spans
     traces: HashMap<String, Vec<AgentSpan>>,
@@ -1434,6 +1439,7 @@ pub struct CostReport {
 }
 
 /// Tracks and attributes costs across scopes with budget enforcement.
+#[derive(Debug)]
 pub struct CostAttributor {
     /// Pricing table for cost calculations
     pricing: PricingTable,
@@ -1608,6 +1614,7 @@ pub struct ExportableSpan {
 }
 
 /// Exports spans to an OTLP-compatible collector via HTTP POST to `/v1/traces`.
+#[derive(Debug)]
 pub struct OtlpHttpExporter {
     pub endpoint: String,
     pub headers: HashMap<String, String>,
@@ -1737,6 +1744,7 @@ impl GenAiConventions {
 }
 
 /// Builder for creating AiSpan with GenAI semantic convention attributes.
+#[derive(Debug)]
 pub struct GenAiSpanBuilder {
     operation: String,
     attributes: HashMap<String, String>,
@@ -1812,6 +1820,7 @@ impl GenAiSpanBuilder {
 // ============================================================================
 
 /// Prometheus-format metrics for AI operations.
+#[derive(Debug)]
 pub struct PrometheusMetrics {
     /// (provider, model, status) -> count
     request_counts: HashMap<(String, String, String), u64>,

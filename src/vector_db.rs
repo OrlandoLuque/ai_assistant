@@ -848,6 +848,7 @@ impl VectorDb for QdrantClient {
 }
 
 /// Builder for creating vector databases
+#[derive(Debug)]
 pub struct VectorDbBuilder {
     config: VectorDbConfig,
     backend: VectorDbBackend,
@@ -1076,6 +1077,7 @@ impl Default for VectorDbBuilder {
 }
 
 /// Hybrid search combining vector and keyword search
+#[derive(Debug)]
 pub struct HybridVectorSearch<V: VectorDb> {
     vector_db: V,
     /// Weight for vector search results (0-1)
@@ -1173,6 +1175,16 @@ impl<V: VectorDb> HybridVectorSearch<V> {
 pub struct DistributedVectorDb<V: VectorDb> {
     local: V,
     network: std::sync::Arc<crate::distributed_network::NetworkNode>,
+}
+
+#[cfg(feature = "distributed-network")]
+impl<V: VectorDb + std::fmt::Debug> std::fmt::Debug for DistributedVectorDb<V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DistributedVectorDb")
+            .field("local", &self.local)
+            .field("network", &"<Arc<NetworkNode>>")
+            .finish()
+    }
 }
 
 #[cfg(feature = "distributed-network")]
@@ -1359,6 +1371,7 @@ impl<V: VectorDb> VectorDb for DistributedVectorDb<V> {
 /// Pinecone cloud vector DB client.
 ///
 /// Uses Pinecone REST API v1 for vector operations.
+#[derive(Debug)]
 pub struct PineconeClient {
     host: String,
     api_key: String,
@@ -1561,6 +1574,7 @@ impl VectorDb for PineconeClient {
 /// Chroma vector DB client.
 ///
 /// Uses Chroma REST API for vector operations.
+#[derive(Debug)]
 pub struct ChromaClient {
     base_url: String,
     config: VectorDbConfig,
@@ -1777,6 +1791,7 @@ impl VectorDb for ChromaClient {
 /// Milvus vector DB client.
 ///
 /// Uses Milvus REST API v2 for vector operations.
+#[derive(Debug)]
 pub struct MilvusClient {
     base_url: String,
     config: VectorDbConfig,
@@ -1967,6 +1982,7 @@ impl VectorDb for MilvusClient {
 /// Weaviate vector DB client.
 ///
 /// Uses Weaviate REST API v1 for vector operations.
+#[derive(Debug)]
 pub struct WeaviateClient {
     base_url: String,
     config: VectorDbConfig,
@@ -2192,6 +2208,7 @@ impl VectorDb for WeaviateClient {
 /// Redis Vector DB client.
 ///
 /// Uses a Redis REST gateway (e.g. redis-rest or RedisJSON HTTP) for vector operations.
+#[derive(Debug)]
 pub struct RedisVectorClient {
     base_url: String,
     #[allow(dead_code)]
@@ -2398,6 +2415,7 @@ impl VectorDb for RedisVectorClient {
 /// Elasticsearch vector DB client.
 ///
 /// Uses Elasticsearch REST API with kNN search for vector operations.
+#[derive(Debug)]
 pub struct ElasticsearchClient {
     base_url: String,
     #[allow(dead_code)]

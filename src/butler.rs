@@ -7,6 +7,7 @@ use crate::agent_profiles::AgentProfile;
 use crate::config::{AiConfig, AiProvider};
 use crate::mode_manager::OperationMode;
 use std::collections::HashMap;
+use std::fmt;
 use std::path::{Path, PathBuf};
 
 // =============================================================================
@@ -14,6 +15,7 @@ use std::path::{Path, PathBuf};
 // =============================================================================
 
 /// Result of a single detector run.
+#[derive(Debug)]
 pub struct DetectionResult {
     /// Whether the resource was detected.
     pub detected: bool,
@@ -56,6 +58,7 @@ pub trait ResourceDetector: Send + Sync {
 // =============================================================================
 
 /// An LLM provider that was detected in the environment.
+#[derive(Debug)]
 pub struct DetectedProvider {
     /// Human-readable name (e.g. "Ollama").
     pub name: String,
@@ -68,6 +71,7 @@ pub struct DetectedProvider {
 }
 
 /// The type of software project detected in the working directory.
+#[derive(Debug)]
 pub enum ProjectType {
     Rust,
     Node,
@@ -80,6 +84,7 @@ pub enum ProjectType {
 }
 
 /// Version control information.
+#[derive(Debug)]
 pub struct VcsInfo {
     /// VCS type, currently always "git".
     pub vcs_type: String,
@@ -90,6 +95,7 @@ pub struct VcsInfo {
 }
 
 /// Runtime environment information.
+#[derive(Debug)]
 pub struct RuntimeInfo {
     /// Operating system name.
     pub os: String,
@@ -106,6 +112,7 @@ pub struct RuntimeInfo {
 }
 
 /// Full environment report produced by a Butler scan.
+#[derive(Debug)]
 pub struct EnvironmentReport {
     /// LLM providers that were detected.
     pub llm_providers: Vec<DetectedProvider>,
@@ -128,6 +135,7 @@ pub struct EnvironmentReport {
 // =============================================================================
 
 /// Detects Ollama by performing a real HTTP check against its API.
+#[derive(Debug)]
 pub struct OllamaDetector {
     pub base_url: String,
 }
@@ -194,6 +202,7 @@ impl ResourceDetector for OllamaDetector {
 }
 
 /// Detects LM Studio by performing a real HTTP check against its API.
+#[derive(Debug)]
 pub struct LmStudioDetector {
     pub base_url: String,
 }
@@ -260,6 +269,7 @@ impl ResourceDetector for LmStudioDetector {
 }
 
 /// Detects cloud API keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`).
+#[derive(Debug)]
 pub struct CloudApiDetector;
 
 impl ResourceDetector for CloudApiDetector {
@@ -287,6 +297,7 @@ impl ResourceDetector for CloudApiDetector {
 }
 
 /// Detects project type by looking for common manifest files.
+#[derive(Debug)]
 pub struct ProjectTypeDetector {
     pub root: PathBuf,
 }
@@ -341,6 +352,7 @@ impl ResourceDetector for ProjectTypeDetector {
 }
 
 /// Detects Git by looking for a `.git` directory and reading `HEAD`.
+#[derive(Debug)]
 pub struct GitDetector {
     pub root: PathBuf,
 }
@@ -383,6 +395,7 @@ impl ResourceDetector for GitDetector {
 }
 
 /// Detects Docker by checking if the docker daemon is running.
+#[derive(Debug)]
 pub struct DockerDetector;
 
 impl ResourceDetector for DockerDetector {
@@ -443,6 +456,7 @@ impl ResourceDetector for DockerDetector {
 }
 
 /// Detects GPU availability via subprocess checks and env vars.
+#[derive(Debug)]
 pub struct GpuDetector;
 
 impl ResourceDetector for GpuDetector {
@@ -520,6 +534,7 @@ impl ResourceDetector for GpuDetector {
 }
 
 /// Detects browser availability by checking env vars and common installation paths.
+#[derive(Debug)]
 pub struct BrowserDetector;
 
 impl ResourceDetector for BrowserDetector {
@@ -598,6 +613,7 @@ impl ResourceDetector for BrowserDetector {
 }
 
 /// Detects internet connectivity by performing real HTTP checks.
+#[derive(Debug)]
 pub struct NetworkDetector;
 
 impl ResourceDetector for NetworkDetector {
@@ -659,6 +675,7 @@ impl ResourceDetector for NetworkDetector {
 }
 
 /// Detects local Whisper resources: whisper.cpp HTTP server and/or model files.
+#[derive(Debug)]
 pub struct WhisperDetector;
 
 impl ResourceDetector for WhisperDetector {
@@ -760,6 +777,7 @@ impl ResourceDetector for WhisperDetector {
 }
 
 /// Detects a local Piper TTS HTTP server.
+#[derive(Debug)]
 pub struct PiperDetector {
     pub base_url: String,
 }
@@ -816,6 +834,7 @@ impl ResourceDetector for PiperDetector {
 }
 
 /// Detects a local Coqui TTS HTTP server.
+#[derive(Debug)]
 pub struct CoquiDetector {
     pub base_url: String,
 }
@@ -1296,6 +1315,15 @@ impl Butler {
         };
 
         (stt, tts)
+    }
+}
+
+impl fmt::Debug for Butler {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Butler")
+            .field("detectors", &"<...>")
+            .field("cache", &self.cache)
+            .finish()
     }
 }
 

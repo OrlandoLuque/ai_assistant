@@ -167,6 +167,7 @@ pub enum OrchestrationStrategy {
 }
 
 /// Multi-agent orchestrator
+#[derive(Debug)]
 pub struct AgentOrchestrator {
     agents: HashMap<String, Agent>,
     tasks: HashMap<String, AgentTask>,
@@ -564,6 +565,19 @@ pub struct MultiAgentSession {
     name: String,
 }
 
+#[cfg(feature = "autonomous")]
+impl std::fmt::Debug for MultiAgentSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MultiAgentSession")
+            .field("orchestrator", &self.orchestrator)
+            .field("agents", &"<...>")
+            .field("task_board", &"<...>")
+            .field("interaction", &"<...>")
+            .field("name", &self.name)
+            .finish()
+    }
+}
+
 /// Summary of a multi-agent session's current state.
 #[cfg(feature = "autonomous")]
 #[derive(Debug, Clone)]
@@ -784,6 +798,7 @@ pub struct BusMessage {
 ///
 /// Agents subscribe to topics and can publish messages. The bus retains a
 /// configurable history of messages and supports polling by subscriber.
+#[derive(Debug)]
 pub struct MessageBus {
     subscriptions: HashMap<String, Vec<String>>,
     messages: Vec<BusMessage>,
@@ -886,6 +901,7 @@ pub struct ContextEntry {
 ///
 /// Supports versioned entries, merge from another context (last-writer-wins
 /// by version), snapshot export, and diff detection.
+#[derive(Debug)]
 pub struct SharedContext {
     data: HashMap<String, ContextEntry>,
     version: u64,
@@ -1005,6 +1021,7 @@ impl Default for SharedContext {
 }
 
 /// Dispatches tasks to agents based on capabilities and current load.
+#[derive(Debug)]
 pub struct TaskDispatcher {
     agents: Vec<String>,
     capabilities: HashMap<String, Vec<String>>,
@@ -1110,6 +1127,7 @@ impl Default for TaskDispatcher {
 
 /// A high-level collaboration session combining a message bus, shared context,
 /// and task dispatcher into a single coordinated workspace.
+#[derive(Debug)]
 pub struct CollaborationSession {
     /// The pub/sub message bus.
     pub bus: MessageBus,
@@ -1376,6 +1394,7 @@ pub struct PatternResult {
 }
 
 /// Executes a conversation pattern with N agents.
+#[derive(Debug)]
 pub struct PatternRunner {
     /// The agents participating in this pattern.
     agents: Vec<PatternAgent>,
@@ -1820,6 +1839,7 @@ pub struct HandoffResult {
 }
 
 /// Manages agent registrations and handoff execution.
+#[derive(Debug)]
 pub struct HandoffManager {
     /// Registered agents keyed by id.
     agents: HashMap<String, PatternAgent>,

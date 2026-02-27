@@ -16,6 +16,7 @@
 
 use std::collections::HashMap;
 use std::collections::VecDeque;
+use std::fmt;
 use std::sync::Mutex;
 use std::time::Instant;
 
@@ -192,6 +193,17 @@ impl GuardrailPipeline {
     }
 }
 
+impl fmt::Debug for GuardrailPipeline {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GuardrailPipeline")
+            .field("guards", &"<...>")
+            .field("block_threshold", &self.block_threshold)
+            .field("log_violations", &self.log_violations)
+            .field("violations", &self.violations)
+            .finish()
+    }
+}
+
 impl Default for GuardrailPipeline {
     fn default() -> Self {
         Self::new()
@@ -203,6 +215,7 @@ impl Default for GuardrailPipeline {
 // ---------------------------------------------------------------------------
 
 /// Blocks text that exceeds a maximum character count.
+#[derive(Debug)]
 pub struct ContentLengthGuard {
     max_chars: usize,
 }
@@ -248,6 +261,7 @@ impl Guard for ContentLengthGuard {
 }
 
 /// Sliding-window rate limiter. Uses interior mutability to track timestamps.
+#[derive(Debug)]
 pub struct RateLimitGuard {
     max_requests: usize,
     window_secs: u64,
@@ -323,6 +337,7 @@ impl Guard for RateLimitGuard {
 }
 
 /// Blocks text containing any of a set of forbidden substrings (case-insensitive).
+#[derive(Debug)]
 pub struct PatternGuard {
     patterns: Vec<String>,
 }
@@ -380,6 +395,14 @@ impl ToxicityGuard {
     /// Create a toxicity guard wrapping the given detector.
     pub fn with_detector(detector: ToxicityDetector) -> Self {
         Self { detector }
+    }
+}
+
+impl fmt::Debug for ToxicityGuard {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ToxicityGuard")
+            .field("detector", &"<...>")
+            .finish()
     }
 }
 
@@ -441,6 +464,14 @@ impl PiiGuard {
     }
 }
 
+impl fmt::Debug for PiiGuard {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PiiGuard")
+            .field("detector", &"<...>")
+            .finish()
+    }
+}
+
 impl Default for PiiGuard {
     fn default() -> Self {
         Self::new()
@@ -496,6 +527,14 @@ impl AttackGuard {
     /// Create an attack guard wrapping the given detector.
     pub fn with_detector(detector: AttackDetector) -> Self {
         Self { detector }
+    }
+}
+
+impl fmt::Debug for AttackGuard {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AttackGuard")
+            .field("detector", &"<...>")
+            .finish()
     }
 }
 
@@ -760,6 +799,18 @@ impl StreamingGuardrailPipeline {
     }
 }
 
+impl fmt::Debug for StreamingGuardrailPipeline {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("StreamingGuardrailPipeline")
+            .field("guards", &"<...>")
+            .field("config", &self.config)
+            .field("accumulated", &self.accumulated)
+            .field("tokens_since_eval", &self.tokens_since_eval)
+            .field("metrics", &self.metrics)
+            .finish()
+    }
+}
+
 impl Default for StreamingGuardrailPipeline {
     fn default() -> Self {
         Self::new()
@@ -772,6 +823,7 @@ impl Default for StreamingGuardrailPipeline {
 
 /// Streaming PII guard — detects email addresses, phone numbers, and SSN-like
 /// patterns in the accumulated text using lightweight heuristics.
+#[derive(Debug)]
 pub struct StreamingPiiGuard;
 
 impl StreamingGuard for StreamingPiiGuard {
@@ -838,6 +890,7 @@ impl StreamingGuard for StreamingPiiGuard {
 
 /// Streaming toxicity guard — flags content matching a configurable blocklist
 /// of toxic words/phrases (case-insensitive).
+#[derive(Debug)]
 pub struct StreamingToxicityGuard {
     /// List of blocked words/phrases (stored in lowercase).
     pub blocklist: Vec<String>,
@@ -881,6 +934,7 @@ impl StreamingGuard for StreamingToxicityGuard {
 
 /// Streaming pattern guard — blocks content that matches any of a set of
 /// forbidden substrings (case-insensitive).
+#[derive(Debug)]
 pub struct StreamingPatternGuard {
     /// Blocked patterns (stored in lowercase).
     pub blocked_patterns: Vec<String>,
@@ -973,6 +1027,7 @@ pub struct PolicyViolation {
 /// ("never", "do not", "prohibit", etc.) and sensitive terms ("API key",
 /// "password", "secret", etc.), and stores the extracted keywords keyed by
 /// policy id.
+#[derive(Debug)]
 pub struct PolicyCompiler {
     keywords_per_policy: HashMap<String, Vec<String>>,
 }
@@ -1106,6 +1161,7 @@ impl Default for PolicyCompiler {
 
 /// Checks text against a set of compiled policies by looking for keyword
 /// matches. Each match produces a [`PolicyViolation`].
+#[derive(Debug)]
 pub struct SemanticChecker {
     /// Pairs of (policy, compiled keywords).
     compiled_policies: Vec<(PolicyStatement, Vec<String>)>,
@@ -1173,6 +1229,7 @@ impl Default for SemanticChecker {
 
 /// High-level guard that combines [`PolicyCompiler`] and [`SemanticChecker`]
 /// into a single, easy-to-use interface for natural-language policy enforcement.
+#[derive(Debug)]
 pub struct NaturalLanguageGuard {
     compiler: PolicyCompiler,
     checker: SemanticChecker,
@@ -1397,6 +1454,7 @@ impl Default for OutputPiiConfig {
 /// guard uses lightweight heuristic matching and is specifically designed for
 /// post-receive output scanning. It supports configurable per-type checks and
 /// can either block or redact detected PII.
+#[derive(Debug)]
 pub struct OutputPiiGuard {
     config: OutputPiiConfig,
 }
@@ -1863,6 +1921,15 @@ impl OutputToxicityGuard {
             config,
             detector: ToxicityDetector::default(),
         }
+    }
+}
+
+impl fmt::Debug for OutputToxicityGuard {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OutputToxicityGuard")
+            .field("config", &self.config)
+            .field("detector", &"<...>")
+            .finish()
     }
 }
 

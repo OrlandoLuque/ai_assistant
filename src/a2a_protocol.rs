@@ -461,6 +461,17 @@ pub struct A2AServer {
     push_configs: Mutex<HashMap<String, PushNotificationConfig>>,
 }
 
+impl fmt::Debug for A2AServer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("A2AServer")
+            .field("card", &self.card)
+            .field("handler", &"<...>")
+            .field("tasks", &self.tasks)
+            .field("push_configs", &self.push_configs)
+            .finish()
+    }
+}
+
 impl A2AServer {
     /// Create a new A2AServer with the given agent card and task handler.
     pub fn new(card: AgentCard, handler: TaskHandler) -> Self {
@@ -776,6 +787,7 @@ impl A2AServer {
 // =============================================================================
 
 /// A client for making A2A protocol requests to remote agents.
+#[derive(Debug)]
 pub struct A2AClient {
     pub base_url: String,
     pub auth_header: Option<(String, String)>,
@@ -820,6 +832,7 @@ impl A2AClient {
 // =============================================================================
 
 /// A directory of known agents, indexed by URL, with skill-based lookup.
+#[derive(Debug)]
 pub struct AgentDirectory {
     agents: HashMap<String, AgentCard>,
 }
@@ -956,6 +969,7 @@ pub struct AgentsMdEntry {
 /// - Capabilities: translate, summarize
 /// - Version: 1.2.0
 /// ```
+#[derive(Debug)]
 pub struct AgentsMdParser;
 
 impl AgentsMdParser {
@@ -1087,6 +1101,7 @@ impl AgentsMdParser {
 }
 
 /// Discovery service built on top of AGENTS.md parsed entries.
+#[derive(Debug)]
 pub struct AgentsMdDiscovery {
     entries: Vec<AgentsMdEntry>,
 }
@@ -1193,6 +1208,7 @@ pub struct AcpAgentDescriptor {
 }
 
 /// Bridge that translates between A2A and ACP message formats.
+#[derive(Debug)]
 pub struct AcpBridge;
 
 impl AcpBridge {
@@ -1314,6 +1330,7 @@ impl AcpBridge {
 
 /// Adapter that wraps an [`AcpAgentDescriptor`] and provides bidirectional
 /// conversion to/from [`AgentCard`].
+#[derive(Debug)]
 pub struct AcpAgentAdapter {
     descriptor: AcpAgentDescriptor,
 }

@@ -29,6 +29,7 @@
 
 use std::any::Any;
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
@@ -128,6 +129,16 @@ pub struct PluginContext {
     pub config: HashMap<String, serde_json::Value>,
 }
 
+impl fmt::Debug for PluginContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PluginContext")
+            .field("data_dir", &self.data_dir)
+            .field("state", &"<...>")
+            .field("config", &self.config)
+            .finish()
+    }
+}
+
 impl PluginContext {
     /// Create a new plugin context
     pub fn new() -> Self {
@@ -185,6 +196,15 @@ pub struct PluginInfo {
 pub struct PluginManager {
     plugins: Vec<(PluginInfo, Box<dyn Plugin>)>,
     context: PluginContext,
+}
+
+impl fmt::Debug for PluginManager {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PluginManager")
+            .field("plugins", &"<...>")
+            .field("context", &self.context)
+            .finish()
+    }
 }
 
 impl PluginManager {
@@ -491,7 +511,18 @@ impl Plugin for MessageProcessorPlugin {
     }
 }
 
+impl fmt::Debug for MessageProcessorPlugin {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MessageProcessorPlugin")
+            .field("name", &self.name)
+            .field("before_send", &"<...>")
+            .field("after_receive", &"<...>")
+            .finish()
+    }
+}
+
 /// A logging plugin for debugging
+#[derive(Debug)]
 pub struct LoggingPlugin {
     enabled: bool,
     log_messages: bool,
@@ -572,6 +603,7 @@ impl Plugin for LoggingPlugin {
 }
 
 /// A plugin that logs every server request/response using `log::info!`
+#[derive(Debug)]
 pub struct RequestLoggingPlugin;
 
 impl RequestLoggingPlugin {
@@ -632,6 +664,7 @@ impl Plugin for RequestLoggingPlugin {
 }
 
 /// A plugin that blocks requests from IPs not in the allowlist
+#[derive(Debug)]
 pub struct IpAllowlistPlugin {
     allowed_ips: Vec<String>,
 }
@@ -710,6 +743,7 @@ impl Plugin for IpAllowlistPlugin {
 }
 
 /// A plugin that collects request metrics (counts and latencies)
+#[derive(Debug)]
 pub struct MetricsCollectorPlugin {
     request_count: AtomicU64,
     total_latency_ms: AtomicU64,

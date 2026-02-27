@@ -210,6 +210,7 @@ pub struct SelectionResult {
 }
 
 /// Automatic model selector
+#[derive(Debug)]
 pub struct AutoModelSelector {
     config: AutoSelectConfig,
     /// Performance history
@@ -527,6 +528,7 @@ pub struct ModelStats {
 }
 
 /// Builder for selector configuration
+#[derive(Debug)]
 pub struct AutoSelectConfigBuilder {
     config: AutoSelectConfig,
 }
@@ -962,6 +964,7 @@ impl PerformanceTracker {
 }
 
 /// Combines cost registry, performance tracking, and fallback into a single selector
+#[derive(Debug)]
 pub struct SmartSelector {
     /// Cost registry for budget calculations
     pub cost_registry: ModelCostRegistry,
@@ -1056,6 +1059,7 @@ pub enum PipelineTaskType {
 }
 
 /// A routing rule that maps task patterns to preferred providers.
+#[derive(Debug)]
 pub struct RoutingRule {
     pub task_pattern: String,
     pub preferred_provider: String,
@@ -1065,6 +1069,7 @@ pub struct RoutingRule {
 }
 
 /// The result of a routing decision.
+#[derive(Debug)]
 pub struct PipelineRoutingDecision {
     pub provider: String,
     pub model: String,
@@ -1073,6 +1078,7 @@ pub struct PipelineRoutingDecision {
 }
 
 /// Routes requests to the optimal provider/model based on task type, cost, and quality.
+#[derive(Debug)]
 pub struct PipelineRouter {
     pub rules: Vec<RoutingRule>,
     pub default_provider: String,
@@ -1179,12 +1185,14 @@ impl PipelineRouter {
 // ============================================================================
 
 /// A prompt segment that can be marked as static (cacheable) or dynamic.
+#[derive(Debug)]
 pub enum PromptSegment {
     Static { content: String, cache_key: String },
     Dynamic { content: String },
 }
 
 /// Marks segments of a prompt as cacheable or dynamic for provider cache optimization.
+#[derive(Debug)]
 pub struct CacheablePrompt {
     pub segments: Vec<PromptSegment>,
 }

@@ -27,6 +27,7 @@
 //! ```
 
 use std::collections::HashMap;
+use std::fmt;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -309,6 +310,7 @@ pub fn generate_mini_summary(messages: &[(String, String)], max_tokens: usize) -
 // ---------------------------------------------------------------------------
 
 /// Proportional token allocator with surplus redistribution.
+#[derive(Debug)]
 pub struct TokenBudgetAllocator;
 
 impl TokenBudgetAllocator {
@@ -542,12 +544,23 @@ impl ContextOverflowDetector {
     }
 }
 
+impl fmt::Debug for ContextOverflowDetector {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ContextOverflowDetector")
+            .field("budget", &self.budget)
+            .field("thresholds", &self.thresholds)
+            .field("on_overflow_callback", &"<...>")
+            .finish()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // ContextComposer
 // ---------------------------------------------------------------------------
 
 /// Orchestrates context composition: budgeting, trimming, overflow
 /// detection, and prompt assembly.
+#[derive(Debug)]
 pub struct ContextComposer {
     config: ContextComposerConfig,
 }
@@ -747,6 +760,7 @@ impl ContextComposer {
 
 /// Allocates token budgets per context segment type and enforces limits through
 /// priority-based eviction when the total approaches the model context window.
+#[derive(Debug)]
 pub struct ContextCompiler {
     total_budget: usize,
     allocations: HashMap<SegmentType, SegmentAllocation>,
@@ -765,6 +779,7 @@ pub enum SegmentType {
 }
 
 /// Budget allocation for a single segment type.
+#[derive(Debug)]
 pub struct SegmentAllocation {
     /// Fraction of total budget (0.0 - 1.0).
     pub percentage: f64,
@@ -777,6 +792,7 @@ pub struct SegmentAllocation {
 }
 
 /// A single context segment with metadata for budget management.
+#[derive(Debug)]
 pub struct ContextSegment {
     /// The type/category of this segment.
     pub segment_type: SegmentType,
@@ -791,6 +807,7 @@ pub struct ContextSegment {
 }
 
 /// Result of compiling segments within the budget.
+#[derive(Debug)]
 pub struct CompiledContext {
     /// Segments that survived eviction.
     pub segments: Vec<ContextSegment>,
@@ -984,6 +1001,7 @@ impl ContextCompiler {
 
 /// Automatically compacts long conversations by summarizing older messages
 /// while preserving the most recent N messages intact.
+#[derive(Debug)]
 pub struct ConversationCompactor {
     max_messages_before_compact: usize,
     preserve_recent: usize,
