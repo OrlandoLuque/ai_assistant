@@ -851,7 +851,7 @@ impl MultiLayerGraph {
         }
         self.session_graphs
             .get_mut(session_id)
-            .expect("key just inserted")
+            .expect("session graph must exist after insert in get_or_create_session")
     }
 
     /// Process a user message and extract entities/beliefs

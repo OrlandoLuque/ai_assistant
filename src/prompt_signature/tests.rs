@@ -561,7 +561,7 @@ use std::collections::HashMap;
         let examples = make_training_examples();
         let mut budget = EvaluationBudget::new(10, 10);
 
-        let result = optimizer.optimize(&sig, &examples, &mut budget).expect("ok");
+        let result = optimizer.optimize(&sig, &examples, &mut budget).expect("bootstrap optimize in selects_best");
         // Best score should be the maximum in history
         let max_score = result
             .scores_history
@@ -604,7 +604,7 @@ use std::collections::HashMap;
         let examples = make_training_examples();
         let mut budget = EvaluationBudget::new(2, 5);
 
-        let result = optimizer.optimize(&sig, &examples, &mut budget).expect("ok");
+        let result = optimizer.optimize(&sig, &examples, &mut budget).expect("bootstrap optimize in respects_budget");
         assert!(result.trials_run <= 2);
         assert_eq!(budget.remaining(), 0);
     }
@@ -624,7 +624,7 @@ use std::collections::HashMap;
 
         let result = optimizer.optimize(&sig, &examples, &mut budget);
         assert!(result.is_ok());
-        let opt = result.expect("ok");
+        let opt = result.expect("grid_search_basic optimize result");
         assert!(opt.trials_run > 0);
     }
 
@@ -640,7 +640,7 @@ use std::collections::HashMap;
         let examples = make_training_examples();
         let mut budget = EvaluationBudget::new(10, 10);
 
-        let result = optimizer.optimize(&sig, &examples, &mut budget).expect("ok");
+        let result = optimizer.optimize(&sig, &examples, &mut budget).expect("grid_search optimize in selects_best");
         let max_score = result
             .scores_history
             .iter()
@@ -676,7 +676,7 @@ use std::collections::HashMap;
         let examples = make_training_examples();
         let mut budget = EvaluationBudget::new(2, 5);
 
-        let result = optimizer.optimize(&sig, &examples, &mut budget).expect("ok");
+        let result = optimizer.optimize(&sig, &examples, &mut budget).expect("grid_search optimize in respects_budget");
         assert!(result.trials_run <= 2);
     }
 
@@ -687,7 +687,7 @@ use std::collections::HashMap;
         let sig = make_qa_signature();
         let mut budget = EvaluationBudget::new(5, 10);
 
-        let result = optimizer.optimize(&sig, &[], &mut budget).expect("ok");
+        let result = optimizer.optimize(&sig, &[], &mut budget).expect("grid_search optimize with no examples");
         assert_eq!(result.trials_run, 1);
     }
 
@@ -702,7 +702,7 @@ use std::collections::HashMap;
 
         let result = optimizer.optimize(&sig, &examples, &mut budget);
         assert!(result.is_ok());
-        let opt = result.expect("ok");
+        let opt = result.expect("random_search_basic optimize result");
         assert!(opt.trials_run > 0);
         assert_eq!(opt.scores_history.len(), opt.trials_run);
     }
@@ -714,7 +714,7 @@ use std::collections::HashMap;
         let examples = make_training_examples();
         let mut budget = EvaluationBudget::new(3, 5);
 
-        let result = optimizer.optimize(&sig, &examples, &mut budget).expect("ok");
+        let result = optimizer.optimize(&sig, &examples, &mut budget).expect("random_search optimize in respects_budget");
         assert!(result.trials_run <= 3);
     }
 
@@ -740,7 +740,7 @@ use std::collections::HashMap;
         let examples = make_training_examples();
         let mut budget = EvaluationBudget::new(5, 5);
 
-        let result = optimizer.optimize(&sig, &examples, &mut budget).expect("ok");
+        let result = optimizer.optimize(&sig, &examples, &mut budget).expect("random_search optimize with instructions");
         assert!(result.best_prompt.system_prompt.len() > 0);
     }
 
@@ -755,7 +755,7 @@ use std::collections::HashMap;
 
         let result = optimizer.optimize(&sig, &examples, &mut budget);
         assert!(result.is_ok());
-        let opt = result.expect("ok");
+        let opt = result.expect("bayesian_optimizer_basic optimize result");
         assert!(opt.trials_run > 0);
     }
 
@@ -766,7 +766,7 @@ use std::collections::HashMap;
         let examples = make_training_examples();
         let mut budget = EvaluationBudget::new(3, 5);
 
-        let result = optimizer.optimize(&sig, &examples, &mut budget).expect("ok");
+        let result = optimizer.optimize(&sig, &examples, &mut budget).expect("bayesian optimize in respects_budget");
         assert!(result.trials_run <= 3);
     }
 
@@ -1113,7 +1113,7 @@ use std::collections::HashMap;
         // Optimize
         let optimizer = BootstrapFewShot::new(2, Box::new(ContainsAnswer));
         let mut budget = EvaluationBudget::new(5, 5);
-        let opt_result = optimizer.optimize(&sig, &examples, &mut budget).expect("ok");
+        let opt_result = optimizer.optimize(&sig, &examples, &mut budget).expect("optimize in end_to_end_optimize_and_reflect");
 
         // Reflect on the result
         let reflector = SelfReflector::new(10, 0.05);
@@ -1133,7 +1133,7 @@ use std::collections::HashMap;
         // Bootstrap
         let bs = BootstrapFewShot::new(2, Box::new(ContainsAnswer));
         let mut budget1 = EvaluationBudget::new(3, 5);
-        let r1 = bs.optimize(&sig, &examples, &mut budget1).expect("ok");
+        let r1 = bs.optimize(&sig, &examples, &mut budget1).expect("bootstrap in optimizers_comparison");
 
         // Grid search
         let gs = GridSearchOptimizer::new(
@@ -1141,12 +1141,12 @@ use std::collections::HashMap;
             Box::new(ContainsAnswer),
         );
         let mut budget2 = EvaluationBudget::new(3, 5);
-        let r2 = gs.optimize(&sig, &examples, &mut budget2).expect("ok");
+        let r2 = gs.optimize(&sig, &examples, &mut budget2).expect("grid_search in optimizers_comparison");
 
         // Random search
         let rs = RandomSearchOptimizer::new(3, Box::new(ContainsAnswer));
         let mut budget3 = EvaluationBudget::new(3, 5);
-        let r3 = rs.optimize(&sig, &examples, &mut budget3).expect("ok");
+        let r3 = rs.optimize(&sig, &examples, &mut budget3).expect("random_search in optimizers_comparison");
 
         // All should produce valid results
         assert!(r1.trials_run > 0);
@@ -1550,7 +1550,7 @@ use std::collections::HashMap;
 
         let result = optimizer.optimize(&sig, &examples, &metrics, &mut budget);
         assert!(result.is_ok());
-        let front = result.expect("ok");
+        let front = result.expect("GEPA optimize in gepa_optimize_basic");
         assert!(!front.solutions.is_empty());
         // All solutions should have been scored
         for sol in &front.solutions {
@@ -1668,7 +1668,7 @@ use std::collections::HashMap;
 
         let result = optimizer.optimize(&sig, &examples, &metric, &mut budget);
         assert!(result.is_ok());
-        let opt = result.expect("ok");
+        let opt = result.expect("MIPROv2 optimize in pipeline_random");
         assert!(opt.trials_run > 0);
         assert!(!opt.scores_history.is_empty());
     }
@@ -1690,7 +1690,7 @@ use std::collections::HashMap;
 
         let result = optimizer.optimize(&sig, &examples, &metric, &mut budget);
         assert!(result.is_ok());
-        let opt = result.expect("ok");
+        let opt = result.expect("MIPROv2 optimize in pipeline_exhaustive");
         assert!(opt.trials_run > 0);
     }
 
@@ -1726,7 +1726,7 @@ use std::collections::HashMap;
         let metric = ContainsAnswer;
         let mut budget = EvaluationBudget::new(20, 10);
 
-        let opt = optimizer.optimize(&sig, &examples, &metric, &mut budget).expect("ok");
+        let opt = optimizer.optimize(&sig, &examples, &metric, &mut budget).expect("MIPROv2 optimize in selects_best");
         let max_score = opt
             .scores_history
             .iter()
@@ -1754,7 +1754,7 @@ use std::collections::HashMap;
         let metric = ExactMatch;
         let mut budget = EvaluationBudget::new(3, 5);
 
-        let opt = optimizer.optimize(&sig, &examples, &metric, &mut budget).expect("ok");
+        let opt = optimizer.optimize(&sig, &examples, &metric, &mut budget).expect("MIPROv2 optimize in respects_budget");
         assert!(opt.trials_run <= 3);
     }
 
