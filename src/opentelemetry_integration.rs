@@ -675,7 +675,7 @@ impl TracingMiddleware {
     ) {
         // Retrieve the span from active spans
         let span_opt = {
-            let mut active = self.tracer.active_spans.lock().unwrap();
+            let mut active = self.tracer.active_spans.lock().expect("active_spans lock in after_llm_call");
             active.remove(span_id)
         };
         if let Some(mut span) = span_opt {
@@ -706,7 +706,7 @@ impl TracingMiddleware {
     /// Complete a tool call span.
     pub fn after_tool_call(&mut self, span_id: &str, success: bool) {
         let span_opt = {
-            let mut active = self.tracer.active_spans.lock().unwrap();
+            let mut active = self.tracer.active_spans.lock().expect("active_spans lock in after_tool_call");
             active.remove(span_id)
         };
         if let Some(span) = span_opt {
