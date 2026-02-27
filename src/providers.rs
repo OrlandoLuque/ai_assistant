@@ -1646,7 +1646,7 @@ impl ConnectionPoolHandle {
                 .build();
             self.agents.insert(host.to_string(), agent);
         }
-        self.agents.get(host).expect("just inserted")
+        self.agents.get(host).expect("agent must exist after insert in get_agent")
     }
 }
 

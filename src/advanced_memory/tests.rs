@@ -424,8 +424,8 @@ use std::collections::HashMap;
     #[test]
     fn test_entity_find_by_name() {
         let mut store = EntityStore::new();
-        store.add(make_entity("e1", "Python", "language")).expect("ok");
-        store.add(make_entity("e2", "Rust", "language")).expect("ok");
+        store.add(make_entity("e1", "Python", "language")).expect("add Python entity for find_by_name");
+        store.add(make_entity("e2", "Rust", "language")).expect("add Rust entity for find_by_name");
 
         let found = store.find_by_name("python");
         assert!(found.is_some());
@@ -441,7 +441,7 @@ use std::collections::HashMap;
     #[test]
     fn test_entity_get() {
         let mut store = EntityStore::new();
-        store.add(make_entity("e1", "Rust", "language")).expect("ok");
+        store.add(make_entity("e1", "Rust", "language")).expect("add entity for entity_get");
         assert!(store.get("e1").is_some());
         assert!(store.get("e2").is_none());
     }
@@ -449,13 +449,13 @@ use std::collections::HashMap;
     #[test]
     fn test_entity_update_attributes() {
         let mut store = EntityStore::new();
-        store.add(make_entity("e1", "Rust", "language")).expect("ok");
+        store.add(make_entity("e1", "Rust", "language")).expect("add entity for update_attributes");
 
         let mut attrs = HashMap::new();
         attrs.insert("version".to_string(), serde_json::json!("1.77"));
         attrs.insert("compiled".to_string(), serde_json::json!(true));
 
-        store.update("e1", attrs).expect("ok");
+        store.update("e1", attrs).expect("update attributes on e1");
         let ent = store.get("e1").expect("should exist");
         assert_eq!(ent.attributes.len(), 2);
         assert_eq!(ent.attributes.get("version"), Some(&serde_json::json!("1.77")));
@@ -471,15 +471,15 @@ use std::collections::HashMap;
     #[test]
     fn test_entity_add_relation() {
         let mut store = EntityStore::new();
-        store.add(make_entity("e1", "Rust", "language")).expect("ok");
-        store.add(make_entity("e2", "Cargo", "tool")).expect("ok");
+        store.add(make_entity("e1", "Rust", "language")).expect("add Rust for add_relation");
+        store.add(make_entity("e2", "Cargo", "tool")).expect("add Cargo for add_relation");
 
         let rel = EntityRelation {
             relation_type: "uses".to_string(),
             target_entity_id: "e2".to_string(),
             confidence: 0.95,
         };
-        store.add_relation("e1", rel).expect("ok");
+        store.add_relation("e1", rel).expect("add uses-relation from Rust to Cargo");
 
         let ent = store.get("e1").expect("exists");
         assert_eq!(ent.relations.len(), 1);
@@ -505,14 +505,14 @@ use std::collections::HashMap;
         let mut e1 = make_entity("e1", "Rust Lang", "language");
         e1.attributes.insert("paradigm".to_string(), serde_json::json!("systems"));
         e1.mention_count = 5;
-        store.add(e1).expect("ok");
+        store.add(e1).expect("add e1 for entity_merge");
 
         let mut e2 = make_entity("e2", "Rust Programming", "language");
         e2.attributes.insert("year".to_string(), serde_json::json!(2010));
         e2.mention_count = 3;
-        store.add(e2).expect("ok");
+        store.add(e2).expect("add e2 for entity_merge");
 
-        store.merge("e1", "e2").expect("ok");
+        store.merge("e1", "e2").expect("merge e2 into e1");
 
         assert_eq!(store.len(), 1, "Source entity should be removed after merge");
         let merged = store.get("e1").expect("target should still exist");
@@ -524,7 +524,7 @@ use std::collections::HashMap;
     #[test]
     fn test_entity_merge_self() {
         let mut store = EntityStore::new();
-        store.add(make_entity("e1", "Rust", "language")).expect("ok");
+        store.add(make_entity("e1", "Rust", "language")).expect("add entity for merge_self test");
         let result = store.merge("e1", "e1");
         assert!(result.is_err(), "Merging entity with itself should fail");
     }
@@ -532,7 +532,7 @@ use std::collections::HashMap;
     #[test]
     fn test_entity_merge_target_not_found() {
         let mut store = EntityStore::new();
-        store.add(make_entity("e2", "Python", "language")).expect("ok");
+        store.add(make_entity("e2", "Python", "language")).expect("add entity for merge_target_not_found");
         let result = store.merge("nonexistent", "e2");
         // Source is removed first, then target lookup fails; source should be restored
         assert!(result.is_err());
@@ -543,7 +543,7 @@ use std::collections::HashMap;
     #[test]
     fn test_entity_merge_source_not_found() {
         let mut store = EntityStore::new();
-        store.add(make_entity("e1", "Rust", "language")).expect("ok");
+        store.add(make_entity("e1", "Rust", "language")).expect("add entity for merge_source_not_found");
         let result = store.merge("e1", "nonexistent");
         assert!(result.is_err());
     }
@@ -551,10 +551,10 @@ use std::collections::HashMap;
     #[test]
     fn test_entity_remove() {
         let mut store = EntityStore::new();
-        store.add(make_entity("e1", "Rust", "language")).expect("ok");
+        store.add(make_entity("e1", "Rust", "language")).expect("add entity for entity_remove");
         assert_eq!(store.len(), 1);
 
-        let removed = store.remove("e1").expect("ok");
+        let removed = store.remove("e1").expect("remove entity e1");
         assert_eq!(removed.id, "e1");
         assert_eq!(store.len(), 0);
         assert!(store.find_by_name("Rust").is_none());
@@ -570,8 +570,8 @@ use std::collections::HashMap;
     #[test]
     fn test_entity_all() {
         let mut store = EntityStore::new();
-        store.add(make_entity("e1", "Rust", "language")).expect("ok");
-        store.add(make_entity("e2", "Python", "language")).expect("ok");
+        store.add(make_entity("e1", "Rust", "language")).expect("add Rust for entity_all");
+        store.add(make_entity("e2", "Python", "language")).expect("add Python for entity_all");
         let all = store.all();
         assert_eq!(all.len(), 2);
     }
@@ -736,7 +736,7 @@ use std::collections::HashMap;
     #[test]
     fn test_manager_find_entity() {
         let mut mgr = AdvancedMemoryManager::new();
-        mgr.add_entity(make_entity("e1", "Rust", "language")).expect("ok");
+        mgr.add_entity(make_entity("e1", "Rust", "language")).expect("add entity via manager for find_entity");
         assert!(mgr.find_entity("rust").is_some());
         assert!(mgr.find_entity("java").is_none());
     }
@@ -757,7 +757,7 @@ use std::collections::HashMap;
         ));
 
         // Add entity
-        mgr.add_entity(make_entity("ent1", "Rust", "language")).expect("ok");
+        mgr.add_entity(make_entity("ent1", "Rust", "language")).expect("add entity in manager_full_lifecycle");
 
         // Recall
         let recalled = mgr.recall_episodes(&[1.0, 0.0], 2);
@@ -861,8 +861,8 @@ use std::collections::HashMap;
     #[test]
     fn test_entity_store_to_from_json() {
         let mut store = EntityStore::new();
-        store.add(make_entity("e1", "Rust", "language")).expect("ok");
-        store.add(make_entity("e2", "Python", "language")).expect("ok");
+        store.add(make_entity("e1", "Rust", "language")).expect("add Rust for entity_store_to_from_json");
+        store.add(make_entity("e2", "Python", "language")).expect("add Python for entity_store_to_from_json");
 
         let json = store.to_json().expect("to_json ok");
         let mut store2 = EntityStore::new();
@@ -1052,14 +1052,14 @@ use std::collections::HashMap;
         let mut store = EntityStore::new();
         let mut e1 = make_entity("e1", "Target", "type");
         e1.first_seen = 200;
-        store.add(e1).expect("ok");
+        store.add(e1).expect("add target entity for first_seen test");
 
         let mut e2 = make_entity("e2", "Source", "type");
         e2.first_seen = 100; // earlier
-        store.add(e2).expect("ok");
+        store.add(e2).expect("add source entity for first_seen test");
 
-        store.merge("e1", "e2").expect("ok");
-        let merged = store.get("e1").expect("exists");
+        store.merge("e1", "e2").expect("merge to preserve earliest first_seen");
+        let merged = store.get("e1").expect("merged entity exists");
         assert_eq!(merged.first_seen, 100, "Should keep the earlier first_seen");
     }
 
@@ -1072,7 +1072,7 @@ use std::collections::HashMap;
             target_entity_id: "other".to_string(),
             confidence: 0.8,
         });
-        store.add(e1).expect("ok");
+        store.add(e1).expect("add target entity for relations merge");
 
         let mut e2 = make_entity("e2", "Source", "type");
         e2.relations.push(EntityRelation {
@@ -1080,10 +1080,10 @@ use std::collections::HashMap;
             target_entity_id: "another".to_string(),
             confidence: 0.7,
         });
-        store.add(e2).expect("ok");
+        store.add(e2).expect("add source entity for relations merge");
 
-        store.merge("e1", "e2").expect("ok");
-        let merged = store.get("e1").expect("exists");
+        store.merge("e1", "e2").expect("merge to accumulate relations");
+        let merged = store.get("e1").expect("merged entity with relations exists");
         assert_eq!(merged.relations.len(), 2, "Relations from both entities should be present");
     }
 
