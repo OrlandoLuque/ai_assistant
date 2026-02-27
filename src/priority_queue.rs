@@ -748,4 +748,109 @@ mod tests {
         assert!(!request.is_expired());
         assert!(request.time_until_deadline().is_some());
     }
+
+    #[test]
+    fn test_peek_and_len_by_priority() {
+        let queue = PriorityQueue::new(100);
+
+        assert!(queue.is_empty());
+        assert!(queue.peek().is_none());
+
+        queue
+            .enqueue(PriorityRequest::new("bg1", Priority::Background))
+            .unwrap();
+        queue
+            .enqueue(PriorityRequest::new("high1", Priority::High))
+            .unwrap();
+        queue
+            .enqueue(PriorityRequest::new("bg2", Priority::Background))
+            .unwrap();
+
+        // Peek should return highest priority without removing
+        let peeked = queue.peek().unwrap();
+        assert_eq!(peeked.priority, Priority::High);
+        assert_eq!(queue.len(), 3); // still 3, nothing removed
+
+        // Count by priority
+        assert_eq!(queue.len_by_priority(Priority::Background), 2);
+        assert_eq!(queue.len_by_priority(Priority::High), 1);
+        assert_eq!(queue.len_by_priority(Priority::Critical), 0);
+    }
+
+    #[test]
+    fn test_non_cancellable_request() {
+        let queue = PriorityQueue::new(100);
+
+        let id = queue
+            .enqueue(PriorityRequest::new("important", Priority::Critical).non_cancellable())
+            .unwrap();
+
+        // Attempting to cancel a non-cancellable request should fail
+        let result = queue.cancel(&id);
+        assert!(matches!(result, Err(QueueError::NotCancellable)));
+
+        // Request should still be in the queue
+        assert_eq!(queue.len(), 1);
+
+        // Cancelling non-existent request should fail with NotFound
+        let result = queue.cancel("nonexistent-id");
+        assert!(matches!(result, Err(QueueError::NotFound)));
+    }
+
+    #[test]
+    fn test_queue_stats_tracking() {
+        let queue = PriorityQueue::new(100);
+
+        let id1 = queue
+            .enqueue(PriorityRequest::new("a", Priority::Normal))
+            .unwrap();
+        queue
+            .enqueue(PriorityRequest::new("b", Priority::High))
+            .unwrap();
+        queue
+            .enqueue(PriorityRequest::new("c", Priority::Low))
+            .unwrap();
+
+        // Dequeue one
+        let _dequeued = queue.dequeue().unwrap();
+        // Cancel one
+        let _cancelled = queue.cancel(&id1).unwrap();
+
+        let stats = queue.stats();
+        assert_eq!(stats.total_enqueued, 3);
+        assert_eq!(stats.total_dequeued, 1);
+        assert_eq!(stats.total_cancelled, 1);
+        assert_eq!(stats.current_size, 1); // 3 - 1 dequeued - 1 cancelled
+    }
+
+    #[test]
+    fn test_worker_queue_and_clear() {
+        let wq = WorkerQueue::new(50, 4);
+        assert_eq!(wq.worker_count(), 4);
+
+        wq.submit(PriorityRequest::new("task1", Priority::Normal))
+            .unwrap();
+        wq.submit(PriorityRequest::new("task2", Priority::High))
+            .unwrap();
+        wq.submit(PriorityRequest::new("task3", Priority::Low))
+            .unwrap();
+
+        assert_eq!(wq.queue().len(), 3);
+
+        // take returns highest priority first
+        let taken = wq.take().unwrap();
+        assert_eq!(taken.priority, Priority::High);
+
+        // Clear the queue
+        wq.queue().clear();
+        assert!(wq.queue().is_empty());
+        assert_eq!(wq.queue().len(), 0);
+
+        // Priority::from_value and name coverage
+        assert_eq!(Priority::from_value(0), Priority::Critical);
+        assert_eq!(Priority::from_value(2), Priority::Normal);
+        assert_eq!(Priority::from_value(99), Priority::Background);
+        assert_eq!(Priority::Normal.name(), "Normal");
+        assert_eq!(Priority::Critical.name(), "Critical");
+    }
 }

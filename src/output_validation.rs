@@ -720,4 +720,205 @@ mod tests {
         assert!(config.strict);
         assert_eq!(config.max_length, Some(1000));
     }
+
+    #[test]
+    fn test_strict_mode_fails_on_warnings() {
+        // In strict mode, even warnings should cause validation to fail
+        let config = ValidationConfig {
+            strict: true,
+            format: Some(OutputFormat::Markdown),
+            ..Default::default()
+        };
+        let validator = OutputValidator::new(config);
+
+        // Long plain text without markdown elements triggers a warning
+        let plain_text = "a".repeat(150);
+        let result = validator.validate(&plain_text);
+        assert!(!result.valid, "Strict mode should fail on warnings");
+        assert!(!result.issues.is_empty());
+
+        // Non-strict mode should pass on warnings
+        let config_relaxed = ValidationConfig {
+            strict: false,
+            format: Some(OutputFormat::Markdown),
+            ..Default::default()
+        };
+        let validator_relaxed = OutputValidator::new(config_relaxed);
+        let result_relaxed = validator_relaxed.validate(&plain_text);
+        assert!(result_relaxed.valid, "Non-strict mode should pass on warnings");
+    }
+
+    #[test]
+    fn test_custom_validator_registration() {
+        let mut config = ValidationConfig::default();
+        config.custom_validators.push("no_profanity".to_string());
+
+        let mut validator = OutputValidator::new(config);
+        validator.register_validator("no_profanity", |output| {
+            if output.contains("badword") {
+                Some(ValidationIssue {
+                    severity: IssueSeverity::Error,
+                    issue_type: IssueType::CustomValidation("no_profanity".to_string()),
+                    message: "Profanity detected".to_string(),
+                    position: None,
+                    suggestion: Some("Remove profanity".to_string()),
+                })
+            } else {
+                None
+            }
+        });
+
+        let result = validator.validate("This is clean text");
+        assert!(result.valid);
+        assert!(result.issues.is_empty());
+
+        let result = validator.validate("This has badword in it");
+        assert!(!result.valid);
+        assert_eq!(result.issues.len(), 1);
+        assert_eq!(
+            result.issues[0].issue_type,
+            IssueType::CustomValidation("no_profanity".to_string())
+        );
+    }
+
+    #[test]
+    fn test_format_validation_xml_yaml_list_table() {
+        // XML validation
+        let config_xml = ValidationConfig {
+            format: Some(OutputFormat::Xml),
+            ..Default::default()
+        };
+        let validator_xml = OutputValidator::new(config_xml);
+        let result = validator_xml.validate("<root><item>data</item></root>");
+        assert!(result.valid);
+        let result = validator_xml.validate("not xml at all");
+        assert!(!result.valid);
+
+        // YAML validation
+        let config_yaml = ValidationConfig {
+            format: Some(OutputFormat::Yaml),
+            ..Default::default()
+        };
+        let validator_yaml = OutputValidator::new(config_yaml);
+        let result = validator_yaml.validate("key: value\nother: data");
+        assert!(result.valid);
+
+        // List validation
+        let config_list = ValidationConfig {
+            format: Some(OutputFormat::List),
+            ..Default::default()
+        };
+        let validator_list = OutputValidator::new(config_list);
+        let result = validator_list.validate("- item one\n- item two");
+        assert!(result.valid);
+
+        // Table validation
+        let config_table = ValidationConfig {
+            format: Some(OutputFormat::Table),
+            ..Default::default()
+        };
+        let validator_table = OutputValidator::new(config_table);
+        let result = validator_table.validate("| Col1 | Col2 |\n|------|------|\n| a | b |");
+        assert!(result.valid);
+        let result = validator_table.validate("just plain text");
+        assert!(result.valid); // Table issues are warnings, not errors
+    }
+
+    #[test]
+    fn test_validation_result_has_errors_and_error_messages() {
+        let result_clean = ValidationResult {
+            valid: true,
+            issues: vec![
+                ValidationIssue {
+                    severity: IssueSeverity::Info,
+                    issue_type: IssueType::MissingContent,
+                    message: "Info only".to_string(),
+                    position: None,
+                    suggestion: None,
+                },
+                ValidationIssue {
+                    severity: IssueSeverity::Warning,
+                    issue_type: IssueType::InvalidFormat,
+                    message: "Just a warning".to_string(),
+                    position: None,
+                    suggestion: None,
+                },
+            ],
+            output: "test".to_string(),
+            corrected: None,
+            score: 0.9,
+        };
+        assert!(!result_clean.has_errors());
+        assert!(result_clean.error_messages().is_empty());
+
+        let result_errors = ValidationResult {
+            valid: false,
+            issues: vec![
+                ValidationIssue {
+                    severity: IssueSeverity::Warning,
+                    issue_type: IssueType::InvalidFormat,
+                    message: "warning msg".to_string(),
+                    position: None,
+                    suggestion: None,
+                },
+                ValidationIssue {
+                    severity: IssueSeverity::Error,
+                    issue_type: IssueType::TooLong,
+                    message: "error msg".to_string(),
+                    position: None,
+                    suggestion: None,
+                },
+                ValidationIssue {
+                    severity: IssueSeverity::Critical,
+                    issue_type: IssueType::SafetyConcern,
+                    message: "critical msg".to_string(),
+                    position: None,
+                    suggestion: None,
+                },
+            ],
+            output: "test".to_string(),
+            corrected: None,
+            score: 0.2,
+        };
+        assert!(result_errors.has_errors());
+        let error_msgs = result_errors.error_messages();
+        assert_eq!(error_msgs.len(), 2);
+        assert!(error_msgs.contains(&"error msg".to_string()));
+        assert!(error_msgs.contains(&"critical msg".to_string()));
+    }
+
+    #[test]
+    fn test_schema_validator_from_str_and_type_mismatch() {
+        // Test SchemaValidator::from_str
+        let schema_str = r#"{"type": "object", "properties": {"name": {"type": "string"}}}"#;
+        let validator = SchemaValidator::from_str(schema_str).unwrap();
+
+        // Valid: name is a string
+        let result = validator.validate(r#"{"name": "Alice"}"#);
+        assert!(result.valid);
+
+        // Invalid: name is a number instead of string
+        let result = validator.validate(r#"{"name": 42}"#);
+        assert!(!result.valid);
+        assert!(result
+            .issues
+            .iter()
+            .any(|i| i.issue_type == IssueType::SchemaViolation));
+
+        // from_str with invalid JSON schema should fail
+        let bad_result = SchemaValidator::from_str("not json");
+        assert!(bad_result.is_err());
+
+        // Test array items validation
+        let array_schema = serde_json::json!({
+            "type": "array",
+            "items": {"type": "string"}
+        });
+        let arr_validator = SchemaValidator::new(array_schema);
+        let result = arr_validator.validate(r#"["a", "b", "c"]"#);
+        assert!(result.valid);
+
+        let result = arr_validator.validate(r#"["a", 42, "c"]"#);
+        assert!(!result.valid);
+    }
 }

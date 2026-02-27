@@ -753,4 +753,134 @@ mod tests {
         assert_eq!(stats.insertions, 1);
         assert_eq!(stats.hit_rate(), 0.5);
     }
+
+    #[test]
+    fn test_cache_remove_clear_peek() {
+        let mut cache: BoundedCache<String, i32> = BoundedCache::new(10, EvictionPolicy::Lru);
+
+        cache.insert("a".to_string(), 1);
+        cache.insert("b".to_string(), 2);
+        cache.insert("c".to_string(), 3);
+
+        // Peek should return value without modifying access metadata
+        assert_eq!(cache.peek(&"b".to_string()), Some(&2));
+
+        // Remove a single entry
+        let removed = cache.remove(&"a".to_string());
+        assert_eq!(removed, Some(1));
+        assert!(!cache.contains(&"a".to_string()));
+        assert_eq!(cache.len(), 2);
+
+        // Remove non-existent key returns None
+        assert_eq!(cache.remove(&"z".to_string()), None);
+
+        // Clear all entries
+        cache.clear();
+        assert!(cache.is_empty());
+        assert_eq!(cache.len(), 0);
+        assert_eq!(cache.memory_usage(), 0);
+    }
+
+    #[test]
+    fn test_bounded_vec_push_front_truncate_last_n() {
+        let mut vec: BoundedVec<i32> = BoundedVec::new(5);
+
+        // push_front keeps items at front, evicts from back when full
+        vec.push_front(10);
+        vec.push_front(20);
+        vec.push_front(30);
+        assert_eq!(vec.get(0), Some(&30));
+        assert_eq!(vec.get(1), Some(&20));
+        assert_eq!(vec.get(2), Some(&10));
+
+        // Push more items using push (back)
+        vec.push(40);
+        vec.push(50);
+        assert_eq!(vec.len(), 5);
+
+        // last_n returns the last n items
+        let last_two: Vec<&i32> = vec.last_n(2).collect();
+        assert_eq!(last_two, vec![&40, &50]);
+
+        // last_n with n > len returns all items
+        let all: Vec<&i32> = vec.last_n(100).collect();
+        assert_eq!(all.len(), 5);
+
+        // truncate reduces size from the back
+        vec.truncate(3);
+        assert_eq!(vec.len(), 3);
+        assert_eq!(vec.to_vec(), vec![30, 20, 10]);
+
+        // clear empties everything
+        vec.clear();
+        assert!(vec.is_empty());
+    }
+
+    #[test]
+    fn test_memory_tracker_add_remove_over_limit_critical() {
+        let mut tracker = MemoryTracker::with_limit(1000);
+        tracker.register("cache", Some(500));
+        tracker.register("buffers", None);
+
+        // add increments memory
+        tracker.add("cache", 200);
+        tracker.add("cache", 150);
+        assert_eq!(tracker.get("cache").unwrap().current_bytes, 350);
+        assert!(!tracker.is_over_limit("cache"));
+
+        // Going over component limit
+        tracker.add("cache", 200); // 550 > 500
+        assert!(tracker.is_over_limit("cache"));
+
+        // remove decrements memory (saturating)
+        tracker.remove("cache", 100);
+        assert_eq!(tracker.get("cache").unwrap().current_bytes, 450);
+        assert!(!tracker.is_over_limit("cache"));
+
+        // Peak should record the maximum
+        assert_eq!(tracker.get("cache").unwrap().peak_bytes, 550);
+
+        // Component without limit is never over limit
+        tracker.add("buffers", 9999);
+        assert!(!tracker.is_over_limit("buffers"));
+
+        // Non-existent component is never over limit
+        assert!(!tracker.is_over_limit("nonexistent"));
+
+        // Critical pressure when over total limit
+        tracker.update("cache", 600);
+        tracker.update("buffers", 500);
+        assert_eq!(tracker.pressure(), MemoryPressure::Critical);
+
+        // Verify report
+        let report = tracker.report();
+        assert_eq!(report.total_bytes, 1100);
+        assert_eq!(report.pressure, MemoryPressure::Critical);
+        assert_eq!(report.limit_bytes, Some(1000));
+    }
+
+    #[test]
+    fn test_format_bytes_and_memory_estimate() {
+        // format_bytes for various magnitudes
+        assert_eq!(format_bytes(0), "0 B");
+        assert_eq!(format_bytes(512), "512 B");
+        assert_eq!(format_bytes(1024), "1.0 KB");
+        assert_eq!(format_bytes(1536), "1.5 KB");
+        assert_eq!(format_bytes(1024 * 1024), "1.0 MB");
+        assert_eq!(format_bytes(1024 * 1024 * 1024), "1.00 GB");
+
+        // MemoryEstimate for String
+        let s = String::from("hello");
+        let est = s.estimate_memory();
+        assert!(est >= std::mem::size_of::<String>() + 5);
+
+        // MemoryEstimate for Vec
+        let v: Vec<u64> = vec![1, 2, 3, 4];
+        let est = v.estimate_memory();
+        assert!(est >= std::mem::size_of::<Vec<u64>>() + 4 * std::mem::size_of::<u64>());
+
+        // CacheStats::hit_rate with zero lookups returns 0.0
+        let stats = CacheStats::default();
+        assert_eq!(stats.hit_rate(), 0.0);
+    }
 }
