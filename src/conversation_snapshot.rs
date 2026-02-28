@@ -428,6 +428,77 @@ mod tests {
     }
 
     #[test]
+    fn test_snapshot_context_and_memory() {
+        let mut snapshot = ConversationSnapshot::new("Test");
+        snapshot.set_context("model", "gpt-4");
+        snapshot.set_context("temp", "0.7");
+        snapshot.add_memory("user_name", "Alice", 0.9);
+        assert_eq!(snapshot.context.get("model").unwrap(), "gpt-4");
+        assert_eq!(snapshot.memory.len(), 1);
+        assert!((snapshot.memory[0].importance - 0.9).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_snapshot_bytes_roundtrip() {
+        let mut snapshot = ConversationSnapshot::new("ByteTest");
+        snapshot.add_message("user", "Hello bytes!");
+        let bytes = snapshot.to_bytes().unwrap();
+        let restored = ConversationSnapshot::from_bytes(&bytes).unwrap();
+        assert_eq!(restored.metadata.name, "ByteTest");
+        assert_eq!(restored.messages.len(), 1);
+    }
+
+    #[test]
+    fn test_manager_save_delete() {
+        let mut manager = SnapshotManager::new();
+        let snapshot = ConversationSnapshot::new("ToDelete");
+        let id = manager.save(snapshot);
+        assert!(manager.load(&id).is_some());
+        let deleted = manager.delete(&id);
+        assert!(deleted.is_some());
+        assert!(manager.load(&id).is_none());
+    }
+
+    #[test]
+    fn test_manager_search_by_tag() {
+        let mut manager = SnapshotManager::new();
+        let s1 = ConversationSnapshot::new("Tagged").with_tag("important");
+        let s2 = ConversationSnapshot::new("Untagged");
+        manager.save(s1);
+        manager.save(s2);
+        let results = manager.search_by_tag("important");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].metadata.name, "Tagged");
+    }
+
+    #[test]
+    fn test_manager_search_by_name() {
+        let mut manager = SnapshotManager::new();
+        manager.save(ConversationSnapshot::new("Alpha Session"));
+        manager.save(ConversationSnapshot::new("Beta Session"));
+        manager.save(ConversationSnapshot::new("Gamma Talk"));
+        let results = manager.search_by_name("session");
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn test_diff_context_and_memory() {
+        let mut old = ConversationSnapshot::new("Old");
+        old.set_context("key1", "val1");
+        old.add_memory("fact", "old_value", 0.5);
+
+        let mut new = ConversationSnapshot::new("New");
+        new.set_context("key1", "val2");
+        new.set_context("key2", "new");
+        new.add_memory("fact", "new_value", 0.8);
+
+        let diff = SnapshotDiff::compare(&old, &new);
+        assert!(!diff.context_changes.is_empty());
+        assert!(!diff.memory_changes.is_empty());
+        assert!(!diff.is_empty());
+    }
+
+    #[test]
     fn test_snapshot_diff() {
         let mut old = ConversationSnapshot::new("Old");
         old.add_message("user", "Hello");

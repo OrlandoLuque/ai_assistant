@@ -425,6 +425,78 @@ mod tests {
     }
 
     #[test]
+    fn test_sync_entry_operations() {
+        let add = SyncEntry::add("msg", "1", "hello");
+        assert_eq!(add.operation, SyncOperation::Add);
+        assert_eq!(add.entity_type, "msg");
+        assert!(add.data.is_some());
+
+        let upd = SyncEntry::update("msg", "1", "updated", 2);
+        assert_eq!(upd.operation, SyncOperation::Update);
+        assert_eq!(upd.version, 2);
+
+        let del = SyncEntry::delete("msg", "1");
+        assert_eq!(del.operation, SyncOperation::Delete);
+        assert!(del.data.is_none());
+    }
+
+    #[test]
+    fn test_sync_log_get_since() {
+        let mut log = SyncLog::new(100);
+        log.append(SyncEntry::add("m", "1", "a"));
+        log.append(SyncEntry::add("m", "2", "b"));
+        log.append(SyncEntry::add("m", "3", "c"));
+        assert_eq!(log.get_since(0).len(), 3);
+        assert_eq!(log.get_since(1).len(), 2);
+        assert_eq!(log.get_since(3).len(), 0);
+    }
+
+    #[test]
+    fn test_sync_log_compact() {
+        let mut log = SyncLog::new(100);
+        log.append(SyncEntry::add("msg", "1", "v1"));
+        log.append(SyncEntry::update("msg", "1", "v2", 2));
+        log.append(SyncEntry::add("msg", "2", "other"));
+        log.compact();
+        // After compact: only latest per entity_type:entity_id
+        assert!(log.entries.len() <= 2);
+    }
+
+    #[test]
+    fn test_sync_delta_json() {
+        let entries = vec![SyncEntry::add("msg", "1", "hello")];
+        let delta = SyncDelta::new(0, 1, entries);
+        assert!(!delta.is_empty());
+        let json = delta.to_json().unwrap();
+        let restored = SyncDelta::from_json(&json).unwrap();
+        assert_eq!(restored.from_version, 0);
+        assert_eq!(restored.to_version, 1);
+        assert_eq!(restored.entries.len(), 1);
+    }
+
+    #[test]
+    fn test_full_sync_delta() {
+        let entries = vec![
+            SyncEntry::add("msg", "1", "a"),
+            SyncEntry::add("msg", "2", "b"),
+        ];
+        let delta = SyncDelta::full_sync(entries);
+        assert!(delta.is_full_sync);
+        assert_eq!(delta.from_version, 0);
+    }
+
+    #[test]
+    fn test_manager_record_and_delta() {
+        let mut mgr = IncrementalSyncManager::new();
+        mgr.record_add("msg", "1", "first");
+        mgr.record_update("msg", "1", "updated");
+        mgr.record_delete("msg", "2");
+        assert_eq!(mgr.current_version(), 3);
+        let delta = mgr.get_delta("new_client");
+        assert_eq!(delta.entries.len(), 3);
+    }
+
+    #[test]
     fn test_two_way_sync() {
         let mut coordinator = TwoWaySyncCoordinator::new();
 

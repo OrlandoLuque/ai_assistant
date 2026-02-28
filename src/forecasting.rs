@@ -284,6 +284,62 @@ mod tests {
     }
 
     #[test]
+    fn test_insufficient_data() {
+        let mut forecaster = UsageForecaster::new(100);
+        assert!(forecaster.forecast(Duration::from_secs(3600)).is_none());
+        forecaster.record_usage(10, 100, 1);
+        forecaster.record_usage(20, 200, 2);
+        assert!(forecaster.forecast(Duration::from_secs(3600)).is_none());
+    }
+
+    #[test]
+    fn test_stable_trend() {
+        let mut forecaster = UsageForecaster::new(100);
+        for _ in 0..10 {
+            forecaster.record_usage(100, 1000, 5);
+        }
+        let forecast = forecaster.forecast(Duration::from_secs(3600)).unwrap();
+        assert_eq!(forecast.trend, Trend::Stable);
+    }
+
+    #[test]
+    fn test_decreasing_trend() {
+        let mut forecaster = UsageForecaster::new(100);
+        for i in 0..10 {
+            forecaster.record_usage(200u64.saturating_sub(i * 20), 1000, 5);
+        }
+        let forecast = forecaster.forecast(Duration::from_secs(3600)).unwrap();
+        assert_eq!(forecast.trend, Trend::Decreasing);
+    }
+
+    #[test]
+    fn test_capacity_estimate() {
+        let mut forecaster = UsageForecaster::new(100);
+        for i in 0..10 {
+            forecaster.record_usage(5000 + i * 500, 50000, 5);
+        }
+        let cap = forecaster.estimate_capacity(Duration::from_secs(3600));
+        assert!(cap.is_some());
+        let cap = cap.unwrap();
+        // Predicted requests should be non-trivial with large enough values
+        assert!(cap.min_requests_per_second > 0 || cap.min_tokens_per_second > 0);
+        assert!((cap.recommended_buffer - 1.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_peak_hours_empty() {
+        let mut forecaster = UsageForecaster::new(100);
+        forecaster.record_usage(100, 1000, 5);
+        assert!(forecaster.get_peak_hours().is_empty());
+    }
+
+    #[test]
+    fn test_default_forecaster() {
+        let forecaster = UsageForecaster::default();
+        assert!(forecaster.forecast(Duration::from_secs(60)).is_none());
+    }
+
+    #[test]
     fn test_anomaly_detection() {
         let mut forecaster = UsageForecaster::new(100);
 
