@@ -582,13 +582,13 @@ pub struct LoggingCallback {
 impl AgentCallback for LoggingCallback {
     fn on_thinking(&self, agent_id: &str) {
         if self.verbose {
-            println!("[{}] Thinking...", agent_id);
+            log::debug!("[{}] Thinking...", agent_id);
         }
     }
 
     fn on_tool_execution(&self, agent_id: &str, tool: &str, input: &str) {
         if self.verbose {
-            println!(
+            log::debug!(
                 "[{}] Executing tool '{}' with input: {}",
                 agent_id, tool, input
             );
@@ -597,12 +597,12 @@ impl AgentCallback for LoggingCallback {
 
     fn on_tool_result(&self, agent_id: &str, tool: &str, result: &str) {
         if self.verbose {
-            println!("[{}] Tool '{}' returned: {}", agent_id, tool, result);
+            log::debug!("[{}] Tool '{}' returned: {}", agent_id, tool, result);
         }
     }
 
     fn on_complete(&self, agent_id: &str, result: &AgentResult) {
-        println!("[{}] Completed. Success: {}", agent_id, result.success);
+        log::info!("[{}] Completed. Success: {}", agent_id, result.success);
     }
 
     fn on_error(&self, agent_id: &str, error: &str) {
