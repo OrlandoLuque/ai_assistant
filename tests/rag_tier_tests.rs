@@ -1103,7 +1103,8 @@ mod rag_methods_tests {
 
         let result = expander.expand("test query", &llm).unwrap();
         assert!(!result.result.is_empty());
-        assert!(result.duration_ms >= 0);
+        // duration_ms is u64 (always >= 0), just verify the field is accessible
+        let _ = result.duration_ms;
     }
 
     // --- MultiQueryDecomposer Tests ---
