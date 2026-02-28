@@ -16,9 +16,6 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-#[allow(unused_imports)]
-#[cfg(feature = "distributed")]
-use crate::distributed::{Dht, DhtNode, NodeId};
 
 // =============================================================================
 // P2P CONFIGURATION
