@@ -53,6 +53,8 @@ pub enum AiError {
     Mcts(MctsError),
     /// Agent DevTools errors
     DevTools(DevToolsError),
+    /// Evaluation benchmark suite errors
+    EvalSuite(EvalSuiteError),
     /// Generic error with message
     Other(String),
 }
@@ -81,6 +83,7 @@ impl std::error::Error for AiError {
             AiError::RedTeam(e) => Some(e),
             AiError::Mcts(e) => Some(e),
             AiError::DevTools(e) => Some(e),
+            AiError::EvalSuite(e) => Some(e),
             AiError::Other(_) => None,
         }
     }
@@ -110,6 +113,7 @@ impl fmt::Display for AiError {
             AiError::RedTeam(e) => write!(f, "Red team error: {}", e),
             AiError::Mcts(e) => write!(f, "MCTS planning error: {}", e),
             AiError::DevTools(e) => write!(f, "DevTools error: {}", e),
+            AiError::EvalSuite(e) => write!(f, "Eval suite error: {}", e),
             AiError::Other(msg) => write!(f, "{}", msg),
         }
     }
@@ -145,6 +149,7 @@ impl AiError {
             AiError::RedTeam(e) => e.suggestion(),
             AiError::Mcts(e) => e.suggestion(),
             AiError::DevTools(e) => e.suggestion(),
+            AiError::EvalSuite(e) => e.suggestion(),
             AiError::Other(_) => None,
         }
     }
@@ -167,6 +172,7 @@ impl AiError {
             AiError::RedTeam(_) => false,
             AiError::Mcts(e) => e.is_recoverable(),
             AiError::DevTools(_) => false,
+            AiError::EvalSuite(e) => e.is_recoverable(),
             _ => false,
         }
     }
@@ -195,6 +201,7 @@ impl AiError {
             AiError::RedTeam(_) => "RED_TEAM",
             AiError::Mcts(_) => "MCTS",
             AiError::DevTools(_) => "DEVTOOLS",
+            AiError::EvalSuite(_) => "EVAL_SUITE",
             AiError::Other(_) => "OTHER",
         }
     }
@@ -1897,6 +1904,91 @@ impl From<DevToolsError> for AiError {
     }
 }
 
+// === Eval Suite Errors ===
+
+/// Errors related to evaluation benchmark suite execution
+#[derive(Debug)]
+pub enum EvalSuiteError {
+    /// Benchmark dataset file not found or unreadable
+    DatasetLoadFailed { path: String, reason: String },
+    /// Invalid problem format in dataset
+    InvalidProblem { problem_id: String, reason: String },
+    /// LLM generation failed during benchmark execution
+    GenerationFailed { problem_id: String, reason: String },
+    /// Response scoring failed
+    ScoringFailed { problem_id: String, reason: String },
+    /// No results available for analysis
+    NoResults { reason: String },
+    /// Insufficient data for statistical analysis
+    InsufficientData { metric: String, samples: usize },
+    /// Report generation failed
+    ReportFailed { reason: String },
+    /// Evaluation timed out
+    Timeout { problem_id: String, timeout_secs: u64 },
+}
+
+impl std::error::Error for EvalSuiteError {}
+
+impl fmt::Display for EvalSuiteError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            EvalSuiteError::DatasetLoadFailed { path, reason } => {
+                write!(f, "Failed to load dataset '{}': {}", path, reason)
+            }
+            EvalSuiteError::InvalidProblem { problem_id, reason } => {
+                write!(f, "Invalid problem '{}': {}", problem_id, reason)
+            }
+            EvalSuiteError::GenerationFailed { problem_id, reason } => {
+                write!(f, "Generation failed for problem '{}': {}", problem_id, reason)
+            }
+            EvalSuiteError::ScoringFailed { problem_id, reason } => {
+                write!(f, "Scoring failed for problem '{}': {}", problem_id, reason)
+            }
+            EvalSuiteError::NoResults { reason } => {
+                write!(f, "No results available: {}", reason)
+            }
+            EvalSuiteError::InsufficientData { metric, samples } => {
+                write!(f, "Insufficient data for '{}': only {} samples", metric, samples)
+            }
+            EvalSuiteError::ReportFailed { reason } => {
+                write!(f, "Report generation failed: {}", reason)
+            }
+            EvalSuiteError::Timeout { problem_id, timeout_secs } => {
+                write!(f, "Evaluation timed out for '{}' after {}s", problem_id, timeout_secs)
+            }
+        }
+    }
+}
+
+impl EvalSuiteError {
+    pub fn suggestion(&self) -> Option<&'static str> {
+        match self {
+            EvalSuiteError::DatasetLoadFailed { .. } => Some("Check the dataset file path and format (JSONL or JSON)"),
+            EvalSuiteError::InvalidProblem { .. } => Some("Verify the problem has all required fields (id, prompt, answer_format)"),
+            EvalSuiteError::GenerationFailed { .. } => Some("Check that the LLM provider is accessible and the model is available"),
+            EvalSuiteError::ScoringFailed { .. } => Some("Verify the scorer matches the problem's answer format"),
+            EvalSuiteError::NoResults { .. } => Some("Run at least one benchmark before generating reports"),
+            EvalSuiteError::InsufficientData { .. } => Some("Collect more samples or lower the significance threshold"),
+            EvalSuiteError::ReportFailed { .. } => Some("Ensure all benchmark runs completed before generating the report"),
+            EvalSuiteError::Timeout { .. } => Some("Increase the timeout or use a faster model"),
+        }
+    }
+
+    pub fn is_recoverable(&self) -> bool {
+        matches!(
+            self,
+            EvalSuiteError::GenerationFailed { .. }
+                | EvalSuiteError::Timeout { .. }
+        )
+    }
+}
+
+impl From<EvalSuiteError> for AiError {
+    fn from(e: EvalSuiteError) -> Self {
+        AiError::EvalSuite(e)
+    }
+}
+
 // === Conversions from anyhow ===
 
 impl From<anyhow::Error> for AiError {
@@ -2106,6 +2198,7 @@ mod tests {
             AiError::RedTeam(RedTeamError::GenerationFailed { category: "injection".into(), reason: "template".into() }),
             AiError::Mcts(MctsError::MaxIterations { iterations: 1000, best_reward: 0.75 }),
             AiError::DevTools(DevToolsError::RecordingFailed { agent_id: "a".into(), reason: "no recorder".into() }),
+            AiError::EvalSuite(EvalSuiteError::DatasetLoadFailed { path: "bench.jsonl".into(), reason: "not found".into() }),
             AiError::Other("something went wrong".into()),
         ];
 
@@ -2554,6 +2647,36 @@ mod tests {
     }
 
     #[test]
+    fn test_eval_suite_error_display_and_suggestion() {
+        let errors: Vec<EvalSuiteError> = vec![
+            EvalSuiteError::DatasetLoadFailed { path: "bench.jsonl".into(), reason: "not found".into() },
+            EvalSuiteError::InvalidProblem { problem_id: "humaneval/0".into(), reason: "missing prompt".into() },
+            EvalSuiteError::GenerationFailed { problem_id: "mmlu/1".into(), reason: "provider down".into() },
+            EvalSuiteError::ScoringFailed { problem_id: "gsm8k/5".into(), reason: "no reference".into() },
+            EvalSuiteError::NoResults { reason: "no runs completed".into() },
+            EvalSuiteError::InsufficientData { metric: "accuracy".into(), samples: 1 },
+            EvalSuiteError::ReportFailed { reason: "incomplete data".into() },
+            EvalSuiteError::Timeout { problem_id: "swe/10".into(), timeout_secs: 60 },
+        ];
+        for err in &errors {
+            assert!(!err.to_string().is_empty());
+            assert!(err.suggestion().is_some());
+        }
+        // Recoverability
+        assert!(EvalSuiteError::GenerationFailed { problem_id: "x".into(), reason: "r".into() }.is_recoverable());
+        assert!(EvalSuiteError::Timeout { problem_id: "x".into(), timeout_secs: 30 }.is_recoverable());
+        assert!(!EvalSuiteError::DatasetLoadFailed { path: "x".into(), reason: "r".into() }.is_recoverable());
+        assert!(!EvalSuiteError::NoResults { reason: "r".into() }.is_recoverable());
+    }
+
+    #[test]
+    fn test_eval_suite_error_from_conversion() {
+        let err = EvalSuiteError::NoResults { reason: "empty".into() };
+        let ai_err: AiError = err.into();
+        assert_eq!(ai_err.code(), "EVAL_SUITE");
+    }
+
+    #[test]
     fn test_v6_error_from_conversions() {
         let hitl_err = HitlError::ApprovalTimeout { tool_name: "t".into(), timeout_secs: 10 };
         let ai_err: AiError = hitl_err.into();
@@ -2676,6 +2799,10 @@ mod tests {
             (
                 AiError::DevTools(DevToolsError::BreakpointInvalid { description: "x".into() }),
                 "DEVTOOLS",
+            ),
+            (
+                AiError::EvalSuite(EvalSuiteError::NoResults { reason: "x".into() }),
+                "EVAL_SUITE",
             ),
             (AiError::Other("misc".into()), "OTHER"),
         ];

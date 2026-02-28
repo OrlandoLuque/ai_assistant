@@ -1248,6 +1248,23 @@ pub use red_team::{
 };
 
 // =============================================================================
+// EVAL-SUITE FEATURE
+// =============================================================================
+
+#[cfg(feature = "eval-suite")]
+pub mod eval_suite;
+
+#[cfg(feature = "eval-suite")]
+pub use eval_suite::{
+    AblationEngine, AblationRecommendation, AblationResult, AblationStudy, AnswerFormat,
+    BenchmarkDataset, BenchmarkProblem, BenchmarkRunResult, BenchmarkSuiteRunner,
+    BenchmarkSuiteType, ComparisonConfig, ComparisonMatrix, CostBreakdown, DefaultScorer,
+    EloCalculator, EvalSuiteReport, ModelIdentifier, ProblemCategory, ProblemResult,
+    ProblemScorer, ReportBuilder as EvalSuiteReportBuilder, ReportSummary, RunConfig, RunSummary,
+    Subtask, SubtaskAnalysis, SubtaskAnalyzer, SubtaskPerformance, TokenUsage as EvalTokenUsage,
+};
+
+// =============================================================================
 // RAG FEATURE
 // =============================================================================
 

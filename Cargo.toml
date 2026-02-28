@@ -200,6 +200,10 @@ webrtc = ["dep:tokio"]
 # Not in 'full' by default — development-only. Opt-in: --features devtools
 devtools = []
 
+# Evaluation benchmark suite: standard benchmarks (HumanEval, MMLU, etc.) with real LLM calls
+# Not in 'full' by default — requires network access and LLM providers. Opt-in: --features eval-suite
+eval-suite = ["eval"]
+
 # Local Whisper STT: offline speech-to-text via whisper.cpp bindings
 # Not in 'full' by default — heavy native C++ dep. Opt-in: --features whisper-local
 whisper-local = ["dep:whisper-rs", "audio"]
