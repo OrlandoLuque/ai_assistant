@@ -50,6 +50,7 @@
     - feature_matrix.html                                 (v28: v22 — Code quality: 4 clippy fixes, 12 #[allow(dead_code)] removed via 17 new public accessors. 5963 tests, 285 source files, 51 examples, 42 benchmarks, 0 warnings)
     - feature_matrix.html                                 (v29: v23 — Code hygiene: 15 println!→log macros, 4 unused_assignments eliminated, 1 unused import removed. 5963 tests, 285 source files, 51 examples, 42 benchmarks, 0 warnings)
     - feature_matrix.html                                 (v30: v24 — format!→to_string() in 10 files, 100% module doc coverage, lib.rs clippy audit. 5963 tests, 285 source files, 51 examples, 42 benchmarks, 0 warnings)
+    - feature_matrix.html                                 (v31: v25 — New eval-suite feature: benchmark runner, multi-model comparison, ablation studies, subtask analysis, report generation. 6061 tests, 293 source files, 51 examples, 42 benchmarks, 0 warnings)
 -->
 <html lang="es">
 <head>
@@ -999,6 +1000,7 @@
     <li><code>feature_matrix.html</code> &mdash; v28: v22 &mdash; Code quality: 4 clippy fixes in ai_test_harness.rs, 12 #[allow(dead_code)] annotations removed via 17 new public accessors across 12 modules. 5963 tests, 285 source files, 51 examples, 42 benchmarks, 0 warnings</li>
     <li><code>feature_matrix.html</code> &mdash; v29: v23 &mdash; Code hygiene: 15 println!&rarr;log macros (agent.rs, assistant.rs), 4 #[allow(unused_assignments)] eliminated by restructuring, 1 unused import removed (p2p.rs). 5963 tests, 285 source files, 51 examples, 42 benchmarks, 0 warnings</li>
     <li><code>feature_matrix.html</code> &mdash; v30: v24 &mdash; format!&rarr;to_string() in 10 production files (13 calls), 100% module doc coverage (4 test submodule files), lib.rs clippy audit (67/67 verified active). 5963 tests, 285 source files, 51 examples, 42 benchmarks, 0 warnings</li>
+    <li><code>feature_matrix.html</code> &mdash; v31: v25 &mdash; New <code>eval-suite</code> feature: benchmark runner, multi-model comparison (Welch&rsquo;s t-test, ELO), ablation studies (Cohen&rsquo;s d), per-subtask analysis, report generation. 8 new files, EvalSuiteError. 6061 tests (+98), 293 source files, 51 examples, 42 benchmarks, 0 warnings</li>
   </ul>
   <p><strong>Pol&iacute;tica de backups:</strong> antes de cambios significativos, crear copia con formato <code>feature_matrix_YYYY-MM-DD_HHMM_descripcion.html</code>.</p>
 
