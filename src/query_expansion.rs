@@ -590,4 +590,38 @@ mod tests {
             assert!(sorted[i - 1].weight >= sorted[i].weight);
         }
     }
+
+    #[test]
+    fn test_expand_includes_original() {
+        let expander = QueryExpander::default();
+        let result = expander.expand("test query");
+        let texts = result.query_texts();
+        assert!(texts.contains(&"test query"));
+    }
+
+    #[test]
+    fn test_keyword_min_length() {
+        let config = ExpansionConfig {
+            min_keyword_length: 5,
+            ..Default::default()
+        };
+        let expander = QueryExpander::new(config);
+        let keywords = expander.extract_keywords("a bb ccc dddd eeeee");
+        assert!(keywords.iter().all(|k| k.len() >= 5));
+    }
+
+    #[test]
+    fn test_custom_synonyms() {
+        let mut expander = QueryExpander::default();
+        expander.add_synonyms("bug", vec!["defect", "issue"]);
+        let result = expander.expand("fix bug");
+        assert!(result.expansions.len() > 1);
+    }
+
+    #[test]
+    fn test_expansion_stats() {
+        let expander = QueryExpander::default();
+        let result = expander.expand("find errors");
+        let _ = result.stats.synonym_expansions; // verify field exists
+    }
 }

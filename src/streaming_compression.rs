@@ -523,4 +523,38 @@ mod tests {
 
         assert_eq!(original, decompressed);
     }
+
+    #[test]
+    fn test_algorithm_content_encoding() {
+        assert_eq!(Algorithm::Gzip.content_encoding(), "gzip");
+        assert_eq!(Algorithm::Deflate.content_encoding(), "deflate");
+        assert_eq!(Algorithm::None.content_encoding(), "identity");
+    }
+
+    #[test]
+    fn test_from_content_encoding() {
+        assert_eq!(Algorithm::from_content_encoding("gzip"), Algorithm::Gzip);
+        assert_eq!(Algorithm::from_content_encoding("deflate"), Algorithm::Deflate);
+        assert_eq!(Algorithm::from_content_encoding("unknown"), Algorithm::None);
+    }
+
+    #[test]
+    fn test_compression_config_defaults() {
+        let config = CompressionConfig::default();
+        assert_eq!(config.algorithm, Algorithm::Gzip);
+        assert!(config.min_size > 0);
+    }
+
+    #[test]
+    fn test_result_bytes_saved() {
+        let result = CompressionResult {
+            data: vec![0; 50],
+            original_size: 100,
+            compressed_size: 50,
+            ratio: 0.5,
+            algorithm: Algorithm::Gzip,
+        };
+        assert_eq!(result.bytes_saved(), 50);
+        assert!(result.is_beneficial());
+    }
 }

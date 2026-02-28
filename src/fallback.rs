@@ -566,4 +566,40 @@ mod tests {
         let state = chain.get_state("test").unwrap();
         assert_eq!(state.failure_count, 0);
     }
+
+    #[test]
+    fn test_available_providers() {
+        let chain = FallbackChain::new()
+            .add_provider(FallbackProvider::new("p1", "http://localhost:1"))
+            .add_provider(FallbackProvider::new("p2", "http://localhost:2"));
+        let available = chain.available_providers();
+        assert_eq!(available.len(), 2);
+    }
+
+    #[test]
+    fn test_primary_provider() {
+        let chain = FallbackChain::new()
+            .add_provider(FallbackProvider::new("first", "http://localhost:1"));
+        let primary = chain.primary();
+        assert!(primary.is_some());
+    }
+
+    #[test]
+    fn test_disable_enable() {
+        let mut chain = FallbackChain::new()
+            .add_provider(FallbackProvider::new("p1", "http://localhost:1"));
+        chain.disable("p1");
+        assert_eq!(chain.available_providers().len(), 0);
+        chain.enable("p1");
+        assert_eq!(chain.available_providers().len(), 1);
+    }
+
+    #[test]
+    fn test_all_states() {
+        let chain = FallbackChain::new()
+            .add_provider(FallbackProvider::new("a", "http://a"))
+            .add_provider(FallbackProvider::new("b", "http://b"));
+        let states = chain.all_states();
+        assert_eq!(states.len(), 2);
+    }
 }

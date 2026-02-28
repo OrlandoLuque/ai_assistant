@@ -600,4 +600,36 @@ mod tests {
         assert_eq!(schema["type"], "function");
         assert_eq!(schema["function"]["name"], "web_search");
     }
+
+    #[test]
+    fn test_common_tools_calculator() {
+        let calc = CommonTools::calculator();
+        assert_eq!(calc.name, "calculator");
+    }
+
+    #[test]
+    fn test_common_tools_datetime() {
+        let dt = CommonTools::datetime();
+        assert_eq!(dt.name, "datetime");
+    }
+
+    #[test]
+    fn test_evaluate_expression() {
+        assert_eq!(evaluate_expression("2+3").unwrap(), "5");
+        assert_eq!(evaluate_expression("10/2").unwrap(), "5");
+    }
+
+    #[test]
+    fn test_format_results_for_context() {
+        let registry = ToolRegistry::new();
+        let results = vec![ToolResult {
+            call_id: "1".to_string(),
+            tool_name: "test".to_string(),
+            success: true,
+            output: "result: 42".to_string(),
+            error: None,
+        }];
+        let formatted = registry.format_results_for_context(&results);
+        assert!(formatted.contains("test"));
+    }
 }

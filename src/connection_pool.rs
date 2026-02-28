@@ -460,4 +460,38 @@ mod tests {
         let stats = pool.stats();
         assert!(stats.connections_created >= 1);
     }
+
+    #[test]
+    fn test_pool_config_defaults() {
+        let config = PoolConfig::default();
+        assert!(config.max_connections_per_host > 0);
+        assert!(config.max_total_connections > 0);
+        assert!(config.keep_alive);
+    }
+
+    #[test]
+    fn test_pool_clear() {
+        let pool = ConnectionPool::new(PoolConfig::default());
+        let _conn = pool.get("http://host1:8080");
+        pool.clear();
+        let stats = pool.stats();
+        assert_eq!(stats.total_connections, 0);
+    }
+
+    #[test]
+    fn test_pool_stats_hit_rate() {
+        let pool = ConnectionPool::new(PoolConfig::default());
+        let _conn1 = pool.get("http://test:1234");
+        let stats = pool.stats();
+        assert!(stats.hit_rate >= 0.0 && stats.hit_rate <= 1.0);
+    }
+
+    #[test]
+    fn test_multiple_hosts_isolation() {
+        let pool = ConnectionPool::new(PoolConfig::default());
+        let _c1 = pool.get("http://host-a:80");
+        let _c2 = pool.get("http://host-b:80");
+        let stats = pool.stats();
+        assert!(stats.connections_created >= 2);
+    }
 }

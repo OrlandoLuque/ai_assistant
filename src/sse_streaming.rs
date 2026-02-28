@@ -545,4 +545,48 @@ mod tests {
         assert_eq!(aggregator.get_text(), "Hello World");
         assert!(aggregator.is_complete());
     }
+
+    #[test]
+    fn test_event_with_id_and_retry() {
+        let event = SseEvent::new("hello")
+            .with_event("message")
+            .with_id("42")
+            .with_retry(5000);
+        let wire = event.to_wire_format();
+        assert!(wire.contains("event: message"));
+        assert!(wire.contains("id: 42"));
+        assert!(wire.contains("retry: 5000"));
+    }
+
+    #[test]
+    fn test_aggregator_chunk_count() {
+        let mut agg = StreamAggregator::new();
+        assert_eq!(agg.chunk_count(), 0);
+        agg.add_chunk(StreamChunk {
+            id: "1".to_string(),
+            object: "chunk".to_string(),
+            created: 0,
+            model: "m".to_string(),
+            choices: vec![StreamChoice {
+                index: 0,
+                delta: StreamDelta { role: None, content: Some("hi".to_string()) },
+                finish_reason: None,
+            }],
+        });
+        assert_eq!(agg.chunk_count(), 1);
+    }
+
+    #[test]
+    fn test_empty_aggregator() {
+        let agg = StreamAggregator::new();
+        assert_eq!(agg.get_text(), "");
+        assert!(!agg.is_complete());
+    }
+
+    #[test]
+    fn test_sse_error_display() {
+        let err = SseError::ConnectionClosed;
+        let msg = format!("{}", err);
+        assert!(!msg.is_empty());
+    }
 }

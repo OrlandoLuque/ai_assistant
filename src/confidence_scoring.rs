@@ -608,4 +608,33 @@ mod tests {
         assert!(config.use_logprobs);
         assert_eq!(config.consistency_samples, 3);
     }
+
+    #[test]
+    fn test_score_range() {
+        let scorer = ConfidenceScorer::new(ConfidenceConfig::default());
+        let score = scorer.score("I am certain this is correct.", None);
+        assert!(score.overall >= 0.0 && score.overall <= 1.0);
+    }
+
+    #[test]
+    fn test_reliability_display() {
+        assert_eq!(format!("{:?}", Reliability::High), "High");
+        assert_eq!(format!("{:?}", Reliability::Unreliable), "Unreliable");
+    }
+
+    #[test]
+    fn test_default_config() {
+        let config = ConfidenceConfig::default();
+        // Default has logprobs enabled and 0 consistency samples
+        let _ = config.use_logprobs;
+        assert_eq!(config.consistency_samples, 0);
+    }
+
+    #[test]
+    fn test_calibration_empty() {
+        let scorer = ConfidenceScorer::new(ConfidenceConfig::default());
+        let stats = scorer.calibration_stats();
+        assert_eq!(stats.total_predictions, 0);
+        assert!(stats.accuracy_by_bucket.is_empty());
+    }
 }
