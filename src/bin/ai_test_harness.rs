@@ -15,15 +15,21 @@
 #![allow(clippy::type_complexity)]
 #![allow(clippy::approx_constant)]
 
+use serde::Serialize;
 use std::collections::HashMap;
 use std::time::Instant;
 
 // ─── Color / Output Helpers ───────────────────────────────────────────────────
 
 static mut USE_COLOR: bool = true;
+static mut JSON_MODE: bool = false;
 
 fn color_enabled() -> bool {
     unsafe { USE_COLOR }
+}
+
+fn json_mode() -> bool {
+    unsafe { JSON_MODE }
 }
 
 fn green(s: &str) -> String {
@@ -64,7 +70,7 @@ fn bold(s: &str) -> String {
 
 // ─── Test Result ──────────────────────────────────────────────────────────────
 
-#[derive(Clone)]
+#[derive(Clone, Serialize)]
 struct TestResult {
     name: String,
     passed: bool,
@@ -72,7 +78,7 @@ struct TestResult {
     duration_ms: f64,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize)]
 struct CategoryResult {
     name: String,
     results: Vec<TestResult>,
@@ -90,6 +96,42 @@ impl CategoryResult {
     }
 }
 
+#[derive(Clone, Serialize)]
+struct HarnessReport {
+    timestamp: String,
+    total_passed: usize,
+    total_failed: usize,
+    total_duration_ms: f64,
+    categories: Vec<CategoryResult>,
+}
+
+impl HarnessReport {
+    fn from_results(results: Vec<CategoryResult>) -> Self {
+        let total_passed: usize = results.iter().map(|r| r.passed()).sum();
+        let total_failed: usize = results.iter().map(|r| r.failed()).sum();
+        let total_duration_ms: f64 = results
+            .iter()
+            .flat_map(|r| r.results.iter())
+            .map(|t| t.duration_ms)
+            .sum();
+
+        // ISO 8601 timestamp
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let timestamp = format!("{}", now);
+
+        Self {
+            timestamp,
+            total_passed,
+            total_failed,
+            total_duration_ms,
+            categories: results,
+        }
+    }
+}
+
 fn run_test(name: &str, f: impl FnOnce() -> Result<(), String>) -> TestResult {
     let start = Instant::now();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
@@ -97,7 +139,9 @@ fn run_test(name: &str, f: impl FnOnce() -> Result<(), String>) -> TestResult {
 
     match result {
         Ok(Ok(())) => {
-            println!("  {} {} ({:.1}ms)", green("PASS"), name, duration_ms);
+            if !json_mode() {
+                println!("  {} {} ({:.1}ms)", green("PASS"), name, duration_ms);
+            }
             TestResult {
                 name: name.to_string(),
                 passed: true,
@@ -106,13 +150,15 @@ fn run_test(name: &str, f: impl FnOnce() -> Result<(), String>) -> TestResult {
             }
         }
         Ok(Err(msg)) => {
-            println!(
-                "  {} {} - {} ({:.1}ms)",
-                red("FAIL"),
-                name,
-                msg,
-                duration_ms
-            );
+            if !json_mode() {
+                println!(
+                    "  {} {} - {} ({:.1}ms)",
+                    red("FAIL"),
+                    name,
+                    msg,
+                    duration_ms
+                );
+            }
             TestResult {
                 name: name.to_string(),
                 passed: false,
@@ -128,13 +174,15 @@ fn run_test(name: &str, f: impl FnOnce() -> Result<(), String>) -> TestResult {
             } else {
                 "unknown panic".to_string()
             };
-            println!(
-                "  {} {} - PANIC: {} ({:.1}ms)",
-                red("FAIL"),
-                name,
-                msg,
-                duration_ms
-            );
+            if !json_mode() {
+                println!(
+                    "  {} {} - PANIC: {} ({:.1}ms)",
+                    red("FAIL"),
+                    name,
+                    msg,
+                    duration_ms
+                );
+            }
             TestResult {
                 name: name.to_string(),
                 passed: false,
@@ -10087,6 +10135,28 @@ fn print_summary(results: &[CategoryResult]) {
     }
 }
 
+fn print_json(results: &[CategoryResult]) {
+    let report = HarnessReport::from_results(results.to_vec());
+    match serde_json::to_string_pretty(&report) {
+        Ok(json) => println!("{}", json),
+        Err(e) => eprintln!("JSON serialization error: {}", e),
+    }
+}
+
+fn write_json_file(results: &[CategoryResult], path: &str) {
+    let report = HarnessReport::from_results(results.to_vec());
+    match serde_json::to_string_pretty(&report) {
+        Ok(json) => {
+            if let Err(e) = std::fs::write(path, &json) {
+                eprintln!("Failed to write JSON to {}: {}", path, e);
+            } else {
+                println!("{}", green(&format!("JSON report written to: {}", path)));
+            }
+        }
+        Err(e) => eprintln!("JSON serialization error: {}", e),
+    }
+}
+
 fn interactive_menu() {
     let categories = all_categories();
     loop {
@@ -10720,6 +10790,8 @@ fn main() {
     let mut replay_api_key: Option<String> = None;
     let mut replay_compare = false;
     let mut replay_session: Option<usize> = None;
+    let mut json_output = false;
+    let mut json_file: Option<String> = None;
 
     let mut i = 1;
     while i < args.len() {
@@ -10727,6 +10799,22 @@ fn main() {
             "--all" => run_all = true,
             "--list" => list_only = true,
             "--no-color" => unsafe { USE_COLOR = false },
+            "--json" => {
+                json_output = true;
+                unsafe {
+                    USE_COLOR = false;
+                    JSON_MODE = true;
+                }
+            }
+            "--json-file" => {
+                i += 1;
+                if i < args.len() {
+                    json_file = Some(args[i].clone());
+                } else {
+                    eprintln!("--json-file requires a path");
+                    std::process::exit(1);
+                }
+            }
             "--compare" => replay_compare = true,
             "--help" | "-h" => {
                 println!("AI Assistant Test Harness\n");
@@ -10736,6 +10824,8 @@ fn main() {
                 println!("  --category=NAME    Run a specific category");
                 println!("  --list             List available categories");
                 println!("  --no-color         Disable ANSI colors");
+                println!("  --json             Output results as JSON to stdout");
+                println!("  --json-file <path> Write JSON report to file (still shows colored output)");
                 println!();
                 println!("Replay Options (requires 'rag' feature):");
                 println!("  --replay <file>      Replay a RAG debug session from JSON file");
@@ -10856,9 +10946,18 @@ fn main() {
     }
 
     if run_all {
-        println!("{}", bold(&cyan("Running ALL test categories...")));
+        if !json_output {
+            println!("{}", bold(&cyan("Running ALL test categories...")));
+        }
         let results: Vec<CategoryResult> = categories.iter().map(|(_, f)| f()).collect();
-        print_summary(&results);
+        if json_output {
+            print_json(&results);
+        } else {
+            print_summary(&results);
+        }
+        if let Some(ref path) = json_file {
+            write_json_file(&results, path);
+        }
         let failed: usize = results.iter().map(|r| r.failed()).sum();
         std::process::exit(if failed == 0 { 0 } else { 1 });
     }
@@ -10870,7 +10969,15 @@ fn main() {
         {
             let result = f();
             let failed = result.failed();
-            print_summary(&[result]);
+            let results = vec![result];
+            if json_output {
+                print_json(&results);
+            } else {
+                print_summary(&results);
+            }
+            if let Some(ref path) = json_file {
+                write_json_file(&results, path);
+            }
             std::process::exit(if failed == 0 { 0 } else { 1 });
         } else {
             eprintln!("Unknown category: '{}'. Use --list.", cat_name);
