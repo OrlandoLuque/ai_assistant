@@ -387,6 +387,91 @@ mod tests {
     }
 
     #[test]
+    fn test_cancel_request() {
+        let config = RateLimitConfig {
+            max_concurrent: 2,
+            ..Default::default()
+        };
+        let mut limiter = RateLimiter::new(config);
+        limiter.record_request_start();
+        limiter.record_request_start();
+        assert_eq!(limiter.get_usage().concurrent_active, 2);
+        limiter.cancel_request();
+        assert_eq!(limiter.get_usage().concurrent_active, 1);
+        limiter.cancel_request();
+        assert_eq!(limiter.get_usage().concurrent_active, 0);
+        // Saturating: can't go below 0
+        limiter.cancel_request();
+        assert_eq!(limiter.get_usage().concurrent_active, 0);
+    }
+
+    #[test]
+    fn test_get_status() {
+        let config = RateLimitConfig {
+            requests_per_minute: 10,
+            tokens_per_minute: 500,
+            max_concurrent: 3,
+            cooldown_seconds: 30,
+        };
+        let mut limiter = RateLimiter::new(config);
+        let status = limiter.get_status();
+        assert_eq!(status.requests_remaining, 10);
+        assert_eq!(status.tokens_remaining, 500);
+        assert_eq!(status.requests_per_minute, 10);
+        assert_eq!(status.tokens_per_minute, 500);
+        assert!(status.cooldown_remaining.is_none());
+
+        limiter.record_request_start();
+        limiter.record_request_end(100);
+        let status2 = limiter.get_status();
+        assert_eq!(status2.requests_remaining, 9);
+        assert_eq!(status2.tokens_remaining, 400);
+    }
+
+    #[test]
+    fn test_rate_limit_reason_display() {
+        assert_eq!(
+            RateLimitReason::TooManyRequests.to_string(),
+            "Too many requests per minute"
+        );
+        assert_eq!(
+            RateLimitReason::TooManyTokens.to_string(),
+            "Too many tokens generated per minute"
+        );
+        assert_eq!(
+            RateLimitReason::TooManyConcurrent.to_string(),
+            "Too many concurrent requests"
+        );
+        assert_eq!(
+            RateLimitReason::Cooldown.to_string(),
+            "Rate limit cooldown active"
+        );
+    }
+
+    #[test]
+    fn test_rate_limit_result_is_allowed() {
+        let allowed = RateLimitResult::Allowed {
+            requests_remaining: 5,
+            tokens_remaining: 100,
+        };
+        assert!(allowed.is_allowed());
+        let denied = RateLimitResult::Denied {
+            reason: RateLimitReason::TooManyRequests,
+            retry_after_ms: 1000,
+        };
+        assert!(!denied.is_allowed());
+    }
+
+    #[test]
+    fn test_default_config() {
+        let config = RateLimitConfig::default();
+        assert_eq!(config.requests_per_minute, 30);
+        assert_eq!(config.tokens_per_minute, 10000);
+        assert_eq!(config.max_concurrent, 2);
+        assert_eq!(config.cooldown_seconds, 30);
+    }
+
+    #[test]
     fn test_get_usage_stats() {
         let config = RateLimitConfig {
             requests_per_minute: 10,
