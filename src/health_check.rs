@@ -532,4 +532,117 @@ mod tests {
         let health_b = checker.get_health("provider_b").unwrap();
         assert_eq!(health_b.consecutive_successes, 1);
     }
+
+    #[test]
+    fn test_reset_clears_health_state() {
+        let config = HealthCheckConfig {
+            failure_threshold: 1,
+            success_threshold: 1,
+            ..Default::default()
+        };
+
+        let mut checker =
+            HealthChecker::new(config).with_check_fn(|_, _| Err("down".to_string()));
+
+        checker.register("svc", "http://localhost:9999");
+        checker.check("svc", "http://localhost:9999");
+
+        // Should be unhealthy after 1 failure (threshold=1)
+        assert_eq!(
+            checker.get_health("svc").unwrap().status,
+            HealthStatus::Unhealthy
+        );
+        assert_eq!(checker.get_health("svc").unwrap().consecutive_failures, 1);
+
+        // Reset should restore to Unknown with zero counters
+        checker.reset("svc");
+        let health = checker.get_health("svc").unwrap();
+        assert_eq!(health.status, HealthStatus::Unknown);
+        assert_eq!(health.consecutive_failures, 0);
+        assert_eq!(health.consecutive_successes, 0);
+        assert!(health.history.is_empty());
+    }
+
+    #[test]
+    fn test_healthy_and_unhealthy_provider_lists() {
+        let config = HealthCheckConfig {
+            failure_threshold: 1,
+            success_threshold: 1,
+            ..Default::default()
+        };
+
+        let call_count = std::sync::Arc::new(std::sync::Mutex::new(0u32));
+        let cc = call_count.clone();
+
+        let mut checker = HealthChecker::new(config).with_check_fn(move |name, _| {
+            let mut count = cc.lock().unwrap();
+            *count += 1;
+            if name == "good" {
+                Ok(Duration::from_millis(10))
+            } else {
+                Err("unreachable".to_string())
+            }
+        });
+
+        checker.register("good", "http://good");
+        checker.register("bad", "http://bad");
+
+        checker.check("good", "http://good");
+        checker.check("bad", "http://bad");
+
+        let healthy = checker.healthy_providers();
+        let unhealthy = checker.unhealthy_providers();
+
+        assert!(healthy.contains(&"good"));
+        assert!(!healthy.contains(&"bad"));
+        assert!(unhealthy.contains(&"bad"));
+        assert!(!unhealthy.contains(&"good"));
+    }
+
+    #[test]
+    fn test_uptime_percent_and_reset_all() {
+        let config = HealthCheckConfig {
+            failure_threshold: 5,
+            success_threshold: 1,
+            ..Default::default()
+        };
+
+        let fail_second = std::sync::Arc::new(std::sync::Mutex::new(0u32));
+        let fs = fail_second.clone();
+
+        let mut checker = HealthChecker::new(config).with_check_fn(move |_, _| {
+            let mut n = fs.lock().unwrap();
+            *n += 1;
+            if *n == 2 {
+                Err("transient".to_string())
+            } else {
+                Ok(Duration::from_millis(5))
+            }
+        });
+
+        checker.register("svc", "http://localhost");
+
+        // 3 checks: success, failure, success
+        checker.check("svc", "http://localhost");
+        checker.check("svc", "http://localhost");
+        checker.check("svc", "http://localhost");
+
+        let health = checker.get_health("svc").unwrap();
+        assert_eq!(health.history.len(), 3);
+        // 2 out of 3 healthy = ~66.67%
+        assert!(health.uptime_percent > 60.0);
+        assert!(health.uptime_percent < 70.0);
+
+        // reset_all should clear all providers
+        checker.register("svc2", "http://other");
+        checker.reset_all();
+        assert_eq!(
+            checker.get_health("svc").unwrap().status,
+            HealthStatus::Unknown
+        );
+        assert_eq!(
+            checker.get_health("svc2").unwrap().status,
+            HealthStatus::Unknown
+        );
+    }
 }

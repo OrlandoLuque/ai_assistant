@@ -562,4 +562,68 @@ mod tests {
         let decompressed = decompress(&compressed).unwrap();
         assert_eq!(String::from_utf8(decompressed).unwrap(), "Hello World!");
     }
+
+    #[test]
+    fn test_compress_decompress_string_helpers() {
+        let original = "Repetitive text for compression testing. ".repeat(50);
+        let compressed = compress_string(&original, CompressionAlgorithm::Deflate);
+        assert_eq!(compressed.algorithm, CompressionAlgorithm::Deflate);
+        assert!(compressed.data.len() < original.len());
+
+        let decompressed = decompress_string(&compressed).unwrap();
+        assert_eq!(decompressed, original);
+    }
+
+    #[test]
+    fn test_cache_remove_and_clear() {
+        let mut cache: CompressedCache<String> = CompressedCache::new(CompressionAlgorithm::Gzip);
+
+        cache.insert("a", "value_a".to_string());
+        cache.insert("b", "value_b".to_string());
+        assert_eq!(cache.len(), 2);
+        assert!(!cache.is_empty());
+        assert!(cache.contains_key("a"));
+
+        // Remove one key and verify stats update
+        let removed = cache.remove("a");
+        assert_eq!(removed, Some("value_a".to_string()));
+        assert!(!cache.contains_key("a"));
+        assert_eq!(cache.len(), 1);
+        assert_eq!(cache.stats().items, 1);
+
+        // Clear all and verify everything resets
+        cache.clear();
+        assert!(cache.is_empty());
+        assert_eq!(cache.len(), 0);
+        assert_eq!(cache.stats().items, 0);
+        assert_eq!(cache.stats().original_bytes, 0);
+        assert_eq!(cache.stats().compressed_bytes, 0);
+    }
+
+    #[test]
+    fn test_no_compression_roundtrip_and_stats_averages() {
+        let mut cache: CompressedCache<String> =
+            CompressedCache::with_level(CompressionAlgorithm::None, CompressionLevel::Fast);
+
+        let val1 = "hello".to_string();
+        let val2 = "world".to_string();
+        cache.insert("k1", val1.clone());
+        cache.insert("k2", val2.clone());
+
+        // With None compression, data passes through unchanged
+        assert_eq!(cache.get("k1"), Some(val1));
+        assert_eq!(cache.get("k2"), Some(val2));
+
+        let stats = cache.stats();
+        assert_eq!(stats.items, 2);
+        assert!(stats.avg_compressed_size() > 0);
+        assert!(stats.avg_original_size() > 0);
+        // None compression means ratio is 1.0 (compressed == original)
+        assert!((stats.compression_ratio() - 1.0).abs() < 0.01);
+        assert_eq!(stats.space_saved(), 0);
+
+        // Verify keys iterator
+        let keys: Vec<&String> = cache.keys().collect();
+        assert_eq!(keys.len(), 2);
+    }
 }
