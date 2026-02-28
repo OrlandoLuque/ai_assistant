@@ -594,7 +594,7 @@ impl FeedMonitor {
                     new_entries: Vec::new(),
                     total_entries: 0,
                     success: false,
-                    error: Some(format!("{}", e)),
+                    error: Some(e.to_string()),
                 }),
             }
         }

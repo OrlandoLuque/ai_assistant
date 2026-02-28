@@ -593,7 +593,7 @@ fn search_urlencode(s: &str) -> String {
     s.bytes()
         .map(|b| match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                format!("{}", b as char)
+                String::from(b as char)
             }
             b' ' => "+".to_string(),
             _ => format!("%{:02X}", b),

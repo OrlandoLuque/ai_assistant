@@ -918,7 +918,7 @@ impl DocumentParser {
 
         // Common page number formats
         let page_patterns = [
-            format!("{}", current_page),
+            current_page.to_string(),
             format!("- {} -", current_page),
             format!("\u{2014} {} \u{2014}", current_page),
             format!("Page {}", current_page),

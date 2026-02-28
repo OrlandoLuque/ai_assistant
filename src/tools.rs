@@ -547,7 +547,7 @@ pub fn create_builtin_tools() -> Vec<(ToolDefinition, ToolHandler)> {
                 let expr = call.get_string("expression").unwrap_or_default();
                 // Simple evaluation (in production, use a proper math parser)
                 match simple_eval(&expr) {
-                    Ok(result) => ToolResult::success(&call.id, &call.name, &format!("{}", result)),
+                    Ok(result) => ToolResult::success(&call.id, &call.name, &result.to_string()),
                     Err(e) => ToolResult::error(&call.id, &call.name, &e),
                 }
             }),

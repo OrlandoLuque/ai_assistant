@@ -146,7 +146,7 @@ impl PgVectorDb {
     pub fn format_vector(vector: &[f32]) -> String {
         let inner: String = vector
             .iter()
-            .map(|v| format!("{}", v))
+            .map(|v| v.to_string())
             .collect::<Vec<_>>()
             .join(",");
         format!("[{}]", inner)

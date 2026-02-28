@@ -3178,7 +3178,7 @@ pub fn tool_call_bubble(ui: &mut Ui, call: &ToolCall, result: Option<&ToolResult
                                 .color(Color32::GRAY),
                         );
                         ui.label(
-                            RichText::new(format!("{}", value))
+                            RichText::new(value.to_string())
                                 .size(9.0)
                                 .color(Color32::WHITE),
                         );
@@ -3312,7 +3312,7 @@ pub fn variant_selector(
             if ui
                 .selectable_label(
                     is_active,
-                    RichText::new(format!("{}", i + 1)).size(10.0).color(color),
+                    RichText::new((i + 1).to_string()).size(10.0).color(color),
                 )
                 .clicked()
                 && !is_active
@@ -3382,7 +3382,7 @@ pub fn advanced_metrics_panel(ui: &mut Ui, metrics_history: &[MessageMetrics]) {
         ui.horizontal(|ui| {
             ui.label(RichText::new("Responses:").size(10.0).color(Color32::GRAY));
             ui.label(
-                RichText::new(format!("{}", metrics_history.len()))
+                RichText::new(metrics_history.len().to_string())
                     .size(10.0)
                     .color(Color32::WHITE),
             );
@@ -4174,7 +4174,7 @@ pub fn rag_tier_button_bar(
             };
 
             let label_text = if compact {
-                format!("{}", tier.emoji())
+                tier.emoji().to_string()
             } else {
                 format!("{} {}", tier.emoji(), tier.short_label())
             };

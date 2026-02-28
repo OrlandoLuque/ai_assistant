@@ -620,7 +620,7 @@ pub fn create_builtin_agent_tools() -> Vec<AgentTool> {
             |input| {
                 // Simple expression evaluator
                 let result = evaluate_simple_math(input)?;
-                Ok(format!("{}", result))
+                Ok(result.to_string())
             },
         )
         .with_parameter("expression", "Mathematical expression like '2 + 3 * 4'"),
