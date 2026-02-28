@@ -303,4 +303,89 @@ mod tests {
         limiter.record("user2", 10);
         assert!(limiter.check("user2", 10).allowed);
     }
+
+    #[test]
+    fn test_default_config() {
+        let config = UserRateLimitConfig::default();
+        assert_eq!(config.requests_per_minute, 20);
+        assert_eq!(config.requests_per_hour, 200);
+        assert_eq!(config.requests_per_day, 1000);
+        assert_eq!(config.tokens_per_minute, 50_000);
+        assert_eq!(config.tokens_per_day, 1_000_000);
+        assert_eq!(config.burst_allowance, 5);
+    }
+
+    #[test]
+    fn test_custom_user_config() {
+        let mut limiter = UserRateLimiter::default();
+        limiter.set_user_config("vip", UserRateLimitConfig {
+            requests_per_minute: 100,
+            burst_allowance: 10,
+            ..Default::default()
+        });
+        // VIP user can make many more requests
+        for _ in 0..25 {
+            let result = limiter.check("vip", 10);
+            assert!(result.allowed);
+            limiter.record("vip", 10);
+        }
+        // Default user would have been blocked at RPM=20+burst=5=25
+    }
+
+    #[test]
+    fn test_reset_user() {
+        let mut limiter = UserRateLimiter::new(UserRateLimitConfig {
+            requests_per_minute: 1,
+            burst_allowance: 0,
+            ..Default::default()
+        });
+        limiter.record("user1", 100);
+        assert!(!limiter.check("user1", 100).allowed);
+        limiter.reset_user("user1");
+        assert!(limiter.check("user1", 100).allowed);
+    }
+
+    #[test]
+    fn test_check_result_fields() {
+        let mut limiter = UserRateLimiter::new(UserRateLimitConfig {
+            requests_per_minute: 5,
+            requests_per_hour: 10,
+            requests_per_day: 20,
+            burst_allowance: 0,
+            ..Default::default()
+        });
+        let result = limiter.check("user1", 10);
+        assert!(result.allowed);
+        assert!(result.reason.is_none());
+        assert!(result.retry_after.is_none());
+        assert_eq!(result.remaining_minute, 4);
+        assert_eq!(result.remaining_hour, 9);
+        assert_eq!(result.remaining_day, 19);
+    }
+
+    #[test]
+    fn test_daily_token_limit() {
+        let mut limiter = UserRateLimiter::new(UserRateLimitConfig {
+            requests_per_minute: 1000,
+            requests_per_hour: 1000,
+            requests_per_day: 1000,
+            tokens_per_minute: 1_000_000,
+            tokens_per_day: 500,
+            burst_allowance: 0,
+        });
+        limiter.record("user1", 400);
+        // 400 + 200 = 600 > 500 daily token limit
+        let result = limiter.check("user1", 200);
+        assert!(!result.allowed);
+        assert!(result.reason.as_ref().unwrap().contains("Daily token"));
+    }
+
+    #[test]
+    fn test_default_limiter() {
+        let mut limiter = UserRateLimiter::default();
+        // Default config should allow normal usage
+        let result = limiter.check("user1", 100);
+        assert!(result.allowed);
+        limiter.record("user1", 100);
+    }
 }
