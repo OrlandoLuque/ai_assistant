@@ -575,4 +575,33 @@ mod tests {
 
         assert_eq!(record.tokens_per_second(), Some(50.0));
     }
+
+    #[test]
+    fn test_record_with_model() {
+        let record = LatencyRecord::new(Duration::from_millis(100), true)
+            .with_model("gpt-4")
+            .with_tokens(50);
+        assert_eq!(record.latency(), Duration::from_millis(100));
+        assert!(record.tokens_per_second().unwrap() > 0.0);
+    }
+
+    #[test]
+    fn test_stats_percentile_ordering() {
+        let mut tracker = LatencyTracker::new();
+        for ms in [10, 20, 30, 40, 50, 60, 70, 80, 90, 100] {
+            tracker.record("provider", Duration::from_millis(ms), true);
+        }
+        let stats = tracker.stats("provider").unwrap();
+        assert!(stats.p50 <= stats.p90);
+        assert!(stats.p90 <= stats.p99);
+    }
+
+    #[test]
+    fn test_fastest_provider_multi() {
+        let mut tracker = LatencyTracker::new();
+        tracker.record("slow", Duration::from_millis(500), true);
+        tracker.record("fast", Duration::from_millis(10), true);
+        tracker.record("medium", Duration::from_millis(200), true);
+        assert_eq!(tracker.fastest_provider(), Some("fast".to_string()));
+    }
 }

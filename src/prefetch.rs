@@ -642,4 +642,27 @@ mod tests {
         assert_eq!(stats.total_prefetches, 0);
         assert_eq!(stats.cache_hits, 0);
     }
+
+    #[test]
+    fn test_prefetch_config_defaults() {
+        let config = PrefetchConfig::default();
+        assert!(config.max_prefetch_items > 0);
+        assert!(config.min_confidence > 0.0);
+    }
+
+    #[test]
+    fn test_record_query_patterns() {
+        let prefetcher = Prefetcher::default();
+        prefetcher.record_query("What is Rust?", "gpt-4");
+        prefetcher.record_query("Tell me more", "gpt-4");
+        let stats = prefetcher.stats();
+        assert_eq!(stats.patterns_learned, 1);
+    }
+
+    #[test]
+    fn test_get_candidates_empty() {
+        let prefetcher = Prefetcher::default();
+        let candidates = prefetcher.get_candidates("random query", "model");
+        assert!(candidates.is_empty());
+    }
 }

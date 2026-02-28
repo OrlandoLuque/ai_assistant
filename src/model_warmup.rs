@@ -534,4 +534,31 @@ mod tests {
         let needing = manager.models_needing_warmup();
         assert_eq!(needing.len(), 2);
     }
+
+    #[test]
+    fn test_warmup_config_defaults() {
+        let config = WarmupConfig::default();
+        assert!(config.max_warm_models > 0);
+        assert!(config.warmup_interval.as_secs() > 0);
+    }
+
+    #[test]
+    fn test_remove_warm_model() {
+        let manager = WarmupManager::new(WarmupConfig::default());
+        manager.add_warm_model("m1", "p1");
+        manager.remove_warm_model("m1", "p1");
+        let needing = manager.models_needing_warmup();
+        assert!(needing.is_empty());
+    }
+
+    #[test]
+    fn test_usage_stats_top_models() {
+        let mut stats = ModelUsageStats::default();
+        stats.record("alpha", Duration::from_millis(10));
+        stats.record("alpha", Duration::from_millis(20));
+        stats.record("beta", Duration::from_millis(15));
+        let top = stats.top_models(1);
+        assert_eq!(top.len(), 1);
+        assert_eq!(top[0], "alpha");
+    }
 }
