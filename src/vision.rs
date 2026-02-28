@@ -618,4 +618,10 @@ mod tests {
             ImageInput::from_url("https://example.com/image.jpg").with_detail(ImageDetail::High);
         assert_eq!(image.estimate_tokens(), 765);
     }
+
+    #[test]
+    fn test_image_detail_default() {
+        let image = ImageInput::from_url("https://example.com/image.jpg");
+        assert_eq!(image.detail, ImageDetail::Auto);
+    }
 }

@@ -495,4 +495,12 @@ mod tests {
         // Should be a recent Unix timestamp in milliseconds (after 2020-01-01)
         assert!(ts > 1_577_836_800_000);
     }
+
+    #[test]
+    fn test_random_uuid_uniqueness() {
+        let a = random::random_uuid();
+        let b = random::random_uuid();
+        assert_ne!(a, b);
+        assert_eq!(a.len(), 36); // UUID format: 8-4-4-4-12
+    }
 }

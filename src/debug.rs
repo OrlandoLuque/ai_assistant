@@ -793,4 +793,17 @@ mod tests {
 
         assert_eq!(logger.entry_count(), 5);
     }
+
+    #[test]
+    fn test_clear_entries() {
+        let logger = DebugLogger::new(DebugConfig {
+            level: DebugLevel::Debug,
+            ..Default::default()
+        });
+        logger.info("test", "msg1");
+        logger.info("test", "msg2");
+        assert_eq!(logger.entry_count(), 2);
+        logger.clear();
+        assert_eq!(logger.entry_count(), 0);
+    }
 }
