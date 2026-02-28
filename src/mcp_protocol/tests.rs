@@ -1,3 +1,5 @@
+//! Tests for the mcp_protocol module.
+
 use super::*;
 use std::collections::HashMap;
 

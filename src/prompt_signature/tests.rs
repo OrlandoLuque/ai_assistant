@@ -1,3 +1,5 @@
+//! Tests for the prompt_signature module.
+
 use super::*;
 use std::collections::HashMap;
 
