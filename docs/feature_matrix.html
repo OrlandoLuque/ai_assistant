@@ -47,6 +47,7 @@
     - feature_matrix.html                                 (v25: v19 — Precision benchmark category (17 tests) in ai_test_harness, --json/--json-file CLI output, compiler warning fix, test coverage boosts for 11 modules. 5963 tests, 285 source files, 51 examples, 42 benchmarks, 0 warnings)
     - feature_matrix.html                                 (v26: v20 — Massive test coverage push: 30 modules boosted to 10-test minimum (+117 tests), landing page HTML. 5848 tests, 285 source files, 51 examples, 42 benchmarks, 0 warnings)
     - feature_matrix.html                                 (v27: v21 — Test coverage push: 40 modules boosted to 10-test minimum (+115 tests). 5963 tests, 285 source files, 51 examples, 42 benchmarks, 0 warnings)
+    - feature_matrix.html                                 (v28: v22 — Code quality: 4 clippy fixes, 12 #[allow(dead_code)] removed via 17 new public accessors. 5963 tests, 285 source files, 51 examples, 42 benchmarks, 0 warnings)
 -->
 <html lang="es">
 <head>
@@ -988,6 +989,12 @@
     <li><code>feature_matrix.html</code> &mdash; v21: v15 &mdash; Test depth (analysis.rs 6&rarr;26, rag_tiers.rs 8&rarr;28, persistence.rs 8&rarr;26, translation_analysis.rs 7&rarr;22, quality.rs 5&rarr;16, progress.rs 4&rarr;14), dead code cleanup (37&rarr;24 #[allow(dead_code)]), Debug derives for 12 structs, //! module docs for 7 files, 6 new benchmarks. 5603 tests, 285 source files, 47 examples, 34 benchmarks, 0 warnings</li>
     <li><code>feature_matrix_v21_20260226_pre-v16.html</code> &mdash; v21 snapshot before v16 additions</li>
     <li><code>feature_matrix.html</code> &mdash; v22: v16 &mdash; Zero-test module coverage (v2_oauth.rs 0&rarr;19, hallucination_detection.rs 4&rarr;18), production .unwrap() cleanup (resumable_streaming.rs), 4 new examples (server-tls, vector-lancedb, whisper-local, distributed-network), 8 new benchmarks (guardrails, attack detection, vector DB, BPE, HNSW build, MapReduce, DHT, CRDT), lib.rs feature list updated to 46 features. 5963 tests, 285 source files, 51 examples, 42 benchmarks, 0 warnings</li>
+    <li><code>feature_matrix.html</code> &mdash; v23: v17 &mdash; Debug derives for ~150 public structs across 14 modules, production .unwrap() cleanup in opentelemetry_integration.rs, .expect() message improvements in resumable_streaming.rs, test coverage boosts (response_ranking.rs 3&rarr;16, user_engagement.rs 3&rarr;18). 5664 tests, 285 source files, 51 examples, 42 benchmarks, 0 warnings</li>
+    <li><code>feature_matrix.html</code> &mdash; v24: v18 &mdash; Debug derives batch 2 (~74 structs across 15 modules), ~170 generic .expect() messages improved, #[allow(dead_code)] review (25&rarr;19), test coverage boosts for 12 modules to 10-test minimum. 5707 tests, 285 source files, 51 examples, 42 benchmarks, 0 warnings</li>
+    <li><code>feature_matrix.html</code> &mdash; v25: v19 &mdash; Precision benchmark category (17 tests) in ai_test_harness, --json/--json-file CLI output, compiler warning fix, test coverage boosts for 11 modules. 5731 tests, 285 source files, 51 examples, 42 benchmarks, 0 warnings</li>
+    <li><code>feature_matrix.html</code> &mdash; v26: v20 &mdash; Massive test coverage push: 30 modules boosted to 10-test minimum (+117 tests), landing page HTML. 5848 tests, 285 source files, 51 examples, 42 benchmarks, 0 warnings</li>
+    <li><code>feature_matrix.html</code> &mdash; v27: v21 &mdash; Test coverage push: 40 modules boosted to 10-test minimum (+115 tests). 5963 tests, 285 source files, 51 examples, 42 benchmarks, 0 warnings</li>
+    <li><code>feature_matrix.html</code> &mdash; v28: v22 &mdash; Code quality: 4 clippy fixes in ai_test_harness.rs, 12 #[allow(dead_code)] annotations removed via 17 new public accessors across 12 modules. 5963 tests, 285 source files, 51 examples, 42 benchmarks, 0 warnings</li>
   </ul>
   <p><strong>Pol&iacute;tica de backups:</strong> antes de cambios significativos, crear copia con formato <code>feature_matrix_YYYY-MM-DD_HHMM_descripcion.html</code>.</p>
 
