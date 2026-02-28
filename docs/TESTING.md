@@ -347,3 +347,4 @@ The harness exits with code 1 if any test fails, making it suitable for CI pipel
 | v22 | 5,963 | +0 | 2026-02-28 |
 | v23 | 5,963 | +0 | 2026-02-28 |
 | v24 | 5,963 | +0 | 2026-02-28 |
+| v25 | 6,061 | +98 | 2026-02-28 |
