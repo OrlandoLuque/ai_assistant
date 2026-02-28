@@ -556,4 +556,45 @@ mod tests {
         assert!(parsed.get("top_k").is_none());
         assert!(parsed.get("stop_sequences").is_none());
     }
+
+    #[test]
+    fn test_error_display_formatting() {
+        let network_err = AnthropicAdapterError::Network("connection refused".to_string());
+        assert_eq!(
+            format!("{}", network_err),
+            "Network error: connection refused"
+        );
+
+        let serial_err = AnthropicAdapterError::Serialization("invalid json".to_string());
+        assert_eq!(
+            format!("{}", serial_err),
+            "Serialization error: invalid json"
+        );
+
+        let deser_err = AnthropicAdapterError::Deserialization("unexpected token".to_string());
+        assert_eq!(
+            format!("{}", deser_err),
+            "Deserialization error: unexpected token"
+        );
+
+        let api_err = AnthropicAdapterError::Api {
+            code: 429,
+            message: "Too many requests".to_string(),
+            error_type: "rate_limit_error".to_string(),
+        };
+        assert_eq!(
+            format!("{}", api_err),
+            "API error 429: Too many requests"
+        );
+
+        let rate_err_with = AnthropicAdapterError::RateLimit {
+            retry_after: Some(Duration::from_secs(30)),
+        };
+        let display = format!("{}", rate_err_with);
+        assert!(display.contains("Rate limited"));
+        assert!(display.contains("retry after"));
+
+        let rate_err_without = AnthropicAdapterError::RateLimit { retry_after: None };
+        assert_eq!(format!("{}", rate_err_without), "Rate limited");
+    }
 }

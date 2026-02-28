@@ -645,4 +645,85 @@ mod tests {
         assert_eq!(stats.total_checks, 1);
         assert_eq!(stats.checks_with_consensus, 1);
     }
+
+    #[test]
+    fn test_consistency_with_mixed_success_and_failure() {
+        let config = ConsistencyConfig {
+            num_samples: 5,
+            min_consensus: 0.5,
+            ..Default::default()
+        };
+        let checker = ConsistencyChecker::new(config);
+
+        let result = checker.check("test prompt", "model", |_, _, _| {
+            Ok("The answer is 42".to_string())
+        });
+
+        // Verify: all 5 should succeed with same answer
+        assert_eq!(result.successful_samples, 5);
+        assert!(result.has_consensus);
+        assert!((result.confidence - 1.0).abs() < f64::EPSILON);
+        assert_eq!(result.groups.len(), 1);
+        assert_eq!(result.groups[0].count, 5);
+
+        // Now test with actual failures
+        let checker2 = ConsistencyChecker::new(ConsistencyConfig {
+            num_samples: 4,
+            min_consensus: 0.5,
+            ..Default::default()
+        });
+        let counter = std::cell::Cell::new(0u32);
+        let result2 = checker2.check("fail test", "model", |_, _, _| {
+            let n = counter.get();
+            counter.set(n + 1);
+            if n % 2 == 0 {
+                Ok("success".to_string())
+            } else {
+                Err("simulated failure".to_string())
+            }
+        });
+
+        assert_eq!(result2.samples.len(), 4);
+        assert_eq!(result2.successful_samples, 2);
+        // Failed samples should have error set
+        let failed: Vec<_> = result2.samples.iter().filter(|s| !s.success).collect();
+        assert_eq!(failed.len(), 2);
+        assert!(failed[0].error.is_some());
+    }
+
+    #[test]
+    fn test_no_consensus_with_divergent_answers() {
+        let config = ConsistencyConfig {
+            num_samples: 5,
+            min_consensus: 0.8, // Require 80% agreement
+            similarity_threshold: 0.95, // Very strict similarity
+            ..Default::default()
+        };
+        let checker = ConsistencyChecker::new(config);
+
+        let counter = std::cell::Cell::new(0u32);
+        let result = checker.check("divergent", "model", |_, _, _| {
+            let n = counter.get();
+            counter.set(n + 1);
+            // Each answer is completely different
+            Ok(format!("completely unique answer number {}", n))
+        });
+
+        assert_eq!(result.successful_samples, 5);
+        // With 5 unique answers, each group has 1 member = 0.2 ratio < 0.8 min_consensus
+        assert!(
+            !result.has_consensus,
+            "Should not reach consensus with all different answers"
+        );
+        assert!(
+            result.confidence < 0.8,
+            "Confidence ({}) should be below 0.8 threshold",
+            result.confidence
+        );
+        // Each answer should form its own group
+        assert!(
+            result.groups.len() > 1,
+            "Should have multiple groups for divergent answers"
+        );
+    }
 }

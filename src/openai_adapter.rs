@@ -650,4 +650,42 @@ mod tests {
         assert_eq!(usage.completion_tokens, 7);
         assert_eq!(usage.total_tokens, 17);
     }
+
+    #[test]
+    fn test_error_display_formatting() {
+        let network_err = OpenAIAdapterError::Network("timeout".to_string());
+        assert_eq!(format!("{}", network_err), "Network error: timeout");
+
+        let serial_err = OpenAIAdapterError::Serialization("bad payload".to_string());
+        assert_eq!(
+            format!("{}", serial_err),
+            "Serialization error: bad payload"
+        );
+
+        let deser_err = OpenAIAdapterError::Deserialization("missing field".to_string());
+        assert_eq!(
+            format!("{}", deser_err),
+            "Deserialization error: missing field"
+        );
+
+        let api_err = OpenAIAdapterError::Api {
+            code: 401,
+            message: "Invalid API key".to_string(),
+            error_type: "authentication_error".to_string(),
+        };
+        assert_eq!(
+            format!("{}", api_err),
+            "API error 401: Invalid API key"
+        );
+
+        let rate_err_with = OpenAIAdapterError::RateLimit {
+            retry_after: Some(Duration::from_secs(60)),
+        };
+        let display = format!("{}", rate_err_with);
+        assert!(display.contains("Rate limited"));
+        assert!(display.contains("retry after"));
+
+        let rate_err_without = OpenAIAdapterError::RateLimit { retry_after: None };
+        assert_eq!(format!("{}", rate_err_without), "Rate limited");
+    }
 }

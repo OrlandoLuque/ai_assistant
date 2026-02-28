@@ -641,4 +641,54 @@ mod tests {
         assert_eq!(config.categories.len(), 2);
         assert_eq!(config.action, ModerationAction::Block);
     }
+
+    #[test]
+    fn test_category_display_names() {
+        assert_eq!(ModerationCategory::Hate.display_name(), "Hate Speech");
+        assert_eq!(ModerationCategory::Violence.display_name(), "Violence");
+        assert_eq!(ModerationCategory::SelfHarm.display_name(), "Self-Harm");
+        assert_eq!(ModerationCategory::Sexual.display_name(), "Sexual Content");
+        assert_eq!(ModerationCategory::Harassment.display_name(), "Harassment");
+        assert_eq!(ModerationCategory::Misinformation.display_name(), "Misinformation");
+        assert_eq!(ModerationCategory::Spam.display_name(), "Spam");
+        assert_eq!(ModerationCategory::PersonalAttack.display_name(), "Personal Attack");
+        assert_eq!(ModerationCategory::Profanity.display_name(), "Profanity");
+        assert_eq!(ModerationCategory::Drugs.display_name(), "Drug Content");
+        assert_eq!(ModerationCategory::Weapons.display_name(), "Weapons");
+        assert_eq!(ModerationCategory::Fraud.display_name(), "Fraud");
+        assert_eq!(ModerationCategory::Custom.display_name(), "Custom");
+    }
+
+    #[test]
+    fn test_stats_pass_rate_and_multi_record() {
+        let mut stats = ModerationStats::default();
+
+        // Initially pass rate should be 1.0 (no checks)
+        assert!((stats.pass_rate() - 1.0).abs() < f64::EPSILON);
+
+        let moderator = ContentModerator::default();
+
+        // Record a passing result
+        let pass_result = moderator.moderate("Hello, how are you?");
+        stats.record(&pass_result);
+        assert_eq!(stats.total_checks, 1);
+        assert_eq!(stats.passed, 1);
+        assert_eq!(stats.failed, 0);
+        assert!((stats.pass_rate() - 1.0).abs() < f64::EPSILON);
+
+        // Record a failing result (blocked term)
+        let config = ModerationConfig {
+            blocked_terms: vec!["forbidden".to_string()],
+            ..Default::default()
+        };
+        let strict_moderator = ContentModerator::new(config);
+        let fail_result = strict_moderator.moderate("This is forbidden content");
+        stats.record(&fail_result);
+
+        assert_eq!(stats.total_checks, 2);
+        assert_eq!(stats.passed, 1);
+        assert_eq!(stats.failed, 1);
+        assert!((stats.pass_rate() - 0.5).abs() < f64::EPSILON);
+        assert!(stats.avg_risk_score > 0.0);
+    }
 }
