@@ -624,4 +624,25 @@ mod tests {
         let schema = tool.to_schema();
         assert_eq!(schema["function"]["name"], "search");
     }
+
+    #[test]
+    fn test_optional_parameter() {
+        let param = ToolParameter::string("name", "A name").optional();
+        assert!(!param.required);
+    }
+
+    #[test]
+    fn test_tool_result_success() {
+        let result = ToolResult::success("id1", "my_tool", serde_json::json!({"ok": true}));
+        assert_eq!(result.call_id, "id1");
+        assert_eq!(result.name, "my_tool");
+        assert!(result.error.is_none());
+    }
+
+    #[test]
+    fn test_tool_result_error() {
+        let result = ToolResult::error("id2", "bad_tool", "something failed");
+        assert!(result.error.is_some());
+        assert_eq!(result.error.unwrap(), "something failed");
+    }
 }

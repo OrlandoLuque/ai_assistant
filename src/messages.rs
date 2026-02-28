@@ -182,4 +182,26 @@ mod tests {
         assert!(cancelled.is_cancelled());
         assert_eq!(cancelled.partial(), Some("partial output"));
     }
+
+    #[test]
+    fn test_chunk_is_not_terminal() {
+        let chunk = AiResponse::Chunk("partial".to_string());
+        assert!(!chunk.is_terminal());
+        assert_eq!(chunk.text(), Some("partial"));
+    }
+
+    #[test]
+    fn test_complete_is_terminal() {
+        let complete = AiResponse::Complete("done".to_string());
+        assert!(complete.is_terminal());
+        assert_eq!(complete.text(), Some("done"));
+    }
+
+    #[test]
+    fn test_message_role_checks() {
+        let sys = ChatMessage::system("You are a helper");
+        assert!(sys.is_system());
+        assert!(!sys.is_user());
+        assert!(!sys.is_assistant());
+    }
 }

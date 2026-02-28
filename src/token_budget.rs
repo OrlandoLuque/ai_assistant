@@ -643,4 +643,29 @@ mod tests {
         assert!(result.allowed);
         assert_eq!(result.remaining, u64::MAX);
     }
+
+    #[test]
+    fn test_budget_period_names() {
+        assert_eq!(BudgetPeriod::Hourly.name(), "hourly");
+        assert_eq!(BudgetPeriod::Daily.name(), "daily");
+        assert_eq!(BudgetPeriod::Lifetime.name(), "lifetime");
+    }
+
+    #[test]
+    fn test_record_usage() {
+        let mut manager = BudgetManager::new();
+        manager.set_budget("user1", Budget::new(1000, BudgetPeriod::Daily));
+        let result = manager.record_usage("user1", 500);
+        assert!(result.allowed);
+        assert_eq!(result.remaining, 500);
+    }
+
+    #[test]
+    fn test_budget_hard_limit_blocks() {
+        let mut manager = BudgetManager::new();
+        manager.set_budget("user1", Budget::new(100, BudgetPeriod::Daily));
+        manager.record_usage("user1", 100);
+        let result = manager.check("user1", 50);
+        assert!(!result.allowed);
+    }
 }

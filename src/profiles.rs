@@ -610,4 +610,30 @@ mod tests {
         assert!(count > 0);
         assert!(new_manager.get_profile("exported").is_some());
     }
+
+    #[test]
+    fn test_preset_profiles() {
+        let creative = ModelProfile::creative();
+        let precise = ModelProfile::precise();
+        assert!(creative.temperature > precise.temperature);
+    }
+
+    #[test]
+    fn test_remove_profile() {
+        let mut manager = ProfileManager::new();
+        let p = ModelProfile::custom("temp").build();
+        manager.add_profile(p);
+        assert!(manager.get_profile("temp").is_some());
+        manager.remove_profile("temp");
+        assert!(manager.get_profile("temp").is_none());
+    }
+
+    #[test]
+    fn test_list_profiles() {
+        let mut manager = ProfileManager::new();
+        manager.add_profile(ModelProfile::custom("a").build());
+        manager.add_profile(ModelProfile::custom("b").build());
+        let list = manager.list_profiles();
+        assert!(list.len() >= 2);
+    }
 }
