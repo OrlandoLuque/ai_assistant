@@ -667,7 +667,7 @@ impl AiAssistant {
         // Leave a small buffer (5%) for safety
         let safe_available = (available as f32 * 0.95) as usize;
 
-        println!(
+        log::debug!(
             "[AI Context] Total: {}, Used: {} (sys:{} conv:{} user:{} reserve:{}), Available for knowledge: {}",
             total_context, used, system_tokens, conversation_tokens, user_tokens, response_reserve, safe_available
         );
@@ -1066,28 +1066,28 @@ impl AiAssistant {
     ) {
         let context = self.knowledge_context.clone();
         // Debug: Log context size to verify knowledge is being used
-        println!(
-            "[AI DEBUG] send_message_auto_with_notes: knowledge_context size = {} bytes",
+        log::debug!(
+            "[AI] send_message_auto_with_notes: knowledge_context size = {} bytes",
             context.len()
         );
         if context.is_empty() {
-            println!("[AI DEBUG] WARNING: knowledge_context is EMPTY!");
+            log::warn!("[AI] knowledge_context is EMPTY");
         } else {
             // Show first 300 chars of context
             let preview: String = context.chars().take(300).collect();
-            println!("[AI DEBUG] Context preview: {}...", preview);
+            log::debug!("[AI] Context preview: {}...", preview);
 
             // Check for CCU-related content specifically
             let context_lower = context.to_lowercase();
             if context_lower.contains("cross-chassis") || context_lower.contains("ccu") {
-                println!("[AI DEBUG] CCU knowledge FOUND in context");
+                log::debug!("[AI] CCU knowledge FOUND in context");
             } else {
-                println!("[AI DEBUG] WARNING: No CCU-related content found in context!");
+                log::warn!("[AI] No CCU-related content found in context");
             }
 
             // Count how many knowledge sections
             let section_count = context.matches("# ").count();
-            println!("[AI DEBUG] Knowledge sections: {}", section_count);
+            log::debug!("[AI] Knowledge sections: {}", section_count);
         }
         self.send_message_with_notes(user_message, &context, session_notes, knowledge_notes);
     }
@@ -2405,9 +2405,9 @@ impl AiAssistant {
             let results = self.process_pending_documents();
             for (source, chunks) in results {
                 if chunks > 0 {
-                    println!("[AI RAG] Indexed '{}': {} chunks", source, chunks);
+                    log::info!("[AI RAG] Indexed '{}': {} chunks", source, chunks);
                 } else {
-                    println!("[AI RAG] '{}' up-to-date (skipped)", source);
+                    log::debug!("[AI RAG] '{}' up-to-date (skipped)", source);
                 }
             }
         }
@@ -2590,9 +2590,9 @@ impl AiAssistant {
             let results = self.process_pending_documents();
             for (source, chunks) in results {
                 if chunks > 0 {
-                    println!("[AI RAG] Indexed '{}': {} chunks", source, chunks);
+                    log::info!("[AI RAG] Indexed '{}': {} chunks", source, chunks);
                 } else {
-                    println!("[AI RAG] '{}' up-to-date (skipped)", source);
+                    log::debug!("[AI RAG] '{}' up-to-date (skipped)", source);
                 }
             }
         }
