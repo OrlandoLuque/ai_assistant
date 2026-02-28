@@ -608,4 +608,34 @@ mod tests {
         assert!(bar.contains("====="));
         assert!(bar.contains("50/100"));
     }
+
+    #[test]
+    fn test_has_started() {
+        let metrics = StreamingMetrics::new();
+        assert!(!metrics.has_started());
+    }
+
+    #[test]
+    fn test_total_tokens_and_chars() {
+        let mut metrics = StreamingMetrics::new();
+        metrics.start();
+        metrics.record_chunk("Hello");
+        metrics.record_chunk(" World");
+        assert_eq!(metrics.total_characters(), 11);
+    }
+
+    #[test]
+    fn test_format_rate() {
+        let formatted = MetricsDisplay::format_rate(42.5);
+        assert!(formatted.contains("42.5"));
+    }
+
+    #[test]
+    fn test_finalize_metrics() {
+        let mut metrics = StreamingMetrics::new();
+        metrics.start();
+        metrics.record_chunk("test");
+        let final_m = metrics.finalize();
+        assert!(final_m.total_chars >= 4);
+    }
 }

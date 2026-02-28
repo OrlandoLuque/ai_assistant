@@ -683,4 +683,33 @@ mod tests {
         let chain = ChainTemplates::code_review("gpt-4");
         assert_eq!(chain.steps.len(), 3);
     }
+
+    #[test]
+    fn test_chain_config_defaults() {
+        let config = ChainConfig::default();
+        assert!(config.max_steps > 0);
+        assert!(!config.continue_on_error);
+    }
+
+    #[test]
+    fn test_extraction_regex() {
+        let executor = ChainExecutor::default();
+        let result = executor.extract_one("ID: 42 found", &ExtractionMethod::Regex(r"\d+".to_string()));
+        assert_eq!(result, Some("42".to_string()));
+    }
+
+    #[test]
+    fn test_extraction_full_response() {
+        let executor = ChainExecutor::default();
+        let result = executor.extract_one("Full text", &ExtractionMethod::FullResponse);
+        assert_eq!(result, Some("Full text".to_string()));
+    }
+
+    #[test]
+    fn test_chain_builder() {
+        let chain = ChainBuilder::new("test-chain", "gpt-4")
+            .step("step1", "Summarize: {{input}}")
+            .build();
+        assert_eq!(chain.steps.len(), 1);
+    }
 }

@@ -324,4 +324,35 @@ mod tests {
         };
         assert_eq!(config3.get_base_url(), "http://my-api:9000");
     }
+
+    #[test]
+    fn test_cloud_providers() {
+        assert!(AiProvider::OpenAI.is_cloud());
+        assert!(AiProvider::Anthropic.is_cloud());
+        assert!(!AiProvider::Ollama.is_cloud());
+        assert!(!AiProvider::LMStudio.is_cloud());
+    }
+
+    #[test]
+    fn test_provider_icons() {
+        assert!(!AiProvider::Ollama.icon().is_empty());
+        assert!(!AiProvider::OpenAI.icon().is_empty());
+    }
+
+    #[test]
+    fn test_all_providers_have_display_names() {
+        let providers = [
+            AiProvider::Ollama, AiProvider::LMStudio, AiProvider::OpenAI,
+            AiProvider::Anthropic, AiProvider::Gemini,
+        ];
+        for p in &providers {
+            assert!(!p.display_name().is_empty());
+        }
+    }
+
+    #[test]
+    fn test_config_temperature_default() {
+        let config = AiConfig::default();
+        assert!(config.temperature >= 0.0 && config.temperature <= 2.0);
+    }
 }

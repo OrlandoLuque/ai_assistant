@@ -610,4 +610,37 @@ mod tests {
         let prompt = builder.build_system_prompt("You are a helpful assistant.", Some("es"));
         assert!(prompt.contains("Spanish"));
     }
+
+    #[test]
+    fn test_detect_returns_confidence() {
+        let detector = LanguageDetector::new();
+        let result = detector.detect("Hello, how are you doing today?");
+        assert!(result.confidence > 0.0);
+        assert!(!result.code.is_empty());
+    }
+
+    #[test]
+    fn test_localized_custom_key() {
+        let mut strings = LocalizedStrings::new();
+        strings.add("custom_key", "en", "Hello");
+        strings.add("custom_key", "es", "Hola");
+        let en_val = strings.get("custom_key", "en");
+        assert_eq!(en_val.as_deref(), Some("Hello"));
+    }
+
+    #[test]
+    fn test_available_languages() {
+        let mut strings = LocalizedStrings::new();
+        strings.add("key1", "en", "English");
+        strings.add("key1", "es", "Spanish");
+        let langs = strings.available_languages("key1");
+        assert_eq!(langs.len(), 2);
+    }
+
+    #[test]
+    fn test_detect_multiple() {
+        let detector = LanguageDetector::new();
+        let results = detector.detect_multiple("Hello world. Hola mundo.");
+        assert!(!results.is_empty());
+    }
 }
