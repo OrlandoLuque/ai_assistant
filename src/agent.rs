@@ -388,7 +388,6 @@ impl ReactAgent {
 #[derive(Debug)]
 pub struct PlanningAgent {
     /// Agent configuration
-    #[allow(dead_code)]
     config: AgentConfig,
     /// The plan steps
     plan: Vec<PlanStep>,
@@ -429,6 +428,11 @@ impl PlanningAgent {
             plan: Vec::new(),
             results: HashMap::new(),
         }
+    }
+
+    /// Get agent configuration
+    pub fn config(&self) -> &AgentConfig {
+        &self.config
     }
 
     /// Add a plan step

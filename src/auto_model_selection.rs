@@ -708,7 +708,6 @@ pub enum FallbackStrategy {
 #[derive(Debug, Clone)]
 pub struct FallbackChain {
     models: Vec<String>,
-    #[allow(dead_code)]
     strategy: FallbackStrategy,
 }
 
@@ -719,6 +718,11 @@ impl FallbackChain {
             models: Vec::new(),
             strategy,
         }
+    }
+
+    /// Get the fallback strategy
+    pub fn strategy(&self) -> &FallbackStrategy {
+        &self.strategy
     }
 
     /// Append a model to the chain

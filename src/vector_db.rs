@@ -2211,7 +2211,6 @@ impl VectorDb for WeaviateClient {
 #[derive(Debug)]
 pub struct RedisVectorClient {
     base_url: String,
-    #[allow(dead_code)]
     config: VectorDbConfig,
     index_name: String,
     cache: HashMap<String, StoredVector>,
@@ -2226,6 +2225,11 @@ impl RedisVectorClient {
             index_name,
             cache: HashMap::new(),
         }
+    }
+
+    /// Returns the vector DB configuration.
+    pub fn config(&self) -> &VectorDbConfig {
+        &self.config
     }
 
     /// Returns the index name used for vector search.
@@ -2418,7 +2422,6 @@ impl VectorDb for RedisVectorClient {
 #[derive(Debug)]
 pub struct ElasticsearchClient {
     base_url: String,
-    #[allow(dead_code)]
     config: VectorDbConfig,
     index_name: String,
     cache: HashMap<String, StoredVector>,
@@ -2433,6 +2436,11 @@ impl ElasticsearchClient {
             index_name,
             cache: HashMap::new(),
         }
+    }
+
+    /// Returns the vector DB configuration.
+    pub fn config(&self) -> &VectorDbConfig {
+        &self.config
     }
 
     /// Returns the index name (lowercased collection name).

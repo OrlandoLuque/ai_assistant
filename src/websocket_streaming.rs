@@ -636,7 +636,6 @@ pub(crate) fn base64_encode(data: &[u8]) -> String {
 pub struct BidirectionalStream {
     handler: WsStreamHandler,
     outgoing: Vec<WsFrame>,
-    #[allow(dead_code)]
     incoming_buffer: String,
 }
 
@@ -669,6 +668,11 @@ impl BidirectionalStream {
 
     pub fn handler_mut(&mut self) -> &mut WsStreamHandler {
         &mut self.handler
+    }
+
+    /// Get the accumulated incoming text buffer.
+    pub fn incoming_buffer(&self) -> &str {
+        &self.incoming_buffer
     }
 }
 

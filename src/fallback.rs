@@ -416,9 +416,7 @@ impl Default for FallbackChain {
 /// Health checker for providers
 pub struct HealthChecker {
     chain: Arc<Mutex<FallbackChain>>,
-    #[allow(dead_code)]
     check_interval: Duration,
-    #[allow(dead_code)]
     running: Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -435,6 +433,16 @@ impl HealthChecker {
     /// Get the chain
     pub fn chain(&self) -> &Arc<Mutex<FallbackChain>> {
         &self.chain
+    }
+
+    /// Get the health check interval.
+    pub fn check_interval(&self) -> Duration {
+        self.check_interval
+    }
+
+    /// Whether the health checker is currently running.
+    pub fn is_running(&self) -> bool {
+        self.running.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Run a health check

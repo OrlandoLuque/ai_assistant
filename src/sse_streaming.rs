@@ -240,7 +240,6 @@ pub struct SseClient {
     url: String,
     headers: HashMap<String, String>,
     last_event_id: Option<String>,
-    #[allow(dead_code)]
     retry_ms: u64,
 }
 
@@ -262,6 +261,11 @@ impl SseClient {
     pub fn with_last_event_id(mut self, id: &str) -> Self {
         self.last_event_id = Some(id.to_string());
         self
+    }
+
+    /// Get the retry interval in milliseconds.
+    pub fn retry_ms(&self) -> u64 {
+        self.retry_ms
     }
 
     /// Connect and return an event iterator

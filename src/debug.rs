@@ -465,9 +465,7 @@ pub struct DebugReport {
 /// Request/response inspector
 pub struct RequestInspector {
     logger: Arc<DebugLogger>,
-    #[allow(dead_code)]
     capture_requests: bool,
-    #[allow(dead_code)]
     capture_responses: bool,
     max_body_length: usize,
     requests: Mutex<Vec<CapturedRequest>>,
@@ -496,6 +494,16 @@ impl RequestInspector {
             max_body_length: 500,
             requests: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Whether request capture is enabled.
+    pub fn captures_requests(&self) -> bool {
+        self.capture_requests
+    }
+
+    /// Whether response capture is enabled.
+    pub fn captures_responses(&self) -> bool {
+        self.capture_responses
     }
 
     /// Capture a request

@@ -1060,7 +1060,6 @@ pub struct P2PManager {
     /// Connected peers
     connections: HashMap<String, PeerConnection>,
     /// Pending ICE negotiations (used during active P2P sessions)
-    #[allow(dead_code)]
     pending_ice: HashMap<String, IceAgent>,
     /// Volatile peer data (not persisted)
     volatile_data: HashMap<String, Vec<KnowledgeShare>>,
@@ -1096,6 +1095,11 @@ impl P2PManager {
             consensus_votes: HashMap::new(),
             config,
         }
+    }
+
+    /// Get the number of pending ICE negotiations.
+    pub fn pending_ice_count(&self) -> usize {
+        self.pending_ice.len()
     }
 
     /// Start the P2P manager
