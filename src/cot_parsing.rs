@@ -657,4 +657,86 @@ Therefore, the answer is 42.
         let validation = validator.validate(&result);
         assert!(validation.valid);
     }
+
+    #[test]
+    fn test_config_builder_and_custom_parsing() {
+        let config = CotConfigBuilder::new()
+            .step_markers(vec!["Paso".to_string(), "Luego".to_string()])
+            .answer_markers(vec!["Resultado:".to_string()])
+            .extract_numbered(false)
+            .min_step_words(2)
+            .max_steps(5)
+            .build();
+
+        assert_eq!(config.step_markers, vec!["Paso", "Luego"]);
+        assert_eq!(config.answer_markers, vec!["Resultado:"]);
+        assert!(!config.extract_numbered);
+        assert_eq!(config.min_step_words, 2);
+        assert_eq!(config.max_steps, 5);
+
+        let parser = CotParser::new(config);
+        let response = "Paso uno empezamos aqui.\nLuego seguimos adelante.\nResultado: 100";
+        let result = parser.parse(response);
+        assert!(result.is_cot_response);
+        assert!(!result.steps.is_empty());
+        assert!(result.answer.is_some());
+    }
+
+    #[test]
+    fn test_non_cot_response_and_entity_extraction() {
+        let parser = CotParser::default();
+
+        // A plain response with no reasoning markers or numbered steps
+        let result = parser.parse("The sky is blue.");
+        assert!(!result.is_cot_response);
+        assert!(result.steps.is_empty());
+        assert_eq!(result.quality_score, 0.0);
+        assert!(result.summary.is_none());
+        // Answer should still extract last line if short enough
+        assert!(result.answer.is_some());
+
+        // Test entity extraction with capitalized phrases and quoted strings
+        let entities = extract_entities("John Smith said \"hello world\" to Alice");
+        assert!(entities.contains(&"hello world".to_string()));
+        assert!(entities.contains(&"John Smith".to_string()));
+        assert!(entities.contains(&"Alice".to_string()));
+    }
+
+    #[test]
+    fn test_validator_fails_on_missing_requirements() {
+        let validator = CotValidator::new()
+            .min_steps(3)
+            .require_types(vec![StepType::Verification, StepType::Conclusion]);
+
+        // Only 1 step, no Verification or Conclusion type, no answer
+        let result = CotParseResult {
+            original: String::new(),
+            steps: vec![ReasoningStep {
+                number: 1,
+                content: "Just one general step".to_string(),
+                step_type: StepType::General,
+                entities: Vec::new(),
+                math_operations: Vec::new(),
+            }],
+            answer: None,
+            is_cot_response: true,
+            quality_score: 0.1,
+            summary: None,
+        };
+
+        let validation = validator.validate(&result);
+        assert!(!validation.valid);
+        // Should have issues for: insufficient steps, missing Verification, missing Conclusion, no answer
+        assert!(validation.issues.len() >= 3);
+        assert!(validation.issues.iter().any(|i| i.contains("Insufficient")));
+        assert!(validation
+            .issues
+            .iter()
+            .any(|i| i.contains("Verification")));
+        assert!(validation
+            .issues
+            .iter()
+            .any(|i| i.contains("Conclusion")));
+        assert!(validation.issues.iter().any(|i| i.contains("answer")));
+    }
 }

@@ -497,4 +497,81 @@ mod tests {
         // Nonces should differ (extremely unlikely to collide)
         assert_ne!(n1, n2);
     }
+
+    #[test]
+    fn test_encrypt_without_active_key_and_set_active_key_errors() {
+        let encryptor = ContentEncryptor::new();
+        // No keys added — should fail with NoActiveKey
+        let result = encryptor.encrypt(b"data");
+        assert_eq!(result.unwrap_err(), EncryptionError::NoActiveKey);
+
+        // set_active_key on nonexistent key should fail
+        let mut encryptor2 = ContentEncryptor::new();
+        let err = encryptor2.set_active_key("nonexistent").unwrap_err();
+        assert_eq!(err, EncryptionError::KeyNotFound);
+
+        // set_active_key on existing key should succeed
+        encryptor2.add_key(EncryptionKey::new(
+            "k1",
+            b"somekey".to_vec(),
+            EncryptionAlgorithm::Xor,
+        ));
+        assert!(encryptor2.set_active_key("k1").is_ok());
+    }
+
+    #[test]
+    fn test_algorithm_mismatch_error() {
+        let mut encryptor = ContentEncryptor::new();
+        encryptor.add_key(EncryptionKey::new(
+            "xor_key",
+            b"xorkey123".to_vec(),
+            EncryptionAlgorithm::Xor,
+        ));
+
+        // Encrypt normally with XOR
+        let encrypted = encryptor.encrypt_string("test data").unwrap();
+        assert_eq!(encrypted.algorithm, EncryptionAlgorithm::Xor);
+
+        // Fabricate an EncryptedContent that claims a different algorithm
+        let tampered = EncryptedContent {
+            ciphertext: encrypted.ciphertext.clone(),
+            nonce: encrypted.nonce.clone(),
+            algorithm: EncryptionAlgorithm::Aes256Gcm, // mismatch
+            key_id: "xor_key".to_string(),
+        };
+
+        let err = encryptor.decrypt(&tampered).unwrap_err();
+        assert_eq!(err, EncryptionError::AlgorithmMismatch);
+    }
+
+    #[test]
+    fn test_message_store_delete_and_list_ids() {
+        let mut encryptor = ContentEncryptor::new();
+        encryptor.add_key(EncryptionKey::new(
+            "k1",
+            b"storekey99".to_vec(),
+            EncryptionAlgorithm::Xor,
+        ));
+
+        let mut store = EncryptedMessageStore::new(encryptor);
+
+        store.store("msg_a", "Alpha message").unwrap();
+        store.store("msg_b", "Beta message").unwrap();
+
+        // Verify both stored
+        let ids = store.list_ids();
+        assert_eq!(ids.len(), 2);
+        assert_eq!(store.retrieve("msg_a").unwrap(), "Alpha message");
+
+        // Delete one and verify
+        store.delete("msg_a");
+        assert_eq!(store.list_ids().len(), 1);
+        assert_eq!(
+            store.retrieve("msg_a").unwrap_err(),
+            EncryptionError::KeyNotFound
+        );
+
+        // Remaining message still retrievable
+        assert_eq!(store.retrieve("msg_b").unwrap(), "Beta message");
+    }
 }

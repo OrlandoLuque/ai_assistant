@@ -652,4 +652,81 @@ mod tests {
             ])
         );
     }
+
+    #[test]
+    fn test_function_result_error_and_success_json() {
+        let err_result = FunctionResult::error("broken_fn", "something went wrong");
+        assert!(!err_result.success);
+        assert_eq!(err_result.name, "broken_fn");
+        assert_eq!(
+            err_result.error,
+            Some("something went wrong".to_string())
+        );
+        assert!(err_result.content.is_empty());
+
+        let json_val = serde_json::json!({"status": "ok", "count": 42});
+        let ok_result = FunctionResult::success_json("json_fn", &json_val);
+        assert!(ok_result.success);
+        assert!(ok_result.error.is_none());
+        // Content should be valid JSON
+        let parsed: Value = serde_json::from_str(&ok_result.content).unwrap();
+        assert_eq!(parsed["count"], 42);
+    }
+
+    #[test]
+    fn test_registry_remove_and_execute_unknown() {
+        let mut registry = FunctionRegistry::new();
+
+        let func = FunctionBuilder::new("temp_fn")
+            .description("Temporary function")
+            .build();
+
+        registry.register(func, |_| FunctionResult::success("temp_fn", "done"));
+        assert!(registry.has("temp_fn"));
+        assert_eq!(registry.names().len(), 1);
+
+        // Remove the function
+        assert!(registry.remove("temp_fn"));
+        assert!(!registry.has("temp_fn"));
+        assert!(registry.get("temp_fn").is_none());
+
+        // Removing again returns false
+        assert!(!registry.remove("temp_fn"));
+
+        // Execute an unknown function returns error result
+        let call = FunctionCall {
+            name: "nonexistent".to_string(),
+            arguments: serde_json::json!({}),
+        };
+        let result = registry.execute(&call);
+        assert!(!result.success);
+        assert!(result.error.as_ref().unwrap().contains("not found"));
+    }
+
+    #[test]
+    fn test_parse_legacy_function_call_format_and_get_bool() {
+        // Test the older function_call format (not tool_calls)
+        let response = serde_json::json!({
+            "function_call": {
+                "name": "toggle_feature",
+                "arguments": {"enabled": true, "label": "dark_mode"}
+            }
+        });
+
+        let calls = parse_function_calls(&response);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "toggle_feature");
+
+        // Test get_bool accessor
+        assert_eq!(calls[0].get_bool("enabled"), Some(true));
+        assert_eq!(calls[0].get_string("label"), Some("dark_mode".to_string()));
+        assert_eq!(calls[0].get_bool("nonexistent"), None);
+
+        // Test array parameter property construction
+        let items = ParameterProperty::string("item name");
+        let arr = ParameterProperty::array("List of items", items);
+        assert_eq!(arr.param_type, "array");
+        assert!(arr.items.is_some());
+        assert_eq!(arr.items.as_ref().unwrap().param_type, "string");
+    }
 }
