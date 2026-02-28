@@ -377,4 +377,66 @@ mod tests {
         assert!(pinner.should_pin("High importance", 0.9).is_some());
         assert!(pinner.should_pin("Normal message", 0.3).is_none());
     }
+
+    #[test]
+    fn test_pin_with_priority() {
+        let mut manager = PinManager::new();
+        let pin = PinnedItem::new("msg1", PinType::System)
+            .with_reason("Critical context")
+            .with_priority(99);
+        manager.pin(pin);
+        let p = manager.get_pin("msg1").unwrap();
+        assert_eq!(p.priority, 99);
+        assert_eq!(p.reason.as_deref(), Some("Critical context"));
+        assert_eq!(p.pin_type, PinType::System);
+    }
+
+    #[test]
+    fn test_pins_by_type() {
+        let mut manager = PinManager::new();
+        manager.pin_id("a", PinType::User);
+        manager.pin_id("b", PinType::System);
+        manager.pin_id("c", PinType::User);
+        let user_pins = manager.pins_by_type(PinType::User);
+        assert_eq!(user_pins.len(), 2);
+        let system_pins = manager.pins_by_type(PinType::System);
+        assert_eq!(system_pins.len(), 1);
+    }
+
+    #[test]
+    fn test_max_pins() {
+        let mut manager = PinManager::new().with_max_pins(2);
+        assert!(manager.pin_id("a", PinType::User));
+        assert!(manager.pin_id("b", PinType::System));
+        // Third pin should evict lowest-priority non-user pin (System at priority 50)
+        assert!(manager.pin_id("c", PinType::User));
+        assert_eq!(manager.pinned_ids().len(), 2);
+        // User pin "a" should still be there, System pin "b" should have been evicted
+        assert!(manager.is_pinned("a"));
+        assert!(manager.is_pinned("c"));
+    }
+
+    #[test]
+    fn test_stats() {
+        let mut manager = PinManager::new();
+        manager.pin_id("a", PinType::User);
+        manager.pin_id("b", PinType::System);
+        manager.add_reference("c", "d"); // Creates a Reference pin for "d"
+        let stats = manager.stats();
+        assert_eq!(stats.total_pins, 3);
+        assert_eq!(stats.user_pins, 1);
+        assert_eq!(stats.system_pins, 1);
+        assert_eq!(stats.reference_pins, 1);
+        assert_eq!(stats.total_references, 1);
+    }
+
+    #[test]
+    fn test_auto_pinner_custom_keyword() {
+        let mut pinner = AutoPinner::new();
+        pinner.add_keyword("urgent");
+        assert!(pinner.should_pin("This is urgent!", 0.0).is_some());
+        let reason = pinner.suggest_reason("This is urgent!");
+        assert!(reason.is_some());
+        assert!(reason.unwrap().contains("urgent"));
+    }
 }

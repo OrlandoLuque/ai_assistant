@@ -384,4 +384,63 @@ mod tests {
         assert_eq!(stats.failed, 1);
         assert!(queue.is_empty());
     }
+
+    #[test]
+    fn test_message_builders() {
+        let msg = QueueMessage::new("hello")
+            .with_priority(10)
+            .with_metadata("key", "value");
+        assert_eq!(msg.payload, "hello");
+        assert_eq!(msg.priority, 10);
+        assert_eq!(msg.metadata.get("key").unwrap(), "value");
+        // Age should be very small (just created)
+        assert!(msg.age() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn test_queue_clear() {
+        let queue = MemoryQueue::new(100);
+        queue.push(QueueMessage::new("a")).unwrap();
+        queue.push(QueueMessage::new("b")).unwrap();
+        assert_eq!(queue.len(), 2);
+        assert!(!queue.is_empty());
+        queue.clear();
+        assert_eq!(queue.len(), 0);
+        assert!(queue.is_empty());
+    }
+
+    #[test]
+    fn test_dead_letter_queue() {
+        let dlq = DeadLetterQueue::new(2);
+        assert!(dlq.is_empty());
+        dlq.add(QueueMessage::new("fail1"), "timeout".to_string());
+        dlq.add(QueueMessage::new("fail2"), "error".to_string());
+        assert_eq!(dlq.len(), 2);
+        // Adding a third should evict the oldest
+        dlq.add(QueueMessage::new("fail3"), "crash".to_string());
+        assert_eq!(dlq.len(), 2);
+        // Pop returns most recent last (it's a Vec, pop removes from end)
+        let (msg, reason) = dlq.pop().unwrap();
+        assert_eq!(msg.payload, "fail3");
+        assert_eq!(reason, "crash");
+    }
+
+    #[test]
+    fn test_queue_error_display() {
+        assert_eq!(QueueError::Full.to_string(), "Queue is full");
+        assert_eq!(QueueError::Empty.to_string(), "Queue is empty");
+        assert_eq!(QueueError::Timeout.to_string(), "Operation timed out");
+        assert_eq!(QueueError::ConnectionFailed.to_string(), "Connection failed");
+    }
+
+    #[test]
+    fn test_processor_start_stop() {
+        let queue = Arc::new(MemoryQueue::new(100));
+        let processor = QueueProcessor::new(Arc::clone(&queue), |_| Ok("ok".to_string()));
+        assert!(!processor.is_running());
+        processor.start();
+        assert!(processor.is_running());
+        processor.stop();
+        assert!(!processor.is_running());
+    }
 }

@@ -345,4 +345,48 @@ mod tests {
         assert!(signer2.verify(&signed2, 60).is_ok());
         assert!(signer1.verify(&signed2, 60).is_err());
     }
+
+    #[test]
+    fn test_expired_signature() {
+        let signer = RequestSigner::new(b"secret", SignatureAlgorithm::HmacSha256);
+        let mut signed = signer.sign("payload");
+        // Set timestamp to far in the past
+        signed.timestamp = 1000;
+        // Re-sign with correct timestamp for the signature to be valid content-wise,
+        // but max_age_secs=0 means any age > 0 expires
+        assert_eq!(signer.verify(&signed, 0), Err(SignatureError::Expired));
+    }
+
+    #[test]
+    fn test_signature_error_display() {
+        assert_eq!(SignatureError::Invalid.to_string(), "Invalid signature");
+        assert_eq!(SignatureError::Expired.to_string(), "Signature expired");
+        assert_eq!(SignatureError::MissingFields.to_string(), "Missing required fields");
+    }
+
+    #[test]
+    fn test_hex_encode() {
+        assert_eq!(sha256::hex_encode(&[0x00, 0xff, 0xab]), "00ffab");
+        assert_eq!(sha256::hex_encode(&[]), "");
+        assert_eq!(sha256::hex_encode(&[0x01]), "01");
+    }
+
+    #[test]
+    fn test_sha256_longer_input() {
+        // SHA-256("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq")
+        let input = b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
+        let digest = sha256::sha256(input);
+        let hex = sha256::hex_encode(&digest);
+        assert_eq!(hex, "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1");
+    }
+
+    #[test]
+    fn test_sign_different_payloads() {
+        let signer = RequestSigner::new(b"key", SignatureAlgorithm::HmacSha256);
+        let s1 = signer.sign("payload_a");
+        let s2 = signer.sign("payload_b");
+        // Different payloads produce different signatures (different nonces too, but even content differs)
+        assert_ne!(s1.signature, s2.signature);
+        assert_eq!(s1.algorithm, SignatureAlgorithm::HmacSha256);
+    }
 }
