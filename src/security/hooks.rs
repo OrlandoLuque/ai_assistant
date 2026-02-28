@@ -224,6 +224,96 @@ mod tests {
     }
 
     #[test]
+    fn test_pre_hook_continue_unchanged() {
+        let mut manager = HookManager::new();
+        manager.register_pre_hook("passthrough", |_msg| HookResult::Continue);
+        let result = manager.run_pre_hooks("hello");
+        assert!(!result.is_blocked());
+        assert_eq!(result.get_content("hello"), "hello");
+        assert!(matches!(result, HookChainResult::Unchanged));
+    }
+
+    #[test]
+    fn test_multiple_pre_hooks_chaining() {
+        let mut manager = HookManager::new();
+        manager.register_pre_hook("prefix", |msg| HookResult::Modify(format!("[OK] {}", msg)));
+        manager.register_pre_hook("uppercase", |msg| HookResult::Modify(msg.to_uppercase()));
+        let result = manager.run_pre_hooks("test");
+        match result {
+            HookChainResult::Modified { content, by_hooks } => {
+                assert_eq!(content, "[OK] TEST");
+                assert_eq!(by_hooks, vec!["prefix", "uppercase"]);
+            }
+            _ => panic!("Expected Modified"),
+        }
+    }
+
+    #[test]
+    fn test_post_hook_blocking() {
+        let mut manager = HookManager::new();
+        manager.register_post_hook("censor", |_user, response| {
+            if response.contains("secret") {
+                HookResult::Block("Response contains secret".to_string())
+            } else {
+                HookResult::Continue
+            }
+        });
+        let ok = manager.run_post_hooks("q", "safe answer");
+        assert!(!ok.is_blocked());
+        let blocked = manager.run_post_hooks("q", "the secret is 42");
+        assert!(blocked.is_blocked());
+        match blocked {
+            HookChainResult::Blocked { by_hook, reason } => {
+                assert_eq!(by_hook, "censor");
+                assert!(reason.contains("secret"));
+            }
+            _ => panic!("Expected Blocked"),
+        }
+    }
+
+    #[test]
+    fn test_hook_result_is_blocked() {
+        assert!(!HookResult::Continue.is_blocked());
+        assert!(!HookResult::Modify("x".to_string()).is_blocked());
+        assert!(HookResult::Block("reason".to_string()).is_blocked());
+    }
+
+    #[test]
+    fn test_hook_chain_result_get_content() {
+        let unchanged = HookChainResult::Unchanged;
+        assert_eq!(unchanged.get_content("original"), "original");
+
+        let modified = HookChainResult::Modified {
+            content: "new".to_string(),
+            by_hooks: vec!["h".to_string()],
+        };
+        assert_eq!(modified.get_content("original"), "new");
+
+        let blocked = HookChainResult::Blocked {
+            by_hook: "h".to_string(),
+            reason: "r".to_string(),
+        };
+        assert_eq!(blocked.get_content("original"), "original");
+    }
+
+    #[test]
+    fn test_list_hooks_empty_and_populated() {
+        let mut manager = HookManager::new();
+        assert!(manager.list_pre_hooks().is_empty());
+        assert!(manager.list_post_hooks().is_empty());
+
+        manager.register_pre_hook("a", |_| HookResult::Continue);
+        manager.register_post_hook("b", |_, _| HookResult::Continue);
+        manager.register_post_hook("c", |_, _| HookResult::Continue);
+
+        assert_eq!(manager.list_pre_hooks(), vec!["a"]);
+        assert_eq!(manager.list_post_hooks(), vec!["b", "c"]);
+
+        manager.remove_post_hook("b");
+        assert_eq!(manager.list_post_hooks(), vec!["c"]);
+    }
+
+    #[test]
     fn test_hook_blocking() {
         let mut manager = HookManager::new();
 

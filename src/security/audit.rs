@@ -357,6 +357,70 @@ mod tests {
     }
 
     #[test]
+    fn test_disabled_logger() {
+        let config = AuditConfig {
+            enabled: false,
+            ..Default::default()
+        };
+        let mut logger = AuditLogger::new(config);
+        logger.log_simple(AuditEventType::MessageSent);
+        logger.log_simple(AuditEventType::Error);
+        assert_eq!(logger.get_events().len(), 0);
+    }
+
+    #[test]
+    fn test_session_events_filtering() {
+        let mut logger = AuditLogger::new(AuditConfig::default());
+        logger.log(AuditEvent::new(AuditEventType::MessageSent).with_session("s1"));
+        logger.log(AuditEvent::new(AuditEventType::ResponseReceived).with_session("s2"));
+        logger.log(AuditEvent::new(AuditEventType::MessageSent).with_session("s1"));
+        assert_eq!(logger.get_session_events("s1").len(), 2);
+        assert_eq!(logger.get_session_events("s2").len(), 1);
+        assert_eq!(logger.get_session_events("s3").len(), 0);
+    }
+
+    #[test]
+    fn test_error_events_filtering() {
+        let mut logger = AuditLogger::new(AuditConfig::default());
+        logger.log_simple(AuditEventType::MessageSent);
+        logger.log(AuditEvent::new(AuditEventType::Error).with_error("fail1"));
+        logger.log_simple(AuditEventType::ResponseReceived);
+        logger.log(AuditEvent::new(AuditEventType::SessionDeleted).with_error("fail2"));
+        let errors = logger.get_errors();
+        assert_eq!(errors.len(), 2);
+        assert!(!errors[0].success);
+        assert!(!errors[1].success);
+    }
+
+    #[test]
+    fn test_recent_events() {
+        let mut logger = AuditLogger::new(AuditConfig::default());
+        for _ in 0..10 {
+            logger.log_simple(AuditEventType::MessageSent);
+        }
+        let recent3 = logger.get_recent(3);
+        assert_eq!(recent3.len(), 3);
+        let recent20 = logger.get_recent(20);
+        assert_eq!(recent20.len(), 10);
+    }
+
+    #[test]
+    fn test_clear_and_export_json() {
+        let mut logger = AuditLogger::new(AuditConfig::default());
+        logger.log(AuditEvent::new(AuditEventType::SessionCreated).with_user("u1"));
+        logger.log_simple(AuditEventType::MessageSent);
+        assert_eq!(logger.get_events().len(), 2);
+
+        let json = logger.export_json();
+        assert!(json.starts_with('['));
+        assert!(json.contains("SessionCreated"));
+
+        logger.clear();
+        assert_eq!(logger.get_events().len(), 0);
+        assert_eq!(logger.export_json(), "[]");
+    }
+
+    #[test]
     fn test_get_events_by_type() {
         let config = AuditConfig::default();
         let mut logger = AuditLogger::new(config);
