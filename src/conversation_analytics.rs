@@ -568,4 +568,65 @@ mod tests {
         assert_eq!(report.total_conversations, 1);
         assert_eq!(report.total_messages, 2);
     }
+
+    #[test]
+    fn test_event_value_accessors() {
+        let s = EventValue::String("hello".into());
+        assert_eq!(s.as_string(), Some("hello"));
+        assert_eq!(s.as_int(), None);
+        let i = EventValue::Int(42);
+        assert_eq!(i.as_int(), Some(42));
+        assert_eq!(i.as_float(), None);
+        let f = EventValue::Float(3.14);
+        assert!((f.as_float().unwrap() - 3.14).abs() < f64::EPSILON);
+        assert_eq!(f.as_string(), None);
+    }
+
+    #[test]
+    fn test_export_events() {
+        let mut analytics = ConversationAnalytics::default();
+        analytics.track_conversation_start("s1", Some("u1"), "model-a");
+        analytics.track_error(Some("s1"), Some("model-a"), "oops");
+        let exported = analytics.export_events();
+        assert_eq!(exported.len(), 2);
+        assert_eq!(exported[0].event_type, "ConversationStart");
+        assert_eq!(exported[1].event_type, "Error");
+    }
+
+    #[test]
+    fn test_clear_analytics() {
+        let mut analytics = ConversationAnalytics::default();
+        analytics.track_conversation_start("s1", None, "m");
+        analytics.track_message("s1", None, "m", "hi", true, 10, None);
+        analytics.clear();
+        assert_eq!(analytics.stats().total_conversations, 0);
+        assert_eq!(analytics.stats().total_messages, 0);
+    }
+
+    #[test]
+    fn test_config_builder() {
+        let config = AnalyticsConfigBuilder::new()
+            .detailed_tracking(false)
+            .track_patterns(false)
+            .track_quality(false)
+            .max_events(500)
+            .build();
+        assert!(!config.detailed_tracking);
+        assert!(!config.track_patterns);
+        assert!(!config.track_quality);
+        assert_eq!(config.max_events, 500);
+    }
+
+    #[test]
+    fn test_model_usage_tracking() {
+        let mut analytics = ConversationAnalytics::default();
+        analytics.track_conversation_start("s1", None, "gpt-4");
+        analytics.track_message("s1", None, "gpt-4", "a", true, 10, None);
+        analytics.track_message("s1", None, "gpt-4", "b", false, 20, None);
+        analytics.track_message("s1", None, "claude", "c", true, 5, None);
+        assert_eq!(*analytics.stats().model_usage.get("gpt-4").unwrap(), 2);
+        assert_eq!(*analytics.stats().model_usage.get("claude").unwrap(), 1);
+        let report = analytics.report();
+        assert!(!report.top_models.is_empty());
+    }
 }

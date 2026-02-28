@@ -648,4 +648,75 @@ mod tests {
         let pricing = estimator.get_pricing("claude-3-sonnet-20240229");
         assert_eq!(pricing.provider, "anthropic");
     }
+
+    #[test]
+    fn test_cost_estimate_format() {
+        let est = CostEstimate {
+            input_tokens: 1000, output_tokens: 500, images: 0,
+            cost: 0.005, currency: "USD".into(), model: "m".into(),
+            provider: "p".into(), pricing_tier: None,
+        };
+        let formatted = est.format();
+        assert!(formatted.contains("1000"));
+        assert!(formatted.contains("500"));
+        let short = est.format_short();
+        assert!(short.starts_with('$'));
+    }
+
+    #[test]
+    fn test_cost_tracker_averages() {
+        let mut tracker = CostTracker::new();
+        for i in 0..4 {
+            tracker.add(CostEstimate {
+                input_tokens: 100 * (i + 1), output_tokens: 50 * (i + 1), images: 0,
+                cost: 0.01 * (i + 1) as f64, currency: "USD".into(),
+                model: "gpt-4".into(), provider: "openai".into(), pricing_tier: None,
+            });
+        }
+        assert_eq!(tracker.request_count, 4);
+        assert!((tracker.average_cost() - 0.025).abs() < 0.001);
+        let (avg_in, avg_out) = tracker.average_tokens();
+        assert_eq!(avg_in, 250); // (100+200+300+400)/4
+        assert_eq!(avg_out, 125);
+        assert_eq!(tracker.history().len(), 4);
+    }
+
+    #[test]
+    fn test_cost_tracker_reset() {
+        let mut tracker = CostTracker::new();
+        tracker.add(CostEstimate {
+            input_tokens: 100, output_tokens: 50, images: 0,
+            cost: 0.01, currency: "USD".into(), model: "m".into(),
+            provider: "p".into(), pricing_tier: None,
+        });
+        tracker.reset();
+        assert_eq!(tracker.request_count, 0);
+        assert!((tracker.total_cost - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_budget_warning() {
+        let mut budget = BudgetManager::new()
+            .with_daily_limit(10.0)
+            .with_monthly_limit(100.0);
+        budget.warning_threshold = 0.8;
+        // Spend 8.5 of 10 daily => warning territory
+        budget.record(8.5);
+        let status = budget.check(0.5);
+        assert!(matches!(status, BudgetStatus::Warning { .. }));
+        // Check remaining
+        let (daily, monthly) = budget.remaining();
+        assert!((daily.unwrap() - 1.5).abs() < 0.01);
+        assert!((monthly.unwrap() - 91.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_pricing_with_images() {
+        let pricing = ModelPricing::new("gpt-4o", 2.50, 10.00).with_image_cost(0.01);
+        let cost = pricing.calculate_with_images(1000, 1000, 3);
+        // base: 2.5*0.001 + 10*0.001 = 0.0025 + 0.01 = 0.0125
+        // images: 0.01*3 = 0.03
+        // total: 0.0425
+        assert!((cost - 0.0425).abs() < 0.0001);
+    }
 }

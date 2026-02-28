@@ -611,4 +611,69 @@ mod tests {
         assert!(selected.is_some());
         assert_eq!(selected.unwrap().content, "Response A");
     }
+
+    #[test]
+    fn test_count_by_role() {
+        let conversation = vec![
+            ChatMessage::system("You are helpful."),
+            ChatMessage::user("Hi"),
+            ChatMessage::assistant("Hello!"),
+            ChatMessage::user("How?"),
+            ChatMessage::assistant("Like this."),
+        ];
+        let (user, assistant, system) = MessageOperations::count_by_role(&conversation);
+        assert_eq!(user, 2);
+        assert_eq!(assistant, 2);
+        assert_eq!(system, 1);
+    }
+
+    #[test]
+    fn test_get_last_user_message() {
+        let conversation = vec![
+            ChatMessage::user("First"),
+            ChatMessage::assistant("Reply"),
+            ChatMessage::user("Second"),
+        ];
+        let last = MessageOperations::get_last_user_message(&conversation);
+        assert!(last.is_some());
+        assert_eq!(last.unwrap().content, "Second");
+    }
+
+    #[test]
+    fn test_edit_non_user_message_fails() {
+        let mut conversation = vec![
+            ChatMessage::user("Hello"),
+            ChatMessage::assistant("Hi!"),
+        ];
+        // Editing an assistant message should return None
+        let result = MessageOperations::edit_user_message(&mut conversation, 1, "changed", false);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_branch_delete() {
+        let mut manager = BranchManager::new();
+        let conv = vec![ChatMessage::user("A"), ChatMessage::assistant("B")];
+        let id = manager.create_branch("branch1", &conv, 1);
+        assert!(manager.has_branches());
+        assert_eq!(manager.branch_count(), 1);
+        assert!(manager.delete_branch(&id));
+        assert!(!manager.has_branches());
+    }
+
+    #[test]
+    fn test_variant_rate_and_clear() {
+        let mut manager = VariantManager::new();
+        manager.add_variant(0, "A".to_string(), "m".to_string(), 0.5);
+        manager.add_variant(0, "B".to_string(), "m".to_string(), 0.7);
+        assert!(manager.rate_variant(0, 1, 4));
+        let variants = manager.get_variants(0).unwrap();
+        assert_eq!(variants[1].rating, Some(4));
+        // Rating > 5 should be clamped
+        manager.rate_variant(0, 0, 10);
+        assert_eq!(manager.get_variants(0).unwrap()[0].rating, Some(5));
+        // Clear variants
+        manager.clear_variants(0);
+        assert_eq!(manager.variant_count(0), 0);
+    }
 }

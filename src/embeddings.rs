@@ -642,4 +642,51 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_empty_text_embedding() {
+        let embedder = LocalEmbedder::new(EmbeddingConfig::default());
+        let emb = embedder.embed("");
+        assert_eq!(emb.len(), 256);
+        // All zeros for empty text
+        assert!(emb.iter().all(|&v| v == 0.0));
+    }
+
+    #[test]
+    fn test_semantic_index_add_remove() {
+        let mut index = SemanticIndex::new(EmbeddingConfig::default());
+        index.add_document("d1".into(), "hello world".into(), HashMap::new());
+        index.add_document("d2".into(), "foo bar".into(), HashMap::new());
+        assert_eq!(index.document_count(), 2);
+        assert!(index.get_document("d1").is_some());
+        assert!(index.remove_document("d1"));
+        assert_eq!(index.document_count(), 1);
+        assert!(index.get_document("d1").is_none());
+    }
+
+    #[test]
+    fn test_semantic_index_clear() {
+        let mut index = SemanticIndex::new(EmbeddingConfig::default());
+        index.add_document("d1".into(), "test".into(), HashMap::new());
+        index.clear();
+        assert_eq!(index.document_count(), 0);
+    }
+
+    #[test]
+    fn test_embedding_config_defaults() {
+        let config = EmbeddingConfig::default();
+        assert_eq!(config.dimensions, 256);
+        assert_eq!(config.min_word_freq, 2);
+        assert_eq!(config.max_vocab_size, 10000);
+        assert!(config.use_subwords);
+        assert_eq!(config.ngram_range, (1, 2));
+    }
+
+    #[test]
+    fn test_hybrid_search_config_defaults() {
+        let config = HybridSearchConfig::default();
+        assert!((config.keyword_weight - 0.5).abs() < f32::EPSILON);
+        assert!((config.semantic_weight - 0.5).abs() < f32::EPSILON);
+        assert!((config.min_semantic_score - 0.1).abs() < f32::EPSILON);
+    }
 }
