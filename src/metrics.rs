@@ -933,4 +933,22 @@ mod tests {
         assert_eq!(rag_after.top_sources.len(), 0);
         assert!((rag_after.cache_hit_rate - 0.0).abs() < f64::EPSILON);
     }
+
+    #[test]
+    fn test_session_id() {
+        let tracker = MetricsTracker::new("my-session-42");
+        let session = tracker.get_session_metrics();
+        assert_eq!(session.session_id, "my-session-42");
+    }
+
+    #[test]
+    fn test_multiple_messages() {
+        let mut tracker = MetricsTracker::new("multi");
+        tracker.start_message("gpt-4");
+        tracker.finish_message(50);
+        tracker.start_message("gpt-4");
+        tracker.finish_message(100);
+        let session = tracker.get_session_metrics();
+        assert_eq!(session.message_count, 2);
+    }
 }

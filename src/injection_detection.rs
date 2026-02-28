@@ -604,4 +604,19 @@ mod tests {
         assert_eq!(config.sensitivity, DetectionSensitivity::High);
         assert_eq!(config.custom_patterns.len(), 1);
     }
+
+    #[test]
+    fn test_sensitivity_levels() {
+        assert_ne!(DetectionSensitivity::Low, DetectionSensitivity::High);
+        assert_ne!(DetectionSensitivity::Medium, DetectionSensitivity::Low);
+    }
+
+    #[test]
+    fn test_detection_result_fields() {
+        let detector = InjectionDetector::new(InjectionConfig::default());
+        let result = detector.detect("Hello world");
+        assert!(!result.detected);
+        assert!(result.risk_score < 0.5);
+        assert!(result.detections.is_empty());
+    }
 }
