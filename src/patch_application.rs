@@ -898,4 +898,20 @@ mod tests {
         assert_eq!(result.text, "Extra line\nLine 1\nModified\nLine 3");
         assert_eq!(result.hunks_offset, 1);
     }
+
+    #[test]
+    fn test_empty_patch() {
+        let patch_text = "@@ -1,1 +1,1 @@\n Line 1";
+        let patch = Patch::parse(patch_text).unwrap();
+        let applicator = PatchApplicator::new();
+        let result = applicator.apply("Line 1", &patch);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_patch_config_defaults() {
+        let config = PatchConfig::default();
+        assert!(!config.continue_on_error);
+        assert!(!config.ignore_whitespace);
+    }
 }

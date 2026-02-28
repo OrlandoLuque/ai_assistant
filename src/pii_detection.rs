@@ -675,4 +675,25 @@ mod tests {
 
         assert_eq!(config.detect_types.len(), 2);
     }
+
+    #[test]
+    fn test_multiple_pii_in_one_text() {
+        let detector = PiiDetector::new(PiiConfig::default());
+        let result = detector.detect("Email me at test@email.com or call 555-123-4567");
+        assert!(result.detections.len() >= 2);
+    }
+
+    #[test]
+    fn test_sensitivity_high_detects_more() {
+        let high = PiiDetector::new(
+            PiiConfigBuilder::new().sensitivity(SensitivityLevel::High).build()
+        );
+        let low = PiiDetector::new(
+            PiiConfigBuilder::new().sensitivity(SensitivityLevel::Low).build()
+        );
+        let text = "John Smith at john@test.com, SSN 123-45-6789";
+        let r_high = high.detect(text);
+        let r_low = low.detect(text);
+        assert!(r_high.detections.len() >= r_low.detections.len());
+    }
 }
