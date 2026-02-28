@@ -655,4 +655,76 @@ mod tests {
         let agreement = ensemble.calculate_agreement(&responses);
         assert_eq!(agreement, 1.0); // Identical responses
     }
+
+    #[test]
+    fn test_ensemble_config_defaults() {
+        let config = EnsembleConfig::default();
+        assert_eq!(config.strategy, EnsembleStrategy::Voting);
+        assert!(config.models.is_empty());
+        assert_eq!(config.model_timeout, Duration::from_secs(30));
+        assert_eq!(config.min_models, 1);
+        assert!(config.parallel);
+    }
+
+    #[test]
+    fn test_ensemble_model_builder() {
+        let model = EnsembleModel::new("gpt-4", "openai")
+            .with_weight(2.0)
+            .with_specialization("coding");
+
+        assert_eq!(model.id, "gpt-4");
+        assert_eq!(model.provider, "openai");
+        assert_eq!(model.weight, 2.0);
+        assert_eq!(model.specializations, vec!["coding"]);
+    }
+
+    #[test]
+    fn test_ensemble_add_model() {
+        let mut ensemble = Ensemble::default();
+        ensemble.add_model(EnsembleModel::new("m1", "ollama"));
+        ensemble.add_model(EnsembleModel::new("m2", "openai"));
+
+        // Execute with 2 models
+        let result = ensemble.execute("test", |_prompt, model_id, _provider| {
+            Ok(format!("Response from {}", model_id))
+        });
+
+        assert_eq!(result.model_responses.len(), 2);
+        assert!(result.model_responses.iter().all(|r| r.success));
+    }
+
+    #[test]
+    fn test_execute_with_all_failures() {
+        let mut ensemble = Ensemble::default();
+        ensemble.add_model(EnsembleModel::new("m1", "ollama"));
+
+        let result = ensemble.execute("test", |_prompt, _model, _provider| {
+            Err("model unavailable".to_string())
+        });
+
+        assert_eq!(result.model_responses.len(), 1);
+        assert!(!result.model_responses[0].success);
+        assert!(result.model_responses[0].error.is_some());
+    }
+
+    #[test]
+    fn test_ensemble_strategy_variants() {
+        let strategies = [
+            EnsembleStrategy::Voting,
+            EnsembleStrategy::WeightedVoting,
+            EnsembleStrategy::BestOfN,
+            EnsembleStrategy::Average,
+            EnsembleStrategy::Cascade,
+            EnsembleStrategy::Routing,
+            EnsembleStrategy::Custom("mine".to_string()),
+        ];
+        // All variants are distinct
+        for (i, a) in strategies.iter().enumerate() {
+            for (j, b) in strategies.iter().enumerate() {
+                if i != j {
+                    assert_ne!(a, b);
+                }
+            }
+        }
+    }
 }

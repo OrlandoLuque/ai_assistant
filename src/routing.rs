@@ -671,4 +671,60 @@ mod tests {
         assert!(profile.is_some());
         assert_eq!(profile.unwrap().get_task_score(TaskType::Coding), 100);
     }
+
+    #[test]
+    fn test_requirements_defaults() {
+        let req = ModelRequirements::default();
+        assert!(req.task_type.is_none());
+        assert!(req.min_context_size.is_none());
+        assert!(!req.requires_vision);
+        assert!(!req.requires_functions);
+        assert!(!req.requires_streaming);
+        assert!(req.preferred_providers.is_empty());
+    }
+
+    #[test]
+    fn test_requirements_for_task_sets_flags() {
+        let vision_req = ModelRequirements::for_task(TaskType::Vision);
+        assert!(vision_req.requires_vision);
+
+        let func_req = ModelRequirements::for_task(TaskType::FunctionCalling);
+        assert!(func_req.requires_functions);
+
+        let long_ctx_req = ModelRequirements::for_task(TaskType::LongContext);
+        assert_eq!(long_ctx_req.min_context_size, Some(32000));
+
+        let fast_req = ModelRequirements::for_task(TaskType::FastResponse);
+        assert_eq!(fast_req.max_latency_ms, Some(1000));
+    }
+
+    #[test]
+    fn test_profile_matches() {
+        let profile = ModelCapabilityProfile::new("llama-3", 128000, 85);
+        assert!(profile.matches("llama-3-8b"));
+        assert!(profile.matches("LLAMA-3-70B"));
+        assert!(!profile.matches("mistral-7b"));
+    }
+
+    #[test]
+    fn test_profile_task_score_fallback() {
+        let profile = ModelCapabilityProfile::new("test", 4096, 75)
+            .with_task_score(TaskType::Coding, 95);
+
+        assert_eq!(profile.get_task_score(TaskType::Coding), 95);
+        // Unset task falls back to quality_score
+        assert_eq!(profile.get_task_score(TaskType::Chat), 75);
+    }
+
+    #[test]
+    fn test_requirements_builder_methods() {
+        let req = ModelRequirements::default()
+            .with_vision()
+            .with_functions()
+            .with_min_context(64000);
+
+        assert!(req.requires_vision);
+        assert!(req.requires_functions);
+        assert_eq!(req.min_context_size, Some(64000));
+    }
 }

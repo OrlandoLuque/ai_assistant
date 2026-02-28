@@ -663,4 +663,60 @@ mod tests {
         let content = exporter.redact_content("Contact me at test@example.com");
         assert!(content.contains("[EMAIL REDACTED]"));
     }
+
+    #[test]
+    fn test_format_extensions() {
+        assert_eq!(ExportFormat::Json.extension(), "json");
+        assert_eq!(ExportFormat::JsonCompressed.extension(), "json.gz");
+        assert_eq!(ExportFormat::Markdown.extension(), "md");
+        assert_eq!(ExportFormat::Csv.extension(), "csv");
+        assert_eq!(ExportFormat::Html.extension(), "html");
+    }
+
+    #[test]
+    fn test_format_mime_types() {
+        assert_eq!(ExportFormat::Json.mime_type(), "application/json");
+        assert_eq!(ExportFormat::Markdown.mime_type(), "text/markdown");
+        assert_eq!(ExportFormat::Csv.mime_type(), "text/csv");
+        assert_eq!(ExportFormat::Html.mime_type(), "text/html");
+    }
+
+    #[test]
+    fn test_export_csv() {
+        let mut options = ExportOptions::default();
+        options.format = ExportFormat::Csv;
+
+        let exporter = ConversationExporter::new(options);
+        let conv = create_test_conversation();
+
+        let csv = exporter.export(&conv).unwrap();
+        assert!(csv.contains("timestamp,role,content"));
+        assert!(csv.contains("user"));
+    }
+
+    #[test]
+    fn test_export_options_defaults() {
+        let options = ExportOptions::default();
+        assert_eq!(options.format, ExportFormat::Json);
+        assert!(options.include_metadata);
+        assert!(options.include_timestamps);
+        assert!(options.pretty_print);
+        assert!(options.date_from.is_none());
+        assert!(options.max_items.is_none());
+        assert!(!options.redact_sensitive);
+    }
+
+    #[test]
+    fn test_export_json_pretty() {
+        let options = ExportOptions {
+            pretty_print: true,
+            ..Default::default()
+        };
+        let exporter = ConversationExporter::new(options);
+        let conv = create_test_conversation();
+
+        let json = exporter.export(&conv).unwrap();
+        assert!(json.contains('\n')); // Pretty-printed has newlines
+        assert!(json.contains("Test Conversation"));
+    }
 }

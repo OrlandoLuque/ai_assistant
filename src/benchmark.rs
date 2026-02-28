@@ -622,4 +622,64 @@ mod tests {
         assert!(suite.results.len() > 0);
         assert!(suite.completed_at.is_some());
     }
+
+    #[test]
+    fn test_benchmark_config_defaults() {
+        let config = BenchmarkConfig::default();
+        assert_eq!(config.iterations, 10);
+        assert_eq!(config.warmup_iterations, 2);
+        assert_eq!(config.timeout_ms, 30000);
+        assert!(config.record_individual);
+        assert!(!config.measure_memory);
+    }
+
+    #[test]
+    fn test_benchmark_result_metadata() {
+        let mut result = BenchmarkResult::new("test_bench", "A test benchmark");
+        result.metadata.insert("version".to_string(), "1.0".to_string());
+        assert_eq!(result.name, "test_bench");
+        assert_eq!(result.description, "A test benchmark");
+        assert_eq!(result.metadata.get("version").unwrap(), "1.0");
+    }
+
+    #[test]
+    fn test_benchmark_result_throughput() {
+        let mut result = BenchmarkResult::new("throughput_test", "Test");
+        result.stats.mean_ms = 10.0;
+        let throughput = result.throughput();
+        assert!((throughput - 100.0).abs() < 0.01);
+
+        // Zero mean should yield 0 throughput
+        result.stats.mean_ms = 0.0;
+        assert_eq!(result.throughput(), 0.0);
+    }
+
+    #[test]
+    fn test_suite_to_json() {
+        let mut suite = BenchmarkSuite::new("JSON Suite");
+        let result = BenchmarkResult::new("bench1", "First benchmark");
+        suite.add_result(result);
+
+        let json = suite.to_json();
+        assert!(json.contains("JSON Suite"));
+        assert!(json.contains("bench1"));
+    }
+
+    #[test]
+    fn test_stats_from_durations() {
+        let durations = vec![
+            Duration::from_millis(10),
+            Duration::from_millis(20),
+            Duration::from_millis(30),
+            Duration::from_millis(40),
+            Duration::from_millis(50),
+        ];
+
+        let stats = BenchmarkStats::from_durations(&durations);
+        assert_eq!(stats.iterations, 5);
+        assert!((stats.mean_ms - 30.0).abs() < 0.1);
+        assert!((stats.min_ms - 10.0).abs() < 0.1);
+        assert!((stats.max_ms - 50.0).abs() < 0.1);
+        assert_eq!(stats.success_rate, 1.0);
+    }
 }
