@@ -1,3 +1,5 @@
+//! Tests for the document_parsing module.
+
 use super::*;
 
 

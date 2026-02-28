@@ -1,3 +1,5 @@
+//! Tests for the advanced_memory module.
+
 use super::*;
 use std::collections::HashMap;
 
