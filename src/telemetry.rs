@@ -270,6 +270,66 @@ mod tests {
     }
 
     #[test]
+    fn test_event_builder() {
+        let event = TelemetryEvent::new("my_event")
+            .with_duration(Duration::from_millis(42))
+            .with_property("key", "value")
+            .with_metric("score", 0.95);
+        assert_eq!(event.name, "my_event");
+        assert_eq!(event.duration_ms, Some(42));
+        assert_eq!(event.properties.get("key").unwrap(), "value");
+        assert!((event.metrics["score"] - 0.95).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_record_error() {
+        let config = TelemetryConfig { enabled: true, ..Default::default() };
+        let collector = TelemetryCollector::new(config);
+        collector.record_error("openai", "timeout");
+        let agg = collector.get_aggregated();
+        assert_eq!(agg.total_requests, 1);
+        assert_eq!(agg.total_errors, 1);
+    }
+
+    #[test]
+    fn test_flush() {
+        let config = TelemetryConfig { enabled: true, ..Default::default() };
+        let collector = TelemetryCollector::new(config);
+        collector.record(TelemetryEvent::new("a"));
+        collector.record(TelemetryEvent::new("b"));
+        let events = collector.flush();
+        assert_eq!(events.len(), 2);
+        assert!(collector.flush().is_empty());
+    }
+
+    #[test]
+    fn test_timed_operation() {
+        let config = TelemetryConfig { enabled: true, ..Default::default() };
+        let collector = Arc::new(TelemetryCollector::new(config));
+        let op = TimedOperation::start(collector.clone(), "op1");
+        let duration = op.finish();
+        assert!(duration.as_nanos() > 0);
+        let events = collector.flush();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].name, "op1");
+    }
+
+    #[test]
+    fn test_is_enabled() {
+        let default = TelemetryCollector::default();
+        assert!(!default.is_enabled());
+        let enabled = TelemetryCollector::new(TelemetryConfig { enabled: true, ..Default::default() });
+        assert!(enabled.is_enabled());
+    }
+
+    #[test]
+    fn test_sampling_edge_cases() {
+        assert!(!should_sample("anything", 0.0));
+        assert!(should_sample("anything", 1.0));
+        assert!(should_sample("test", 1.5));
+    }
+
+    #[test]
     fn test_approximate_sampling_rate() {
         let rate = 0.5;
         let total = 1000;

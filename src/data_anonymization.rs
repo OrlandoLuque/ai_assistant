@@ -383,6 +383,66 @@ mod tests {
     }
 
     #[test]
+    fn test_hash_strategy() {
+        let mut anonymizer = DataAnonymizer::new();
+        anonymizer.add_rule(AnonymizationRule::new(DataType::Email, AnonymizationStrategy::Hash));
+        let r1 = anonymizer.anonymize("Email: a@b.com");
+        let r2 = anonymizer.anonymize("Email: a@b.com");
+        let v1 = r1.mapping.get("a@b.com").unwrap();
+        let v2 = r2.mapping.get("a@b.com").unwrap();
+        assert!(v1.starts_with("HASH_"));
+        assert_eq!(v1, v2); // deterministic
+    }
+
+    #[test]
+    fn test_mask_strategy() {
+        let mut anonymizer = DataAnonymizer::new();
+        anonymizer.add_rule(AnonymizationRule::new(DataType::Email, AnonymizationStrategy::Mask));
+        let result = anonymizer.anonymize("user@example.com is my email");
+        let masked = result.mapping.get("user@example.com").unwrap();
+        assert!(masked.starts_with("us"));
+        assert!(masked.ends_with("om"));
+        assert!(masked.contains('*'));
+    }
+
+    #[test]
+    fn test_generalize_ip() {
+        let mut anonymizer = DataAnonymizer::new();
+        anonymizer.add_rule(AnonymizationRule::new(DataType::IpAddress, AnonymizationStrategy::Generalize));
+        let result = anonymizer.anonymize("IP is 10.20.30.40");
+        let gen = result.mapping.get("10.20.30.40").unwrap();
+        assert_eq!(gen, "10.20.x.x");
+    }
+
+    #[test]
+    fn test_deanonymize() {
+        let mut anonymizer = DataAnonymizer::new();
+        let result = anonymizer.anonymize("Contact john@test.com please");
+        let restored = anonymizer.deanonymize(&result.anonymized, &result.mapping);
+        assert!(restored.contains("john@test.com"));
+    }
+
+    #[test]
+    fn test_batch_anonymizer() {
+        let mut batch = BatchAnonymizer::new();
+        let results = batch.anonymize_all(&["Email me at a@b.com", "Call 555-123-4567"]);
+        assert_eq!(results.len(), 2);
+        assert!(!results[0].anonymized.contains("a@b.com"));
+    }
+
+    #[test]
+    fn test_reset_pseudonyms() {
+        let mut anonymizer = DataAnonymizer::new();
+        anonymizer.add_rule(AnonymizationRule::new(DataType::Email, AnonymizationStrategy::Pseudonymize));
+        let r1 = anonymizer.anonymize("a@b.com");
+        let p1 = r1.mapping.get("a@b.com").unwrap().clone();
+        anonymizer.reset_pseudonyms();
+        let r2 = anonymizer.anonymize("a@b.com");
+        let p2 = r2.mapping.get("a@b.com").unwrap().clone();
+        assert_eq!(p1, p2); // same counter restart → same pseudonym
+    }
+
+    #[test]
     fn test_multiple_types() {
         let mut anonymizer = DataAnonymizer::new();
         let text = "Email: user@test.com, Phone: 555-123-4567, IP: 192.168.1.1";

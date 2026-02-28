@@ -426,6 +426,67 @@ mod tests {
     }
 
     #[test]
+    fn test_multiple_sources() {
+        let mut verifier = FactVerifier::default();
+        verifier.add_sources("rust", vec![
+            FactSource::new("s1", "Doc1", "Rust is a systems programming language"),
+            FactSource::new("s2", "Doc2", "Rust is a programming language focused on safety"),
+        ]);
+        let result = verifier.verify("Rust is a programming language");
+        assert_eq!(result.status, VerificationStatus::Verified);
+        assert!(result.confidence > 0.0);
+    }
+
+    #[test]
+    fn test_verify_all() {
+        let mut verifier = FactVerifier::default();
+        verifier.add_source("python", FactSource::new("w", "Wiki", "Python is a programming language"));
+        let results = verifier.verify_all(&["Python is a language", "Unknown fact xyz"]);
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn test_verification_config_defaults() {
+        let config = VerificationConfig::default();
+        assert!((config.min_confidence - 0.7).abs() < f64::EPSILON);
+        assert_eq!(config.min_sources, 1);
+        assert!(config.check_freshness);
+        assert_eq!(config.max_age_days, 365);
+    }
+
+    #[test]
+    fn test_source_builder() {
+        let src = FactSource::new("id1", "Name", "Content")
+            .with_reliability(0.95)
+            .with_date("2026-01-01");
+        assert!((src.reliability - 0.95).abs() < f64::EPSILON);
+        assert_eq!(src.date.as_deref(), Some("2026-01-01"));
+
+        // Clamp test
+        let clamped = FactSource::new("id2", "N", "C").with_reliability(1.5);
+        assert!((clamped.reliability - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_extract_claims_filters_opinions() {
+        let verifier = FactVerifier::default();
+        let text = "I think AI is great. Python is a programming language. Maybe it rains tomorrow.";
+        let claims = verifier.extract_claims(text);
+        // "I think..." and "Maybe..." should be filtered out
+        for claim in &claims {
+            assert!(!claim.to_lowercase().contains("i think"));
+            assert!(!claim.to_lowercase().contains("maybe"));
+        }
+    }
+
+    #[test]
+    fn test_builder_defaults() {
+        let verifier = FactVerifierBuilder::default().build();
+        let result = verifier.verify("anything");
+        assert_eq!(result.status, VerificationStatus::Unverified);
+    }
+
+    #[test]
     fn test_builder() {
         let verifier = FactVerifierBuilder::new()
             .min_confidence(0.8)
