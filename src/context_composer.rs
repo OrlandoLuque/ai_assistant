@@ -1000,7 +1000,6 @@ impl ContextCompiler {
 pub struct ConversationCompactor {
     max_messages_before_compact: usize,
     preserve_recent: usize,
-    #[allow(dead_code)]
     summary_max_tokens: usize,
     compaction_count: usize,
 }
@@ -1040,6 +1039,11 @@ impl ConversationCompactor {
             summary_max_tokens: 256,
             compaction_count: 0,
         }
+    }
+
+    /// Get the maximum token count for summaries.
+    pub fn summary_max_tokens(&self) -> usize {
+        self.summary_max_tokens
     }
 
     /// Whether the given message count warrants compaction.

@@ -40,15 +40,13 @@ pub struct EngagementMetrics {
 #[derive(Debug, Clone)]
 struct EngagementRecord {
     event: EngagementEvent,
-    #[allow(dead_code)]
     timestamp: Instant,
-    #[allow(dead_code)]
     metadata: HashMap<String, String>,
 }
 
+
 /// User engagement tracker
 pub struct EngagementTracker {
-    #[allow(dead_code)]
     user_id: String,
     events: Vec<EngagementRecord>,
     session_start: Instant,
@@ -74,6 +72,26 @@ impl EngagementTracker {
             topics: Vec::new(),
             feedback_scores: Vec::new(),
         }
+    }
+
+    /// Get the user ID for this tracker.
+    pub fn user_id(&self) -> &str {
+        &self.user_id
+    }
+
+    /// Get the number of recorded events.
+    pub fn event_count(&self) -> usize {
+        self.events.len()
+    }
+
+    /// Get the elapsed time since the most recent event.
+    pub fn time_since_last_event(&self) -> Option<Duration> {
+        self.events.last().map(|r| r.timestamp.elapsed())
+    }
+
+    /// Get metadata from the most recent event.
+    pub fn last_event_metadata(&self) -> Option<&HashMap<String, String>> {
+        self.events.last().map(|r| &r.metadata)
     }
 
     pub fn record_event(&mut self, event: EngagementEvent) {

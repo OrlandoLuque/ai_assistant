@@ -517,13 +517,17 @@ pub struct ImportResult {
 
 /// Conversation importer
 pub struct ConversationImporter {
-    #[allow(dead_code)]
     options: ImportOptions,
 }
 
 impl ConversationImporter {
     pub fn new(options: ImportOptions) -> Self {
         Self { options }
+    }
+
+    /// Get import options.
+    pub fn options(&self) -> &ImportOptions {
+        &self.options
     }
 
     /// Import from JSON string

@@ -90,7 +90,6 @@ impl FlowAnalysis {
 /// Conversation flow analyzer
 pub struct FlowAnalyzer {
     turns: Vec<ConversationTurn>,
-    #[allow(dead_code)]
     topic_keywords: HashMap<String, Vec<String>>,
 }
 
@@ -100,6 +99,19 @@ impl FlowAnalyzer {
             turns: Vec::new(),
             topic_keywords: HashMap::new(),
         }
+    }
+
+    /// Add a keyword associated with a topic for enriched analysis.
+    pub fn add_topic_keyword(&mut self, topic: &str, keyword: &str) {
+        self.topic_keywords
+            .entry(topic.to_string())
+            .or_default()
+            .push(keyword.to_string());
+    }
+
+    /// Get all registered topic keywords.
+    pub fn topic_keywords(&self) -> &HashMap<String, Vec<String>> {
+        &self.topic_keywords
     }
 
     pub fn add_turn(&mut self, turn: ConversationTurn) {
