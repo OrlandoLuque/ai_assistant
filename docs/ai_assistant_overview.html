@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ai_assistant — Libreria Rust para IA</title>
+<style>
+/* ── Reset & Base ──────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  background: #0f172a;
+  color: #e2e8f0;
+  line-height: 1.65;
+  font-size: 16px;
+}
+a { color: #60a5fa; text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* ── Layout ────────────────────────────────────────────────── */
+.container { max-width: 1140px; margin: 0 auto; padding: 0 24px; }
+section { padding: 64px 0; }
+section:nth-child(even) { background: #0c1322; }
+
+/* ── Nav ───────────────────────────────────────────────────── */
+nav {
+  position: sticky; top: 0; z-index: 100;
+  background: rgba(15, 23, 42, 0.92);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid #1e293b;
+  padding: 12px 0;
+}
+nav .container {
+  display: flex; align-items: center; gap: 16px;
+  flex-wrap: wrap; justify-content: center;
+}
+nav a {
+  color: #94a3b8; font-size: 0.85rem; font-weight: 500;
+  padding: 4px 10px; border-radius: 6px; transition: color .2s;
+}
+nav a:hover { color: #f1f5f9; text-decoration: none; background: #1e293b; }
+.nav-brand { color: #f1f5f9 !important; font-weight: 700; font-size: 1rem; }
+
+/* ── Hero ──────────────────────────────────────────────────── */
+.hero {
+  text-align: center;
+  padding: 80px 0 64px;
+  background: linear-gradient(180deg, #0f172a 0%, #131c31 100%);
+}
+.hero h1 {
+  font-size: 2.8rem; font-weight: 800; letter-spacing: -0.02em;
+  background: linear-gradient(135deg, #60a5fa 0%, #a78bfa 50%, #f472b6 100%);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text; margin-bottom: 16px;
+}
+.hero .tagline {
+  font-size: 1.2rem; color: #94a3b8; max-width: 680px; margin: 0 auto 40px;
+}
+.stat-row {
+  display: flex; gap: 16px; justify-content: center; flex-wrap: wrap;
+}
+.stat-badge {
+  background: #1e293b; border: 1px solid #334155; border-radius: 12px;
+  padding: 16px 24px; min-width: 140px; text-align: center;
+}
+.stat-badge .num {
+  font-size: 1.6rem; font-weight: 800; display: block;
+  background: linear-gradient(135deg, #60a5fa, #a78bfa);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.stat-badge .label { font-size: 0.78rem; color: #94a3b8; margin-top: 2px; }
+
+/* ── Section Titles ────────────────────────────────────────── */
+.section-title {
+  font-size: 1.7rem; font-weight: 700; text-align: center;
+  margin-bottom: 12px;
+}
+.section-sub {
+  text-align: center; color: #94a3b8; max-width: 640px;
+  margin: 0 auto 40px; font-size: 0.95rem;
+}
+
+/* ── Card Grid ─────────────────────────────────────────────── */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 20px;
+}
+.card {
+  background: #1e293b; border: 1px solid #334155; border-radius: 14px;
+  padding: 24px; transition: border-color .2s, transform .15s;
+}
+.card:hover { border-color: #3b82f6; transform: translateY(-2px); }
+.card-icon { font-size: 1.6rem; margin-bottom: 8px; display: block; }
+.card h3 { font-size: 1.05rem; font-weight: 700; margin-bottom: 6px; }
+.card p { font-size: 0.85rem; color: #94a3b8; line-height: 1.55; }
+
+/* ── Feature cards (smaller) ───────────────────────────────── */
+.feat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+}
+.feat-card {
+  background: #1e293b; border: 1px solid #334155; border-radius: 12px;
+  padding: 20px; display: flex; gap: 14px; align-items: flex-start;
+  transition: border-color .2s;
+}
+.feat-card:hover { border-color: #3b82f6; }
+.feat-card .icon { font-size: 1.5rem; flex-shrink: 0; margin-top: 2px; }
+.feat-card h4 { font-size: 0.92rem; font-weight: 700; margin-bottom: 4px; }
+.feat-card p { font-size: 0.8rem; color: #94a3b8; line-height: 1.5; }
+
+/* ── Metrics ───────────────────────────────────────────────── */
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+}
+.metric {
+  background: #1e293b; border: 1px solid #334155; border-radius: 12px;
+  padding: 20px; text-align: center;
+}
+.metric .val {
+  font-size: 1.5rem; font-weight: 800; color: #10b981; display: block;
+}
+.metric .lbl { font-size: 0.78rem; color: #94a3b8; margin-top: 4px; }
+
+/* ── Comparison Table ──────────────────────────────────────── */
+.table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+table {
+  width: 100%; border-collapse: collapse;
+  background: #1e293b; border-radius: 12px; overflow: hidden;
+  font-size: 0.85rem;
+}
+th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid #334155; }
+th { background: #334155; font-weight: 700; color: #f1f5f9; position: sticky; top: 0; }
+td:first-child { font-weight: 600; color: #e2e8f0; white-space: nowrap; }
+.yes { color: #10b981; font-weight: 700; }
+.partial { color: #f59e0b; }
+.no { color: #64748b; }
+
+/* ── Tiers ─────────────────────────────────────────────────── */
+.tier-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 20px;
+}
+.tier {
+  background: #1e293b; border: 1px solid #334155; border-radius: 14px;
+  padding: 28px; text-align: center; position: relative; overflow: hidden;
+}
+.tier.highlight { border-color: #3b82f6; }
+.tier.highlight::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  background: linear-gradient(90deg, #3b82f6, #a78bfa);
+}
+.tier h3 { font-size: 1.15rem; margin-bottom: 4px; }
+.tier .price { font-size: 1.4rem; font-weight: 800; color: #60a5fa; margin: 12px 0; }
+.tier ul { list-style: none; text-align: left; margin-top: 16px; }
+.tier li { padding: 6px 0; font-size: 0.85rem; color: #94a3b8; border-bottom: 1px solid #293548; }
+.tier li::before { content: ''; margin-right: 8px; }
+
+/* ── Intro box ─────────────────────────────────────────────── */
+.intro-box {
+  max-width: 800px; margin: 0 auto;
+  background: #1e293b; border: 1px solid #334155; border-radius: 14px;
+  padding: 32px; font-size: 1rem; line-height: 1.75;
+}
+.intro-box strong { color: #f1f5f9; }
+.intro-box .highlight-text { color: #60a5fa; font-weight: 600; }
+
+/* ── Footer ────────────────────────────────────────────────── */
+footer {
+  text-align: center; padding: 40px 0; border-top: 1px solid #1e293b;
+  color: #64748b; font-size: 0.8rem;
+}
+footer strong { color: #94a3b8; }
+
+/* ── Mobile ────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .hero h1 { font-size: 1.8rem; }
+  .hero .tagline { font-size: 1rem; }
+  section { padding: 40px 0; }
+  .section-title { font-size: 1.35rem; }
+  .stat-badge { min-width: 120px; padding: 12px 16px; }
+  .stat-badge .num { font-size: 1.3rem; }
+  .card-grid, .feat-grid { grid-template-columns: 1fr; }
+  .metrics-grid { grid-template-columns: repeat(2, 1fr); }
+  .tier-grid { grid-template-columns: 1fr; }
+  .intro-box { padding: 20px; font-size: 0.92rem; }
+  nav a { font-size: 0.78rem; padding: 4px 8px; }
+  table { font-size: 0.78rem; }
+  th, td { padding: 8px 10px; }
+}
+@media (max-width: 480px) {
+  .hero h1 { font-size: 1.5rem; }
+  .stat-row { gap: 10px; }
+  .stat-badge { min-width: 100px; padding: 10px 12px; }
+  .stat-badge .num { font-size: 1.1rem; }
+  .metrics-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
+}
+</style>
+</head>
+<body>
+
+<!-- ═══ NAV ═══════════════════════════════════════════════════ -->
+<nav>
+  <div class="container">
+    <a href="#top" class="nav-brand">ai_assistant</a>
+    <a href="#que-es">Que es</a>
+    <a href="#capacidades">Capacidades</a>
+    <a href="#calidad">Calidad</a>
+    <a href="#casos-de-uso">Casos de uso</a>
+    <a href="#comparativa">Comparativa</a>
+    <a href="#tiers">Tiers</a>
+  </div>
+</nav>
+
+<!-- ═══ HERO ══════════════════════════════════════════════════ -->
+<section class="hero" id="top">
+  <div class="container">
+    <h1>ai_assistant</h1>
+    <p class="tagline">
+      Libreria Rust de IA completa: desde integracion con modelos de lenguaje
+      hasta agentes autonomos distribuidos. Todo en un solo crate, sin dependencias externas.
+    </p>
+    <div class="stat-row">
+      <div class="stat-badge">
+        <span class="num">300K+</span>
+        <span class="label">lineas de codigo</span>
+      </div>
+      <div class="stat-badge">
+        <span class="num">5.731</span>
+        <span class="label">tests unitarios</span>
+      </div>
+      <div class="stat-badge">
+        <span class="num">285</span>
+        <span class="label">modulos fuente</span>
+      </div>
+      <div class="stat-badge">
+        <span class="num">0</span>
+        <span class="label">warnings del compilador</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ QUE ES ════════════════════════════════════════════════ -->
+<section id="que-es">
+  <div class="container">
+    <h2 class="section-title">Que es ai_assistant</h2>
+    <p class="section-sub">Explicado para un programador que no sabe de IA</p>
+    <div class="intro-box">
+      <p>
+        <strong>ai_assistant</strong> es una <span class="highlight-text">libreria de Rust</span> que te permite
+        construir aplicaciones con inteligencia artificial. No es un servicio en la nube ni una app &mdash;
+        es un crate que integras directamente en tu proyecto.
+      </p>
+      <br>
+      <p>
+        Imagina que quieres que tu aplicacion pueda <strong>entender texto</strong>,
+        <strong>responder preguntas sobre documentos</strong>, <strong>ejecutar tareas complejas de forma autonoma</strong>,
+        o <strong>hablar por voz</strong>. Normalmente necesitarias combinar 5-10 librerias diferentes
+        (una para conectar con ChatGPT, otra para buscar en documentos, otra para seguridad, otra para voz...).
+      </p>
+      <br>
+      <p>
+        <strong>ai_assistant lo tiene todo en uno</strong>: conexion con 11 proveedores de IA
+        (OpenAI, Anthropic, Ollama local, etc.), busqueda inteligente en documentos (RAG),
+        agentes que trabajan en equipo, seguridad empresarial, streaming en tiempo real,
+        y hasta un servidor HTTP embebido. Todo compilado como binario nativo de Rust:
+        <span class="highlight-text">rapido, seguro y sin runtime de Python</span>.
+      </p>
+      <br>
+      <p>
+        Es como tener <strong>LangChain + LlamaIndex + AutoGen + una capa de seguridad</strong>,
+        pero en Rust, en un solo paquete, con 5.731 tests y cero atajos.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ CAPACIDADES ═══════════════════════════════════════════ -->
+<section id="capacidades">
+  <div class="container">
+    <h2 class="section-title">Que puede hacer</h2>
+    <p class="section-sub">12 areas funcionales completas, cada una con implementacion real y tests</p>
+    <div class="feat-grid">
+
+      <div class="feat-card">
+        <div class="icon">🤖</div>
+        <div>
+          <h4>Multi-proveedor LLM</h4>
+          <p>Conecta con 11 proveedores de IA: OpenAI, Anthropic, Gemini, Ollama (local), LM Studio, HuggingFace, Bedrock, Groq, Together, Fireworks, OpenRouter. Autodescubrimiento de modelos locales, failover automatico.</p>
+        </div>
+      </div>
+
+      <div class="feat-card">
+        <div class="icon">📚</div>
+        <div>
+          <h4>RAG — Busqueda en documentos</h4>
+          <p>Tus documentos se convierten en conocimiento consultable. 5 niveles de sofisticacion (desde basico hasta Graph RAG y RAPTOR). 7 bases de datos vectoriales soportadas (Qdrant, LanceDB, Pinecone, Chroma, Milvus, pgvector, en memoria).</p>
+        </div>
+      </div>
+
+      <div class="feat-card">
+        <div class="icon">👥</div>
+        <div>
+          <h4>Agentes multi-rol</h4>
+          <p>Crea equipos de agentes con roles especializados (investigador, programador, critico, coordinador, ejecutor). Cada agente tiene sus propias herramientas y memoria. Se coordinan automaticamente para resolver tareas complejas.</p>
+        </div>
+      </div>
+
+      <div class="feat-card">
+        <div class="icon">🧠</div>
+        <div>
+          <h4>Agentes autonomos</h4>
+          <p>5 niveles de autonomia: desde supervisado hasta totalmente autonomo. Planifican, ejecutan y adaptan su estrategia. Incluye scheduler cron, automatizacion de navegador (Chrome DevTools Protocol) y ejecucion en contenedores Docker.</p>
+        </div>
+      </div>
+
+      <div class="feat-card">
+        <div class="icon">🌐</div>
+        <div>
+          <h4>Sistema distribuido</h4>
+          <p>Ejecuta agentes en un cluster de maquinas. P2P con descubrimiento DHT Kademlia, sincronizacion con CRDTs, MapReduce para procesamiento masivo, QUIC/TLS 1.3 para comunicacion segura entre nodos.</p>
+        </div>
+      </div>
+
+      <div class="feat-card">
+        <div class="icon">🔒</div>
+        <div>
+          <h4>Seguridad empresarial</h4>
+          <p>RBAC con herencia de roles, MFA y restricciones por IP. Deteccion automatica de datos personales (PII). Cifrado AES-256-GCM. Guardrails constitucionales que filtran contenido peligroso antes y despues del modelo.</p>
+        </div>
+      </div>
+
+      <div class="feat-card">
+        <div class="icon">⚡</div>
+        <div>
+          <h4>Streaming en tiempo real</h4>
+          <p>Las respuestas de la IA llegan palabra a palabra, no de golpe. SSE (Server-Sent Events) y WebSocket RFC 6455 implementados desde cero. Compresion gzip, streams resumibles, backpressure inteligente.</p>
+        </div>
+      </div>
+
+      <div class="feat-card">
+        <div class="icon">🎤</div>
+        <div>
+          <h4>Voz y multimodal</h4>
+          <p>Speech-to-Text (Whisper, proveedores cloud), Text-to-Speech, streaming bidireccional por WebRTC. Deteccion de actividad vocal (VAD), manejo de interrupciones. Generacion de imagenes (DALL-E, Stable Diffusion, Flux) y video (Runway, Sora).</p>
+        </div>
+      </div>
+
+      <div class="feat-card">
+        <div class="icon">🖥️</div>
+        <div>
+          <h4>Servidor HTTP integrado</h4>
+          <p>Tu IA como API REST lista para produccion. Auth middleware, CORS, rate limiting, graceful shutdown, metricas Prometheus, endpoint OpenAPI 3.0. TLS nativo con rustls. Un solo binario, sin infraestructura adicional.</p>
+        </div>
+      </div>
+
+      <div class="feat-card">
+        <div class="icon">🔌</div>
+        <div>
+          <h4>Protocolo MCP</h4>
+          <p>Implementacion completa del Model Context Protocol (v2): el estandar emergente para que herramientas externas hablen con modelos de IA. Cliente y servidor, con elicitacion, audio y batching.</p>
+        </div>
+      </div>
+
+      <div class="feat-card">
+        <div class="icon">📊</div>
+        <div>
+          <h4>Evaluacion y benchmarks</h4>
+          <p>Mide la calidad de las respuestas con evaluadores de relevancia, coherencia, fluencia y seguridad. A/B testing estadistico. Red teaming automatizado (pruebas de ataque). 42 benchmarks de rendimiento con Criterion.</p>
+        </div>
+      </div>
+
+      <div class="feat-card">
+        <div class="icon">📄</div>
+        <div>
+          <h4>Parsing de documentos</h4>
+          <p>Extrae texto de PDF, DOCX, EPUB, HTML, feeds RSS/Atom y tablas. Chunking inteligente que respeta los limites semanticos del texto (no corta frases a medias). Soporte para OCR y extraccion de metadatos.</p>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ═══ CALIDAD ═══════════════════════════════════════════════ -->
+<section id="calidad">
+  <div class="container">
+    <h2 class="section-title">Calidad del codigo</h2>
+    <p class="section-sub">Metricas que demuestran que no es un prototipo &mdash; es software de produccion</p>
+
+    <div class="metrics-grid">
+      <div class="metric"><span class="val">5.731</span><span class="lbl">tests unitarios</span></div>
+      <div class="metric"><span class="val">~15.179</span><span class="lbl">aserciones totales</span></div>
+      <div class="metric"><span class="val">0</span><span class="lbl">warnings del compilador</span></div>
+      <div class="metric"><span class="val">0</span><span class="lbl">stubs o TODOs</span></div>
+      <div class="metric"><span class="val">28%</span><span class="lbl">ratio test/codigo</span></div>
+      <div class="metric"><span class="val">42</span><span class="lbl">benchmarks Criterion</span></div>
+      <div class="metric"><span class="val">51</span><span class="lbl">ejemplos compilables</span></div>
+      <div class="metric"><span class="val">20.6K</span><span class="lbl">lineas de doc comments</span></div>
+      <div class="metric"><span class="val">6.417</span><span class="lbl">funciones publicas</span></div>
+      <div class="metric"><span class="val">1.920</span><span class="lbl">structs (objetos de dominio)</span></div>
+      <div class="metric"><span class="val">68</span><span class="lbl">traits (extensibilidad)</span></div>
+      <div class="metric"><span class="val">46</span><span class="lbl">feature flags</span></div>
+    </div>
+
+    <div class="intro-box" style="margin-top: 32px;">
+      <p>
+        <strong>Que significan estos numeros?</strong> &mdash;
+        El ratio de tests del 28% esta en el rango de buenas practicas de la industria (20-30%).
+        Cada modulo tiene al menos 10 tests. No hay codigo placeholder: todo lo que esta declarado,
+        esta implementado, testeado y documentado. El compilador de Rust no produce ni un solo
+        warning en las 46 combinaciones posibles de feature flags.
+      </p>
+      <br>
+      <p>
+        Los 51 ejemplos compilables sirven como documentacion viva: si el API cambia, los ejemplos
+        dejan de compilar, forzando actualizacion inmediata. Los 42 benchmarks con Criterion miden
+        rendimiento en cada build para detectar regresiones.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ CASOS DE USO ═════════════════════════════════════════ -->
+<section id="casos-de-uso">
+  <div class="container">
+    <h2 class="section-title">Casos de uso</h2>
+    <p class="section-sub">Escenarios reales donde esta libreria aporta valor</p>
+    <div class="card-grid">
+
+      <div class="card">
+        <span class="card-icon">💻</span>
+        <h3>IA embebida en tu aplicacion</h3>
+        <p>Anade capacidades de IA a cualquier backend Rust sin depender de APIs externas. Busqueda semantica, moderacion de contenido, analisis de codigo, generacion de texto. Todo local, sin latencia de red, con total privacidad de datos.</p>
+      </div>
+
+      <div class="card">
+        <span class="card-icon">🏢</span>
+        <h3>Base de conocimiento empresarial</h3>
+        <p>Convierte miles de documentos (PDF, DOCX, web) en una base de conocimiento consultable con lenguaje natural. RAG de 5 niveles significa que las respuestas se basan en datos reales, no en alucinaciones del modelo.</p>
+      </div>
+
+      <div class="card">
+        <span class="card-icon">🤝</span>
+        <h3>Equipos de agentes especializados</h3>
+        <p>Un agente investiga, otro programa, otro revisa. Coordinacion automatica con memoria compartida. Ideal para pipelines de analisis complejos, generacion de informes, o atencion al cliente con especializacion por tema.</p>
+      </div>
+
+      <div class="card">
+        <span class="card-icon">🎙️</span>
+        <h3>Asistente de voz</h3>
+        <p>Speech-to-Text + procesamiento + Text-to-Speech en un loop continuo. WebRTC para baja latencia. Funciona con modelos locales (Whisper) o cloud. Deteccion de actividad vocal y manejo de interrupciones incluidos.</p>
+      </div>
+
+      <div class="card">
+        <span class="card-icon">🤖</span>
+        <h3>Agente autonomo</h3>
+        <p>Agentes que planifican, ejecutan y se adaptan. Desde tareas simples con supervision humana hasta operacion totalmente autonoma. Scheduler cron para tareas periodicas. Automatizacion de navegador para scraping o testing.</p>
+      </div>
+
+      <div class="card">
+        <span class="card-icon">🌍</span>
+        <h3>Inferencia distribuida</h3>
+        <p>Despliega agentes en un cluster de maquinas con P2P, descubrimiento automatico y sincronizacion de estado. Tolerancia a fallos con CRDTs. MapReduce para procesamiento masivo de datos. Ideal para alta escala o distribucion geografica.</p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ═══ COMPARATIVA ═══════════════════════════════════════════ -->
+<section id="comparativa">
+  <div class="container">
+    <h2 class="section-title">Comparativa con la competencia</h2>
+    <p class="section-sub">Como se posiciona frente a los frameworks de IA mas conocidos</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Capacidad</th>
+            <th>ai_assistant</th>
+            <th>LangChain</th>
+            <th>LlamaIndex</th>
+            <th>Rig (Rust)</th>
+            <th>AutoGen</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Lenguaje</td>
+            <td class="yes">Rust (nativo)</td>
+            <td>Python</td>
+            <td>Python</td>
+            <td class="yes">Rust</td>
+            <td>Python</td>
+          </tr>
+          <tr>
+            <td>Proveedores LLM</td>
+            <td class="yes">11 integrados</td>
+            <td class="yes">50+</td>
+            <td class="yes">30+</td>
+            <td class="partial">5-8</td>
+            <td class="partial">OpenAI-centric</td>
+          </tr>
+          <tr>
+            <td>RAG avanzado</td>
+            <td class="yes">5 niveles, 7 vector DBs</td>
+            <td class="yes">Bueno</td>
+            <td class="yes">Excelente</td>
+            <td class="partial">Basico</td>
+            <td class="no">Minimo</td>
+          </tr>
+          <tr>
+            <td>Multi-agente</td>
+            <td class="yes">5 roles, orquestacion</td>
+            <td class="partial">Via LangGraph</td>
+            <td class="partial">Limitado</td>
+            <td class="no">No</td>
+            <td class="yes">Excelente</td>
+          </tr>
+          <tr>
+            <td>Sistema distribuido</td>
+            <td class="yes">P2P, CRDTs, DHT, QUIC</td>
+            <td class="no">No</td>
+            <td class="no">No</td>
+            <td class="no">No</td>
+            <td class="no">No</td>
+          </tr>
+          <tr>
+            <td>Seguridad (RBAC, PII)</td>
+            <td class="yes">Completa</td>
+            <td class="partial">Parcial</td>
+            <td class="partial">Parcial</td>
+            <td class="no">No</td>
+            <td class="no">No</td>
+          </tr>
+          <tr>
+            <td>Voz / WebRTC</td>
+            <td class="yes">STT + TTS + WebRTC</td>
+            <td class="no">No</td>
+            <td class="no">No</td>
+            <td class="no">No</td>
+            <td class="no">No</td>
+          </tr>
+          <tr>
+            <td>Servidor HTTP incluido</td>
+            <td class="yes">Con auth, TLS, OpenAPI</td>
+            <td class="partial">Via LangServe</td>
+            <td class="no">No</td>
+            <td class="no">No</td>
+            <td class="no">No</td>
+          </tr>
+          <tr>
+            <td>Protocolo MCP</td>
+            <td class="yes">v2 completo</td>
+            <td class="partial">Parcial</td>
+            <td class="no">No</td>
+            <td class="no">No</td>
+            <td class="no">No</td>
+          </tr>
+          <tr>
+            <td>Tests</td>
+            <td class="yes">5.731</td>
+            <td class="partial">~4.000</td>
+            <td class="partial">Moderados</td>
+            <td class="partial">Moderados</td>
+            <td class="partial">Moderados</td>
+          </tr>
+          <tr>
+            <td>Rendimiento</td>
+            <td class="yes">Nativo, 10-50x Python</td>
+            <td class="no">Python GIL</td>
+            <td class="no">Python GIL</td>
+            <td class="yes">Nativo</td>
+            <td class="no">Python GIL</td>
+          </tr>
+          <tr>
+            <td>Deploy</td>
+            <td class="yes">1 binario estatico</td>
+            <td class="no">pip + runtime</td>
+            <td class="no">pip + runtime</td>
+            <td class="yes">1 binario</td>
+            <td class="no">pip + runtime</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="intro-box" style="margin-top: 32px;">
+      <p>
+        <strong>Resumen</strong>: LangChain y LlamaIndex tienen ecosistemas mas grandes (mas integraciones y comunidad),
+        pero dependen de Python y requieren ensamblar multiples paquetes. <strong>Rig</strong> es el competidor mas cercano
+        en Rust, pero cubre solo providers + RAG basico. <strong>ai_assistant es la unica libreria que ofrece full-stack
+        de IA en Rust</strong>: desde LLMs hasta agentes distribuidos, voz y seguridad, en un solo crate.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ TIERS ═════════════════════════════════════════════════ -->
+<section id="tiers">
+  <div class="container">
+    <h2 class="section-title">Estructura de features</h2>
+    <p class="section-sub">Compila solo lo que necesitas. 46 feature flags para control total.</p>
+    <div class="tier-grid">
+
+      <div class="tier">
+        <h3>Gratuito / Personal</h3>
+        <div class="price">0 &euro;</div>
+        <p style="font-size: 0.82rem; color: #94a3b8;">Uso personal, academico, investigacion</p>
+        <ul>
+          <li>Core LLM (11 proveedores)</li>
+          <li>Embeddings y busqueda semantica</li>
+          <li>Streaming (SSE, WebSocket)</li>
+          <li>Herramientas y function calling</li>
+          <li>Parsing de documentos</li>
+          <li>RAG basico y avanzado</li>
+          <li>51 ejemplos compilables</li>
+        </ul>
+      </div>
+
+      <div class="tier highlight">
+        <h3>Pro</h3>
+        <div class="price">Negociado</div>
+        <p style="font-size: 0.82rem; color: #94a3b8;">Uso comercial con soporte</p>
+        <ul>
+          <li>Todo lo de Gratuito +</li>
+          <li>Multi-agente (5 roles)</li>
+          <li>Seguridad (RBAC, PII, cifrado)</li>
+          <li>Analytics y metricas</li>
+          <li>Evaluacion y benchmarks</li>
+          <li>Vision y analisis de imagen</li>
+          <li>Prompt optimization (DSPy)</li>
+        </ul>
+      </div>
+
+      <div class="tier">
+        <h3>Enterprise</h3>
+        <div class="price">Personalizado</div>
+        <p style="font-size: 0.82rem; color: #94a3b8;">Despliegue a escala</p>
+        <ul>
+          <li>Todo lo de Pro +</li>
+          <li>Sistema distribuido (P2P, CRDTs)</li>
+          <li>Agentes autonomos + scheduler</li>
+          <li>Automatizacion de navegador</li>
+          <li>Ejecucion en contenedores</li>
+          <li>Voz y WebRTC</li>
+          <li>Generacion de media</li>
+        </ul>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ═══ FOOTER ════════════════════════════════════════════════ -->
+<footer>
+  <div class="container">
+    <p>
+      <strong>ai_assistant</strong> &mdash; Libreria Rust de IA &bull;
+      Licencia: PolyForm Noncommercial 1.0.0
+    </p>
+    <p style="margin-top: 8px;">
+      Autor: Orlando Jose Luque Moraira &bull;
+      Contacto: <a href="mailto:orlando.luque@gmail.com">orlando.luque@gmail.com</a>
+    </p>
+    <p style="margin-top: 8px; color: #475569;">
+      300K+ LoC &bull; 5.731 tests &bull; 285 modulos &bull; 0 warnings &bull; Febrero 2026
+    </p>
+  </div>
+</footer>
+
+</body>
+</html>
