@@ -179,25 +179,13 @@ impl TaskDecomposer {
         }
 
         let lower = description.to_lowercase();
-        #[allow(unused_assignments)]
-        let mut subtasks = Vec::new();
 
         match self.strategy {
-            DecompositionStrategy::Sequential => {
-                subtasks = self.decompose_sequential(&lower, depth);
-            }
-            DecompositionStrategy::Functional => {
-                subtasks = self.decompose_functional(&lower, depth);
-            }
-            DecompositionStrategy::Priority => {
-                subtasks = self.decompose_by_priority(&lower, depth);
-            }
-            DecompositionStrategy::Temporal => {
-                subtasks = self.decompose_temporal(&lower, depth);
-            }
+            DecompositionStrategy::Sequential => self.decompose_sequential(&lower, depth),
+            DecompositionStrategy::Functional => self.decompose_functional(&lower, depth),
+            DecompositionStrategy::Priority => self.decompose_by_priority(&lower, depth),
+            DecompositionStrategy::Temporal => self.decompose_temporal(&lower, depth),
         }
-
-        subtasks
     }
 
     fn decompose_sequential(&self, description: &str, _depth: usize) -> Vec<TaskNode> {

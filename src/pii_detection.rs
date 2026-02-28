@@ -262,8 +262,6 @@ impl PiiDetector {
 
     /// Detect and redact PII in text
     pub fn detect(&self, text: &str) -> PiiResult {
-        #[allow(unused_assignments)]
-        let mut detections = Vec::new();
         let mut redacted = text.to_string();
         let mut counts: HashMap<PiiType, usize> = HashMap::new();
 
@@ -323,14 +321,13 @@ impl PiiDetector {
 
         // Sort back by position ascending for output
         all_detections.sort_by_key(|d| d.start);
-        detections = all_detections;
 
         PiiResult {
             original: text.to_string(),
             redacted,
-            detections: detections.clone(),
+            has_pii: !all_detections.is_empty(),
             counts,
-            has_pii: !detections.is_empty(),
+            detections: all_detections,
         }
     }
 

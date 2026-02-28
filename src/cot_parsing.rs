@@ -173,8 +173,6 @@ impl CotParser {
     /// Parse a response for chain-of-thought reasoning
     pub fn parse(&self, response: &str) -> CotParseResult {
         let mut steps = Vec::new();
-        #[allow(unused_assignments)]
-        let mut answer = None;
 
         // Try numbered extraction first
         if self.config.extract_numbered {
@@ -187,7 +185,7 @@ impl CotParser {
         }
 
         // Extract final answer
-        answer = self.extract_answer(response);
+        let answer = self.extract_answer(response);
 
         // Calculate quality score
         let quality_score = self.calculate_quality(&steps);

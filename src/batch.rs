@@ -299,8 +299,7 @@ impl BatchProcessor {
 
                     let start = Instant::now();
                     let mut retries = 0;
-                    #[allow(unused_assignments)]
-                    let mut last_error = String::new();
+                    let mut last_error;
 
                     let result = loop {
                         match generator(&request) {
