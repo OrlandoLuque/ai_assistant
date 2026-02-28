@@ -578,4 +578,61 @@ mod tests {
         assert!(answer.is_some());
         assert_eq!(answer.unwrap().answer_type, AnswerType::List);
     }
+
+    #[test]
+    fn test_explanation_extraction() {
+        let extractor = AnswerExtractor::default();
+        let text = "Rust is fast because it has zero-cost abstractions and no garbage collector.";
+        let answer = extractor.extract("Why is Rust fast?", text);
+        assert!(answer.is_some());
+        let a = answer.unwrap();
+        assert_eq!(a.answer_type, AnswerType::Explanation);
+        assert!(a.confidence > 0.0);
+    }
+
+    #[test]
+    fn test_extract_all_multiple() {
+        let extractor = AnswerExtractor::default();
+        let text = "The answer is 42. In summary, the value equals forty-two. It is a number.";
+        let answers = extractor.extract_all("What is the answer?", text);
+        // Should find at least one answer (via indicator "the answer is")
+        assert!(!answers.is_empty());
+        // Answers should be sorted by confidence (descending)
+        for pair in answers.windows(2) {
+            assert!(pair[0].confidence >= pair[1].confidence);
+        }
+    }
+
+    #[test]
+    fn test_no_answer_found() {
+        let extractor = AnswerExtractor::default();
+        let text = "Short.";
+        let answer = extractor.extract("When was it built?", text);
+        // Very short text with no relevant content yields None
+        assert!(answer.is_none());
+    }
+
+    #[test]
+    fn test_config_defaults() {
+        let config = ExtractionConfig::default();
+        assert_eq!(config.max_answer_length, 500);
+        assert!(config.include_context);
+        assert_eq!(config.context_sentences, 1);
+        assert!((config.min_confidence - 0.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_truncate_long_answer() {
+        let config = ExtractionConfig {
+            max_answer_length: 20,
+            ..Default::default()
+        };
+        let extractor = AnswerExtractor::new(config);
+        let text = "The answer is a very long explanation that goes on and on for many words.";
+        let answer = extractor.extract("What is the answer?", text);
+        assert!(answer.is_some());
+        let a = answer.unwrap();
+        // Truncated answers end with "..."
+        assert!(a.answer.len() <= 23); // 20 + "..."
+    }
 }

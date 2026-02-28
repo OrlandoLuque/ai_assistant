@@ -508,4 +508,75 @@ mod tests {
         let analysis = decomposer.analyze(&root);
         assert!(analysis.total_tasks > 0);
     }
+
+    #[test]
+    fn test_task_node_leaf() {
+        let leaf = TaskNode::new("1", "Leaf task");
+        assert!(leaf.is_leaf());
+        assert_eq!(leaf.leaf_count(), 1);
+        assert_eq!(leaf.depth(), 0);
+
+        let parent = TaskNode::new("2", "Parent")
+            .with_subtask(TaskNode::new("2.1", "Child"));
+        assert!(!parent.is_leaf());
+        assert_eq!(parent.leaf_count(), 1);
+        assert_eq!(parent.depth(), 1);
+    }
+
+    #[test]
+    fn test_task_node_depth() {
+        let deep = TaskNode::new("r", "Root")
+            .with_subtask(
+                TaskNode::new("a", "Level 1")
+                    .with_subtask(
+                        TaskNode::new("b", "Level 2")
+                            .with_subtask(TaskNode::new("c", "Level 3")),
+                    ),
+            );
+        assert_eq!(deep.depth(), 3);
+        assert_eq!(deep.leaf_count(), 1);
+    }
+
+    #[test]
+    fn test_task_node_builders() {
+        let node = TaskNode::new("1", "Task")
+            .with_dependency("dep1")
+            .with_dependency("dep2")
+            .with_capability("rust")
+            .with_complexity(3.5);
+        assert_eq!(node.dependencies.len(), 2);
+        assert_eq!(node.required_capabilities, vec!["rust"]);
+        assert!((node.estimated_complexity - 3.5).abs() < f64::EPSILON);
+        assert_eq!(node.status, DecompositionStatus::NotStarted);
+    }
+
+    #[test]
+    fn test_functional_decomposition() {
+        let decomposer = TaskDecomposer::new(DecompositionStrategy::Functional);
+        let root = decomposer.decompose("Build a simple tool");
+        // Functional decomposition with no matching keywords yields generic subtasks
+        assert!(root.subtasks.len() >= 2);
+    }
+
+    #[test]
+    fn test_priority_decomposition() {
+        let decomposer = TaskDecomposer::new(DecompositionStrategy::Priority);
+        let root = decomposer.decompose("Create a system");
+        // Priority decomposition always produces 4 buckets
+        assert_eq!(root.subtasks.len(), 4);
+        // First bucket has highest complexity (1.0), last has lowest (0.3)
+        assert!(root.subtasks[0].estimated_complexity >= root.subtasks[3].estimated_complexity);
+    }
+
+    #[test]
+    fn test_temporal_decomposition() {
+        let decomposer = TaskDecomposer::new(DecompositionStrategy::Temporal);
+        let root = decomposer.decompose("Deploy application");
+        // Temporal decomposition produces 4 phases with sequential dependencies
+        assert_eq!(root.subtasks.len(), 4);
+        // Phases 2-4 should each depend on the previous phase
+        assert!(root.subtasks[1].dependencies.len() >= 1);
+        assert!(root.subtasks[2].dependencies.len() >= 1);
+        assert!(root.subtasks[3].dependencies.len() >= 1);
+    }
 }

@@ -586,4 +586,66 @@ mod tests {
         let client = create_ollama_client("llama2");
         assert_eq!(client.provider_name(), "ollama");
     }
+
+    #[test]
+    fn test_model_error_display() {
+        assert_eq!(ModelError::RateLimitError.to_string(), "Rate limit exceeded");
+        assert_eq!(ModelError::AuthenticationError.to_string(), "Authentication failed");
+        assert_eq!(ModelError::ContextLengthExceeded.to_string(), "Context length exceeded");
+        assert_eq!(ModelError::ContentFilterTriggered.to_string(), "Content filter triggered");
+        assert!(ModelError::ConnectionError("timeout".into()).to_string().contains("timeout"));
+        assert!(ModelError::ToolExecutionError("fail".into()).to_string().contains("fail"));
+    }
+
+    #[test]
+    fn test_chat_role_serialization_all() {
+        let roles = [ChatRole::System, ChatRole::User, ChatRole::Assistant, ChatRole::Tool];
+        let expected = ["system", "user", "assistant", "tool"];
+        for (role, exp) in roles.iter().zip(expected.iter()) {
+            let json = serde_json::to_string(role).unwrap();
+            assert!(json.contains(exp), "Role {:?} should serialize to {}", role, exp);
+        }
+    }
+
+    #[test]
+    fn test_lm_studio_default() {
+        let provider = LMStudioProvider::default();
+        assert_eq!(provider.name(), "lm_studio");
+        assert!(provider.supports_tools());
+        assert!(provider.supports_streaming());
+    }
+
+    #[test]
+    fn test_finish_reason_equality() {
+        assert_eq!(FinishReason::Stop, FinishReason::Stop);
+        assert_ne!(FinishReason::Stop, FinishReason::ToolCalls);
+        assert_ne!(FinishReason::Length, FinishReason::Error);
+    }
+
+    #[test]
+    fn test_client_history_and_clear() {
+        let client = create_lm_studio_client();
+        assert!(client.get_history().is_empty());
+        // Can't call chat without a real server, but we can test clear
+        let mut client = client.with_system_prompt("You are helpful.");
+        client.clear_history();
+        assert!(client.get_history().is_empty());
+    }
+
+    #[test]
+    fn test_tool_call_info_serialization() {
+        let tc = ToolCallInfo {
+            id: "call_1".to_string(),
+            r#type: "function".to_string(),
+            function: FunctionCall {
+                name: "get_weather".to_string(),
+                arguments: r#"{"city":"Madrid"}"#.to_string(),
+            },
+        };
+        let json = serde_json::to_string(&tc).unwrap();
+        assert!(json.contains("get_weather"));
+        assert!(json.contains("Madrid"));
+        let restored: ToolCallInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.function.name, "get_weather");
+    }
 }

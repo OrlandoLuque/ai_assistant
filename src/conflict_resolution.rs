@@ -478,6 +478,62 @@ mod tests {
     }
 
     #[test]
+    fn test_conflict_with_versions() {
+        let c = Conflict::new(ConflictType::VersionConflict, "doc", "1", Some("a".into()), Some("b".into()))
+            .with_versions(3, 5);
+        assert_eq!(c.local_version, 3);
+        assert_eq!(c.remote_version, 5);
+        assert!(!c.resolved);
+    }
+
+    #[test]
+    fn test_resolve_keep_newest() {
+        let mut resolver = ConflictResolver::new(ResolutionStrategy::KeepNewest);
+        let c = resolver.detect_conflict("msg", "1", Some("local_v3"), Some("remote_v5"), 3, 5).unwrap();
+        let res = resolver.resolve(&c.id).unwrap();
+        assert_eq!(res.strategy, ResolutionStrategy::KeepNewest);
+        assert_eq!(res.resolved_value.as_deref(), Some("remote_v5"));
+    }
+
+    #[test]
+    fn test_resolve_with_custom_strategy() {
+        let mut resolver = ConflictResolver::default();
+        let c = resolver.detect_conflict("msg", "1", Some("A"), Some("B"), 1, 2).unwrap();
+        let res = resolver.resolve_with_strategy(&c.id, ResolutionStrategy::KeepLocal).unwrap();
+        assert_eq!(res.resolved_value.as_deref(), Some("A"));
+    }
+
+    #[test]
+    fn test_type_specific_strategy() {
+        let mut resolver = ConflictResolver::new(ResolutionStrategy::KeepNewest);
+        resolver.set_strategy_for_type("config", ResolutionStrategy::KeepRemote);
+        let c = resolver.detect_conflict("config", "1", Some("local"), Some("remote"), 1, 2).unwrap();
+        let res = resolver.resolve(&c.id).unwrap();
+        assert_eq!(res.resolved_value.as_deref(), Some("remote"));
+    }
+
+    #[test]
+    fn test_pending_and_resolved() {
+        let mut resolver = ConflictResolver::default();
+        resolver.detect_conflict("msg", "1", Some("a"), Some("b"), 1, 2);
+        resolver.detect_conflict("msg", "2", Some("c"), Some("d"), 1, 2);
+        assert_eq!(resolver.pending_count(), 2);
+        assert_eq!(resolver.get_resolved().len(), 0);
+        let id = resolver.get_pending()[0].id.clone();
+        resolver.resolve(&id).unwrap();
+        assert_eq!(resolver.pending_count(), 1);
+        assert_eq!(resolver.get_resolved().len(), 1);
+        resolver.clear_resolved();
+        assert_eq!(resolver.get_resolved().len(), 0);
+    }
+
+    #[test]
+    fn test_conflict_error_display() {
+        assert_eq!(ConflictError::NotFound.to_string(), "Conflict not found");
+        assert_eq!(ConflictError::ManualResolutionRequired.to_string(), "Manual resolution required");
+    }
+
+    #[test]
     fn test_three_way_merge() {
         let base = "line1\nline2\nline3";
         let local = "line1\nmodified local\nline3";
