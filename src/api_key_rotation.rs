@@ -349,4 +349,56 @@ mod tests {
         // No stats for unknown provider
         assert!(manager.get_stats("anthropic").is_none());
     }
+
+    #[test]
+    fn test_default_config() {
+        let config = RotationConfig::default();
+        assert!(config.auto_rotate);
+        assert!(config.rotation_interval.is_some());
+        assert_eq!(config.max_errors_before_rotation, 10);
+        assert_eq!(config.rate_limit_recovery_time, Duration::from_secs(60));
+    }
+
+    #[test]
+    fn test_default_manager() {
+        let mut manager = ApiKeyManager::default();
+        assert!(manager.get_key("openai").is_none());
+    }
+
+    #[test]
+    fn test_no_key_for_unknown_provider() {
+        let mut manager = ApiKeyManager::default();
+        manager.add_key(ApiKey::new("k1", "s1", "openai"));
+        assert!(manager.get_key("anthropic").is_none());
+    }
+
+    #[test]
+    fn test_revoke_key() {
+        let mut manager = ApiKeyManager::default();
+        manager.add_key(ApiKey::new("k1", "s1", "openai"));
+        manager.revoke_key("openai", "k1");
+        // Revoked key should not be returned by get_key
+        assert!(manager.get_key("openai").is_none());
+    }
+
+    #[test]
+    fn test_auto_rotate_on_errors() {
+        let config = RotationConfig {
+            auto_rotate: true,
+            max_errors_before_rotation: 2,
+            ..Default::default()
+        };
+        let mut manager = ApiKeyManager::new(config);
+        manager.add_key(ApiKey::new("k1", "s1", "openai"));
+        manager.add_key(ApiKey::new("k2", "s2", "openai"));
+
+        // First key should be active initially
+        assert_eq!(manager.get_key("openai").unwrap().id, "k1");
+        // Cause enough errors to trigger auto-rotation
+        manager.mark_error("openai", "k1");
+        manager.mark_error("openai", "k1"); // This triggers rotation (2 >= max_errors=2)
+        // After rotation, next get_key should return k2
+        let key = manager.get_key("openai").unwrap();
+        assert_eq!(key.id, "k2");
+    }
 }

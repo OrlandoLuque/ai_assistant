@@ -372,4 +372,57 @@ mod tests {
         // Wrong length signature
         assert!(!verify_webhook_signature(payload, secret, "tooshort"));
     }
+
+    #[test]
+    fn test_config_builders() {
+        let config = WebhookConfig::new("http://example.com")
+            .with_events(vec![WebhookEvent::MessageSent, WebhookEvent::ErrorOccurred])
+            .with_secret("s3cr3t")
+            .with_header("X-Custom", "value");
+        assert_eq!(config.url, "http://example.com");
+        assert_eq!(config.events.len(), 2);
+        assert_eq!(config.secret.as_deref(), Some("s3cr3t"));
+        assert_eq!(config.headers.get("X-Custom").unwrap(), "value");
+    }
+
+    #[test]
+    fn test_unregister() {
+        let mut manager = WebhookManager::new();
+        manager.register(WebhookConfig::new("http://a.com"));
+        manager.register(WebhookConfig::new("http://b.com"));
+        assert_eq!(manager.webhooks.len(), 2);
+        manager.unregister("http://a.com");
+        assert_eq!(manager.webhooks.len(), 1);
+        assert_eq!(manager.webhooks[0].url, "http://b.com");
+    }
+
+    #[test]
+    fn test_stats_empty() {
+        let manager = WebhookManager::new();
+        let stats = manager.stats();
+        assert_eq!(stats.total_deliveries, 0);
+        assert_eq!(stats.successful_deliveries, 0);
+        assert_eq!(stats.failed_deliveries, 0);
+        assert!((stats.success_rate - 0.0).abs() < f64::EPSILON);
+        assert_eq!(stats.registered_webhooks, 0);
+    }
+
+    #[test]
+    fn test_webhook_event_equality() {
+        assert_eq!(WebhookEvent::MessageReceived, WebhookEvent::MessageReceived);
+        assert_ne!(WebhookEvent::MessageReceived, WebhookEvent::MessageSent);
+        assert_ne!(WebhookEvent::SessionStarted, WebhookEvent::SessionEnded);
+    }
+
+    #[test]
+    fn test_payload_json_format() {
+        let payload = WebhookPayload::new(
+            WebhookEvent::ErrorOccurred,
+            serde_json::json!({"code": 500, "msg": "fail"}),
+        );
+        let json = payload.to_json();
+        assert!(json.contains("ErrorOccurred"));
+        assert!(json.contains("500"));
+        assert!(json.contains("timestamp"));
+    }
 }

@@ -334,4 +334,43 @@ mod tests {
             relevance
         );
     }
+
+    #[test]
+    fn test_default_generator() {
+        let gen = SuggestionGenerator::default();
+        let suggestions = gen.generate("hello", "world", 10);
+        // Clarification template matches everything (empty pattern)
+        assert!(!suggestions.is_empty());
+    }
+
+    #[test]
+    fn test_max_truncation() {
+        let gen = SuggestionGenerator::new();
+        let suggestions = gen.generate("Explain how computers work", "Computers use transistors", 2);
+        assert!(suggestions.len() <= 2);
+    }
+
+    #[test]
+    fn test_alternative_suggestion() {
+        let gen = SuggestionGenerator::new();
+        let suggestions = gen.generate("Tell me about X", "X is great, however Y is also good", 10);
+        assert!(suggestions.iter().any(|s| s.suggestion_type == SuggestionType::Alternative));
+    }
+
+    #[test]
+    fn test_example_suggestion() {
+        let gen = SuggestionGenerator::new();
+        let suggestions = gen.generate("Show me", "Here is an example of the concept", 10);
+        assert!(suggestions.iter().any(|s| s.text.contains("another example")));
+    }
+
+    #[test]
+    fn test_suggestion_config_defaults() {
+        let config = SuggestionConfig::default();
+        assert_eq!(config.max_suggestions, 5);
+        assert!(config.include_follow_up);
+        assert!(config.include_clarification);
+        assert!(config.include_related);
+        assert!(config.include_deep_dive);
+    }
 }
