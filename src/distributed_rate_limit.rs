@@ -168,6 +168,98 @@ mod tests {
     }
 
     #[test]
+    fn test_in_memory_backend_default() {
+        let backend = InMemoryBackend::default();
+        assert!(backend.get("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_backend_get_set() {
+        let backend = InMemoryBackend::new();
+        let state = RateLimitState {
+            requests: 5,
+            tokens: 100,
+            window_start: 1000,
+            last_update: 1001,
+        };
+        backend.set("k1", state.clone(), Duration::from_secs(60));
+        let retrieved = backend.get("k1").expect("Should find key");
+        assert_eq!(retrieved.requests, 5);
+        assert_eq!(retrieved.tokens, 100);
+    }
+
+    #[test]
+    fn test_backend_increment() {
+        let backend = InMemoryBackend::new();
+        let s1 = backend.increment("user1", 1, 50);
+        assert_eq!(s1.requests, 1);
+        assert_eq!(s1.tokens, 50);
+        let s2 = backend.increment("user1", 1, 30);
+        assert_eq!(s2.requests, 2);
+        assert_eq!(s2.tokens, 80);
+    }
+
+    #[test]
+    fn test_separate_keys() {
+        let backend = InMemoryBackend::new();
+        let limiter = DistributedRateLimiter::new(Box::new(backend), 5, 1000);
+        limiter.record("user_a", 100);
+        limiter.record("user_b", 200);
+        assert!(limiter.check("user_a").is_allowed());
+        assert!(limiter.check("user_b").is_allowed());
+    }
+
+    #[test]
+    fn test_result_is_allowed() {
+        let allowed = DistributedRateLimitResult::Allowed {
+            remaining_requests: 5,
+            remaining_tokens: 100,
+        };
+        assert!(allowed.is_allowed());
+        let denied = DistributedRateLimitResult::Denied {
+            reason: "test".into(),
+            retry_after: Duration::from_secs(10),
+        };
+        assert!(!denied.is_allowed());
+    }
+
+    #[test]
+    fn test_token_limit() {
+        let backend = InMemoryBackend::new();
+        let limiter = DistributedRateLimiter::new(Box::new(backend), 100, 50);
+        limiter.record("u1", 60);
+        let result = limiter.check("u1");
+        assert!(!result.is_allowed());
+        match result {
+            DistributedRateLimitResult::Denied { reason, .. } => {
+                assert!(reason.contains("Token"));
+            }
+            _ => panic!("Expected Denied"),
+        }
+    }
+
+    #[test]
+    fn test_rate_limit_state_fields() {
+        let state = RateLimitState {
+            requests: 10,
+            tokens: 500,
+            window_start: 123456,
+            last_update: 123460,
+        };
+        assert_eq!(state.requests, 10);
+        assert_eq!(state.tokens, 500);
+        assert_eq!(state.window_start, 123456);
+        assert_eq!(state.last_update, 123460);
+    }
+
+    #[test]
+    fn test_fresh_key_allowed() {
+        let backend = InMemoryBackend::new();
+        let limiter = DistributedRateLimiter::new(Box::new(backend), 1, 1);
+        assert!(limiter.check("brand_new_key").is_allowed());
+    }
+
+    #[test]
     fn test_distributed_rpm_limit() {
         let backend = InMemoryBackend::new();
         let limiter = DistributedRateLimiter::new(Box::new(backend), 2, 100_000);

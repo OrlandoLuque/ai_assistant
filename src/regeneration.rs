@@ -233,6 +233,120 @@ mod tests {
     }
 
     #[test]
+    fn test_length_preference_instructions() {
+        assert!(LengthPreference::VeryShort.to_instruction().contains("brief"));
+        assert!(LengthPreference::Short.to_instruction().contains("short"));
+        assert!(LengthPreference::Medium.to_instruction().contains("moderate"));
+        assert!(LengthPreference::Long.to_instruction().contains("comprehensive"));
+        assert!(LengthPreference::VeryLong.to_instruction().contains("exhaustive"));
+    }
+
+    #[test]
+    fn test_build_improved_prompt_all_fields() {
+        let feedback = RegenerationFeedback {
+            issue: RegenerationIssue::OffTopic,
+            instructions: Some("Stay focused on quantum computing".to_string()),
+            style: Some(ResponseStyle::Technical),
+            length: Some(LengthPreference::Long),
+        };
+        let request = RegenerationRequest::new("What is QC?", "Irrelevant text", feedback);
+        let prompt = request.build_improved_prompt();
+        assert!(prompt.contains("focus directly"));
+        assert!(prompt.contains("technical"));
+        assert!(prompt.contains("comprehensive"));
+        assert!(prompt.contains("quantum computing"));
+        assert!(prompt.contains("What is QC?"));
+    }
+
+    #[test]
+    fn test_build_prompt_no_optional_fields() {
+        let feedback = RegenerationFeedback {
+            issue: RegenerationIssue::Other,
+            instructions: None,
+            style: None,
+            length: None,
+        };
+        let request = RegenerationRequest::new("Hello?", "Hi", feedback);
+        let prompt = request.build_improved_prompt();
+        assert!(prompt.contains("Hello?"));
+    }
+
+    #[test]
+    fn test_all_issue_types_produce_prompt() {
+        let issues = [
+            RegenerationIssue::TooLong,
+            RegenerationIssue::TooShort,
+            RegenerationIssue::OffTopic,
+            RegenerationIssue::Incorrect,
+            RegenerationIssue::TooTechnical,
+            RegenerationIssue::TooSimple,
+            RegenerationIssue::WrongFormat,
+            RegenerationIssue::Other,
+        ];
+        for issue in &issues {
+            let feedback = RegenerationFeedback {
+                issue: *issue,
+                instructions: None,
+                style: None,
+                length: None,
+            };
+            let request = RegenerationRequest::new("Q", "A", feedback);
+            let prompt = request.build_improved_prompt();
+            assert!(prompt.contains("Q"), "Issue {:?} should preserve question", issue);
+        }
+    }
+
+    #[test]
+    fn test_manager_max_attempts() {
+        let mut manager = RegenerationManager::new(2);
+        let feedback = RegenerationFeedback {
+            issue: RegenerationIssue::TooShort,
+            instructions: None,
+            style: None,
+            length: None,
+        };
+        assert!(manager.request_regeneration("c1", "Q", "A", feedback.clone()).is_some());
+        assert!(manager.request_regeneration("c1", "Q", "A", feedback.clone()).is_some());
+        assert!(manager.request_regeneration("c1", "Q", "A", feedback.clone()).is_none());
+    }
+
+    #[test]
+    fn test_manager_get_history() {
+        let mut manager = RegenerationManager::new(5);
+        let feedback = RegenerationFeedback {
+            issue: RegenerationIssue::Incorrect,
+            instructions: None,
+            style: None,
+            length: None,
+        };
+        manager.request_regeneration("c1", "Q", "A", feedback.clone());
+        manager.request_regeneration("c1", "Q", "B", feedback.clone());
+        assert_eq!(manager.get_history("c1").len(), 2);
+        assert_eq!(manager.get_history("c2").len(), 0);
+    }
+
+    #[test]
+    fn test_manager_clear_history() {
+        let mut manager = RegenerationManager::new(5);
+        let feedback = RegenerationFeedback {
+            issue: RegenerationIssue::TooLong,
+            instructions: None,
+            style: None,
+            length: None,
+        };
+        manager.request_regeneration("c1", "Q", "A", feedback.clone());
+        assert_eq!(manager.get_history("c1").len(), 1);
+        manager.clear_history("c1");
+        assert_eq!(manager.get_history("c1").len(), 0);
+    }
+
+    #[test]
+    fn test_default_manager() {
+        let manager = RegenerationManager::default();
+        assert_eq!(manager.get_history("any").len(), 0);
+    }
+
+    #[test]
     fn test_manager() {
         let mut manager = RegenerationManager::new(3);
 

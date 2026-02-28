@@ -243,6 +243,89 @@ mod tests {
     }
 
     #[test]
+    fn test_typing_state_display_text() {
+        assert_eq!(TypingState::Idle.display_text(), "");
+        assert!(TypingState::Typing.display_text().contains("typing"));
+        assert!(TypingState::Processing.display_text().contains("Processing"));
+        assert!(TypingState::Generating.display_text().contains("Generating"));
+        assert_eq!(TypingState::Finished.display_text(), "");
+        assert!(TypingState::Error.display_text().contains("Error"));
+    }
+
+    #[test]
+    fn test_typing_state_is_active() {
+        assert!(!TypingState::Idle.is_active());
+        assert!(TypingState::Typing.is_active());
+        assert!(TypingState::Processing.is_active());
+        assert!(TypingState::Generating.is_active());
+        assert!(!TypingState::Finished.is_active());
+        assert!(!TypingState::Error.is_active());
+    }
+
+    #[test]
+    fn test_indicator_error_state() {
+        let indicator = TypingIndicator::new();
+        indicator.error(Some("timeout".to_string()));
+        assert_eq!(indicator.state(), TypingState::Error);
+        assert!(!indicator.is_active());
+    }
+
+    #[test]
+    fn test_indicator_elapsed() {
+        let indicator = TypingIndicator::new();
+        assert!(indicator.elapsed().is_none());
+        indicator.start(TypingState::Processing);
+        assert!(indicator.elapsed().is_some());
+        indicator.stop();
+        assert!(indicator.elapsed().is_none());
+    }
+
+    #[test]
+    fn test_animated_dots() {
+        let mut anim = AnimatedIndicator::dots();
+        assert_eq!(anim.current(), ".");
+        // tick won't advance because interval not elapsed
+        let _ = anim.tick();
+        anim.reset();
+        assert_eq!(anim.current(), ".");
+    }
+
+    #[test]
+    fn test_animated_spinner() {
+        let anim = AnimatedIndicator::spinner();
+        assert_eq!(anim.current(), "|");
+    }
+
+    #[test]
+    fn test_animated_braille() {
+        let anim = AnimatedIndicator::braille();
+        assert_eq!(anim.current(), "⠋");
+    }
+
+    #[test]
+    fn test_progress_display() {
+        let mut progress = ProgressIndicator::new(200, "Downloading");
+        progress.set(100);
+        let display = progress.display();
+        assert!(display.contains("Downloading"));
+        assert!(display.contains("50.0%"));
+        assert!(display.contains("█"));
+    }
+
+    #[test]
+    fn test_progress_eta() {
+        let progress = ProgressIndicator::new(100, "Test");
+        assert!(progress.eta().is_none()); // no progress yet, no ETA
+    }
+
+    #[test]
+    fn test_progress_zero_total() {
+        let progress = ProgressIndicator::new(0, "Empty");
+        assert_eq!(progress.percentage(), 100.0);
+        assert!(progress.is_complete());
+    }
+
+    #[test]
     fn test_progress() {
         let mut progress = ProgressIndicator::new(100, "Loading");
 
