@@ -9881,8 +9881,8 @@ fn tests_precision() -> CategoryResult {
             if *should_detect {
                 total_positive += 1;
                 if result.has_pii { detected += 1; }
-            } else {
-                if result.has_pii { return Err(format!("False positive on: {}", text)); }
+            } else if result.has_pii {
+                return Err(format!("False positive on: {}", text));
             }
         }
         let recall = detected as f64 / total_positive as f64;
@@ -10058,7 +10058,7 @@ fn tests_precision() -> CategoryResult {
 
         // Linearity: 10x text should give ~10x tokens (within 20% tolerance)
         let ratio = t_long as f64 / t_medium as f64;
-        if ratio < 8.0 || ratio > 12.0 {
+        if !(8.0..=12.0).contains(&ratio) {
             return Err(format!("Linearity check: 10x text gave {:.1}x tokens", ratio));
         }
 
@@ -10171,7 +10171,7 @@ fn tests_precision() -> CategoryResult {
             }
         }
 
-        if queue.len() != 0 { return Err(format!("Queue not empty: {} remaining", queue.len())); }
+        if !queue.is_empty() { return Err(format!("Queue not empty: {} remaining", queue.len())); }
         Ok(())
     }));
 
@@ -10377,7 +10377,7 @@ fn tests_precision() -> CategoryResult {
 
         // Normal text should pass
         let clean = sanitizer.sanitize("Hello, how are you today?");
-        if clean.get_output().map_or(true, |s| s.is_empty()) {
+        if clean.get_output().is_none_or(|s| s.is_empty()) {
             return Err("Sanitizer cleared normal text".to_string());
         }
 
