@@ -964,7 +964,7 @@ fn urlencoded(s: &str) -> String {
     s.bytes()
         .map(|b| {
             if b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' || b == b'~' {
-                format!("{}", b as char)
+                String::from(b as char)
             } else if b == b' ' {
                 "+".to_string()
             } else {

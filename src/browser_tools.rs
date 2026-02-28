@@ -403,7 +403,7 @@ fn send_cdp_command(
         if let Ok(val) = serde_json::from_str::<serde_json::Value>(&raw) {
             if val.get("id").and_then(|v| v.as_u64()) == Some(id) {
                 if let Some(err) = val.get("error") {
-                    return Err(BrowserError::CdpError(format!("{}", err)));
+                    return Err(BrowserError::CdpError(err.to_string()));
                 }
                 return Ok(val
                     .get("result")

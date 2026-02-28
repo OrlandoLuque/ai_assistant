@@ -773,7 +773,7 @@ impl RemoteMcpClient {
                     _ => {
                         // Check if the error message contains "timed out" or
                         // similar indicators.
-                        let msg = format!("{}", error);
+                        let msg = error.to_string();
                         if msg.contains("timed out") || msg.contains("timeout") {
                             McpClientError::Timeout {
                                 url: self.config.url.clone(),
