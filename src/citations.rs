@@ -687,4 +687,64 @@ mod tests {
         assert_eq!(config.style, CitationStyle::Superscript);
         assert_eq!(config.max_citations_per_claim, 5);
     }
+
+    #[test]
+    fn test_source_with_metadata() {
+        let mut source = Source::new("s1", "My Title", "Some content")
+            .with_authors(vec!["Alice", "Bob"])
+            .with_date("2025")
+            .with_url("https://example.com");
+        source.page = Some("42".to_string());
+
+        assert_eq!(source.authors.len(), 2);
+        assert_eq!(source.date.as_deref(), Some("2025"));
+        assert_eq!(source.url.as_deref(), Some("https://example.com"));
+        assert_eq!(source.page.as_deref(), Some("42"));
+    }
+
+    #[test]
+    fn test_citation_config_defaults() {
+        let config = CitationConfig::default();
+        assert_eq!(config.style, CitationStyle::Numeric);
+        assert_eq!(config.max_citations_per_claim, 3);
+        assert!((config.min_similarity - 0.7).abs() < f64::EPSILON);
+        assert!(config.group_citations);
+        assert!(config.include_pages);
+    }
+
+    #[test]
+    fn test_source_type_variants() {
+        let types = [
+            SourceType::WebPage,
+            SourceType::Document,
+            SourceType::Book,
+            SourceType::Article,
+            SourceType::Code,
+            SourceType::Database,
+            SourceType::UserInput,
+            SourceType::Other,
+        ];
+        // All variants are distinct
+        for (i, a) in types.iter().enumerate() {
+            for (j, b) in types.iter().enumerate() {
+                if i != j {
+                    assert_ne!(a, b);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_empty_sources_cite() {
+        let mut generator = CitationGenerator::default();
+        let result = generator.cite("Some text without any matching sources.");
+        assert!(result.citations.is_empty());
+    }
+
+    #[test]
+    fn test_citation_style_custom() {
+        let style = CitationStyle::Custom("({author} - {year})".to_string());
+        assert_ne!(style, CitationStyle::Numeric);
+        assert_ne!(style, CitationStyle::AuthorYear);
+    }
 }

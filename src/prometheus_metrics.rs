@@ -601,4 +601,60 @@ mod tests {
         assert!(export.contains("# TYPE my_counter counter"));
         assert!(export.contains("my_counter{status=\"200\"} 1"));
     }
+
+    #[test]
+    fn test_counter_add() {
+        let counter = Counter::new("requests", "Total requests");
+        counter.add(5);
+        assert_eq!(counter.get(&[]), 5);
+        counter.add(3);
+        assert_eq!(counter.get(&[]), 8);
+    }
+
+    #[test]
+    fn test_counter_multiple_labels() {
+        let counter = Counter::new("http_requests", "HTTP requests");
+        counter.inc_with_labels(&[("method", "GET"), ("status", "200")]);
+        counter.inc_with_labels(&[("method", "POST"), ("status", "201")]);
+        counter.inc_with_labels(&[("method", "GET"), ("status", "200")]);
+
+        assert_eq!(counter.get(&[("method", "GET"), ("status", "200")]), 2);
+        assert_eq!(counter.get(&[("method", "POST"), ("status", "201")]), 1);
+    }
+
+    #[test]
+    fn test_gauge_set_and_export() {
+        let gauge = Gauge::new("active_connections", "Active connections");
+        gauge.set(42.0);
+
+        let export = gauge.export();
+        assert!(export.contains("# HELP active_connections"));
+        assert!(export.contains("# TYPE active_connections gauge"));
+        assert!(export.contains("42"));
+    }
+
+    #[test]
+    fn test_histogram_buckets() {
+        let histogram = Histogram::new("latency", "Request latency");
+        histogram.observe(0.05);
+        histogram.observe(0.25);
+        histogram.observe(2.5);
+
+        let export = histogram.export();
+        assert!(export.contains("latency_count 3"));
+    }
+
+    #[test]
+    fn test_registry_multiple_operations() {
+        let registry = AiMetricsRegistry::new();
+        registry.record_request("llama", "ollama");
+        registry.record_request("llama", "ollama");
+        registry.record_request("gpt-4", "openai");
+        registry.record_completion("llama", "ollama", Duration::from_millis(500), 50, true);
+        registry.record_completion("gpt-4", "openai", Duration::from_millis(200), 100, false);
+
+        let export = registry.export();
+        assert!(export.contains("ai_requests_total"));
+        assert!(export.contains("ai_request_duration_seconds"));
+    }
 }
