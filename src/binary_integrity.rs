@@ -522,4 +522,15 @@ mod tests {
         #[cfg(debug_assertions)]
         assert_eq!(result, IntegrityResult::Skipped);
     }
+
+    #[test]
+    fn test_hash_mismatch_display() {
+        let result = IntegrityResult::HashMismatch {
+            expected: "abc123".to_string(),
+            actual: "def456".to_string(),
+        };
+        let msg = format!("{}", result);
+        assert!(msg.contains("abc123"));
+        assert!(msg.contains("def456"));
+    }
 }

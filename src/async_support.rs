@@ -669,4 +669,10 @@ mod tests {
         let result = block_on(select(std::future::ready(1), std::future::ready(2)));
         assert_eq!(result, 1);
     }
+
+    #[test]
+    fn test_block_on_nested_ready() {
+        let result = block_on(async { 2 + 3 });
+        assert_eq!(result, 5);
+    }
 }

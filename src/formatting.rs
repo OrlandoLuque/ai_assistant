@@ -879,4 +879,11 @@ This is a [link](https://example.com) and some `code`.
         assert!(!plain.contains("https://"));
         assert!(!plain.contains("**"));
     }
+
+    #[test]
+    fn test_extract_empty_code_blocks() {
+        let parser = ResponseParser::new();
+        let parsed = parser.parse("No code blocks here at all.");
+        assert!(parsed.code_blocks.is_empty());
+    }
 }

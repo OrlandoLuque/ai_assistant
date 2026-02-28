@@ -733,4 +733,20 @@ mod tests {
         // No user feedback provided, so satisfaction should be None
         assert!(avg.user_satisfaction.is_none());
     }
+
+    #[test]
+    fn test_score_range() {
+        let mut scorer = EffectivenessScorer::new();
+        let qa = QAPair {
+            question: "What is Rust?".to_string(),
+            response: "Rust is a systems programming language focused on safety.".to_string(),
+            context: None,
+            expected_topics: vec!["rust".to_string()],
+            user_feedback: None,
+        };
+        let score = scorer.score(&qa);
+        assert!(score.overall >= 0.0 && score.overall <= 1.0);
+        assert!(score.relevance >= 0.0 && score.relevance <= 1.0);
+        assert!(score.clarity >= 0.0 && score.clarity <= 1.0);
+    }
 }

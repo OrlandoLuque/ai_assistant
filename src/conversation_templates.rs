@@ -443,4 +443,18 @@ mod tests {
         let tutor = lib.get("tutor").unwrap();
         assert!(tutor.starter_messages[0].contains("{topic}"));
     }
+
+    #[test]
+    fn test_category_name_roundtrip() {
+        let categories = vec![
+            TemplateCategory::Coding, TemplateCategory::Writing,
+            TemplateCategory::Analysis, TemplateCategory::Learning,
+            TemplateCategory::Creative, TemplateCategory::Business,
+            TemplateCategory::Research, TemplateCategory::Support,
+        ];
+        for cat in &categories {
+            assert!(!cat.name().is_empty());
+        }
+        assert_eq!(categories.len(), 8);
+    }
 }

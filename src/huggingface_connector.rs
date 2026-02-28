@@ -591,4 +591,11 @@ mod tests {
         assert!(req.parameters.is_none());
         assert!(req.options.is_none());
     }
+
+    #[test]
+    fn test_task_variants() {
+        assert_eq!(HfTask::TextGeneration.as_str(), "text-generation");
+        assert_eq!(HfTask::Summarization.as_str(), "summarization");
+        assert_eq!(HfTask::QuestionAnswering.as_str(), "question-answering");
+    }
 }

@@ -635,4 +635,14 @@ mod tests {
         // Truncated answers end with "..."
         assert!(a.answer.len() <= 23); // 20 + "..."
     }
+
+    #[test]
+    fn test_question_type_classification() {
+        let extractor = AnswerExtractor::new(ExtractionConfig::default());
+        // "Is X?" should be classified as YesNo and return Boolean answer
+        let text = "Yes, absolutely Rust is memory safe by default.";
+        let answer = extractor.extract("Is Rust memory safe?", text);
+        assert!(answer.is_some());
+        assert_eq!(answer.unwrap().answer_type, AnswerType::Boolean);
+    }
 }

@@ -427,4 +427,11 @@ mod tests {
         assert_eq!(classifier.suggest_response_type(Intent::Comparison), "analytical");
         assert_eq!(classifier.suggest_response_type(Intent::Unknown), "general");
     }
+
+    #[test]
+    fn test_empty_input_is_unknown() {
+        let classifier = IntentClassifier::new();
+        let intent = classifier.classify("");
+        assert_eq!(intent.primary, Intent::Unknown);
+    }
 }

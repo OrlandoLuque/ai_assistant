@@ -322,4 +322,9 @@ mod tests {
         });
         assert_eq!(size, 50_000);
     }
+
+    #[test]
+    fn test_estimate_tokens_empty() {
+        assert_eq!(estimate_tokens(""), 0);
+    }
 }
