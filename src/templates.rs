@@ -853,4 +853,77 @@ mod tests {
         invalid.insert("count".to_string(), "not a number".to_string());
         assert!(template.render(&invalid).is_err());
     }
+
+    #[test]
+    fn test_template_manager_search_remove_export_import() {
+        let mut manager = TemplateManager::with_builtins();
+
+        // Search by description keyword
+        let results = manager.search("review");
+        assert!(
+            !results.is_empty(),
+            "Should find templates matching 'review'"
+        );
+
+        // Remove a template
+        let removed = manager.remove("code_review");
+        assert!(removed.is_some(), "Should remove existing template");
+        assert!(
+            manager.get("code_review").is_none(),
+            "Removed template should not be found"
+        );
+
+        // Export and import round-trip
+        let json = manager.export_json().expect("Should export to JSON");
+        let mut fresh_manager = TemplateManager::new();
+        let count = fresh_manager
+            .import_json(&json)
+            .expect("Should import from JSON");
+        assert!(count > 0, "Should import at least one template");
+
+        // Verify imported templates are accessible
+        let list = fresh_manager.list();
+        assert_eq!(list.len(), count);
+    }
+
+    #[test]
+    fn test_single_line_validation_and_validate_values() {
+        // Test SingleLine validation rejects multiline input
+        let template = PromptTemplate::new("test", "Title: {{title}}")
+            .set_variable_type("title", VariableType::SingleLine);
+
+        let mut valid = HashMap::new();
+        valid.insert("title".to_string(), "Single line title".to_string());
+        assert!(template.render(&valid).is_ok());
+
+        let mut invalid = HashMap::new();
+        invalid.insert("title".to_string(), "Line one\nLine two".to_string());
+        assert!(
+            template.render(&invalid).is_err(),
+            "SingleLine should reject multiline input"
+        );
+
+        // Test validate_values reports missing required variables
+        let template2 = PromptTemplate::new("test2", "{{a}} and {{b}} and {{c}}")
+            .configure_variable("a", "First", None, true)
+            .configure_variable("b", "Second", Some("default_b"), true)
+            .configure_variable("c", "Third", None, true);
+
+        let mut partial = HashMap::new();
+        partial.insert("a".to_string(), "value_a".to_string());
+        // "b" has a default, "c" is missing
+        let missing = template2.validate_values(&partial);
+        assert!(
+            missing.contains(&"c".to_string()),
+            "Should report 'c' as missing"
+        );
+        assert!(
+            !missing.contains(&"b".to_string()),
+            "Should NOT report 'b' as missing (has default)"
+        );
+        assert!(
+            !missing.contains(&"a".to_string()),
+            "Should NOT report 'a' as missing (provided)"
+        );
+    }
 }

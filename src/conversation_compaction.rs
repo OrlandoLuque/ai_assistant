@@ -561,4 +561,33 @@ mod tests {
             result.messages.len()
         );
     }
+
+    #[test]
+    fn test_unique_topic_preserves_message() {
+        let config = CompactionConfig {
+            max_messages: 5,
+            target_messages: 5,
+            preserve_recent: 1,
+            preserve_first: 1,
+            min_importance: 1.0, // Very high so only topic/position-based preservation kicks in
+        };
+        let compactor = ConversationCompactor::new(config);
+
+        let mut messages: Vec<_> = (0..15)
+            .map(|i| CompactableMessage::new("user", &format!("Message {}", i)))
+            .collect();
+
+        // Give a middle message a unique topic (count <= 2 triggers preservation)
+        messages[7] = messages[7]
+            .clone()
+            .with_topics(vec!["rare_topic".to_string()]);
+
+        let result = compactor.compact(messages);
+
+        // The message with the rare topic should be preserved even though it has low importance
+        assert!(
+            result.messages.iter().any(|m| m.topics.contains(&"rare_topic".to_string())),
+            "Message with unique topic should be preserved"
+        );
+    }
 }
