@@ -632,4 +632,73 @@ mod tests {
         assert!((stats.success_rate() - 0.875).abs() < 0.001);
         assert!((stats.requests_per_second() - 2.0).abs() < 0.001);
     }
+
+    #[test]
+    fn test_batch_stats_eta() {
+        let stats = BatchStats {
+            total: 10,
+            completed: 5,
+            total_duration: Duration::from_secs(10),
+            ..Default::default()
+        };
+        // 5 remaining, avg 2s each => 10s ETA
+        let eta = stats.eta().unwrap();
+        assert!((eta.as_secs_f64() - 10.0).abs() < 0.1);
+
+        // When all completed, no ETA
+        let done = BatchStats { total: 5, completed: 5, ..Default::default() };
+        assert!(done.eta().is_none());
+    }
+
+    #[test]
+    fn test_batch_results_accessors() {
+        let config = BatchConfig {
+            max_concurrent: 1,
+            max_retries: 0,
+            request_delay: Duration::ZERO,
+            ..Default::default()
+        };
+        let processor = BatchProcessor::new(config);
+        let requests = vec![
+            BatchRequest::new("ok1", "good"),
+            BatchRequest::new("fail1", "bad"),
+            BatchRequest::new("ok2", "good"),
+        ];
+        let results = processor.process(requests, |req| {
+            if req.message == "bad" { Err("err".into()) } else { Ok("ok".into()) }
+        });
+        assert_eq!(results.successful().len(), 2);
+        assert_eq!(results.failed().len(), 1);
+        assert!(results.get("ok1").unwrap().success);
+        assert!(!results.get("fail1").unwrap().success);
+        let map = results.to_map();
+        assert_eq!(map.len(), 3);
+    }
+
+    #[test]
+    fn test_batch_config_defaults() {
+        let config = BatchConfig::default();
+        assert_eq!(config.max_concurrent, 4);
+        assert_eq!(config.max_retries, 2);
+        assert!(config.continue_on_error);
+        assert!(config.batch_timeout.is_none());
+    }
+
+    #[test]
+    fn test_batch_builder_add_all() {
+        let requests = BatchBuilder::new()
+            .default_model("llama3")
+            .add_all(vec![("1", "a"), ("2", "b"), ("3", "c")])
+            .build();
+        assert_eq!(requests.len(), 3);
+        assert!(requests.iter().all(|r| r.model == Some("llama3".into())));
+    }
+
+    #[test]
+    fn test_cancel_batch() {
+        let processor = BatchProcessor::default();
+        assert!(!processor.is_cancelled());
+        processor.cancel();
+        assert!(processor.is_cancelled());
+    }
 }
