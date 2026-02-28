@@ -204,6 +204,111 @@ mod tests {
     }
 
     #[test]
+    fn test_default_config() {
+        let config = SummaryConfig::default();
+        assert_eq!(config.max_length, 500);
+        assert!(config.include_key_points);
+        assert!(config.include_topics);
+        assert!(config.include_action_items);
+        assert_eq!(config.style, SummaryStyle::Concise);
+    }
+
+    #[test]
+    fn test_summary_styles_in_prompt() {
+        let messages = vec![("User".to_string(), "Hello".to_string())];
+
+        for (style, keyword) in [
+            (SummaryStyle::Detailed, "detailed"),
+            (SummaryStyle::Bullet, "bullet"),
+            (SummaryStyle::Narrative, "narrative"),
+        ] {
+            let s = ConversationSummarizer::new(SummaryConfig {
+                style,
+                ..Default::default()
+            });
+            let prompt = s.build_summary_prompt(&messages);
+            assert!(
+                prompt.to_lowercase().contains(keyword),
+                "Style {:?} should produce '{}' in prompt",
+                style,
+                keyword
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_key_points() {
+        let summarizer = ConversationSummarizer::default();
+        let text = "The weather is nice. It is important to stay hydrated during summer. You should drink water. The sky is blue. We need to plan ahead for the winter season.";
+        let points = summarizer.extract_key_points(text);
+        assert!(!points.is_empty());
+        assert!(points.len() <= 5);
+        for p in &points {
+            assert!(p.ends_with('.'));
+        }
+    }
+
+    #[test]
+    fn test_extract_key_points_empty() {
+        let summarizer = ConversationSummarizer::default();
+        let points = summarizer.extract_key_points("Short text here.");
+        assert!(points.is_empty());
+    }
+
+    #[test]
+    fn test_rolling_summary_with_existing() {
+        let summarizer = ConversationSummarizer::default();
+        let result = summarizer.rolling_summary(
+            "Previous discussion about AI.",
+            &[("User".to_string(), "What about ML?".to_string())],
+        );
+        assert!(result.contains("Previous summary:"));
+        assert!(result.contains("Previous discussion about AI"));
+        assert!(result.contains("What about ML?"));
+    }
+
+    #[test]
+    fn test_rolling_summary_without_existing() {
+        let summarizer = ConversationSummarizer::default();
+        let result = summarizer.rolling_summary(
+            "",
+            &[("User".to_string(), "First message".to_string())],
+        );
+        assert!(!result.contains("Previous summary:"));
+        assert!(result.contains("First message"));
+    }
+
+    #[test]
+    fn test_prompt_config_flags() {
+        let config = SummaryConfig {
+            include_key_points: false,
+            include_topics: false,
+            include_action_items: false,
+            ..Default::default()
+        };
+        let summarizer = ConversationSummarizer::new(config);
+        let messages = vec![("User".to_string(), "test".to_string())];
+        let prompt = summarizer.build_summary_prompt(&messages);
+        assert!(!prompt.contains("key points"));
+        assert!(!prompt.contains("main topics"));
+        assert!(!prompt.contains("action items"));
+    }
+
+    #[test]
+    fn test_stop_words_filtered() {
+        let summarizer = ConversationSummarizer::default();
+        let messages = vec![
+            ("User".to_string(), "Explain machine learning algorithms in detail".to_string()),
+            ("Assistant".to_string(), "Machine learning algorithms process data".to_string()),
+        ];
+        let topics = summarizer.extract_topics(&messages);
+        // "machine" and "learning" should appear but stop words like "the", "in" should not
+        for topic in &topics {
+            assert!(topic.len() > 4);
+        }
+    }
+
+    #[test]
     fn test_topic_extraction() {
         let summarizer = ConversationSummarizer::default();
         let messages = vec![
