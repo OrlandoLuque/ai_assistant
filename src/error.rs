@@ -1925,6 +1925,10 @@ pub enum EvalSuiteError {
     ReportFailed { reason: String },
     /// Evaluation timed out
     Timeout { problem_id: String, timeout_secs: u64 },
+    /// Configuration search failed
+    SearchFailed { reason: String },
+    /// Invalid agent configuration
+    InvalidAgentConfig { field: String, reason: String },
 }
 
 impl std::error::Error for EvalSuiteError {}
@@ -1956,6 +1960,12 @@ impl fmt::Display for EvalSuiteError {
             EvalSuiteError::Timeout { problem_id, timeout_secs } => {
                 write!(f, "Evaluation timed out for '{}' after {}s", problem_id, timeout_secs)
             }
+            EvalSuiteError::SearchFailed { reason } => {
+                write!(f, "Configuration search failed: {}", reason)
+            }
+            EvalSuiteError::InvalidAgentConfig { field, reason } => {
+                write!(f, "Invalid agent config field '{}': {}", field, reason)
+            }
         }
     }
 }
@@ -1971,6 +1981,8 @@ impl EvalSuiteError {
             EvalSuiteError::InsufficientData { .. } => Some("Collect more samples or lower the significance threshold"),
             EvalSuiteError::ReportFailed { .. } => Some("Ensure all benchmark runs completed before generating the report"),
             EvalSuiteError::Timeout { .. } => Some("Increase the timeout or use a faster model"),
+            EvalSuiteError::SearchFailed { .. } => Some("Check search dimensions and dataset, or increase max_evaluations budget"),
+            EvalSuiteError::InvalidAgentConfig { .. } => Some("Verify the EvalAgentConfig fields (model identifiers, temperature range, etc.)"),
         }
     }
 
@@ -1979,6 +1991,7 @@ impl EvalSuiteError {
             self,
             EvalSuiteError::GenerationFailed { .. }
                 | EvalSuiteError::Timeout { .. }
+                | EvalSuiteError::SearchFailed { .. }
         )
     }
 }
@@ -2657,6 +2670,8 @@ mod tests {
             EvalSuiteError::InsufficientData { metric: "accuracy".into(), samples: 1 },
             EvalSuiteError::ReportFailed { reason: "incomplete data".into() },
             EvalSuiteError::Timeout { problem_id: "swe/10".into(), timeout_secs: 60 },
+            EvalSuiteError::SearchFailed { reason: "budget exhausted".into() },
+            EvalSuiteError::InvalidAgentConfig { field: "temperature".into(), reason: "must be >= 0".into() },
         ];
         for err in &errors {
             assert!(!err.to_string().is_empty());
@@ -2665,8 +2680,10 @@ mod tests {
         // Recoverability
         assert!(EvalSuiteError::GenerationFailed { problem_id: "x".into(), reason: "r".into() }.is_recoverable());
         assert!(EvalSuiteError::Timeout { problem_id: "x".into(), timeout_secs: 30 }.is_recoverable());
+        assert!(EvalSuiteError::SearchFailed { reason: "r".into() }.is_recoverable());
         assert!(!EvalSuiteError::DatasetLoadFailed { path: "x".into(), reason: "r".into() }.is_recoverable());
         assert!(!EvalSuiteError::NoResults { reason: "r".into() }.is_recoverable());
+        assert!(!EvalSuiteError::InvalidAgentConfig { field: "f".into(), reason: "r".into() }.is_recoverable());
     }
 
     #[test]
