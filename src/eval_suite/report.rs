@@ -5,6 +5,7 @@
 
 use super::ablation::AblationResult;
 use super::comparison::ComparisonMatrix;
+use super::config_search::ConfigSearchResult;
 use super::runner::{BenchmarkRunResult, ModelIdentifier, TokenUsage};
 use super::subtask::SubtaskAnalysis;
 use serde::{Deserialize, Serialize};
@@ -65,6 +66,8 @@ pub struct EvalSuiteReport {
     pub subtask_analysis: Option<SubtaskAnalysis>,
     /// Ablation study results
     pub ablations: Vec<AblationResult>,
+    /// Configuration search results (if applicable)
+    pub config_search: Option<ConfigSearchResult>,
     /// Cost breakdown
     pub cost_breakdown: CostBreakdown,
     /// Summary and recommendations
@@ -94,6 +97,7 @@ pub struct ReportBuilder {
     comparison: Option<ComparisonMatrix>,
     subtask_analysis: Option<SubtaskAnalysis>,
     ablations: Vec<AblationResult>,
+    config_search: Option<ConfigSearchResult>,
 }
 
 impl ReportBuilder {
@@ -105,6 +109,7 @@ impl ReportBuilder {
             comparison: None,
             subtask_analysis: None,
             ablations: Vec::new(),
+            config_search: None,
         }
     }
 
@@ -132,6 +137,12 @@ impl ReportBuilder {
         self
     }
 
+    /// Set the configuration search results.
+    pub fn with_config_search(mut self, result: ConfigSearchResult) -> Self {
+        self.config_search = Some(result);
+        self
+    }
+
     /// Build the final report.
     pub fn build(self) -> EvalSuiteReport {
         let cost_breakdown = self.compute_cost_breakdown();
@@ -148,6 +159,7 @@ impl ReportBuilder {
             comparison: self.comparison,
             subtask_analysis: self.subtask_analysis,
             ablations: self.ablations,
+            config_search: self.config_search,
             cost_breakdown,
             summary,
         }
@@ -295,6 +307,31 @@ impl ReportBuilder {
                 significant_ablations.len(),
                 self.ablations.len()
             ));
+        }
+
+        // Config search findings
+        if let Some(ref search) = self.config_search {
+            if search.quality_improvement_pct > 0.0 {
+                key_findings.push(format!(
+                    "Config search improved quality by {:.1}% over baseline ({} evaluations)",
+                    search.quality_improvement_pct, search.total_evaluations
+                ));
+            }
+            if search.cost_change_pct.abs() > 1.0 {
+                let direction = if search.cost_change_pct < 0.0 { "reduced" } else { "increased" };
+                key_findings.push(format!(
+                    "Config search {} cost by {:.1}%",
+                    direction, search.cost_change_pct.abs()
+                ));
+            }
+            let top_dims = search.top_dimensions(2);
+            if !top_dims.is_empty() {
+                let dim_names: Vec<String> = top_dims.iter().map(|(n, _)| n.clone()).collect();
+                key_findings.push(format!(
+                    "Most impactful config dimensions: {}",
+                    dim_names.join(", ")
+                ));
+            }
         }
 
         ReportSummary {
@@ -494,5 +531,87 @@ mod tests {
 
         assert!(report.cost_breakdown.cost_by_technique.contains_key("rag"));
         assert!(report.cost_breakdown.cost_by_technique.contains_key("cot"));
+    }
+
+    #[test]
+    fn test_report_with_config_search() {
+        use super::super::agent_config::{ConfigMeasurement, EvalAgentConfig};
+        use super::super::config_search::{
+            ConfigSearchResult, EvolutionSnapshot, SearchCost,
+        };
+        use super::super::runner::ModelIdentifier;
+
+        let model = ModelIdentifier {
+            name: "test".into(),
+            provider: "mock".into(),
+            variant: None,
+        };
+        let config = EvalAgentConfig::new("baseline", model);
+        let baseline = ConfigMeasurement {
+            config: config.clone(),
+            quality: 0.6,
+            quality_std: 0.1,
+            latency_ms: 100.0,
+            cost: 0.05,
+            sample_count: 10,
+            subtask_quality: HashMap::new(),
+            run_result: None,
+        };
+        let best = ConfigMeasurement {
+            config: config.clone(),
+            quality: 0.85,
+            quality_std: 0.08,
+            latency_ms: 120.0,
+            cost: 0.04,
+            sample_count: 10,
+            subtask_quality: HashMap::new(),
+            run_result: None,
+        };
+        let search_result = ConfigSearchResult {
+            baseline,
+            best,
+            iterations: Vec::new(),
+            evolution: vec![EvolutionSnapshot {
+                iteration: 0,
+                current_best_quality: 0.6,
+                current_best_cost: 0.05,
+                current_best_latency_ms: 100.0,
+                objective_score: 0.6,
+                dimension_explored: "baseline".into(),
+                variant_tested: "initial".into(),
+                was_improvement: false,
+            }],
+            dimension_variance: {
+                let mut m = HashMap::new();
+                m.insert("Temperature".to_string(), 0.02);
+                m
+            },
+            recommended: config,
+            quality_improvement_pct: 41.7,
+            cost_change_pct: -20.0,
+            total_evaluations: 8,
+            search_cost: SearchCost {
+                total_configurations_evaluated: 8,
+                total_problems_solved: 80,
+                total_llm_calls: 80,
+                estimated_total_cost: 0.4,
+                estimated_total_tokens: 8000,
+            },
+            converged: false,
+            stopped_by_budget: false,
+        };
+
+        let report = ReportBuilder::new("Config Search Report")
+            .add_run(make_run("model", 0.7, 0.02))
+            .with_config_search(search_result)
+            .build();
+
+        assert!(report.config_search.is_some());
+        let cs = report.config_search.as_ref().unwrap();
+        assert!((cs.quality_improvement_pct - 41.7).abs() < 0.01);
+        // Check key findings include config search info
+        let findings_text = report.summary.key_findings.join(" ");
+        assert!(findings_text.contains("Config search"));
+        assert!(findings_text.contains("41.7%"));
     }
 }

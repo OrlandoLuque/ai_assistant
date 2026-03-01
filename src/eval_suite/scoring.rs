@@ -153,44 +153,136 @@ fn score_free_text(response: &str, reference: Option<&str>) -> f64 {
 }
 
 /// Extract a single answer letter (A, B, C, D, etc.) from an LLM response.
+///
+/// Searches the entire response text for common answer patterns. Prioritizes
+/// explicit answer declarations ("the answer is X") over implicit patterns.
 fn extract_answer_letter(response: &str) -> Option<String> {
     let trimmed = response.trim();
+    let lower = trimmed.to_lowercase();
 
-    // Pattern: "The answer is X" or "Answer: X"
-    for prefix in &["the answer is ", "answer: ", "answer is "] {
-        if let Some(rest) = trimmed.to_lowercase().strip_prefix(prefix) {
-            let letter = rest.trim().chars().next()?;
-            if letter.is_ascii_alphabetic() {
-                return Some(letter.to_uppercase().to_string());
-            }
-        }
-    }
-
-    // Pattern: single letter response
+    // Pattern 1: single letter response (highest confidence)
     if trimmed.len() == 1 && trimmed.chars().next().map_or(false, |c| c.is_ascii_alphabetic()) {
         return Some(trimmed.to_uppercase());
     }
 
-    // Pattern: "(X)" or "X)" or "X."
+    // Pattern 2: "(X)" or "X)" or "X." at start of response
     for pattern in &["(", ""] {
         let search = trimmed.strip_prefix(pattern).unwrap_or(trimmed);
         let first_char = search.chars().next()?;
         if first_char.is_ascii_alphabetic() {
             let second = search.chars().nth(1);
-            if second == Some(')') || second == Some('.') || second == Some(':') || second.is_none() {
+            if second == Some(')') || second == Some('.') || second == Some(':') || second.is_none()
+            {
                 return Some(first_char.to_uppercase().to_string());
             }
         }
     }
 
-    // Scan for "X)" pattern after newlines (common in multi-line responses)
+    // Pattern 3: Scan ENTIRE text for answer phrases (not just prefix)
+    // "the answer is X", "answer: X", "correct answer is X", "answer is X"
+    let answer_markers = [
+        "the correct answer is ",
+        "the answer is ",
+        "correct answer is ",
+        "my answer is ",
+        "answer is ",
+        "answer: ",
+    ];
+    for marker in &answer_markers {
+        if let Some(pos) = lower.find(marker) {
+            let after = &trimmed[pos + marker.len()..];
+            let after = after.trim();
+            // Extract letter: could be "B", "B)", "(B)", "**B**", "B."
+            let cleaned = after
+                .trim_start_matches('(')
+                .trim_start_matches('*')
+                .trim_start_matches('*');
+            if let Some(ch) = cleaned.chars().next() {
+                if ch.is_ascii_alphabetic() {
+                    // Validate it's a single option letter (A-F range)
+                    let upper = ch.to_ascii_uppercase();
+                    if upper >= 'A' && upper <= 'F' {
+                        return Some(upper.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // Pattern 4: "therefore, X" or "so the answer is X" — look for conclusion markers
+    let conclusion_markers = ["therefore, ", "therefore ", "thus, ", "so, ", "hence, "];
+    for marker in &conclusion_markers {
+        if let Some(pos) = lower.rfind(marker) {
+            let after = &trimmed[pos + marker.len()..];
+            let after = after
+                .trim()
+                .trim_start_matches('(')
+                .trim_start_matches('*')
+                .trim_start_matches('*');
+            if let Some(ch) = after.chars().next() {
+                if ch.is_ascii_alphabetic() {
+                    let upper = ch.to_ascii_uppercase();
+                    if upper >= 'A' && upper <= 'F' {
+                        let next = after.chars().nth(1);
+                        if next == Some(')') || next == Some('.') || next == Some(' ')
+                            || next == Some('*') || next == Some(',') || next.is_none()
+                        {
+                            return Some(upper.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Pattern 5: Scan for "X)" or "**X**" on its own line (common in multi-line responses)
+    // Search from the END of the response (last answer is usually the final one)
     for line in trimmed.lines().rev() {
         let line = line.trim();
+        // Skip empty or very long lines (explanations)
+        if line.is_empty() || line.len() > 40 {
+            continue;
+        }
+        // "X)" or "X."
         if line.len() >= 2 {
-            let first = line.chars().next()?;
-            let second = line.chars().nth(1)?;
-            if first.is_ascii_alphabetic() && (second == ')' || second == '.') {
+            let first = line.chars().next().unwrap_or(' ');
+            let second = line.chars().nth(1).unwrap_or(' ');
+            if first.is_ascii_alphabetic()
+                && first.to_ascii_uppercase() >= 'A'
+                && first.to_ascii_uppercase() <= 'F'
+                && (second == ')' || second == '.')
+            {
                 return Some(first.to_uppercase().to_string());
+            }
+        }
+        // "**X**" (markdown bold)
+        let stripped = line.trim_start_matches('*').trim_end_matches('*').trim();
+        if stripped.len() == 1 {
+            let ch = stripped.chars().next().unwrap_or(' ');
+            if ch.is_ascii_alphabetic()
+                && ch.to_ascii_uppercase() >= 'A'
+                && ch.to_ascii_uppercase() <= 'F'
+            {
+                return Some(ch.to_uppercase().to_string());
+            }
+        }
+    }
+
+    // Pattern 6: Last resort — scan for isolated "X)" pattern anywhere in text
+    let bytes = lower.as_bytes();
+    for i in (0..bytes.len().saturating_sub(1)).rev() {
+        let ch = bytes[i] as char;
+        let next = bytes[i + 1] as char;
+        if ch.is_ascii_alphabetic()
+            && ch.to_ascii_uppercase() >= 'A'
+            && ch.to_ascii_uppercase() <= 'F'
+            && next == ')'
+        {
+            // Make sure it's not inside a word (check previous char)
+            let prev_is_separator =
+                i == 0 || !bytes[i - 1].is_ascii_alphabetic();
+            if prev_is_separator {
+                return Some(ch.to_uppercase().to_string());
             }
         }
     }
@@ -650,11 +742,30 @@ mod tests {
 
     #[test]
     fn test_extract_answer_letter_patterns() {
+        // Basic patterns
         assert_eq!(extract_answer_letter("B"), Some("B".to_string()));
         assert_eq!(extract_answer_letter("The answer is C"), Some("C".to_string()));
         assert_eq!(extract_answer_letter("Answer: A"), Some("A".to_string()));
         assert_eq!(extract_answer_letter("(D)"), Some("D".to_string()));
         assert_eq!(extract_answer_letter("B)"), Some("B".to_string()));
+
+        // Embedded in longer text (the real-world LLM case)
+        assert_eq!(
+            extract_answer_letter("Let me calculate 15 * 17 = 255. The answer is B."),
+            Some("B".to_string()),
+        );
+        assert_eq!(
+            extract_answer_letter("After analyzing the options, the correct answer is D) Some flowers are roses."),
+            Some("D".to_string()),
+        );
+        assert_eq!(
+            extract_answer_letter("Mercury is the closest planet to the Sun.\n\nTherefore, B"),
+            Some("B".to_string()),
+        );
+        assert_eq!(
+            extract_answer_letter("The symbol for gold is Au.\n\n**C**"),
+            Some("C".to_string()),
+        );
     }
 
     #[test]

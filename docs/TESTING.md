@@ -6,7 +6,7 @@ The project has two testing layers:
 
 | Layer | Tests | Run Command |
 |-------|-------|-------------|
-| Unit tests (`#[test]`) | 5,963 | `cargo test --lib --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools"` |
+| Unit tests (`#[test]`) | 6,133 | `cargo test --lib --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite"` |
 | Integration tests | 38 | `cargo test --test integration_tests --features full` |
 | Test harness (CLI) | ~436 | `cargo run --bin ai_test_harness -- --all` (sin P2P) |
 | Distributed networking tests | 115 | `cargo test --features "full,distributed-network"` |
@@ -15,7 +15,7 @@ The project has two testing layers:
 | Test harness P2P categories | 16 | `cargo run --bin ai_test_harness --features "full,p2p" -- --category=p2p_nat` |
 | Benchmarks | 42 | `cargo bench --bench core_benchmarks --features full` |
 
-**Total: 5,963 tests** (verified with `cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,vector-pgvector,cloud-connectors" --lib`)
+**Total: 6,133 tests** (verified with `cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite" --lib`)
 
 ## Quick Start
 
@@ -175,6 +175,18 @@ Unit tests live inside each source file in `crates/ai_assistant/src/` using `#[c
 - `knowledge_graph.rs` - Entity dedup, cycles, traversal, query (~48 tests)
 - `vector_db.rs` - Migration, cache eviction, error paths (~62 tests)
 - `advanced_memory.rs` - Fact extraction/store, compressed snapshots, checksum verification (~204 tests)
+
+**Eval Suite** (feature `eval-suite`, v25-v26):
+- `eval_suite/dataset.rs` - BenchmarkDataset, JSONL/JSON loading, filtering, sampling (16 tests)
+- `eval_suite/scoring.rs` - Pass@k, accuracy, DefaultScorer, ELO, answer extraction (22 tests)
+- `eval_suite/runner.rs` - BenchmarkSuiteRunner, ProblemResult, chain-of-thought, retries (14 tests)
+- `eval_suite/comparison.rs` - ComparisonMatrix, Welch's t-test, ELO ratings, cost-effectiveness (10 tests)
+- `eval_suite/ablation.rs` - AblationEngine, Cohen's d, recommendations (11 tests)
+- `eval_suite/subtask.rs` - SubtaskAnalyzer, optimal routing, improvement calculation (10 tests)
+- `eval_suite/report.rs` - ReportBuilder, cost breakdown, key findings, JSON export, config search integration (12 tests)
+- `eval_suite/agent_config.rs` - EvalAgentConfig builder, per-subtask routing, MultiModelGenerator dispatch, SearchDimension, config diff (16 tests)
+- `eval_suite/config_search.rs` - ConfigSearchEngine, coordinate descent, evolution tracking, budget guard, significance gating, cost tracking + 1 `#[ignore]` Ollama integration test (17 tests)
+- `eval_suite/feature_combos.rs` - Cross-feature integration tests: decision tree routing, embeddings+VDB, KG+RAG pipeline, episodic/procedural memory, multi-agent, full-stack combos, plus 7 heavy multi-document integration tests (Urban Sustainability domain with DocumentParser, KG, RAG, VDB, ContextComposer, LlmJudge, AgentOrchestrator, EpisodicStore) (39 tests)
 
 ## Benchmarks (`cargo bench`)
 
@@ -348,3 +360,4 @@ The harness exits with code 1 if any test fails, making it suitable for CI pipel
 | v23 | 5,963 | +0 | 2026-02-28 |
 | v24 | 5,963 | +0 | 2026-02-28 |
 | v25 | 6,061 | +98 | 2026-02-28 |
+| v26 | 6,094 | +33 | 2026-03-01 |

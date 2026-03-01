@@ -28,6 +28,9 @@ mod comparison;
 mod ablation;
 mod subtask;
 mod report;
+mod agent_config;
+mod config_search;
+mod feature_combos;
 
 pub use dataset::{
     make_code_problem, make_mc_problem, make_numeric_problem, AnswerFormat, BenchmarkDataset,
@@ -50,3 +53,12 @@ pub use ablation::{AblationEngine, AblationRecommendation, AblationResult, Ablat
 pub use subtask::{Subtask, SubtaskAnalysis, SubtaskAnalyzer, SubtaskPerformance};
 
 pub use report::{CostBreakdown, EvalSuiteReport, ReportBuilder, ReportSummary};
+
+pub use agent_config::{
+    ConfigMeasurement, EvalAgentConfig, MultiModelGenerator, SearchDimension,
+};
+
+pub use config_search::{
+    ConfigSearchConfig, ConfigSearchEngine, ConfigSearchResult, EvolutionSnapshot, SearchCost,
+    SearchIteration, SearchObjective,
+};

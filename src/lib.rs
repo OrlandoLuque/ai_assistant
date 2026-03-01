@@ -1258,10 +1258,13 @@ pub mod eval_suite;
 pub use eval_suite::{
     AblationEngine, AblationRecommendation, AblationResult, AblationStudy, AnswerFormat,
     BenchmarkDataset, BenchmarkProblem, BenchmarkRunResult, BenchmarkSuiteRunner,
-    BenchmarkSuiteType, ComparisonConfig, ComparisonMatrix, CostBreakdown, DefaultScorer,
-    EloCalculator, EvalSuiteReport, ModelIdentifier, ProblemCategory, ProblemResult,
-    ProblemScorer, ReportBuilder as EvalSuiteReportBuilder, ReportSummary, RunConfig, RunSummary,
-    Subtask, SubtaskAnalysis, SubtaskAnalyzer, SubtaskPerformance, TokenUsage as EvalTokenUsage,
+    BenchmarkSuiteType, ComparisonConfig, ComparisonMatrix, ConfigMeasurement, ConfigSearchConfig,
+    ConfigSearchEngine, ConfigSearchResult, CostBreakdown, DefaultScorer, EloCalculator,
+    EvalAgentConfig, EvalSuiteReport, EvolutionSnapshot, ModelIdentifier, MultiModelGenerator,
+    ProblemCategory, ProblemResult, ProblemScorer, ReportBuilder as EvalSuiteReportBuilder,
+    ReportSummary, RunConfig, RunSummary, SearchCost, SearchDimension, SearchIteration,
+    SearchObjective, Subtask, SubtaskAnalysis, SubtaskAnalyzer, SubtaskPerformance,
+    TokenUsage as EvalTokenUsage,
 };
 
 // =============================================================================
