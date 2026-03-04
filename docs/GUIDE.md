@@ -143,6 +143,7 @@ This guide covers every feature in the `ai_assistant` crate. Each section explai
 135. [Server CLI Binary](#135-server-cli-binary)
 136. [Advanced Model Routing (Bandit + NFA/DFA Pipeline)](#136-advanced-model-routing-bandit--nfadfa-pipeline)
 137. [Routing Enhancements: Composite Rewards, Preferences, and Context](#137-routing-enhancements-composite-rewards-preferences-and-context)
+138. [Butler Advisor — Optimization Guidance](#138-butler-advisor--optimization-guidance)
 
 ---
 
@@ -7630,3 +7631,145 @@ If you have run model comparisons via the eval-suite feature, you can bootstrap 
 ```
 
 **Feature flags**: core (always available), `eval-suite` for BanditBootstrapper, `distributed` for private arm filtering in distributed sharing
+
+---
+
+## 138. Butler Advisor — Optimization Guidance
+
+**What**: The Butler Advisor analyzes your environment (detected providers, GPU, Docker, network) and your deployment context to generate prioritized optimization recommendations across six categories: Efficiency, Quality, Cost, Security, Scalability, and Observability.
+
+**Why**: After `Butler::scan()` tells you what is available, the natural next question is "what should I enable?" The advisor answers this automatically, producing actionable recommendations ranked by priority, with each recommendation pointing to the specific feature flag to enable.
+
+### Basic Usage via AiAssistant
+
+The simplest path is `butler_advise()`, which runs the full pipeline (environment scan + advisor analysis) in one call:
+
+```rust
+use ai_assistant::AiAssistant;
+
+let mut assistant = AiAssistant::default();
+
+if let Some(report) = assistant.butler_advise() {
+    println!("Total recommendations: {}", report.summary.total);
+    println!("Already enabled: {}", report.summary.already_enabled);
+    println!("Top priority: {:?}", report.summary.top_priority);
+
+    // Show only pending (not-yet-enabled) recommendations
+    for rec in report.pending() {
+        println!("[{:?}] {:?} — {}", rec.priority, rec.category, rec.title);
+        println!("  Action: {}", rec.action);
+        println!("  Feature flag: {}", rec.feature_flag);
+    }
+}
+```
+
+### Context-Aware Recommendations with AdvisorConfig
+
+For more targeted advice, provide an `AdvisorConfig` describing your deployment:
+
+```rust
+use ai_assistant::{AiAssistant, AdvisorConfig};
+
+let mut assistant = AiAssistant::default();
+
+let config = AdvisorConfig {
+    handles_user_data: true,         // Triggers Critical PII detection recommendation
+    needs_low_latency: true,         // Emphasizes caching and local routing
+    has_budget_constraints: true,    // Emphasizes cost optimization
+    production: true,                // Triggers HITL and audit logging recommendations
+    multi_user: true,                // Triggers RBAC and rate limiting
+    multi_node: false,               // Suppresses distributed/QUIC recommendations
+    active_features: vec![           // Features already compiled in
+        "security".into(),
+        "rag".into(),
+    ],
+    ..Default::default()
+};
+
+if let Some(report) = assistant.butler_advise_with_config(&config) {
+    // PII detection won't appear — "security" is in active_features
+    // RAG won't appear — "rag" is in active_features
+    // Distributed won't appear — multi_node is false
+    for rec in report.pending() {
+        println!("[{:?}] {}: {}", rec.priority, rec.title, rec.description);
+    }
+}
+```
+
+### Filtering by Category
+
+Use `by_category()` to focus on a specific optimization dimension:
+
+```rust
+use ai_assistant::OptimizationCategory;
+
+if let Some(report) = assistant.butler_advise() {
+    // Show only security recommendations
+    let security_recs = report.by_category(OptimizationCategory::Security);
+    for rec in &security_recs {
+        println!("[{:?}] {}: {}", rec.priority, rec.title, rec.action);
+    }
+
+    // Show only cost-saving recommendations
+    let cost_recs = report.by_category(OptimizationCategory::Cost);
+    for rec in &cost_recs {
+        println!("  {} — feature: {}", rec.title, rec.feature_flag);
+    }
+}
+```
+
+### Filtering by Minimum Priority
+
+Use `by_min_priority()` to see only recommendations at or above a given urgency:
+
+```rust
+use ai_assistant::RecommendationPriority;
+
+if let Some(report) = assistant.butler_advise() {
+    // Only Critical and High priority items
+    let urgent = report.by_min_priority(RecommendationPriority::High);
+    println!("{} urgent recommendations:", urgent.len());
+    for rec in &urgent {
+        println!("  [{:?}] {} — {}", rec.priority, rec.title, rec.description);
+    }
+}
+```
+
+### Direct Butler API
+
+You can also use the Butler and ButlerAdvisor types directly without going through AiAssistant:
+
+```rust
+use ai_assistant::butler::{Butler, ButlerAdvisor, AdvisorConfig};
+
+let butler = Butler::new();
+let env_report = butler.scan();
+
+// Without config (default context)
+let advisor_report = butler.advise(&env_report);
+
+// With config (context-aware)
+let config = AdvisorConfig {
+    production: true,
+    handles_user_data: true,
+    ..Default::default()
+};
+let advisor_report = butler.advise_with_config(&env_report, &config);
+
+// Summary breakdown
+println!("By category: {:?}", advisor_report.summary.by_category);
+println!("By priority: {:?}", advisor_report.summary.by_priority);
+```
+
+### The Six Optimization Categories
+
+| Category | Focus | Example Recommendations |
+|----------|-------|------------------------|
+| **Efficiency** | Reduce latency and resource usage | Response caching, semantic dedup, bandit routing, batch APIs, constrained decoding, GPU acceleration |
+| **Quality** | Improve correctness and safety | Guardrail pipelines, RAG, cloud routing for complex tasks, eval-suite, HITL, DSPy optimization |
+| **Cost** | Lower spend | Local routing for simple queries, budget limits, per-request cost tracking, cost benchmarking, cache TTL |
+| **Security** | Protect data and access | PII detection (Critical), RBAC, AES-256-GCM encryption, audit logging, rate limiting, input sanitization |
+| **Scalability** | Handle growth | Distributed CRDTs, memory persistence, QUIC networking, container sandboxing |
+| **Observability** | Visibility into behavior | OpenTelemetry tracing, metrics logging, agent devtools |
+
+**Feature flags**: `butler` (required), `autonomous` (Butler depends on autonomous)

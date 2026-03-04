@@ -1,11 +1,14 @@
-//! Butler — auto-detection and configuration
+//! Butler — auto-detection, configuration, and optimization advisory.
 //!
-//! Detects the local environment and generates optimal configurations.
+//! Detects the local environment, generates optimal configurations, and provides
+//! multi-dimensional optimization recommendations (efficiency, quality, cost,
+//! security, scalability, observability).
 
 use crate::agent_policy::{AgentPolicyBuilder, InternetMode};
 use crate::agent_profiles::AgentProfile;
 use crate::config::{AiConfig, AiProvider};
 use crate::mode_manager::OperationMode;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -1334,6 +1337,720 @@ impl Default for Butler {
 }
 
 // =============================================================================
+// Advisor types
+// =============================================================================
+
+/// Category of optimization recommendation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum OptimizationCategory {
+    /// Reduce latency, use caching, batch requests, compiled routing.
+    Efficiency,
+    /// Enable guardrails, use better models, enable RAG for factual queries.
+    Quality,
+    /// Route cheap tasks to local models, budget limits, cost-effective selection.
+    Cost,
+    /// PII detection, guardrails, RBAC, encrypted storage.
+    Security,
+    /// Distributed setup, memory persistence, load balancing.
+    Scalability,
+    /// Tracing, metrics, logging, alerting.
+    Observability,
+}
+
+impl fmt::Display for OptimizationCategory {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Efficiency => write!(f, "efficiency"),
+            Self::Quality => write!(f, "quality"),
+            Self::Cost => write!(f, "cost"),
+            Self::Security => write!(f, "security"),
+            Self::Scalability => write!(f, "scalability"),
+            Self::Observability => write!(f, "observability"),
+        }
+    }
+}
+
+/// Priority level for a recommendation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum RecommendationPriority {
+    /// Nice to have, minor improvement.
+    Low,
+    /// Noticeable improvement, worth enabling.
+    Medium,
+    /// Significant improvement, strongly recommended.
+    High,
+    /// Essential for production use; leaving this off is a risk.
+    Critical,
+}
+
+impl fmt::Display for RecommendationPriority {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Low => write!(f, "low"),
+            Self::Medium => write!(f, "medium"),
+            Self::High => write!(f, "high"),
+            Self::Critical => write!(f, "critical"),
+        }
+    }
+}
+
+/// A single optimization recommendation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ButlerRecommendation {
+    /// Which optimization category this falls into.
+    pub category: OptimizationCategory,
+    /// Priority of this recommendation.
+    pub priority: RecommendationPriority,
+    /// Short title (e.g., "Enable response caching").
+    pub title: String,
+    /// Detailed description explaining why this is recommended.
+    pub description: String,
+    /// Actionable instruction for the user.
+    pub action: String,
+    /// Feature flag that enables this capability. `None` if always available.
+    pub feature_flag: Option<String>,
+    /// Whether this recommendation is already satisfied.
+    pub already_enabled: bool,
+}
+
+/// Summary statistics for the advisor report.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AdvisorSummary {
+    /// Total number of recommendations.
+    pub total: usize,
+    /// Number already enabled (satisfied).
+    pub already_enabled: usize,
+    /// Count by category.
+    pub by_category: HashMap<OptimizationCategory, usize>,
+    /// Count by priority.
+    pub by_priority: HashMap<RecommendationPriority, usize>,
+    /// Top priority among pending (non-enabled) recommendations.
+    pub top_priority: Option<RecommendationPriority>,
+}
+
+/// Full advisor report with all recommendations and summary.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdvisorReport {
+    /// All generated recommendations, sorted by priority descending.
+    pub recommendations: Vec<ButlerRecommendation>,
+    /// Summary statistics.
+    pub summary: AdvisorSummary,
+}
+
+impl AdvisorReport {
+    /// Get only the pending (not yet enabled) recommendations.
+    pub fn pending(&self) -> Vec<&ButlerRecommendation> {
+        self.recommendations.iter().filter(|r| !r.already_enabled).collect()
+    }
+
+    /// Get recommendations filtered by category.
+    pub fn by_category(&self, cat: OptimizationCategory) -> Vec<&ButlerRecommendation> {
+        self.recommendations.iter().filter(|r| r.category == cat).collect()
+    }
+
+    /// Get recommendations filtered by minimum priority.
+    pub fn by_min_priority(&self, min: RecommendationPriority) -> Vec<&ButlerRecommendation> {
+        self.recommendations.iter().filter(|r| r.priority >= min).collect()
+    }
+}
+
+/// Configuration snapshot for the advisor to analyze.
+///
+/// Captures which features and settings are currently active so the advisor
+/// can determine what is already enabled vs. what should be recommended.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AdvisorConfig {
+    /// Whether response caching is enabled.
+    pub caching_enabled: bool,
+    /// Whether RAG is enabled.
+    pub rag_enabled: bool,
+    /// Whether guardrails pipeline is active.
+    pub guardrails_enabled: bool,
+    /// Whether PII detection is enabled.
+    pub pii_detection_enabled: bool,
+    /// Whether RBAC/access control is enabled.
+    pub access_control_enabled: bool,
+    /// Whether audit logging is enabled.
+    pub audit_logging_enabled: bool,
+    /// Whether OpenTelemetry tracing is enabled.
+    pub otel_enabled: bool,
+    /// Whether memory persistence is configured.
+    pub memory_persistence_enabled: bool,
+    /// Whether bandit/advanced routing is used.
+    pub advanced_routing_enabled: bool,
+    /// Whether budget limits are set.
+    pub budget_limits_set: bool,
+    /// Whether rate limiting is enabled.
+    pub rate_limiting_enabled: bool,
+    /// Whether content encryption is enabled.
+    pub content_encryption_enabled: bool,
+    /// Whether eval-suite benchmarking has been run.
+    pub eval_suite_used: bool,
+    /// Whether distributed features are active.
+    pub distributed_enabled: bool,
+    /// Whether constrained decoding is used.
+    pub constrained_decoding_enabled: bool,
+    /// Whether HITL approval gates are configured.
+    pub hitl_enabled: bool,
+    /// Active feature flags (e.g., `["full", "butler", "rag"]`).
+    #[serde(default)]
+    pub active_features: Vec<String>,
+}
+
+// =============================================================================
+// Butler Advisor
+// =============================================================================
+
+/// Analyzes environment and configuration to produce optimization recommendations
+/// across efficiency, quality, cost, security, scalability, and observability.
+pub struct ButlerAdvisor<'a> {
+    report: &'a EnvironmentReport,
+    config: Option<&'a AdvisorConfig>,
+}
+
+impl<'a> ButlerAdvisor<'a> {
+    /// Create an advisor from an environment report (assumes no features enabled).
+    pub fn new(report: &'a EnvironmentReport) -> Self {
+        Self { report, config: None }
+    }
+
+    /// Create an advisor with both environment report and current configuration.
+    pub fn with_config(report: &'a EnvironmentReport, config: &'a AdvisorConfig) -> Self {
+        Self { report, config: Some(config) }
+    }
+
+    /// Generate the full advisor report.
+    pub fn analyze(&self) -> AdvisorReport {
+        let mut recommendations = Vec::new();
+        self.check_efficiency(&mut recommendations);
+        self.check_quality(&mut recommendations);
+        self.check_cost(&mut recommendations);
+        self.check_security(&mut recommendations);
+        self.check_scalability(&mut recommendations);
+        self.check_observability(&mut recommendations);
+
+        // Sort by priority descending (Critical first)
+        recommendations.sort_by(|a, b| b.priority.cmp(&a.priority));
+
+        let summary = Self::compute_summary(&recommendations);
+        AdvisorReport { recommendations, summary }
+    }
+
+    fn is_enabled(&self, check: impl Fn(&AdvisorConfig) -> bool) -> bool {
+        self.config.map(|c| check(c)).unwrap_or(false)
+    }
+
+    fn has_feature(&self, feature: &str) -> bool {
+        self.config
+            .map(|c| c.active_features.iter().any(|f| f == feature))
+            .unwrap_or(false)
+    }
+
+    fn has_local_provider(&self) -> bool {
+        self.report.llm_providers.iter().any(|p| {
+            matches!(p.provider_type, AiProvider::Ollama | AiProvider::LMStudio)
+        })
+    }
+
+    fn has_cloud_provider(&self) -> bool {
+        self.report.llm_providers.iter().any(|p| {
+            matches!(
+                p.provider_type,
+                AiProvider::OpenAI | AiProvider::Anthropic | AiProvider::Gemini
+            )
+        })
+    }
+
+    // --- Efficiency ---
+
+    fn check_efficiency(&self, recs: &mut Vec<ButlerRecommendation>) {
+        // E1: Enable caching
+        recs.push(ButlerRecommendation {
+            category: OptimizationCategory::Efficiency,
+            priority: RecommendationPriority::High,
+            title: "Enable response caching".into(),
+            description: "Response caching avoids redundant API calls for similar queries, \
+                reducing latency by 50-90% for repeated requests and saving token costs.".into(),
+            action: "Set `cache.enabled = true` in your config, or create a \
+                `ResponseCache::new(CacheConfig::default())`.".into(),
+            feature_flag: None,
+            already_enabled: self.is_enabled(|c| c.caching_enabled),
+        });
+
+        // E2: Semantic cache dedup (only if caching is on)
+        if self.is_enabled(|c| c.caching_enabled) {
+            recs.push(ButlerRecommendation {
+                category: OptimizationCategory::Efficiency,
+                priority: RecommendationPriority::Medium,
+                title: "Enable semantic cache deduplication".into(),
+                description: "Semantic caching recognises paraphrased queries that map to the \
+                    same intent, further reducing redundant API calls beyond exact-match caching.".into(),
+                action: "Enable the embeddings-backed semantic cache layer in your \
+                    `CacheConfig`.".into(),
+                feature_flag: Some("embeddings".into()),
+                already_enabled: false,
+            });
+        }
+
+        // E3: Bandit routing (2+ providers)
+        if self.report.llm_providers.len() >= 2 {
+            recs.push(ButlerRecommendation {
+                category: OptimizationCategory::Efficiency,
+                priority: RecommendationPriority::High,
+                title: "Enable bandit-based model routing".into(),
+                description: format!(
+                    "You have {} LLM providers available. Thompson Sampling bandit routing \
+                     automatically learns which model performs best for each task type, \
+                     optimising both latency and quality over time.",
+                    self.report.llm_providers.len()
+                ),
+                action: "Create a `RoutingPipeline::for_models(&[...])` with your provider \
+                    names and feed it `ArmFeedback` after each request.".into(),
+                feature_flag: None,
+                already_enabled: self.is_enabled(|c| c.advanced_routing_enabled),
+            });
+        }
+
+        // E4: Batch API requests
+        if self.has_cloud_provider() {
+            recs.push(ButlerRecommendation {
+                category: OptimizationCategory::Efficiency,
+                priority: RecommendationPriority::Low,
+                title: "Use batch API for bulk operations".into(),
+                description: "Cloud providers (OpenAI, Anthropic) offer batch APIs that process \
+                    multiple requests at reduced cost and better throughput.".into(),
+                action: "For bulk workloads, collect requests and submit them via the \
+                    provider's batch endpoint.".into(),
+                feature_flag: None,
+                already_enabled: false,
+            });
+        }
+
+        // E5: Constrained decoding (local provider)
+        if self.has_local_provider() {
+            recs.push(ButlerRecommendation {
+                category: OptimizationCategory::Efficiency,
+                priority: RecommendationPriority::Medium,
+                title: "Use constrained decoding for structured output".into(),
+                description: "Local models support grammar-guided generation (GBNF, JSON Schema). \
+                    This guarantees valid output format, eliminating retry overhead.".into(),
+                action: "Enable `constrained-decoding` feature and use \
+                    `generate_with_grammar()`.".into(),
+                feature_flag: Some("constrained-decoding".into()),
+                already_enabled: self.is_enabled(|c| c.constrained_decoding_enabled),
+            });
+        }
+
+        // E6: GPU acceleration
+        if self.report.runtime.has_gpu && self.has_local_provider() {
+            recs.push(ButlerRecommendation {
+                category: OptimizationCategory::Efficiency,
+                priority: RecommendationPriority::Medium,
+                title: "Leverage detected GPU for local inference".into(),
+                description: "A GPU was detected. Ensure your local LLM provider is configured \
+                    to use GPU acceleration for 5-20x faster inference.".into(),
+                action: "For Ollama: set `OLLAMA_NUM_GPU=-1` (all layers on GPU). \
+                    For LM Studio: enable GPU offloading in model settings.".into(),
+                feature_flag: None,
+                already_enabled: false,
+            });
+        }
+    }
+
+    // --- Quality ---
+
+    fn check_quality(&self, recs: &mut Vec<ButlerRecommendation>) {
+        // Q1: Guardrails
+        recs.push(ButlerRecommendation {
+            category: OptimizationCategory::Quality,
+            priority: RecommendationPriority::High,
+            title: "Enable guardrail pipeline".into(),
+            description: "The guardrail pipeline validates inputs and outputs through multiple \
+                safety layers (toxicity, bias, PII, custom rules), ensuring response quality.".into(),
+            action: "Create a `GuardrailPipeline` with your desired guards and wire it \
+                into your request flow.".into(),
+            feature_flag: Some("security".into()),
+            already_enabled: self.is_enabled(|c| c.guardrails_enabled),
+        });
+
+        // Q2: RAG
+        recs.push(ButlerRecommendation {
+            category: OptimizationCategory::Quality,
+            priority: RecommendationPriority::High,
+            title: "Enable RAG for factual accuracy".into(),
+            description: "Retrieval-Augmented Generation grounds responses in your documents, \
+                dramatically reducing hallucination for factual queries.".into(),
+            action: "Enable the `rag` feature and configure a vector database backend \
+                (SQLite, Qdrant, etc.) with your documents.".into(),
+            feature_flag: Some("rag".into()),
+            already_enabled: self.is_enabled(|c| c.rag_enabled),
+        });
+
+        // Q3: Route complex to cloud (local + cloud)
+        if self.has_local_provider() && self.has_cloud_provider() {
+            recs.push(ButlerRecommendation {
+                category: OptimizationCategory::Quality,
+                priority: RecommendationPriority::Medium,
+                title: "Route complex tasks to cloud models".into(),
+                description: "You have both local and cloud providers. Route complex tasks \
+                    (multi-step reasoning, code generation) to cloud models for higher \
+                    quality, while using local models for simple tasks.".into(),
+                action: "Use `RoutingPipeline::with_tiered_models()` to assign models to \
+                    Premium/Standard/Economy tiers.".into(),
+                feature_flag: None,
+                already_enabled: self.is_enabled(|c| c.advanced_routing_enabled),
+            });
+        }
+
+        // Q4: Eval suite
+        if !self.report.llm_providers.is_empty() {
+            recs.push(ButlerRecommendation {
+                category: OptimizationCategory::Quality,
+                priority: RecommendationPriority::Medium,
+                title: "Run eval-suite to measure model quality".into(),
+                description: "The eval-suite benchmarks models on standardised tasks (HumanEval, \
+                    MMLU, GSM8K), giving you data-driven model selection instead of guessing.".into(),
+                action: "Enable `eval-suite` feature and run `BenchmarkRunner` with your \
+                    available models.".into(),
+                feature_flag: Some("eval-suite".into()),
+                already_enabled: self.is_enabled(|c| c.eval_suite_used),
+            });
+        }
+
+        // Q5: HITL
+        recs.push(ButlerRecommendation {
+            category: OptimizationCategory::Quality,
+            priority: RecommendationPriority::Low,
+            title: "Add human-in-the-loop approval for critical actions".into(),
+            description: "HITL approval gates let humans review and approve agent actions \
+                before execution, preventing costly mistakes in high-stakes scenarios.".into(),
+            action: "Enable `hitl` feature and add `ApprovalGate` to critical tool calls.".into(),
+            feature_flag: Some("hitl".into()),
+            already_enabled: self.is_enabled(|c| c.hitl_enabled),
+        });
+
+        // Q6: Prompt signatures
+        recs.push(ButlerRecommendation {
+            category: OptimizationCategory::Quality,
+            priority: RecommendationPriority::Low,
+            title: "Use DSPy-style prompt optimisation".into(),
+            description: "Prompt signatures with GEPA/MIPROv2 optimisers automatically tune \
+                prompts for your specific use case, often improving accuracy 10-30%.".into(),
+            action: "Enable `prompt-signatures` feature and define `PromptSignature` for \
+                your main workflows.".into(),
+            feature_flag: Some("prompt-signatures".into()),
+            already_enabled: self.has_feature("prompt-signatures"),
+        });
+    }
+
+    // --- Cost ---
+
+    fn check_cost(&self, recs: &mut Vec<ButlerRecommendation>) {
+        // C1: Local models for simple tasks
+        if self.has_local_provider() && self.has_cloud_provider() {
+            recs.push(ButlerRecommendation {
+                category: OptimizationCategory::Cost,
+                priority: RecommendationPriority::High,
+                title: "Route simple tasks to local models".into(),
+                description: "You have both local and cloud providers. Routing simple tasks \
+                    (summarisation, formatting, classification) to local models saves \
+                    significant API costs with minimal quality loss.".into(),
+                action: "Use `RoutingPreferences` or `RoutingPipeline::with_tiered_models()` \
+                    to direct simple tasks to Ollama/LM Studio.".into(),
+                feature_flag: None,
+                already_enabled: self.is_enabled(|c| c.advanced_routing_enabled),
+            });
+        }
+
+        // C2: Budget limits
+        if self.has_cloud_provider() {
+            recs.push(ButlerRecommendation {
+                category: OptimizationCategory::Cost,
+                priority: RecommendationPriority::High,
+                title: "Configure token/cost budget limits".into(),
+                description: "Cloud API calls can be expensive. Token budget limits prevent \
+                    runaway costs from loops or verbose prompts.".into(),
+                action: "Use `TokenBudget` or `BudgetConfig` to set daily/monthly limits.".into(),
+                feature_flag: None,
+                already_enabled: self.is_enabled(|c| c.budget_limits_set),
+            });
+        }
+
+        // C3: Cost tracking
+        if self.has_cloud_provider() {
+            recs.push(ButlerRecommendation {
+                category: OptimizationCategory::Cost,
+                priority: RecommendationPriority::Medium,
+                title: "Enable per-request cost tracking".into(),
+                description: "Per-request cost tracking lets you identify expensive queries \
+                    and optimise them. Combined with OTel, it enables cost attribution.".into(),
+                action: "Enable `CostTracker` and wire it into your request pipeline.".into(),
+                feature_flag: None,
+                already_enabled: self.is_enabled(|c| c.otel_enabled),
+            });
+        }
+
+        // C4: Benchmark cost-effectiveness
+        if self.has_cloud_provider() {
+            recs.push(ButlerRecommendation {
+                category: OptimizationCategory::Cost,
+                priority: RecommendationPriority::Medium,
+                title: "Benchmark cost-effectiveness with eval-suite".into(),
+                description: "The eval-suite ComparisonMatrix calculates cost-effectiveness \
+                    scores per model. Find the cheapest model that meets your quality bar.".into(),
+                action: "Run `ModelComparator` with your models to get cost-effectiveness \
+                    rankings, then use `BanditBootstrapper` to warm-start routing.".into(),
+                feature_flag: Some("eval-suite".into()),
+                already_enabled: self.is_enabled(|c| c.eval_suite_used),
+            });
+        }
+
+        // C5: Cache TTL
+        if self.is_enabled(|c| c.caching_enabled) {
+            recs.push(ButlerRecommendation {
+                category: OptimizationCategory::Cost,
+                priority: RecommendationPriority::Low,
+                title: "Extend cache TTL for repetitive workloads".into(),
+                description: "If your workload has many similar queries, extending cache TTL \
+                    maximises hit rate and reduces API calls.".into(),
+                action: "Increase `CacheConfig.ttl_seconds` for workloads with stable answers.".into(),
+                feature_flag: None,
+                already_enabled: false,
+            });
+        }
+    }
+
+    // --- Security ---
+
+    fn check_security(&self, recs: &mut Vec<ButlerRecommendation>) {
+        // S1: PII detection (Critical)
+        recs.push(ButlerRecommendation {
+            category: OptimizationCategory::Security,
+            priority: RecommendationPriority::Critical,
+            title: "Enable PII detection".into(),
+            description: "PII detection identifies and redacts personal information (emails, \
+                phones, SSNs, credit cards) before sending data to LLM providers. Essential \
+                for compliance (GDPR, HIPAA).".into(),
+            action: "Enable `security` feature and add `PiiGuard` to your \
+                `GuardrailPipeline`.".into(),
+            feature_flag: Some("security".into()),
+            already_enabled: self.is_enabled(|c| c.pii_detection_enabled),
+        });
+
+        // S2: RBAC
+        recs.push(ButlerRecommendation {
+            category: OptimizationCategory::Security,
+            priority: RecommendationPriority::High,
+            title: "Configure role-based access control".into(),
+            description: "RBAC restricts which users can access which tools, models, and \
+                capabilities. Prevents unauthorised use in multi-user deployments.".into(),
+            action: "Configure `AccessControl` with roles and permissions for your users.".into(),
+            feature_flag: Some("security".into()),
+            already_enabled: self.is_enabled(|c| c.access_control_enabled),
+        });
+
+        // S3: Content encryption (if RAG active)
+        if self.is_enabled(|c| c.rag_enabled) {
+            recs.push(ButlerRecommendation {
+                category: OptimizationCategory::Security,
+                priority: RecommendationPriority::High,
+                title: "Enable AES-256-GCM content encryption".into(),
+                description: "RAG stores document chunks that may contain sensitive data. \
+                    AES-256-GCM encryption protects data at rest.".into(),
+                action: "Enable content encryption in your RAG configuration.".into(),
+                feature_flag: Some("rag".into()),
+                already_enabled: self.is_enabled(|c| c.content_encryption_enabled),
+            });
+        }
+
+        // S4: Audit logging
+        recs.push(ButlerRecommendation {
+            category: OptimizationCategory::Security,
+            priority: RecommendationPriority::Medium,
+            title: "Enable security audit logging".into(),
+            description: "Audit logs record all security-relevant events (access attempts, \
+                guardrail triggers, tool invocations) for compliance and forensics.".into(),
+            action: "Enable `ServerAuditLog` in your server configuration.".into(),
+            feature_flag: None,
+            already_enabled: self.is_enabled(|c| c.audit_logging_enabled),
+        });
+
+        // S5: Rate limiting
+        recs.push(ButlerRecommendation {
+            category: OptimizationCategory::Security,
+            priority: RecommendationPriority::Medium,
+            title: "Enable request rate limiting".into(),
+            description: "Rate limiting prevents abuse and protects against denial-of-service. \
+                Essential for any internet-facing deployment.".into(),
+            action: "Configure `ServerRateLimiter` with appropriate request-per-second limits.".into(),
+            feature_flag: None,
+            already_enabled: self.is_enabled(|c| c.rate_limiting_enabled),
+        });
+
+        // S6: Input sanitisation
+        recs.push(ButlerRecommendation {
+            category: OptimizationCategory::Security,
+            priority: RecommendationPriority::High,
+            title: "Enable input sanitisation guards".into(),
+            description: "Input sanitisation strips control characters, enforces length limits, \
+                and detects prompt injection attempts before they reach the model.".into(),
+            action: "Add `InjectionGuard` and `SanitizationGuard` to your \
+                `GuardrailPipeline`.".into(),
+            feature_flag: Some("security".into()),
+            already_enabled: self.is_enabled(|c| c.guardrails_enabled),
+        });
+    }
+
+    // --- Scalability ---
+
+    fn check_scalability(&self, recs: &mut Vec<ButlerRecommendation>) {
+        // SC1: Distributed computing
+        if self.report.runtime.cpus >= 8 {
+            recs.push(ButlerRecommendation {
+                category: OptimizationCategory::Scalability,
+                priority: RecommendationPriority::Medium,
+                title: "Enable distributed computing".into(),
+                description: format!(
+                    "You have {} CPUs. Distributed computing with CRDTs and DHT enables \
+                     horizontal scaling across multiple nodes for heavy workloads.",
+                    self.report.runtime.cpus
+                ),
+                action: "Enable `distributed` feature and configure peer discovery.".into(),
+                feature_flag: Some("distributed".into()),
+                already_enabled: self.is_enabled(|c| c.distributed_enabled),
+            });
+        }
+
+        // SC2: Memory persistence
+        recs.push(ButlerRecommendation {
+            category: OptimizationCategory::Scalability,
+            priority: RecommendationPriority::High,
+            title: "Enable memory persistence".into(),
+            description: "Memory persistence saves conversation history, learned facts, and \
+                routing state across restarts. Essential for production deployments.".into(),
+            action: "Configure `AutoPersistenceConfig` with a storage path for your \
+                `AdvancedMemory` store.".into(),
+            feature_flag: Some("advanced-memory".into()),
+            already_enabled: self.is_enabled(|c| c.memory_persistence_enabled),
+        });
+
+        // SC3: QUIC networking (Docker + many CPUs)
+        if self.report.runtime.has_docker && self.report.runtime.cpus >= 4 {
+            recs.push(ButlerRecommendation {
+                category: OptimizationCategory::Scalability,
+                priority: RecommendationPriority::Low,
+                title: "Set up QUIC-based distributed networking".into(),
+                description: "Docker is available and you have enough CPUs. QUIC/TLS 1.3 \
+                    networking enables fast, secure inter-node communication for \
+                    distributed agent deployments.".into(),
+                action: "Enable `distributed-network` feature and configure `NetworkNode`.".into(),
+                feature_flag: Some("distributed-network".into()),
+                already_enabled: self.is_enabled(|c| c.distributed_enabled),
+            });
+        }
+
+        // SC4: Container sandboxing
+        if self.report.runtime.has_docker {
+            recs.push(ButlerRecommendation {
+                category: OptimizationCategory::Scalability,
+                priority: RecommendationPriority::Low,
+                title: "Enable container-based execution sandboxing".into(),
+                description: "Docker was detected. Container sandboxing isolates agent code \
+                    execution in secure containers, preventing damage to the host system.".into(),
+                action: "Enable `containers` feature and configure `ContainerSandbox`.".into(),
+                feature_flag: Some("containers".into()),
+                already_enabled: self.has_feature("containers"),
+            });
+        }
+    }
+
+    // --- Observability ---
+
+    fn check_observability(&self, recs: &mut Vec<ButlerRecommendation>) {
+        // O1: OTel tracing
+        recs.push(ButlerRecommendation {
+            category: OptimizationCategory::Observability,
+            priority: RecommendationPriority::High,
+            title: "Enable OpenTelemetry tracing".into(),
+            description: "OTel tracing provides distributed request tracing, GenAI semantic \
+                conventions, and cost attribution. Essential for debugging and monitoring.".into(),
+            action: "Configure `OpenTelemetryIntegration` with your OTel collector endpoint.".into(),
+            feature_flag: None,
+            already_enabled: self.is_enabled(|c| c.otel_enabled),
+        });
+
+        // O2: Metrics logging
+        recs.push(ButlerRecommendation {
+            category: OptimizationCategory::Observability,
+            priority: RecommendationPriority::Medium,
+            title: "Enable Prometheus metrics exposition".into(),
+            description: "Prometheus metrics expose request counts, latencies, error rates, \
+                and cache hit ratios for operational dashboards and alerting.".into(),
+            action: "Enable the `/metrics` endpoint on your HTTP server configuration.".into(),
+            feature_flag: None,
+            already_enabled: false,
+        });
+
+        // O3: DevTools
+        recs.push(ButlerRecommendation {
+            category: OptimizationCategory::Observability,
+            priority: RecommendationPriority::Low,
+            title: "Enable agent debugging devtools".into(),
+            description: "DevTools provide a debugger, profiler, and replay system for agent \
+                executions, making it easy to diagnose issues and optimise performance.".into(),
+            action: "Enable `devtools` feature and use `AgentDebugger` during development.".into(),
+            feature_flag: Some("devtools".into()),
+            already_enabled: self.has_feature("devtools"),
+        });
+    }
+
+    fn compute_summary(recs: &[ButlerRecommendation]) -> AdvisorSummary {
+        let total = recs.len();
+        let already_enabled = recs.iter().filter(|r| r.already_enabled).count();
+        let mut by_category: HashMap<OptimizationCategory, usize> = HashMap::new();
+        let mut by_priority: HashMap<RecommendationPriority, usize> = HashMap::new();
+        let mut top_priority: Option<RecommendationPriority> = None;
+
+        for rec in recs {
+            *by_category.entry(rec.category).or_insert(0) += 1;
+            *by_priority.entry(rec.priority).or_insert(0) += 1;
+            if !rec.already_enabled {
+                match top_priority {
+                    None => top_priority = Some(rec.priority),
+                    Some(current) if rec.priority > current => top_priority = Some(rec.priority),
+                    _ => {}
+                }
+            }
+        }
+
+        AdvisorSummary { total, already_enabled, by_category, by_priority, top_priority }
+    }
+}
+
+// Add advise methods to Butler
+impl Butler {
+    /// Generate optimization recommendations based on an environment report.
+    ///
+    /// Assumes no features are currently enabled (use `advise_with_config` for
+    /// more precise recommendations).
+    pub fn advise(&self, report: &EnvironmentReport) -> AdvisorReport {
+        ButlerAdvisor::new(report).analyze()
+    }
+
+    /// Generate optimization recommendations with knowledge of current configuration.
+    ///
+    /// Produces more precise recommendations by marking features that are
+    /// already enabled as `already_enabled = true`.
+    pub fn advise_with_config(
+        &self,
+        report: &EnvironmentReport,
+        config: &AdvisorConfig,
+    ) -> AdvisorReport {
+        ButlerAdvisor::with_config(report, config).analyze()
+    }
+}
+
+// =============================================================================
 // Helpers
 // =============================================================================
 
@@ -1814,6 +2531,278 @@ mod tests {
         let (stt, tts) = butler.suggest_speech_config();
         assert!(stt.is_none());
         assert_eq!(tts, Some("coqui".to_string()));
+    }
+
+    // ==========================================
+    // Advisor tests
+    // ==========================================
+
+    fn make_test_report(providers: Vec<DetectedProvider>, has_gpu: bool, has_docker: bool, cpus: usize) -> EnvironmentReport {
+        EnvironmentReport {
+            llm_providers: providers,
+            project_type: None,
+            vcs: None,
+            runtime: RuntimeInfo {
+                os: "test".to_string(),
+                arch: "x86_64".to_string(),
+                cpus,
+                has_gpu,
+                has_docker,
+                has_browser: false,
+            },
+            capabilities: Vec::new(),
+            suggested_agent_profile: "research-agent".to_string(),
+            suggested_mode: OperationMode::Assistant,
+        }
+    }
+
+    fn make_ollama_provider() -> DetectedProvider {
+        DetectedProvider {
+            name: "Ollama".to_string(),
+            provider_type: AiProvider::Ollama,
+            url: "http://localhost:11434".to_string(),
+            available_models: vec!["llama3".to_string()],
+        }
+    }
+
+    fn make_openai_provider() -> DetectedProvider {
+        DetectedProvider {
+            name: "OpenAI".to_string(),
+            provider_type: AiProvider::OpenAI,
+            url: "https://api.openai.com".to_string(),
+            available_models: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn test_optimization_category_display() {
+        assert_eq!(OptimizationCategory::Efficiency.to_string(), "efficiency");
+        assert_eq!(OptimizationCategory::Quality.to_string(), "quality");
+        assert_eq!(OptimizationCategory::Cost.to_string(), "cost");
+        assert_eq!(OptimizationCategory::Security.to_string(), "security");
+        assert_eq!(OptimizationCategory::Scalability.to_string(), "scalability");
+        assert_eq!(OptimizationCategory::Observability.to_string(), "observability");
+    }
+
+    #[test]
+    fn test_recommendation_priority_ordering() {
+        assert!(RecommendationPriority::Low < RecommendationPriority::Medium);
+        assert!(RecommendationPriority::Medium < RecommendationPriority::High);
+        assert!(RecommendationPriority::High < RecommendationPriority::Critical);
+    }
+
+    #[test]
+    fn test_recommendation_priority_display() {
+        assert_eq!(RecommendationPriority::Low.to_string(), "low");
+        assert_eq!(RecommendationPriority::Medium.to_string(), "medium");
+        assert_eq!(RecommendationPriority::High.to_string(), "high");
+        assert_eq!(RecommendationPriority::Critical.to_string(), "critical");
+    }
+
+    #[test]
+    fn test_advisor_report_pending() {
+        let report = make_test_report(vec![], false, false, 4);
+        let config = AdvisorConfig {
+            guardrails_enabled: true,
+            pii_detection_enabled: true,
+            ..Default::default()
+        };
+        let advisor = ButlerAdvisor::with_config(&report, &config);
+        let result = advisor.analyze();
+
+        let pending = result.pending();
+        // Pending items should NOT include those marked already_enabled
+        for r in &pending {
+            assert!(!r.already_enabled);
+        }
+        // There should be some enabled ones
+        let enabled_count = result.recommendations.iter().filter(|r| r.already_enabled).count();
+        assert!(enabled_count >= 2); // guardrails + PII
+    }
+
+    #[test]
+    fn test_advisor_report_by_category() {
+        let report = make_test_report(vec![], false, false, 4);
+        let result = ButlerAdvisor::new(&report).analyze();
+
+        let security_recs = result.by_category(OptimizationCategory::Security);
+        assert!(!security_recs.is_empty());
+        for r in &security_recs {
+            assert_eq!(r.category, OptimizationCategory::Security);
+        }
+    }
+
+    #[test]
+    fn test_advisor_report_by_min_priority() {
+        let report = make_test_report(vec![], false, false, 4);
+        let result = ButlerAdvisor::new(&report).analyze();
+
+        let high_plus = result.by_min_priority(RecommendationPriority::High);
+        for r in &high_plus {
+            assert!(r.priority >= RecommendationPriority::High);
+        }
+        // PII detection is Critical, so at least 1
+        assert!(!high_plus.is_empty());
+    }
+
+    #[test]
+    fn test_advisor_empty_environment() {
+        let report = make_test_report(vec![], false, false, 2);
+        let result = ButlerAdvisor::new(&report).analyze();
+
+        // Should still generate baseline recs (caching, guardrails, PII, etc.)
+        assert!(result.recommendations.len() >= 10);
+        assert!(result.summary.total >= 10);
+    }
+
+    #[test]
+    fn test_advisor_all_enabled_config() {
+        let report = make_test_report(vec![make_ollama_provider(), make_openai_provider()], true, true, 16);
+        let config = AdvisorConfig {
+            caching_enabled: true,
+            rag_enabled: true,
+            guardrails_enabled: true,
+            pii_detection_enabled: true,
+            access_control_enabled: true,
+            audit_logging_enabled: true,
+            otel_enabled: true,
+            memory_persistence_enabled: true,
+            advanced_routing_enabled: true,
+            budget_limits_set: true,
+            rate_limiting_enabled: true,
+            content_encryption_enabled: true,
+            eval_suite_used: true,
+            distributed_enabled: true,
+            constrained_decoding_enabled: true,
+            hitl_enabled: true,
+            active_features: vec!["prompt-signatures".into(), "containers".into(), "devtools".into()],
+        };
+        let result = ButlerAdvisor::with_config(&report, &config).analyze();
+
+        // Most should be already_enabled
+        assert!(result.summary.already_enabled > result.summary.total / 2);
+    }
+
+    #[test]
+    fn test_advisor_multi_provider_routing() {
+        let report = make_test_report(
+            vec![make_ollama_provider(), make_openai_provider()],
+            false, false, 4,
+        );
+        let result = ButlerAdvisor::new(&report).analyze();
+
+        let routing_recs: Vec<_> = result.recommendations.iter()
+            .filter(|r| r.title.contains("bandit"))
+            .collect();
+        assert_eq!(routing_recs.len(), 1);
+        assert!(!routing_recs[0].already_enabled);
+    }
+
+    #[test]
+    fn test_advisor_single_provider_no_routing() {
+        let report = make_test_report(vec![make_ollama_provider()], false, false, 4);
+        let result = ButlerAdvisor::new(&report).analyze();
+
+        let routing_recs: Vec<_> = result.recommendations.iter()
+            .filter(|r| r.title.contains("bandit"))
+            .collect();
+        assert!(routing_recs.is_empty());
+    }
+
+    #[test]
+    fn test_advisor_local_provider_constrained_decoding() {
+        let report = make_test_report(vec![make_ollama_provider()], false, false, 4);
+        let result = ButlerAdvisor::new(&report).analyze();
+
+        let cd_recs: Vec<_> = result.recommendations.iter()
+            .filter(|r| r.title.contains("constrained decoding"))
+            .collect();
+        assert_eq!(cd_recs.len(), 1);
+    }
+
+    #[test]
+    fn test_advisor_gpu_with_local_provider() {
+        let report = make_test_report(vec![make_ollama_provider()], true, false, 4);
+        let result = ButlerAdvisor::new(&report).analyze();
+
+        let gpu_recs: Vec<_> = result.recommendations.iter()
+            .filter(|r| r.title.contains("GPU"))
+            .collect();
+        assert_eq!(gpu_recs.len(), 1);
+    }
+
+    #[test]
+    fn test_advisor_gpu_without_local_no_rec() {
+        let report = make_test_report(vec![make_openai_provider()], true, false, 4);
+        let result = ButlerAdvisor::new(&report).analyze();
+
+        let gpu_recs: Vec<_> = result.recommendations.iter()
+            .filter(|r| r.title.contains("GPU"))
+            .collect();
+        assert!(gpu_recs.is_empty());
+    }
+
+    #[test]
+    fn test_advisor_docker_suggests_containers() {
+        let report = make_test_report(vec![], false, true, 4);
+        let result = ButlerAdvisor::new(&report).analyze();
+
+        let container_recs: Vec<_> = result.recommendations.iter()
+            .filter(|r| r.title.contains("container"))
+            .collect();
+        assert!(!container_recs.is_empty());
+    }
+
+    #[test]
+    fn test_advisor_cloud_suggests_budget() {
+        let report = make_test_report(vec![make_openai_provider()], false, false, 4);
+        let result = ButlerAdvisor::new(&report).analyze();
+
+        let budget_recs: Vec<_> = result.recommendations.iter()
+            .filter(|r| r.title.contains("budget"))
+            .collect();
+        assert!(!budget_recs.is_empty());
+    }
+
+    #[test]
+    fn test_advisor_summary_stats_correct() {
+        let report = make_test_report(vec![make_ollama_provider(), make_openai_provider()], true, true, 16);
+        let result = ButlerAdvisor::new(&report).analyze();
+
+        assert_eq!(result.summary.total, result.recommendations.len());
+        assert_eq!(
+            result.summary.already_enabled,
+            result.recommendations.iter().filter(|r| r.already_enabled).count()
+        );
+
+        let cat_total: usize = result.summary.by_category.values().sum();
+        assert_eq!(cat_total, result.summary.total);
+
+        let pri_total: usize = result.summary.by_priority.values().sum();
+        assert_eq!(pri_total, result.summary.total);
+    }
+
+    #[test]
+    fn test_advisor_sorted_by_priority() {
+        let report = make_test_report(vec![make_ollama_provider(), make_openai_provider()], true, true, 16);
+        let result = ButlerAdvisor::new(&report).analyze();
+
+        for window in result.recommendations.windows(2) {
+            assert!(window[0].priority >= window[1].priority);
+        }
+    }
+
+    #[test]
+    fn test_butler_advise_method() {
+        let butler = Butler {
+            detectors: vec![],
+            cache: HashMap::new(),
+        };
+        let report = make_test_report(vec![], false, false, 4);
+        let result = butler.advise(&report);
+
+        assert!(!result.recommendations.is_empty());
+        assert!(result.summary.total > 0);
     }
 
     #[test]

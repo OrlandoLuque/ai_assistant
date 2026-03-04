@@ -551,6 +551,11 @@ pub mod autonomous_loop;
 pub mod browser_tools;
 #[cfg(feature = "butler")]
 pub mod butler;
+#[cfg(feature = "butler")]
+pub use butler::{
+    AdvisorConfig, AdvisorReport, AdvisorSummary, ButlerAdvisor, ButlerRecommendation,
+    OptimizationCategory, RecommendationPriority,
+};
 #[cfg(feature = "distributed-agents")]
 pub mod distributed_agents;
 #[cfg(feature = "autonomous")]

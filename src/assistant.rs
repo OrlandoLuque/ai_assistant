@@ -3298,6 +3298,39 @@ impl AiAssistant {
         Ok(())
     }
 
+    /// Run butler environment scan and produce an optimization advisor report.
+    ///
+    /// Scans the environment, then generates recommendations for improving
+    /// efficiency, quality, cost, security, scalability, and observability.
+    #[cfg(feature = "butler")]
+    pub fn butler_advise(&mut self) -> Option<crate::butler::AdvisorReport> {
+        if self.butler.is_none() {
+            self.butler = Some(Butler::new());
+        }
+        self.butler.as_mut().map(|b| {
+            let report = b.scan();
+            b.advise(&report)
+        })
+    }
+
+    /// Run butler advisor with knowledge of current feature configuration.
+    ///
+    /// Produces more accurate recommendations by knowing which features
+    /// the user has already enabled.
+    #[cfg(feature = "butler")]
+    pub fn butler_advise_with_config(
+        &mut self,
+        advisor_config: &crate::butler::AdvisorConfig,
+    ) -> Option<crate::butler::AdvisorReport> {
+        if self.butler.is_none() {
+            self.butler = Some(Butler::new());
+        }
+        self.butler.as_mut().map(|b| {
+            let report = b.scan();
+            b.advise_with_config(&report, advisor_config)
+        })
+    }
+
     // === Scheduler ===
 
     /// Initialize the scheduler.

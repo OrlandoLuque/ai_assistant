@@ -6,7 +6,7 @@ The project has two testing layers:
 
 | Layer | Tests | Run Command |
 |-------|-------|-------------|
-| Unit tests (`#[test]`) | 6,401 | `cargo test --lib --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite"` |
+| Unit tests (`#[test]`) | 6,417 | `cargo test --lib --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite"` |
 | Integration tests | 38 | `cargo test --test integration_tests --features full` |
 | Test harness (CLI) | ~436 | `cargo run --bin ai_test_harness -- --all` (sin P2P) |
 | Distributed networking tests | 115 | `cargo test --features "full,distributed-network"` |
@@ -15,7 +15,7 @@ The project has two testing layers:
 | Test harness P2P categories | 16 | `cargo run --bin ai_test_harness --features "full,p2p" -- --category=p2p_nat` |
 | Benchmarks | 42 | `cargo bench --bench core_benchmarks --features full` |
 
-**Total: 6,401 tests** (verified with `cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite" --lib`)
+**Total: 6,417 tests** (verified with `cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite" --lib`)
 
 ## Quick Start
 
@@ -108,7 +108,7 @@ Unit tests live inside each source file in `crates/ai_assistant/src/` using `#[c
 - `agent_policy.rs` - AgentPolicy builder, internet modes, risk levels, command validation (12 tests)
 - `scheduler.rs` - CronSchedule parser, ScheduledJob, Scheduler, job lifecycle (16 tests)
 - `trigger_system.rs` - TriggerManager, conditions (Manual/Cron/FileChange/FeedUpdate), cooldowns, max-fires (20 tests)
-- `butler.rs` - Real detectors: Ollama/LM Studio (HTTP), GPU (nvidia-smi), Docker, Browser, Network (18 tests)
+- `butler.rs` - Real detectors: Ollama/LM Studio (HTTP), GPU (nvidia-smi), Docker, Browser, Network; ButlerAdvisor optimization advisory: 30 recommendations across 6 categories (Efficiency, Quality, Cost, Security, Scalability, Observability), conditional recommendations, filtering, priority sorting (36 tests)
 - `os_tools.rs` - OS operations with sandbox validation (11 tests)
 - `browser_tools.rs` - Real CDP via WebSocket, Chrome process management, base64 encoder (19 tests)
 - `distributed_agents.rs` - Task distribution, node management, heartbeats, MapReduce (17 tests)
@@ -369,3 +369,4 @@ The harness exits with code 1 if any test fails, making it suitable for CI pipel
 | v26 | 6,094 | +33 | 2026-03-01 |
 | v27 | 6,316 | +222 | 2026-03-04 |
 | v28 | 6,401 | +85 | 2026-03-04 |
+| v28+butler-advisor | 6,417 | +16 | 2026-03-04 |
