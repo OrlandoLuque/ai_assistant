@@ -51,9 +51,6 @@
     - feature_matrix.html                                 (v29: v23 — Code hygiene: 15 println!→log macros, 4 unused_assignments eliminated, 1 unused import removed. 5963 tests, 285 source files, 51 examples, 42 benchmarks, 0 warnings)
     - feature_matrix.html                                 (v30: v24 — format!→to_string() in 10 files, 100% module doc coverage, lib.rs clippy audit. 5963 tests, 285 source files, 51 examples, 42 benchmarks, 0 warnings)
     - feature_matrix.html                                 (v31: v25 — New eval-suite feature: benchmark runner, multi-model comparison, ablation studies, subtask analysis, report generation. 6061 tests, 293 source files, 51 examples, 42 benchmarks, 0 warnings)
-    - feature_matrix.html                                 (v32: v26 — eval-suite config search engine, per-subtask model routing, cross-feature integration tests. 6094 tests.)
-    - feature_matrix.html                                 (v33: v27 — Advanced Routing System: Multi-Armed Bandit + NFA/DFA pipeline + MCP runtime tools + distributed sharing + zero-config defaults. 6316 tests, 0 warnings)
-    - feature_matrix.html                                 (v34: v28 — Routing enhancements: RewardPolicy (composite reward), RoutingPreferences, ArmVisibility (private arms), BanditBootstrapper, RoutingContext, FeatureImportance. 6401 tests, 0 warnings)
 -->
 <html lang="es">
 <head>
@@ -757,7 +754,7 @@
 <body>
 
 <h1>AI Assistant &mdash; Matriz Casos de Uso vs Tecnolog&iacute;as</h1>
-<p class="subtitle">v28 (2026-03-04) &mdash; 6401 tests | 42 benchmarks | 51 examples | 285 source files | 0 warnings &mdash; Haz clic en cualquier celda para editarla.</p>
+<p class="subtitle">v27 (2026-02-28) &mdash; 5963 tests | 42 benchmarks | 51 examples | 285 source files | 0 warnings &mdash; Haz clic en cualquier celda para editarla.</p>
 
 <div class="legend">
   <div class="legend-item"><div class="legend-dot" style="background:var(--core)"></div>Core (siempre activo)</div>
@@ -1004,9 +1001,6 @@
     <li><code>feature_matrix.html</code> &mdash; v29: v23 &mdash; Code hygiene: 15 println!&rarr;log macros (agent.rs, assistant.rs), 4 #[allow(unused_assignments)] eliminated by restructuring, 1 unused import removed (p2p.rs). 5963 tests, 285 source files, 51 examples, 42 benchmarks, 0 warnings</li>
     <li><code>feature_matrix.html</code> &mdash; v30: v24 &mdash; format!&rarr;to_string() in 10 production files (13 calls), 100% module doc coverage (4 test submodule files), lib.rs clippy audit (67/67 verified active). 5963 tests, 285 source files, 51 examples, 42 benchmarks, 0 warnings</li>
     <li><code>feature_matrix.html</code> &mdash; v31: v25 &mdash; New <code>eval-suite</code> feature: benchmark runner, multi-model comparison (Welch&rsquo;s t-test, ELO), ablation studies (Cohen&rsquo;s d), per-subtask analysis, report generation. 8 new files, EvalSuiteError. 6061 tests (+98), 293 source files, 51 examples, 42 benchmarks, 0 warnings</li>
-    <li><code>feature_matrix.html</code> &mdash; v32: v26 &mdash; eval-suite config search engine (coordinate descent), per-subtask model routing, 39 cross-feature integration tests. 6094 tests (+33)</li>
-    <li><code>feature_matrix.html</code> &mdash; v33: v27 &mdash; Advanced Routing System: Multi-Armed Bandit (Thompson Sampling, UCB1, &epsilon;-greedy) + feature-matching NFA + compiled DFA (powerset construction, Hopcroft minimization). Closed-loop pipeline, NfaRuleBuilder, BanditNfaSynthesizer, export/import, NFA merge, distributed sharing, 10 MCP runtime tools, zero-config defaults. 6316 tests (+222), 0 warnings</li>
-    <li><code>feature_matrix.html</code> &mdash; v34: v28 &mdash; Routing enhancements: RewardPolicy (composite reward: quality+latency+cost), RoutingPreferences (per-query overrides), ArmVisibility (private arms), BanditBootstrapper (auto-benchmark bootstrapping), RoutingContext (contextual features), FeatureImportance (feature attribution). 6401 tests (+85), 0 warnings</li>
   </ul>
   <p><strong>Pol&iacute;tica de backups:</strong> antes de cambios significativos, crear copia con formato <code>feature_matrix_YYYY-MM-DD_HHMM_descripcion.html</code>.</p>
 
@@ -1875,14 +1869,6 @@ const GROUPS = [
         cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
         typical: ['basic_chat','rag_chat','autonomous','multi_agent'],
         notes: 'Feature flag advanced-memory. gzip-compressed memory snapshots for persistence, checksum verification on load, reduced disk footprint. advanced_memory.rs. v9.' },
-      { tech: 'Eval Suite (BenchmarkSuiteRunner, ComparisonMatrix, AblationEngine, ConfigSearchEngine)', flag: 'eval-suite',
-        cells: { basic_chat:'feature', rag_chat:'feature', kpkg:'feature', multi_user:'feature', agent_tools:'feature', autonomous:'feature', multi_agent:'feature', http_server:'feature', distributed:'feature', p2p:'feature' },
-        typical: ['basic_chat','rag_chat','agent_tools','multi_agent'],
-        notes: 'Feature flag eval-suite. Benchmark runner (HumanEval/MMLU/GSM8K), multi-model comparison (Welch t-test, ELO), ablation studies (Cohen d), per-subtask analysis, report generation, config search engine (coordinate descent with significance testing). 8 modules, ~167 tests. v25+v26.' },
-      { tech: 'Advanced Routing (BanditRouter + NFA/DFA Pipeline + MCP Tools)', flag: null,
-        cells: { basic_chat:'available', rag_chat:'available', kpkg:'available', multi_user:'available', agent_tools:'available', autonomous:'available', multi_agent:'available', http_server:'available', distributed:'available', p2p:'available' },
-        typical: ['basic_chat','rag_chat','agent_tools','autonomous','multi_agent','http_server'],
-        notes: 'Siempre compilado. Multi-Armed Bandit (Thompson Sampling, UCB1, epsilon-greedy) + feature-matching NFA + compiled DFA (powerset construction, Hopcroft minimization). Closed-loop pipeline: bandit learns → synthesize NFA → compile DFA → serve. NfaRuleBuilder, BanditNfaSynthesizer, export/import (JSON/bincode), NFA merge (union construction), distributed NFA sharing (cfg distributed), 10 MCP runtime tools, zero-config constructors (for_models, with_tiered_models). v28: RewardPolicy (composite reward: quality+latency+cost), RoutingPreferences (per-query overrides), ArmVisibility (private arms), BanditBootstrapper (auto-benchmark bootstrapping), RoutingContext (contextual features), FeatureImportance (feature attribution). advanced_routing.rs. ~307 tests. v27+v28.' },
     ]
   },
 ];

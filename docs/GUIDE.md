@@ -141,6 +141,8 @@ This guide covers every feature in the `ai_assistant` crate. Each section explai
 133. [OpenAPI Specification](#133-openapi-specification)
 134. [Server Plugin System](#134-server-plugin-system)
 135. [Server CLI Binary](#135-server-cli-binary)
+136. [Advanced Model Routing (Bandit + NFA/DFA Pipeline)](#136-advanced-model-routing-bandit--nfadfa-pipeline)
+137. [Routing Enhancements: Composite Rewards, Preferences, and Context](#137-routing-enhancements-composite-rewards-preferences-and-context)
 
 ---
 
@@ -1254,6 +1256,8 @@ let requirements = ModelRequirements::for_task(TaskType::Coding)
 
 let best = router.select_best(&available_models, &requirements);
 ```
+
+> **See also**: [Section 136 — Advanced Model Routing](#136-advanced-model-routing-bandit--nfadfa-pipeline) for the self-learning bandit + NFA/DFA routing pipeline with MCP runtime control.
 
 ---
 
@@ -7306,3 +7310,323 @@ cargo run --bin ai_assistant_server --features full -- --dry-run --config server
 ```
 
 **Feature flags**: `full`
+
+---
+
+## 136. Advanced Model Routing (Bandit + NFA/DFA Pipeline)
+
+**What**: A self-learning routing system that decides which LLM handles each query. Combines a **Multi-Armed Bandit** (continuous learner) with **NFA/DFA automata** (compiled rule engine) in a closed loop.
+
+**Why**: Different models excel at different tasks. Claude Opus is best for complex code, GPT-4 for general reasoning, a small model for simple questions. Manually configuring these rules is brittle. The bandit learns from real feedback; the NFA/DFA serves decisions instantly.
+
+### Quick Start: Zero-Config
+
+```rust
+use ai_assistant::{RoutingPipeline, PipelineConfig, QueryFeatures, ArmFeedback};
+
+// Option 1: Pure bandit — learns from scratch
+let mut pipeline = RoutingPipeline::for_models(
+    &["claude-opus", "gpt-4", "gpt-4-mini"],
+    PipelineConfig::default(),
+);
+
+// Route a query
+let features = QueryFeatures {
+    domain: Some("code".into()),
+    complexity: 0.8,
+    token_estimate: 200,
+    bool_features: Default::default(),
+};
+let outcome = pipeline.route(&features).unwrap();
+println!("Selected: {}", outcome.selected_arm);
+
+// Feed back the result
+pipeline.record_outcome(&ArmFeedback {
+    arm_id: outcome.selected_arm.clone(),
+    success: true,
+    quality: Some(0.95),
+    latency_ms: Some(1200),
+    cost: Some(0.03),
+    task_type: Some("code".into()),
+});
+// After enough feedback, the pipeline auto-synthesizes NFA→DFA
+```
+
+### Quick Start: Tiered Models
+
+```rust
+use ai_assistant::{RoutingPipeline, PipelineConfig, ModelTier};
+
+// Option 2: Pre-configured tiers — starts with NFA rules + seeds bandit
+let pipeline = RoutingPipeline::with_tiered_models(
+    &[
+        ("claude-opus", ModelTier::Premium),    // code + complex tasks
+        ("gpt-4", ModelTier::Standard),         // medium tasks
+        ("gpt-4-mini", ModelTier::Economy),     // simple + fallback
+    ],
+    PipelineConfig::default(),
+).unwrap();
+```
+
+### Custom NFA Rules
+
+```rust
+use ai_assistant::{NfaRuleBuilder, NfaSymbol, NfaDfaCompiler, RoutingPipeline, PipelineConfig};
+
+let nfa = NfaRuleBuilder::new()
+    .rule("code_hard")
+        .when(NfaSymbol::Domain("code".into()))
+        .and(NfaSymbol::ComplexityRange { low_pct: 70, high_pct: 100 })
+        .route_to("claude-opus")
+        .priority(10)
+        .done()
+    .rule("math")
+        .when(NfaSymbol::Domain("math".into()))
+        .route_to("gpt-4")
+        .priority(8)
+        .done()
+    .fallback("gpt-4-mini", 1)
+    .build()
+    .unwrap();
+
+// Compile to DFA for fast routing
+let mut dfa = NfaDfaCompiler::compile(&nfa).unwrap();
+dfa.minimize(); // Hopcroft minimization
+
+// Or use in a pipeline (combines with bandit learning)
+let pipeline = RoutingPipeline::new(
+    ai_assistant::BanditConfig::default(),
+    PipelineConfig::default(),
+).with_initial_nfa(nfa).unwrap();
+```
+
+### Bandit Strategies
+
+```rust
+use ai_assistant::{BanditRouter, BanditConfig, BanditStrategy};
+
+// Thompson Sampling (default, recommended)
+let config = BanditConfig::default();
+
+// UCB1 (deterministic, good for debugging)
+let config = BanditConfig {
+    strategy: BanditStrategy::Ucb1,
+    ..Default::default()
+};
+
+// Epsilon-Greedy (simplest)
+let config = BanditConfig {
+    strategy: BanditStrategy::EpsilonGreedy { epsilon: 0.1 },
+    ..Default::default()
+};
+```
+
+### Export, Import & Merge
+
+```rust
+use ai_assistant::{NfaRouter, merge_and_compile_nfas};
+
+// Export pipeline state
+let json = pipeline.to_json().unwrap();
+
+// Import on another node
+let restored = RoutingPipeline::from_json(&json).unwrap();
+
+// Merge two NFAs (union construction + DFA recompilation + minimization)
+let merged_dfa = merge_and_compile_nfas(&nfa_a, &nfa_b).unwrap();
+
+// Export/import individual NFA or DFA
+let nfa_json = nfa.to_json().unwrap();
+let restored_nfa = NfaRouter::from_json(&nfa_json).unwrap();
+```
+
+### MCP Runtime Control
+
+```rust
+use ai_assistant::{register_routing_tools, RoutingPipeline, PipelineConfig};
+use ai_assistant::mcp_protocol::McpServer;
+use std::sync::{Arc, Mutex};
+
+let pipeline = RoutingPipeline::for_models(&["m1", "m2"], PipelineConfig::default());
+let shared = Arc::new(Mutex::new(pipeline));
+
+let mut server = McpServer::new("my-server", "1.0");
+register_routing_tools(&mut server, shared);
+
+// Now any MCP client can call:
+//   routing.get_stats    — view bandit statistics
+//   routing.add_arm      — add a new model
+//   routing.remove_arm   — remove a model
+//   routing.warm_start   — set priors to influence routing
+//   routing.record_outcome — feed back results
+//   routing.add_rule     — add NFA rule + recompile DFA
+//   routing.force_resynthesize — force bandit→NFA→DFA
+//   routing.export/import — transfer pipeline state
+//   routing.get_config   — read current configuration
+```
+
+### Distributed Sharing (feature `distributed`)
+
+```rust
+use ai_assistant::{DistributedNfaState, NfaStateMerger};
+
+// Node A exports its NFA
+let state_a = NfaStateMerger::extract_state(&nfa_a, "node-a");
+
+// Node B exports its NFA
+let state_b = NfaStateMerger::extract_state(&nfa_b, "node-b");
+
+// Merge at coordinator
+let merged = NfaStateMerger::merge(&[state_a, state_b]).unwrap();
+```
+
+### The Closed-Loop Cycle
+
+```
+ 1. Bandit selects model (Thompson/UCB1/ε-greedy)
+ 2. Model generates response
+ 3. Feedback recorded → bandit posterior updated
+ 4. After N pulls → BanditNfaSynthesizer generates NFA
+ 5. NfaDfaCompiler compiles NFA → DFA (powerset construction)
+ 6. DFA minimized (Hopcroft algorithm)
+ 7. DFA serves fast routing until next cycle
+ 8. Goto 1
+```
+
+**Feature flags**: core (always available), `distributed` for NFA sharing
+
+---
+
+## 137. Routing Enhancements: Composite Rewards, Preferences, and Context
+
+**What**: v28 extends the bandit-based routing pipeline (section 136) with composite reward signals, per-query routing preferences, extended routing context with budget awareness, private arms for local-only models, feature importance diagnostics, and warm-start bootstrapping from evaluation results.
+
+**Why**: The original routing pipeline treated feedback as a single success/failure boolean. Real-world routing needs to balance quality, latency, and cost simultaneously. Different queries have different priorities — a critical customer-facing request should ignore cost entirely, while a batch job should minimize it. Budget-aware routing prevents overspend without manual intervention. Private arms keep proprietary fine-tunes out of distributed sharing. And bootstrapping from evaluation data eliminates the cold-start exploration period.
+
+### Composite Reward Policy
+
+Instead of treating feedback as binary (success/failure), the `RewardPolicy` computes a weighted composite score from quality, latency, and cost:
+
+```rust
+use ai_assistant::{RewardPolicy, BanditConfig};
+
+// Custom reward policy (quality + latency + cost)
+let mut config = BanditConfig::default();
+config.reward_policy = RewardPolicy {
+    quality_weight: 0.6,
+    latency_weight: 0.3,
+    cost_weight: 0.1,
+    latency_ref_ms: 3000.0,
+    cost_ref: 0.05,
+};
+
+// When feedback is recorded, the composite reward is:
+//   reward = quality_weight * quality
+//          + latency_weight * (1 - latency/latency_ref).clamp(0,1)
+//          + cost_weight * (1 - cost/cost_ref).clamp(0,1)
+// This single scalar feeds the bandit's Beta posterior update.
+```
+
+### Per-Query Routing Preferences
+
+`RoutingPreferences` lets you customize routing behavior per query without changing the pipeline configuration:
+
+```rust
+use ai_assistant::{RoutingPreferences, RoutingPipeline, QueryFeatures};
+
+// For critical queries: ignore cost entirely
+let prefs = RoutingPreferences::ignore_cost();
+let features = QueryFeatures::new("coding", 0.8, 2000);
+let outcome = pipeline.route_with_preferences(&features, &prefs)?;
+
+// For time-sensitive queries: minimize latency
+let prefs = RoutingPreferences::minimize_latency();
+
+// Exclude or prefer specific models
+let prefs = RoutingPreferences {
+    excluded_arms: vec!["gpt-4".into()],
+    preferred_arms: vec!["claude-3".into()],
+    ..Default::default()
+};
+```
+
+Preferences affect both selection-time (arm filtering and boost) and recording-time (weight overrides for the composite reward).
+
+### Extended Routing Context
+
+`RoutingContext` wraps query features with agent metadata for automatic budget-aware and tier-aware routing:
+
+```rust
+use ai_assistant::{RoutingContext, QueryFeatures, RoutingPipeline};
+
+let ctx = RoutingContext {
+    features: QueryFeatures::new("coding", 0.8, 2000),
+    rag_active: true,
+    budget_remaining: Some(0.05), // Low budget -> auto-boosts cost_weight
+    agent_tier: Some("premium".into()),
+    ..Default::default()
+};
+let outcome = pipeline.route_with_context(&ctx)?;
+
+// When budget_remaining is low, derive_preferences() automatically
+// increases cost_weight in the effective reward policy, steering the
+// bandit toward cheaper models without manual intervention.
+```
+
+### Private Arms
+
+Mark models as private to keep them out of distributed NFA/bandit sharing while still routing to them locally:
+
+```rust
+// Mark a fine-tuned model as private
+router.set_arm_private("my-finetune");
+
+// The model still participates in local routing decisions,
+// but BanditStateMerger and NfaStateMerger filter it out
+// when extracting state for distributed sharing.
+```
+
+### Feature Importance Diagnostics
+
+After the pipeline accumulates enough feedback, inspect which query dimensions drive routing decisions:
+
+```rust
+use ai_assistant::RoutingPipeline;
+
+let importance = discovery.feature_importance();
+for fi in &importance {
+    println!("{:?}: gain={:.3}, splits={}", fi.dimension, fi.total_gain, fi.split_count);
+}
+
+// Example output:
+//   Domain: gain=0.842, splits=15
+//   Complexity: gain=0.631, splits=12
+//   TokenEstimate: gain=0.204, splits=5
+//   BoolFeature("has_code"): gain=0.187, splits=3
+```
+
+### Bootstrapping from Evaluation Results (feature `eval-suite`)
+
+If you have run model comparisons via the eval-suite feature, you can bootstrap the bandit with warm-start priors to eliminate the cold-start exploration period:
+
+```rust
+#[cfg(feature = "eval-suite")]
+{
+    use ai_assistant::{BanditBootstrapper, RewardPolicy, BanditConfig, PipelineConfig};
+
+    // Convert comparison results into Beta priors
+    let priors = BanditBootstrapper::from_comparison_matrix(
+        &matrix,
+        &RewardPolicy::default(),
+    );
+
+    // Create a pipeline that starts warm -- no cold-start exploration waste
+    let pipeline = BanditBootstrapper::bootstrap_pipeline(
+        &priors,
+        BanditConfig::default(),
+        PipelineConfig::default(),
+    );
+}
+```
+
+**Feature flags**: core (always available), `eval-suite` for BanditBootstrapper, `distributed` for private arm filtering in distributed sharing

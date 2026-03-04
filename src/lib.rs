@@ -1506,6 +1506,7 @@ pub mod request_coalescing;
 pub mod request_signing;
 pub mod response_ranking;
 pub mod routing;
+pub mod advanced_routing;
 pub mod smart_suggestions;
 pub mod summarization;
 pub mod task_planning;
@@ -1555,6 +1556,28 @@ pub use memory::{
 
 pub use routing::{
     ModelCapabilityProfile, ModelRequirements, ModelRouter, RoutingDecision, TaskType,
+};
+
+pub use advanced_routing::{
+    AdaptivePerQueryRouter, AdvancedRoutingError, ArmFeedback, ArmVisibility, BanditArm,
+    BanditConfig, BanditNfaSynthesizer, BanditRouter, BanditSnapshot, BanditStrategy, BetaParams,
+    ContextSnapshot, ContextualDiscovery, ContextualObservation,
+    DfaRouter, DfaSnapshot, DfaState, DiscoveredSplit,
+    DiscoveryConfig as RoutingDiscoveryConfig, DomainSplit, EnsembleRouter,
+    EnsembleStrategy as RoutingEnsembleStrategy, FeatureDimension, FeatureImportance,
+    ModelTier, NfaDfaCompiler, NfaRouter, NfaRuleBuilder, NfaSnapshot, NfaState, NfaSymbol,
+    PipelineConfig, PipelineSnapshot, QueryFeatureExtractor, QueryFeatures, RewardPolicy,
+    RoutingContext, RoutingDag, RoutingDagNode, RoutingDagNodeType, RoutingOutcome,
+    RoutingPipeline, RoutingPreferences, RoutingVoter, SnapshotFormat, SubRouterVote,
+    merge_and_compile_nfas, register_routing_tools,
+};
+
+#[cfg(feature = "eval-suite")]
+pub use advanced_routing::{BanditBootstrapper, EvalFeedbackMapper};
+
+#[cfg(feature = "distributed")]
+pub use advanced_routing::{
+    BanditStateMerger, DistributedBanditState, DistributedNfaState, NfaStateMerger,
 };
 
 pub use cost::{

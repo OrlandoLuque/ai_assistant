@@ -1018,6 +1018,107 @@ const CATEGORIES = [
       },
     ]
   },
+  {
+    id: 'routing-tools',
+    name: 'Advanced Routing MCP Tools',
+    icon: '\uD83D\uDEE4\uFE0F',
+    feature: null,
+    featureInFull: true,
+    desc: 'MCP tools para control runtime del sistema de routing avanzado (Bandit + NFA/DFA pipeline). Registrados via register_routing_tools(). v27.',
+    items: [
+      { name: 'routing.get_stats', type: 'tool',
+        desc: 'Obtener estad\u00edsticas del bandit: arms, pulls, rewards, task types',
+        params: [
+          { name: 'task_type', type: 'string', required: false, desc: 'Filtrar por tipo de tarea (omitir para global)' }
+        ],
+        module: 'advanced_routing.rs',
+        notes: 'Devuelve: total_pulls, task_types, arms (id, pull_count, total_reward, mean_reward, alpha, beta), has_dfa, synthesis_count.'
+      },
+      { name: 'routing.add_arm', type: 'tool',
+        desc: 'A\u00f1adir un modelo al bandit router con priors opcionales',
+        params: [
+          { name: 'arm_id', type: 'string', required: true, desc: 'Identificador del modelo' },
+          { name: 'task_type', type: 'string', required: false, desc: 'Tipo de tarea (omitir para arm global)' },
+          { name: 'alpha', type: 'number', required: false, desc: 'Prior alpha inicial' },
+          { name: 'beta', type: 'number', required: false, desc: 'Prior beta inicial' }
+        ],
+        module: 'advanced_routing.rs',
+        notes: 'Si se proporcionan alpha/beta, se aplica warm-start autom\u00e1ticamente.'
+      },
+      { name: 'routing.remove_arm', type: 'tool',
+        desc: 'Eliminar un modelo del bandit router',
+        params: [
+          { name: 'arm_id', type: 'string', required: true, desc: 'Modelo a eliminar' },
+          { name: 'task_type', type: 'string', required: false, desc: 'Tipo de tarea (omitir para global)' }
+        ],
+        module: 'advanced_routing.rs',
+        notes: 'Devuelve status: "removed" o "not_found".'
+      },
+      { name: 'routing.warm_start', type: 'tool',
+        desc: 'Establecer priors alpha/beta para influir en el routing',
+        params: [
+          { name: 'arm_id', type: 'string', required: true, desc: 'Modelo' },
+          { name: 'alpha', type: 'number', required: true, desc: 'Prior alpha (mayor = m\u00e1s preferido)' },
+          { name: 'beta', type: 'number', required: true, desc: 'Prior beta (mayor = menos preferido)' },
+          { name: 'task_type', type: 'string', required: false, desc: 'Tipo de tarea (omitir para global)' }
+        ],
+        module: 'advanced_routing.rs',
+        notes: 'Manipula directamente la distribuci\u00f3n Beta posterior del arm.'
+      },
+      { name: 'routing.record_outcome', type: 'tool',
+        desc: 'Registrar feedback de un resultado para actualizar el bandit',
+        params: [
+          { name: 'arm_id', type: 'string', required: true, desc: 'Modelo utilizado' },
+          { name: 'success', type: 'boolean', required: true, desc: 'Si la respuesta fue exitosa' },
+          { name: 'quality', type: 'number', required: false, desc: 'Puntuaci\u00f3n de calidad 0.0-1.0' },
+          { name: 'task_type', type: 'string', required: false, desc: 'Tipo de tarea' },
+          { name: 'latency_ms', type: 'number', required: false, desc: 'Latencia en ms' },
+          { name: 'cost', type: 'number', required: false, desc: 'Coste de la llamada' }
+        ],
+        module: 'advanced_routing.rs',
+        notes: 'Actualiza el posterior del bandit y llama maybe_resynthesize(). Devuelve resynthesized: true/false.'
+      },
+      { name: 'routing.add_rule', type: 'tool',
+        desc: 'A\u00f1adir una regla NFA de routing y recompilar DFA',
+        params: [
+          { name: 'arm_id', type: 'string', required: true, desc: 'Modelo destino' },
+          { name: 'priority', type: 'number', required: true, desc: 'Prioridad de la regla (mayor gana)' },
+          { name: 'domain', type: 'string', required: false, desc: 'Dominio a matchear (code, math, etc.)' },
+          { name: 'min_complexity', type: 'number', required: false, desc: 'Complejidad m\u00ednima % 0-100' },
+          { name: 'max_complexity', type: 'number', required: false, desc: 'Complejidad m\u00e1xima % 0-100' },
+          { name: 'has_code', type: 'boolean', required: false, desc: 'Match queries con c\u00f3digo' }
+        ],
+        module: 'advanced_routing.rs',
+        notes: 'Crea estados NFA para las condiciones, a\u00f1ade al NFA source, recompila DFA con minimize().'
+      },
+      { name: 'routing.force_resynthesize', type: 'tool',
+        desc: 'Forzar re-s\u00edntesis inmediata bandit\u2192NFA\u2192DFA',
+        params: [],
+        module: 'advanced_routing.rs',
+        notes: 'Ejecuta BanditNfaSynthesizer + NfaDfaCompiler + minimize(). Devuelve synthesis_count y has_dfa.'
+      },
+      { name: 'routing.export', type: 'tool',
+        desc: 'Exportar estado completo del pipeline como JSON',
+        params: [],
+        module: 'advanced_routing.rs',
+        notes: 'Devuelve pipeline_json con bandit + NFA + config serializados.'
+      },
+      { name: 'routing.import', type: 'tool',
+        desc: 'Importar estado del pipeline desde JSON (hot-swap)',
+        params: [
+          { name: 'pipeline_json', type: 'string', required: true, desc: 'JSON del pipeline (de routing.export)' }
+        ],
+        module: 'advanced_routing.rs',
+        notes: 'Reemplaza el pipeline completo. Devuelve has_dfa y synthesis_count.'
+      },
+      { name: 'routing.get_config', type: 'tool',
+        desc: 'Obtener configuraci\u00f3n actual del pipeline',
+        params: [],
+        module: 'advanced_routing.rs',
+        notes: 'Devuelve: synthesis_interval, min_pulls_for_synthesis, quality_threshold, auto_minimize, synthesis_count, has_dfa, has_nfa, bandit_arms_count, bandit_task_types.'
+      },
+    ]
+  },
 ];
 
 // ============================================================

@@ -55,6 +55,8 @@ pub enum AiError {
     DevTools(DevToolsError),
     /// Evaluation benchmark suite errors
     EvalSuite(EvalSuiteError),
+    /// Advanced routing errors
+    AdvancedRouting(AdvancedRoutingError),
     /// Generic error with message
     Other(String),
 }
@@ -84,6 +86,7 @@ impl std::error::Error for AiError {
             AiError::Mcts(e) => Some(e),
             AiError::DevTools(e) => Some(e),
             AiError::EvalSuite(e) => Some(e),
+            AiError::AdvancedRouting(e) => Some(e),
             AiError::Other(_) => None,
         }
     }
@@ -114,6 +117,7 @@ impl fmt::Display for AiError {
             AiError::Mcts(e) => write!(f, "MCTS planning error: {}", e),
             AiError::DevTools(e) => write!(f, "DevTools error: {}", e),
             AiError::EvalSuite(e) => write!(f, "Eval suite error: {}", e),
+            AiError::AdvancedRouting(e) => write!(f, "Advanced routing error: {}", e),
             AiError::Other(msg) => write!(f, "{}", msg),
         }
     }
@@ -150,6 +154,7 @@ impl AiError {
             AiError::Mcts(e) => e.suggestion(),
             AiError::DevTools(e) => e.suggestion(),
             AiError::EvalSuite(e) => e.suggestion(),
+            AiError::AdvancedRouting(e) => e.suggestion(),
             AiError::Other(_) => None,
         }
     }
@@ -173,6 +178,7 @@ impl AiError {
             AiError::Mcts(e) => e.is_recoverable(),
             AiError::DevTools(_) => false,
             AiError::EvalSuite(e) => e.is_recoverable(),
+            AiError::AdvancedRouting(e) => e.is_recoverable(),
             _ => false,
         }
     }
@@ -202,6 +208,7 @@ impl AiError {
             AiError::Mcts(_) => "MCTS",
             AiError::DevTools(_) => "DEVTOOLS",
             AiError::EvalSuite(_) => "EVAL_SUITE",
+            AiError::AdvancedRouting(_) => "ADVANCED_ROUTING",
             AiError::Other(_) => "OTHER",
         }
     }
@@ -1999,6 +2006,106 @@ impl EvalSuiteError {
 impl From<EvalSuiteError> for AiError {
     fn from(e: EvalSuiteError) -> Self {
         AiError::EvalSuite(e)
+    }
+}
+
+// === Advanced Routing Errors ===
+
+/// Errors specific to the advanced routing system (bandits, NFA/DFA, DAGs, ensembles).
+#[derive(Debug)]
+pub enum AdvancedRoutingError {
+    /// Invalid routing configuration
+    InvalidConfig { field: String, reason: String },
+    /// Bandit arm not found
+    ArmNotFound { arm_id: String },
+    /// NFA/DFA compilation error
+    CompilationError { reason: String },
+    /// Cycle detected in routing DAG
+    CycleDetected,
+    /// Node not found in routing DAG
+    NodeNotFound { node_id: String },
+    /// Empty router ensemble (no sub-routers registered)
+    EmptyEnsemble,
+    /// Serialization or deserialization failed
+    SerializationFailed { format: String, reason: String },
+    /// Incompatible snapshot version
+    IncompatibleVersion { expected: u32, found: u32 },
+    /// No valid routing path found for the query
+    NoRoutingPath { query: String, reason: String },
+    /// Distributed merge conflict
+    #[cfg(feature = "distributed")]
+    MergeConflict { reason: String },
+}
+
+impl std::error::Error for AdvancedRoutingError {}
+
+impl fmt::Display for AdvancedRoutingError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AdvancedRoutingError::InvalidConfig { field, reason } => {
+                write!(f, "Invalid routing config field '{}': {}", field, reason)
+            }
+            AdvancedRoutingError::ArmNotFound { arm_id } => {
+                write!(f, "Bandit arm '{}' not found", arm_id)
+            }
+            AdvancedRoutingError::CompilationError { reason } => {
+                write!(f, "NFA/DFA compilation failed: {}", reason)
+            }
+            AdvancedRoutingError::CycleDetected => {
+                write!(f, "Cycle detected in routing DAG")
+            }
+            AdvancedRoutingError::NodeNotFound { node_id } => {
+                write!(f, "Routing DAG node '{}' not found", node_id)
+            }
+            AdvancedRoutingError::EmptyEnsemble => {
+                write!(f, "Ensemble router has no sub-routers")
+            }
+            AdvancedRoutingError::SerializationFailed { format, reason } => {
+                write!(f, "Serialization failed ({}): {}", format, reason)
+            }
+            AdvancedRoutingError::IncompatibleVersion { expected, found } => {
+                write!(f, "Incompatible snapshot version: expected {}, found {}", expected, found)
+            }
+            AdvancedRoutingError::NoRoutingPath { query, reason } => {
+                write!(f, "No routing path for query '{}': {}", query, reason)
+            }
+            #[cfg(feature = "distributed")]
+            AdvancedRoutingError::MergeConflict { reason } => {
+                write!(f, "Distributed bandit merge conflict: {}", reason)
+            }
+        }
+    }
+}
+
+impl AdvancedRoutingError {
+    pub fn suggestion(&self) -> Option<&'static str> {
+        match self {
+            AdvancedRoutingError::InvalidConfig { .. } => Some("Check the routing configuration fields and value ranges"),
+            AdvancedRoutingError::ArmNotFound { .. } => Some("Register the arm with add_arm() before selecting"),
+            AdvancedRoutingError::CompilationError { .. } => Some("Verify the NFA has valid states and transitions"),
+            AdvancedRoutingError::CycleDetected => Some("Remove cycles from the routing DAG to make it acyclic"),
+            AdvancedRoutingError::NodeNotFound { .. } => Some("Add the node with add_node() before referencing it"),
+            AdvancedRoutingError::EmptyEnsemble => Some("Add at least one voter with add_voter() before routing"),
+            AdvancedRoutingError::SerializationFailed { .. } => Some("Check that the data format matches the expected schema"),
+            AdvancedRoutingError::IncompatibleVersion { .. } => Some("Export a new snapshot from the current version"),
+            AdvancedRoutingError::NoRoutingPath { .. } => Some("Add transitions or accepting states that match the query features"),
+            #[cfg(feature = "distributed")]
+            AdvancedRoutingError::MergeConflict { .. } => Some("Ensure all nodes use compatible bandit configurations"),
+        }
+    }
+
+    pub fn is_recoverable(&self) -> bool {
+        matches!(
+            self,
+            AdvancedRoutingError::NoRoutingPath { .. }
+                | AdvancedRoutingError::ArmNotFound { .. }
+        )
+    }
+}
+
+impl From<AdvancedRoutingError> for AiError {
+    fn from(e: AdvancedRoutingError) -> Self {
+        AiError::AdvancedRouting(e)
     }
 }
 
