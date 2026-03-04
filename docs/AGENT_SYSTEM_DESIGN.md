@@ -62,6 +62,8 @@
 50. [WebSocket Chat Architecture (v10)](#50-websocket-chat-architecture-v10)
 51. [Plugin System Architecture (v10)](#51-plugin-system-architecture-v10)
 52. [Arquitectura de Feature Gating Condicional (v12)](#52-arquitectura-de-feature-gating-condicional-v12)
+53. [Advanced Routing System Architecture (v27)](#53-advanced-routing-system-architecture-v27)
+54. [Routing Enhancement Architecture (v28)](#54-routing-enhancement-architecture-v28)
 
 ---
 
@@ -8261,3 +8263,388 @@ El feature `core` no activa ningun codigo condicional — ningun modulo tiene `#
 - Consumidores que no usan cloud presets ni PostgreSQL vector DB ya no compilan esos modulos.
 - El tamano del binario con features minimos se reduce.
 - La superficie de warnings y dead-code se reduce porque el compilador ya no ve codigo que solo es relevante para features no activos.
+
+---
+
+## 53. Advanced Routing System Architecture (v27)
+
+> Fecha: 2026-03-04
+
+### Overview
+
+v27 introduces a complete advanced routing system in `src/advanced_routing.rs` that combines three complementary approaches into a unified closed-loop pipeline:
+
+1. **Multi-Armed Bandit** — continuous online learner (Thompson Sampling, UCB1, epsilon-greedy)
+2. **Feature-Matching NFA** — declarative rule engine using non-deterministic finite automata
+3. **Compiled DFA** — fast deterministic routing via powerset construction + Hopcroft minimization
+
+Plus: builder patterns, export/import, merge operations, distributed sharing, MCP runtime control, and zero-config defaults.
+
+### Component Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        RoutingPipeline                              │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────────┐  │
+│  │ BanditRouter │  │  NfaRouter   │  │       DfaRouter          │  │
+│  │              │  │  (source)    │  │  (compiled, minimized)   │  │
+│  │ - global_    │  │              │  │                          │  │
+│  │   bandit     │◄─┤  States +   │──┤  Powerset construction   │  │
+│  │ - per-task   │  │  Transitions │  │  + Hopcroft minimize     │  │
+│  │   bandits    │  │              │  │                          │  │
+│  └──────┬───────┘  └──────▲───────┘  └──────────┬───────────────┘  │
+│         │ feedback        │ synthesize           │ route()          │
+│         │                 │                      │                  │
+│  ┌──────▼───────┐  ┌──────┴───────┐             │                  │
+│  │ ArmFeedback  │  │ BanditNfa    │             │                  │
+│  │ (success,    │  │ Synthesizer  │             │                  │
+│  │  quality,    │  └──────────────┘             │                  │
+│  │  cost)       │                               │                  │
+│  └──────────────┘                               │                  │
+│                                          ┌──────▼───────┐          │
+│                                          │ QueryFeatures │          │
+│                                          │ (domain,      │          │
+│                                          │  complexity,  │          │
+│                                          │  tokens,      │          │
+│                                          │  booleans)    │          │
+│                                          └──────────────┘          │
+└─────────────────────────────────────────────────────────────────────┘
+
+External integrations:
+  ├── NfaRuleBuilder          (declarative NFA construction)
+  ├── NfaSnapshot / DfaSnapshot  (JSON/bincode serialization)
+  ├── NfaRouter::merge()      (union construction)
+  ├── merge_and_compile_nfas() (merge + compile + minimize)
+  ├── DistributedNfaState     (cfg "distributed")
+  ├── NfaStateMerger          (cfg "distributed")
+  ├── register_routing_tools() (10 MCP tools)
+  └── ModelTier + factory constructors (zero-config)
+```
+
+### Algorithms Used
+
+| Algorithm | Where | Complexity | Purpose |
+|-----------|-------|------------|---------|
+| Thompson Sampling | `BanditRouter::thompson_select` | O(arms) | Bayesian arm selection via Beta posterior sampling |
+| Jöhnk Beta sampling | `BanditRouter::sample_beta` | O(1) amortized | Sample from Beta(α,β) without external RNG dependency |
+| UCB1 | `BanditRouter::ucb1_select` | O(arms) | Deterministic arm selection via confidence bounds |
+| Epsilon-Greedy | `BanditRouter::epsilon_greedy_select` | O(arms) | Random exploration with probability ε |
+| Epsilon Closure (BFS) | `NfaRouter::epsilon_closure` | O(states + transitions) | Compute all states reachable via epsilon transitions |
+| Fixed-Point Iteration | `NfaRouter::route` | O(states² × transitions) | Follow all matching transitions until no new states |
+| Powerset Construction | `NfaDfaCompiler::compile` | O(2^N) worst, O(reachable) typical | Convert NFA to equivalent DFA |
+| Hopcroft Minimization | `DfaRouter::minimize` | O(n log n) | Reduce DFA to minimum equivalent states |
+| NFA Union Construction | `NfaRouter::merge` | O(states_a + states_b) | Combine two NFAs with state renumbering |
+| Bandit→NFA Synthesis | `BanditNfaSynthesizer::synthesize` | O(task_types × arms) | Distill bandit knowledge into NFA rules |
+| Bandit Seeding from NFA | `RoutingPipeline::seed_bandit_from_nfa` | O(states + transitions) | Extract arms and warm-start priors from NFA |
+| LCG PRNG | `BanditRouter::next_random` | O(1) | Deterministic pseudo-random for reproducible tests |
+
+### NFA Symbol Matching
+
+The feature-matching NFA uses domain-specific symbols instead of character alphabets:
+
+```
+QueryFeatures {                    NfaSymbol matchers:
+  domain: "code"          ←──→  Domain("code")
+  complexity: 0.85        ←──→  ComplexityRange { low: 70, high: 100 }
+  token_estimate: 200     ←──→  TokenRange { min: 100, max: 500 }
+  bool_features: {        ←──→  BoolFeature { name: "has_code", value: true }
+    "has_code": true
+  }
+}
+                                   Epsilon  — always matches (free transition)
+                                   Any      — matches any query
+```
+
+### Routing Decision Flow
+
+```
+route(features) called
+  │
+  ├─ DFA exists?
+  │   ├─ YES → DFA.route(features) → RoutingOutcome
+  │   └─ NO  → Bandit.select(task_type) → RoutingOutcome
+  │
+  ▼
+record_outcome(feedback)
+  │
+  ├─ Update bandit arm (alpha/beta)
+  ├─ Increment pulls_since_synthesis
+  └─ pulls_since_synthesis >= synthesis_interval?
+      ├─ NO  → done
+      └─ YES → BanditNfaSynthesizer.synthesize()
+               → NfaDfaCompiler.compile()
+               → DfaRouter.minimize()
+               → Replace active DFA
+               → Reset counter
+```
+
+### NFA Merge Algorithm (Union Construction)
+
+When merging NFA_A and NFA_B:
+
+```
+Before:
+  NFA_A: states [0,1,2], start=0
+  NFA_B: states [0,1],   start=0
+
+After merge:
+  New start (id=0)
+  NFA_A states: +1 offset → [1,2,3], original start=1
+  NFA_B states: +1+|A| offset → [4,5], original start=4
+  Epsilon: 0→1 (to A's start), 0→4 (to B's start)
+  All transitions renumbered accordingly
+```
+
+### Distributed NFA Sharing (cfg "distributed")
+
+Same pattern as `DistributedBanditState` + `BanditStateMerger`:
+
+```
+Node A:  extract_state(nfa, "node-a") → DistributedNfaState
+Node B:  extract_state(nfa, "node-b") → DistributedNfaState
+         ──── network transfer ────
+Coord:   NfaStateMerger::merge(&[state_a, state_b]) → merged NFA
+         NfaDfaCompiler::compile → merged DFA
+```
+
+Bandit state merging uses a federated formula to avoid double-counting shared priors:
+`merged_alpha = sum(alpha_i) - (N-1) * prior_alpha`
+
+### MCP Tools
+
+10 tools registered via `register_routing_tools(server, Arc<Mutex<RoutingPipeline>>)`:
+
+| Tool | HTTP-like | Mutates? | Description |
+|------|-----------|----------|-------------|
+| `routing.get_stats` | GET | No | Bandit arms, pulls, rewards, task types |
+| `routing.add_arm` | POST | Yes | Add model with optional warm-start priors |
+| `routing.remove_arm` | DELETE | Yes | Remove model from bandit |
+| `routing.warm_start` | PUT | Yes | Set alpha/beta priors |
+| `routing.record_outcome` | POST | Yes | Feed back result, may trigger resynthesis |
+| `routing.add_rule` | POST | Yes | Add NFA rule, recompiles DFA |
+| `routing.force_resynthesize` | POST | Yes | Force bandit→NFA→DFA |
+| `routing.export` | GET | No | Full pipeline state as JSON |
+| `routing.import` | PUT | Yes | Replace pipeline from JSON |
+| `routing.get_config` | GET | No | Pipeline configuration |
+
+### Test Coverage
+
+| Component | Tests | Key scenarios |
+|-----------|-------|---------------|
+| BanditRouter | 12 | Thompson, UCB1, epsilon-greedy, warm-start, per-task, decay, remove_arm |
+| NfaRouter | 14 | route, epsilon closure, fixed-point, multi-step chains, priority |
+| DfaRouter | 8 | compile, minimize, route, state merging |
+| NfaRuleBuilder | 8 | single rule, chained conditions, fallback, priority, build+route |
+| BanditNfaSynthesizer | 6 | synthesis, min_pulls, quality threshold, empty error |
+| NFA/DFA Export/Import | 12 | to_json, from_json, round-trip, version check, bytes |
+| NFA Merge | 6 | union, renumbering, transitions, accepting, merge+route, chain |
+| RoutingPipeline | 16 | route, resynthesize, seed from NFA, for_models, tiered, export |
+| MCP Tools | 12 | get_stats, add/remove arm, warm_start, add_rule, export/import, workflow |
+| EnsembleRouter | 6 | voting, confidence-weighted, priority cascade |
+| RoutingDag | 6 | DAG routing, topological order, parallel branches |
+| Integration | 5 | end-to-end bandit→NFA→DFA→route cycles |
+| **Total** | **~183** | |
+
+### Competitive Advantage
+
+No other LLM framework combines:
+- **Bandit-based online learning** (exists in academic papers: BaRP, PILOT, LLM Bandit)
+- **NFA/DFA automata for model routing** (novel — borrowed from network packet classification)
+- **Closed-loop pipeline** with automatic distillation from bandit to compiled rules
+- **MCP runtime control** for live routing management
+- **Distributed sharing** with federated merging
+
+The closest analogs are static config-based routers (LangChain, LiteLLM) or research-only bandit systems. The NFA/DFA compilation step and the bandit-to-automaton synthesis loop appear to be unique to this crate.
+
+---
+
+## 54. Routing Enhancement Architecture (v28)
+
+> Fecha: 2026-03-04
+
+### Overview
+
+v28 extends the routing system (section 53) with five architectural additions: composite reward signals, per-query routing preferences, private arms for distributed filtering, evaluation-based bootstrapping, and extended routing context with budget awareness.
+
+### Composite Reward Pipeline
+
+v27 treated feedback as binary success/failure. v28 introduces `RewardPolicy` to compute a weighted composite scalar from three dimensions:
+
+```
+ArmFeedback { quality, latency_ms, cost }
+       │
+       ▼
+RewardPolicy.compute_reward()
+       │
+       ├─ quality_component  = quality_weight * quality
+       ├─ latency_component  = latency_weight * (1 - latency/latency_ref).clamp(0,1)
+       └─ cost_component     = cost_weight * (1 - cost/cost_ref).clamp(0,1)
+       │
+       ▼
+composite_reward = quality_component + latency_component + cost_component
+       │
+       ▼
+BanditRouter.update_arm(arm_id, composite_reward)
+       │  (Beta posterior: alpha += reward, beta += 1 - reward)
+       ▼
+Bandit posterior reflects multi-dimensional performance
+```
+
+Default weights: quality=0.7, latency=0.2, cost=0.1. Reference values normalize latency (3000ms) and cost ($0.05) to [0,1].
+
+### Preferences Flow
+
+`RoutingPreferences` applies at two points in the pipeline:
+
+```
+RoutingPreferences
+  ├── excluded_arms: Vec<ArmId>
+  ├── preferred_arms: Vec<ArmId>
+  ├── quality_weight_override: Option<f64>
+  ├── latency_weight_override: Option<f64>
+  └── cost_weight_override: Option<f64>
+
+Selection time (route_with_preferences):
+  ┌───────────────────────────────────────────┐
+  │ 1. Filter out excluded_arms from candidates │
+  │ 2. Boost preferred_arms sampling weight     │
+  │ 3. Select via bandit/DFA from filtered set  │
+  └───────────────────────────────────────────┘
+
+Recording time (record_outcome with preferences):
+  ┌───────────────────────────────────────────┐
+  │ 1. Override RewardPolicy weights if set     │
+  │ 2. Compute composite reward with overrides  │
+  │ 3. Update bandit arm with adjusted reward   │
+  └───────────────────────────────────────────┘
+
+Factory constructors:
+  RoutingPreferences::ignore_cost()       → cost_weight = 0.0
+  RoutingPreferences::minimize_latency()  → latency_weight = 0.8
+  RoutingPreferences::default()           → no overrides
+```
+
+### Private Arms
+
+Private arms participate in local routing but are excluded from distributed sharing:
+
+```
+BanditRouter / NfaRouter
+  └── private_arms: HashSet<ArmId>
+
+set_arm_private("my-finetune")
+  └── Adds to private_arms set
+
+BanditStateMerger::extract_state()
+  ├── Iterates bandit arms
+  ├── Checks private_arms set
+  └── Filters out private arms from DistributedBanditState
+
+NfaStateMerger::extract_state()
+  ├── Iterates NFA accepting states
+  ├── Checks private_arms set
+  └── Filters out transitions targeting private arms
+
+Result: private models route locally but never leak to other nodes
+```
+
+### Bootstrapper (feature `eval-suite`)
+
+Eliminates cold-start by converting evaluation results into bandit priors:
+
+```
+ComparisonMatrix (from eval-suite)
+  │  model_a vs model_b results across tasks
+  │
+  ▼
+BanditBootstrapper::from_comparison_matrix(&matrix, &reward_policy)
+  │
+  ├── For each model:
+  │     wins = count(quality > threshold)
+  │     losses = count(quality <= threshold)
+  │     alpha_prior = 1.0 + wins * scale
+  │     beta_prior  = 1.0 + losses * scale
+  │
+  ▼
+Vec<BetaParams> { arm_id, alpha, beta }
+  │
+  ▼
+BanditBootstrapper::bootstrap_pipeline(&priors, bandit_config, pipeline_config)
+  │
+  ├── Creates BanditRouter with warm_start_for_task
+  ├── Sets priors for each arm
+  └── Returns RoutingPipeline ready to route without exploration waste
+
+Cold-start comparison:
+  Without bootstrapper: ~100 pulls of random exploration per arm
+  With bootstrapper:    Priors encode evaluation knowledge → immediate intelligent routing
+```
+
+### RoutingContext
+
+Wraps `QueryFeatures` with agent-level metadata for automatic preference derivation:
+
+```
+RoutingContext
+  ├── features: QueryFeatures      (domain, complexity, tokens)
+  ├── rag_active: bool              (is RAG pipeline active?)
+  ├── budget_remaining: Option<f64> (remaining spend budget)
+  ├── agent_tier: Option<String>    (e.g., "premium", "free")
+  └── ..Default::default()
+
+route_with_context(&ctx):
+  │
+  ├── ctx.derive_preferences()
+  │     ├── budget_remaining < 0.01 → cost_weight = 1.0 (emergency cost mode)
+  │     ├── budget_remaining < 0.10 → cost_weight *= 2.0 (boost cost awareness)
+  │     ├── agent_tier == "premium" → prefer premium arms
+  │     └── rag_active → prefer models good at grounded generation
+  │
+  ▼
+  route_with_preferences(&ctx.features, &derived_prefs)
+```
+
+### Integration with Existing Components
+
+```
+                    ┌────────────────────┐
+                    │   RoutingContext    │
+                    │  (features + meta) │
+                    └────────┬───────────┘
+                             │ derive_preferences()
+                             ▼
+                    ┌────────────────────┐
+                    │RoutingPreferences  │
+                    │(filter/boost/wt)   │
+                    └────────┬───────────┘
+                             │
+              ┌──────────────┼──────────────┐
+              ▼              ▼              ▼
+    ┌──────────────┐  ┌──────────┐  ┌──────────────┐
+    │ BanditRouter │  │ NfaRouter│  │  DfaRouter   │
+    │ +RewardPolicy│  │          │  │  (compiled)  │
+    │ +private_arms│  │          │  │              │
+    └──────┬───────┘  └──────────┘  └──────────────┘
+           │ feedback
+           ▼
+    ┌──────────────┐
+    │ RewardPolicy │
+    │ .compute()   │──→ composite scalar ──→ Beta update
+    └──────────────┘
+
+    ┌──────────────────────────────────────┐
+    │ BanditBootstrapper (eval-suite)      │
+    │ ComparisonMatrix → BetaParams priors │
+    │ → warm_start → skip cold-start       │
+    └──────────────────────────────────────┘
+```
+
+### Backward Compatibility
+
+All v28 additions are backward compatible with v27:
+
+- `RewardPolicy::default()` uses quality_weight=0.7, latency_weight=0.2, cost_weight=0.1 — similar to binary success when quality dominates
+- `route()` still works without preferences (uses default preferences internally)
+- Private arms set is empty by default (no filtering)
+- `BanditBootstrapper` is behind `eval-suite` feature flag
+- `RoutingContext` has `Default` — all metadata fields are optional

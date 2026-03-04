@@ -6,7 +6,7 @@ The project has two testing layers:
 
 | Layer | Tests | Run Command |
 |-------|-------|-------------|
-| Unit tests (`#[test]`) | 6,133 | `cargo test --lib --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite"` |
+| Unit tests (`#[test]`) | 6,401 | `cargo test --lib --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite"` |
 | Integration tests | 38 | `cargo test --test integration_tests --features full` |
 | Test harness (CLI) | ~436 | `cargo run --bin ai_test_harness -- --all` (sin P2P) |
 | Distributed networking tests | 115 | `cargo test --features "full,distributed-network"` |
@@ -15,7 +15,7 @@ The project has two testing layers:
 | Test harness P2P categories | 16 | `cargo run --bin ai_test_harness --features "full,p2p" -- --category=p2p_nat` |
 | Benchmarks | 42 | `cargo bench --bench core_benchmarks --features full` |
 
-**Total: 6,133 tests** (verified with `cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite" --lib`)
+**Total: 6,401 tests** (verified with `cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite" --lib`)
 
 ## Quick Start
 
@@ -175,6 +175,12 @@ Unit tests live inside each source file in `crates/ai_assistant/src/` using `#[c
 - `knowledge_graph.rs` - Entity dedup, cycles, traversal, query (~48 tests)
 - `vector_db.rs` - Migration, cache eviction, error paths (~62 tests)
 - `advanced_memory.rs` - Fact extraction/store, compressed snapshots, checksum verification (~204 tests)
+
+**Advanced Routing** (v27+v28):
+- `advanced_routing.rs` - BanditRouter (Thompson Sampling, UCB1, epsilon-greedy, warm-start, per-task, decay, remove_arm), NfaRouter (route, epsilon closure, fixed-point, multi-step chains, priority), DfaRouter (compile, minimize, route), NfaRuleBuilder (declarative construction, chained conditions, fallback), BanditNfaSynthesizer (synthesis from bandit data), NFA/DFA export/import (JSON round-trip, version check, bytes), NFA merge (union construction, renumbering), RoutingPipeline (route, resynthesize, seed from NFA, for_models, tiered), MCP tools (10 tools: get_stats, add/remove arm, warm_start, add_rule, force_resynthesize, export/import, get_config), EnsembleRouter, RoutingDag, distributed NFA sharing (~183 tests)
+
+**Routing** (v28):
+- `advanced_routing.rs` — Multi-armed bandit (Thompson/UCB1/ε-greedy), NFA/DFA routing, composite reward, routing preferences, private arms, bootstrapper, routing context, feature importance (222 + 85 = 307 tests)
 
 **Eval Suite** (feature `eval-suite`, v25-v26):
 - `eval_suite/dataset.rs` - BenchmarkDataset, JSONL/JSON loading, filtering, sampling (16 tests)
@@ -361,3 +367,5 @@ The harness exits with code 1 if any test fails, making it suitable for CI pipel
 | v24 | 5,963 | +0 | 2026-02-28 |
 | v25 | 6,061 | +98 | 2026-02-28 |
 | v26 | 6,094 | +33 | 2026-03-01 |
+| v27 | 6,316 | +222 | 2026-03-04 |
+| v28 | 6,401 | +85 | 2026-03-04 |

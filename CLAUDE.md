@@ -1,5 +1,12 @@
 # Contexto del Proyecto: ai_assistant
 
+## Inicio de sesión — OBLIGATORIO
+Al iniciar cada nueva sesión de trabajo, **lee estos archivos ANTES de hacer cualquier otra cosa**:
+1. `memory/modus-operandi.md` — workflow, reglas de calidad, checklist de implementación
+2. El último `docs/IMPROVEMENTS_V*.md` (el de número más alto) — estado actual del roadmap
+
+Esto te da el contexto completo: dónde estamos, qué se ha hecho, cómo trabajamos.
+
 ## Sobre el Proyecto
 - **Librería Rust** para integración con LLMs locales y cloud
 - **203.427+ líneas de código**, 220+ archivos fuente (.rs), 2.730+ tests

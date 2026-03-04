@@ -157,6 +157,20 @@ Read this for understanding, inspiration, and to demystify the magic.
 147. [Criterion Benchmarks](#147-criterion-benchmarks)
 148. [Feature Gating Strategy](#148-feature-gating-strategy)
 149. [Dead Code Hygiene](#149-dead-code-hygiene)
+150. [Multi-Armed Bandit Routing](#150-multi-armed-bandit-routing)
+151. [Thompson Sampling, UCB1 & Epsilon-Greedy](#151-thompson-sampling-ucb1--epsilon-greedy)
+152. [Feature-Matching NFA for Model Routing](#152-feature-matching-nfa-for-model-routing)
+153. [NFA→DFA Powerset Construction](#153-nfadfa-powerset-construction)
+154. [Hopcroft DFA Minimization](#154-hopcroft-dfa-minimization)
+155. [NFA Rule Builder & Bandit Synthesizer](#155-nfa-rule-builder--bandit-synthesizer)
+156. [Closed-Loop Routing Pipeline](#156-closed-loop-routing-pipeline)
+157. [MCP Runtime Routing Control](#157-mcp-runtime-routing-control)
+158. [Composite Reward Policy](#158-composite-reward-policy)
+159. [Per-Query Routing Preferences](#159-per-query-routing-preferences)
+160. [Private Arms for Distributed Sharing](#160-private-arms-for-distributed-sharing)
+161. [Auto-Benchmark Bootstrapping](#161-auto-benchmark-bootstrapping)
+162. [Extended Routing Context](#162-extended-routing-context)
+163. [Feature Importance Tracking](#163-feature-importance-tracking)
 
 ---
 
@@ -2977,6 +2991,8 @@ The same zoom-in/zoom-out principle applies to knowledge graph entities. A clust
 
 **The fundamental idea**: Different query types benefit from different retrieval strategies. A simple factual lookup ("What is the capital of France?") works best with BM25 keyword search, while a complex analytical question ("Compare the economic policies of the last three presidents") needs multi-document synthesis. The Hierarchical RAG Router classifies incoming queries by complexity and routes them to the optimal retrieval strategy: simple keyword queries to BM25, factual queries to dense vector retrieval, multi-hop queries requiring relationship traversal to Graph RAG, and analytical queries requiring hierarchical summarization to RAPTOR. The classifier uses lightweight heuristics (query length, question type, entity count) to avoid adding an LLM call to the critical path.
 
+> **See also**: Sections [150](#150-multi-armed-bandit-routing)–[157](#157-mcp-runtime-routing-control) for the Advanced Routing System (Bandit + NFA/DFA pipeline) that extends this concept to **model selection** — choosing which LLM handles each query using online learning and compiled automata.
+
 **Feature flag**: `rag`
 
 ---
@@ -3286,3 +3302,390 @@ Dead code in a feature-gated crate falls into distinct categories:
 **The v12 audit process**: Every `#[allow(dead_code)]` annotation was examined. If the code was truly dead (e.g., a field written but never read, a function never called), the annotation was removed and the underlying code was either deleted, moved into a `#[cfg(test)]` block, or refactored to be used. If the annotation was legitimate (feature-gated serialization field, cross-module trait usage), it was kept. This reduced the count from 54 to 37 across the entire codebase.
 
 **Feature flag**: core (always available)
+
+---
+
+## 150. Multi-Armed Bandit Routing
+
+**The fundamental idea**: Choosing which LLM to use for each query is an exploration-exploitation dilemma. You want to **exploit** the model that has performed best so far, but you also need to **explore** alternatives — a model you haven't tried much might actually be better for certain tasks.
+
+This is the classic **Multi-Armed Bandit** (MAB) problem from probability theory. Imagine a row of slot machines ("one-armed bandits"), each with an unknown payout distribution. You want to maximise total reward across many pulls. Pulling the machine with the highest observed average is pure exploitation; pulling random machines is pure exploration. The optimal strategy balances both.
+
+In ai_assistant, the `BanditRouter` treats each LLM as an arm. Each arm tracks a Beta distribution posterior (`alpha`, `beta`) representing its success rate. When a query arrives:
+
+1. The router **selects** an arm using the configured strategy (Thompson Sampling, UCB1, or epsilon-greedy)
+2. The selected model handles the query
+3. The user (or automated evaluator) provides **feedback** — success/failure, quality score
+4. The arm's posterior is updated: success increments alpha, failure increments beta
+
+Over time, the router converges to the best model per task type while still occasionally exploring alternatives. The router maintains **per-task-type bandits** (e.g., separate bandits for "code", "math", "creative") plus a global bandit for unknown task types.
+
+**Feature flag**: core (always available)
+
+---
+
+## 151. Thompson Sampling, UCB1 & Epsilon-Greedy
+
+**The fundamental idea**: The three classic strategies for solving the multi-armed bandit problem, each with different trade-offs.
+
+**Thompson Sampling** (default): For each arm, sample a random value from its Beta(alpha, beta) posterior distribution, then pick the arm with the highest sample. Arms with high uncertainty (few pulls) have wide distributions and occasionally produce high samples — this provides natural exploration. As evidence accumulates, the distribution narrows and exploitation dominates. Thompson Sampling is Bayesian, asymptotically optimal, and handles non-stationary environments gracefully.
+
+The Beta distribution sampling uses the Jöhnk algorithm — a rejection-based method that works with any alpha/beta values using only uniform random numbers from a lightweight LCG PRNG (no external dependency on `rand`).
+
+**UCB1** (Upper Confidence Bound): Selects the arm maximising `mean_reward + sqrt(2 * ln(N) / n_i)`, where `N` is total pulls and `n_i` is pulls for arm `i`. The second term is a confidence bonus that shrinks as the arm is pulled more. Always tries unpulled arms first. Deterministic (given the same history, always picks the same arm), which makes debugging easier but provides no randomised exploration.
+
+**Epsilon-Greedy**: With probability `epsilon`, pick a random arm (explore). Otherwise pick the arm with the highest mean reward (exploit). Simple but effective. Typically `epsilon` starts high (e.g., 0.3) and decays over time. The main drawback is that exploration is uniform — it doesn't explore promising arms more than hopeless ones.
+
+| Strategy | Exploration mechanism | Deterministic? | Best when |
+|----------|----------------------|----------------|-----------|
+| Thompson | Posterior sampling | No | Default — best theoretical guarantees |
+| UCB1 | Confidence bonus | Yes | Need reproducible decisions |
+| Epsilon-Greedy | Random coin flip | No | Simplest to understand/tune |
+
+**Feature flag**: core (always available)
+
+---
+
+## 152. Feature-Matching NFA for Model Routing
+
+**The fundamental idea**: Some routing decisions are too structured for bandits. "All code tasks above 70% complexity go to Claude Opus" is a **rule**, not a learned preference. Rules need a different formalism: finite automata.
+
+A **Non-deterministic Finite Automaton** (NFA) in classical automata theory processes a string of symbols and accepts or rejects it. In ai_assistant, the concept is repurposed: instead of characters from an alphabet, the "symbols" are **conditions on query features** — domain, complexity range, token range, boolean flags. Instead of accept/reject, accepting states specify which model to route to and at what priority.
+
+The NFA states are:
+
+```
+NfaState {
+    id: NfaStateId,                       // numeric identifier
+    label: String,                         // human-readable name
+    accepting_arm: Option<ArmId>,          // if Some, routes to this model
+    priority: u32,                         // higher wins when multiple accept
+}
+```
+
+Transitions between states are labeled with `NfaSymbol`:
+
+```
+NfaSymbol::Domain("code")                          // matches domain "code"
+NfaSymbol::ComplexityRange { low: 70, high: 100 }  // complexity in [70%, 100%]
+NfaSymbol::TokenRange { min: 0, max: 500 }         // token count range
+NfaSymbol::BoolFeature { name: "has_code", value: true }
+NfaSymbol::Epsilon                                  // always (free transition)
+NfaSymbol::Any                                      // matches any query
+```
+
+Routing computes the **epsilon closure** of start states, then iterates transitions to a **fixed point** — following all matching transitions until no new states are reachable. All reached accepting states are collected, and the one with the highest priority wins. This fixed-point iteration is essential because rules can form multi-step chains:
+
+```
+start ──[Domain("code")]──→ S1 ──[Complexity(70-100)]──→ S2(accept: "opus", pri=10)
+```
+
+The NFA is **non-deterministic** because the same input can activate multiple transition paths simultaneously. This is intentional — it lets rules overlap, with priority resolving conflicts.
+
+**Feature flag**: core (always available)
+
+---
+
+## 153. NFA→DFA Powerset Construction
+
+**The fundamental idea**: NFAs are expressive but slow — routing requires exploring all possible state combinations at each step. A **Deterministic Finite Automaton** (DFA) makes exactly one transition per input, so routing is O(transitions) instead of O(states × transitions).
+
+The **powerset construction** (also called subset construction) converts any NFA into an equivalent DFA. The key insight: each DFA state represents a **set of NFA states** that could be active simultaneously. The algorithm:
+
+1. Start with the epsilon closure of the NFA's start states — this becomes the DFA's start state
+2. For each DFA state (= set of NFA states), compute all possible transitions:
+   - For each unique symbol on outgoing NFA transitions, compute which NFA states are reachable
+   - Take the epsilon closure of those reachable states
+   - This becomes a new DFA state (or maps to an existing one)
+3. Repeat until no new DFA states are discovered
+4. A DFA state is accepting if **any** of its constituent NFA states is accepting. The priority and arm come from the highest-priority accepting NFA state in the set.
+
+Example with 3 NFA states:
+
+```
+NFA:  S0 ──[Domain("code")]──→ S1 (accept: "gpt4", pri=5)
+      S0 ──[Domain("code")]──→ S2 (accept: "opus", pri=10)
+
+DFA:  D0{S0} ──[Domain("code")]──→ D1{S1,S2} (accept: "opus", pri=10)
+```
+
+Both NFA paths merge into one DFA state. The higher-priority arm ("opus") wins.
+
+In the worst case, a DFA can have 2^N states for an N-state NFA (hence "powerset"). In practice, the number is much smaller because most state combinations are unreachable.
+
+**Feature flag**: core (always available)
+
+---
+
+## 154. Hopcroft DFA Minimization
+
+**The fundamental idea**: The DFA produced by powerset construction may have redundant states — states that behave identically for all inputs. **Hopcroft's algorithm** finds the minimum equivalent DFA by merging such states.
+
+The algorithm uses **partition refinement**:
+
+1. Start with two partitions: accepting states and non-accepting states
+2. For each partition and each possible symbol, check if all states in the partition transition to the same target partition
+3. If not, split the partition into sub-groups that transition to the same target
+4. Repeat until no more splits are possible
+5. Each final partition becomes one state in the minimized DFA
+
+Time complexity: **O(n log n)** where n is the number of DFA states — much better than the naive O(n²) equivalence-checking approach.
+
+Why minimization matters for routing:
+
+- **Faster lookups**: Fewer states = fewer comparisons during routing
+- **Smaller snapshots**: Export/import transfers less data
+- **Cleaner merges**: Merging two minimized DFAs produces a more compact result
+- The `merge_and_compile_nfas()` function automatically minimizes after compilation
+
+**Feature flag**: core (always available)
+
+---
+
+## 155. NFA Rule Builder & Bandit Synthesizer
+
+**The fundamental idea**: Constructing NFAs by hand (add_state, add_transition) is error-prone. Two higher-level construction mechanisms exist: **declarative rules** and **automatic synthesis from bandit data**.
+
+**NfaRuleBuilder** — A fluent builder that translates human-readable rules into NFA states and transitions:
+
+```rust
+let nfa = NfaRuleBuilder::new()
+    .rule("code_hard")
+        .when(NfaSymbol::Domain("code".into()))
+        .and(NfaSymbol::ComplexityRange { low_pct: 70, high_pct: 100 })
+        .route_to("claude-opus")
+        .priority(10)
+        .done()
+    .rule("code_easy")
+        .when(NfaSymbol::Domain("code".into()))
+        .and(NfaSymbol::ComplexityRange { low_pct: 0, high_pct: 70 })
+        .route_to("gpt-4")
+        .priority(5)
+        .done()
+    .fallback("gpt-4-mini", 1)
+    .build()?;
+```
+
+Each rule becomes a chain of states: `start →[cond1]→ intermediate →[cond2]→ ... →[condN]→ accepting(arm, priority)`. The builder creates a single start state and connects all rule chains from it. The fallback creates an `Any` transition from start to a low-priority accepting state.
+
+**BanditNfaSynthesizer** — Automatically generates an NFA reflecting the bandit's learned preferences:
+
+1. Iterates all task types tracked by the bandit
+2. For each task type, ranks arms by mean reward (`total_reward / pull_count`)
+3. Best arm per task type → `Domain(task_type) → accepting(arm, priority=quality×100)`
+4. Arms above the quality threshold get alternative paths with lower priority
+5. Global best arm → fallback via `Any`
+
+Example output for a bandit with "code" (opus=0.92, gpt4=0.78) and "math" (gemini=0.88, opus=0.85):
+
+```
+                ┌─[Domain("code")]─→ S1 (accept:"opus", pri=92)
+                ├─[Domain("code")]─→ S2 (accept:"gpt4", pri=78)
+  S0 (start) ──├─[Domain("math")]─→ S3 (accept:"gemini", pri=88)
+                ├─[Domain("math")]─→ S4 (accept:"opus", pri=85)
+                └─[Any]───────────→ S5 (accept:"opus", pri=1)  ← fallback
+```
+
+The synthesizer produces **simple single-condition rules** (Domain only) because the bandit tracks performance per task type, not per complexity bucket. Multi-condition rules require the NfaRuleBuilder or MCP tools.
+
+**Feature flag**: core (always available)
+
+---
+
+## 156. Closed-Loop Routing Pipeline
+
+**The fundamental idea**: The bandit and the NFA/DFA are not competing approaches — they form a **closed loop**. The bandit is the continuous learner. The NFA/DFA is the compiled, fast routing engine. Periodically, the pipeline "distills" the bandit's knowledge into a new NFA, compiles it to a DFA, and serves with the DFA until the next cycle.
+
+The `RoutingPipeline` orchestrates this loop:
+
+```
+                    ┌──────────────────────────┐
+                    │     Bandit (learner)      │
+                    │  Thompson/UCB1/ε-greedy   │
+                    └──────┬───────────────┬────┘
+                  feedback │               │ synthesize (every N pulls)
+                    ┌──────┴──┐    ┌───────┴──────────┐
+                    │ Users / │    │ BanditNfaSynth.   │
+                    │ Eval    │    │ → NfaRuleBuilder  │
+                    └─────────┘    └───────┬───────────┘
+                                           │ compile + minimize
+                                   ┌───────┴──────────┐
+                                   │ NfaDfaCompiler    │
+                                   │ + Hopcroft min.   │
+                                   └───────┬───────────┘
+                                           │
+                                   ┌───────┴──────────┐
+                                   │   DFA (server)    │◄── queries
+                                   │   O(1) routing    │
+                                   └──────────────────┘
+```
+
+Key behaviours:
+
+- **`route(features)`**: If a DFA exists, use it (fast). Otherwise, fall back to bandit selection.
+- **`record_outcome(feedback)`**: Updates the bandit's arm posterior. After recording, calls `maybe_resynthesize()`.
+- **`maybe_resynthesize()`**: If pulls since last synthesis ≥ `synthesis_interval`, synthesizes a new NFA, compiles to DFA, minimizes, and replaces the active DFA.
+- **Seeding**: If the pipeline starts with an initial NFA (`with_initial_nfa()` or `with_tiered_models()`), it **seeds the bandit** from the NFA — extracting arms and task-type associations from the NFA's structure and warm-starting priors based on priority.
+- **Export/Import**: Full pipeline state (bandit + NFA + config) serializes to JSON or bincode for persistence and distributed sharing.
+- **NFA Merge**: Two NFAs can be combined using **union construction** (new start state with epsilon transitions to both originals, states renumbered to avoid conflicts), then recompiled to DFA.
+
+Zero-config constructors:
+
+- **`for_models(&["m1", "m2"])`** — Pure bandit start, all models as global arms
+- **`with_tiered_models(&[("opus", Premium), ("gpt4", Standard), ("mini", Economy)])`** — Auto-generates NFA rules by tier (Premium → code+complex, Standard → medium, Economy → simple+fallback), seeds bandit from the generated NFA
+
+**Feature flag**: core (always available)
+
+---
+
+## 157. MCP Runtime Routing Control
+
+**The fundamental idea**: The routing system should be controllable at runtime without redeploying code. The Model Context Protocol (MCP) provides the transport: any MCP-connected client (IDE, agent, monitoring dashboard) can inspect and modify routing behaviour through standard tool calls.
+
+`register_routing_tools()` registers 10 MCP tools on an `McpServer`, sharing a `RoutingPipeline` via `Arc<Mutex<>>`:
+
+| Tool | Purpose |
+|------|---------|
+| `routing.get_stats` | Read bandit statistics: arms, pulls, rewards, task types |
+| `routing.add_arm` | Add a model with optional warm-start priors |
+| `routing.remove_arm` | Remove a model from routing |
+| `routing.warm_start` | Set alpha/beta priors to bias routing towards/against a model |
+| `routing.record_outcome` | Feed back success/quality data (triggers auto-resynthesis) |
+| `routing.add_rule` | Add an NFA routing rule with domain/complexity/code conditions, recompiles DFA |
+| `routing.force_resynthesize` | Force immediate bandit→NFA→DFA resynthesis |
+| `routing.export` | Export full pipeline state as JSON |
+| `routing.import` | Import pipeline state from JSON (hot-swap) |
+| `routing.get_config` | Read current pipeline configuration |
+
+This enables scenarios like:
+- A monitoring system detects a model degradation → calls `routing.warm_start` to penalise it
+- An operator wants to try a new model → calls `routing.add_arm` + `routing.add_rule`
+- Two pipeline instances share learned routing → one exports, the other imports
+- A live A/B test → add arm with conservative priors, let Thompson Sampling naturally explore it
+
+**Feature flag**: core (always available)
+
+---
+
+## 158. Composite Reward Policy
+
+**The fundamental idea**: A routing system that only considers "did the answer work?" is leaving money on the table. In reality, three factors matter: **quality** (correctness), **latency** (speed), and **cost** (price). A composite reward blends all three into a single signal the bandit can learn from.
+
+**How it works**: `RewardPolicy` defines three weights (default: quality=0.7, latency=0.2, cost=0.1) plus normalization references (latency_ref_ms=5000, cost_ref=0.01). When computing reward from `ArmFeedback`:
+
+1. **Quality component**: `feedback.quality` or success=1.0/fail=0.0
+2. **Latency component**: `(1 - ms/latency_ref).clamp(0, 1)` — faster is better
+3. **Cost component**: `(1 - cost/cost_ref).clamp(0, 1)` — cheaper is better
+4. **Missing components**: If latency or cost is `None`, their weight is redistributed proportionally to the remaining active components
+
+This means the common case (quality-only feedback) automatically gives 100% weight to quality — perfectly backward compatible with pre-v28 behaviour.
+
+**Why normalization references?** Latency (100-50000ms) and cost ($0.0001-$0.10) live on wildly different scales. The reference values define "what counts as bad" — latency ≥ ref = zero score, cost ≥ ref = zero score. Values below the reference score proportionally.
+
+**Related concepts**: [150. Multi-Armed Bandit Routing](#150-multi-armed-bandit-routing), [159. Per-Query Routing Preferences](#159-per-query-routing-preferences)
+
+**Feature flag**: core
+
+---
+
+## 159. Per-Query Routing Preferences
+
+**The fundamental idea**: Not all queries are equal. A developer debugging a production incident wants the **best** model regardless of cost. A batch summarization job wants the **cheapest** model that meets a quality floor. Per-query routing preferences let the caller override default routing behaviour for individual requests.
+
+**How it works**: `RoutingPreferences` has two mechanisms:
+
+1. **At selection time** — arm exclusion and boosting:
+   - `excluded_arms`: Models to skip entirely (e.g., exclude GPT-4 for simple tasks)
+   - `preferred_arms`: Models to boost by `prefer_boost` multiplier (default 2×)
+
+2. **At recording time** — weight overrides:
+   - `quality_weight`, `latency_weight`, `cost_weight`: Override the base `RewardPolicy` weights when recording THIS query's outcome
+   - `apply_to_policy(base)` merges overrides onto the default policy
+
+**Why recording-time, not selection-time for weight overrides?** Bandit posteriors (alpha/beta parameters) already bake in historical composite rewards. You can't retroactively decompose them. Instead, the "ignore cost" use case works by NOT penalizing the arm for cost when recording this outcome → over time, queries flagged "ignore cost" teach the bandit that expensive-but-good arms are fine for these patterns.
+
+**Convenience constructors**: `RoutingPreferences::ignore_cost()`, `::minimize_latency()`, `::quality_only()`
+
+**Related concepts**: [158. Composite Reward Policy](#158-composite-reward-policy), [156. Closed-Loop Routing Pipeline](#156-closed-loop-routing-pipeline)
+
+**Feature flag**: core
+
+---
+
+## 160. Private Arms for Distributed Sharing
+
+**The fundamental idea**: In a distributed deployment, routing pipelines share learned state across nodes to speed up convergence. But some models should stay local — perhaps a proprietary fine-tuned model, a preview-access model, or an experimental endpoint. Private arms are excluded from distributed state export while remaining fully functional locally.
+
+**How it works**: Rather than adding a `visibility` field to every `BanditArm` (which would touch 9 struct literals), a `HashSet<ArmId>` side-channel on `BanditRouter` tracks which arms are private. This is a classic **metadata side-channel** pattern — the core data structure stays clean, while auxiliary metadata rides alongside.
+
+- `set_arm_private(arm_id)` — mark as local-only
+- `set_arm_public(arm_id)` — restore to shareable (default)
+- `BanditStateMerger::extract_state()` — automatically filters private arms from exported state
+- `NfaStateMerger::extract_state_filtered(nfa, node_id, private_arms)` — filters accepting states whose arm is private
+
+**Snapshot persistence**: `BanditSnapshot` includes `private_arms: HashSet<ArmId>` with `#[serde(default, skip_serializing_if = "HashSet::is_empty")]` — old snapshots deserialize correctly (empty set = all public).
+
+**Related concepts**: [36. Distributed Computing](#36-distributed-computing-beyond-a-single-machine), [150. Multi-Armed Bandit Routing](#150-multi-armed-bandit-routing)
+
+**Feature flag**: core + distributed (for the merger filtering)
+
+---
+
+## 161. Auto-Benchmark Bootstrapping
+
+**The fundamental idea**: A cold-start bandit explores blindly for the first N queries, wasting time and quality. If you've already run benchmarks (via the eval-suite), those results should warm-start the bandit. `BanditBootstrapper` converts structured evaluation data into optimal priors.
+
+**How it works**: Two data sources:
+
+1. **`ComparisonMatrix`** (from multi-model comparison): Uses `mean_score` (metric index 1) and `cost_effectiveness` to compute a composite score via the `RewardPolicy`. Generates "global" priors accessible to all task types.
+
+2. **`SubtaskAnalysis`** (from per-subtask analysis): Uses `SubtaskPerformance.score` to generate per-subtask priors (e.g., "model A is best at CodeGeneration, model B at ReasoningChain").
+
+The composite score is converted to Beta distribution parameters: `alpha = composite × scale`, `beta = (1 - composite) × scale`. Scale (default 10) controls confidence — higher scale means the priors dominate longer before live data overrides them.
+
+**`bootstrap_pipeline(priors, config)`** creates a complete `RoutingPipeline` with warm-started bandits, ready for production use with zero cold-start exploration waste.
+
+**Related concepts**: [151. Thompson Sampling, UCB1 & Epsilon-Greedy](#151-thompson-sampling-ucb1--epsilon-greedy), [158. Composite Reward Policy](#158-composite-reward-policy)
+
+**Feature flag**: eval-suite
+
+---
+
+## 162. Extended Routing Context
+
+**The fundamental idea**: Text-level features (domain, complexity, token count) aren't enough to make optimal routing decisions. Agent-level context matters: Is RAG active? What's the remaining budget? What tier is the user on? `RoutingContext` wraps `QueryFeatures` with this metadata.
+
+**How it works**: `RoutingContext` adds:
+- `rag_active: bool` — whether RAG retrieval is in the pipeline
+- `budget_remaining: Option<f64>` — cost budget left for this session
+- `agent_tier: Option<String>` — user/agent tier (e.g., "premium", "free")
+- `session_cost_so_far: Option<f64>` — cumulative session cost
+- `preferred_provider: Option<String>` — soft preference for a provider
+
+The key method is `derive_preferences(base_policy)`: it examines context and auto-generates `RoutingPreferences`. Currently: low budget (< $0.10) → boost cost_weight to 0.5, reducing expensive model selection.
+
+`RoutingPipeline::route_with_context(ctx)` combines feature-based routing with context-derived preferences in one call.
+
+**Related concepts**: [159. Per-Query Routing Preferences](#159-per-query-routing-preferences), [68. Context Composition](#68-context-composition)
+
+**Feature flag**: core
+
+---
+
+## 163. Feature Importance Tracking
+
+**The fundamental idea**: The `ContextualDiscovery` system finds decision stumps (single-feature splits) that improve routing, but doesn't tell you *which features matter most overall*. Feature importance aggregates all discovered splits by dimension, ranking which features are most discriminative across all domains.
+
+**How it works**: `feature_importance()` iterates over all discovered splits across all domains, grouping by `FeatureDimension` (Complexity, TokenEstimate, BoolFeature). For each dimension, it computes:
+
+- `total_gain` — sum of information gains from all splits on this dimension
+- `split_count` — how many splits use this dimension
+- `domains_affected` — how many routing domains this dimension impacts
+
+Results are sorted by `total_gain` descending, so the most discriminative feature is first.
+
+**Use case**: Diagnostic output for operators. "Complexity is the most important routing feature (gain=2.4, 5 splits, 3 domains), while BoolFeature('needs_code') matters less (gain=0.3, 1 split, 1 domain)."
+
+**Related concepts**: [156. Closed-Loop Routing Pipeline](#156-closed-loop-routing-pipeline), [150. Multi-Armed Bandit Routing](#150-multi-armed-bandit-routing)
+
+**Feature flag**: core
