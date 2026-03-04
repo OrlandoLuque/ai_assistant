@@ -171,6 +171,7 @@ Read this for understanding, inspiration, and to demystify the magic.
 161. [Auto-Benchmark Bootstrapping](#161-auto-benchmark-bootstrapping)
 162. [Extended Routing Context](#162-extended-routing-context)
 163. [Feature Importance Tracking](#163-feature-importance-tracking)
+164. [Butler Advisor (Optimization Guidance)](#164-butler-advisor-optimization-guidance)
 
 ---
 
@@ -3689,3 +3690,52 @@ Results are sorted by `total_gain` descending, so the most discriminative featur
 **Related concepts**: [156. Closed-Loop Routing Pipeline](#156-closed-loop-routing-pipeline), [150. Multi-Armed Bandit Routing](#150-multi-armed-bandit-routing)
 
 **Feature flag**: core
+
+---
+
+## 164. Butler Advisor (Optimization Guidance)
+
+**The fundamental idea**: Detecting what is available on a machine (Butler's environment scan) is only half the picture. The other half is telling the user what they *should* enable or configure given what they have. `ButlerAdvisor` bridges this gap: it takes an `EnvironmentReport` (from `Butler::scan()`) and produces a ranked list of multi-dimensional optimization recommendations.
+
+**How it works**: `ButlerAdvisor` is a stateless analyzer that accepts two inputs:
+
+1. **`EnvironmentReport`** — the output of `Butler::scan()`, containing detected providers, GPU availability, Docker presence, network connectivity, and more.
+2. **`AdvisorConfig`** (optional) — a struct with 16 boolean fields describing the deployment context (e.g., `handles_user_data`, `needs_low_latency`, `has_budget_constraints`, `multi_user`, `production`) plus an `active_features: Vec<String>` listing feature flags already compiled in.
+
+The advisor evaluates 30 built-in recommendations across six optimization categories, filtering out those already enabled (detected from the environment report and the `active_features` list) and those irrelevant to the declared context.
+
+**The six optimization categories**:
+
+- **Efficiency** — Reduce latency and resource usage: response caching, semantic deduplication, multi-armed bandit routing, batch API calls, constrained decoding, GPU acceleration.
+- **Quality** — Improve output correctness and safety: guardrail pipelines, RAG for grounded answers, cloud model routing for complex tasks, eval-suite benchmarking, human-in-the-loop approval, DSPy prompt optimization.
+- **Cost** — Lower token and compute spend: local model routing for simple queries, budget limits, per-request cost tracking, cost benchmarking via eval-suite, cache TTL tuning.
+- **Security** — Protect data and access: PII detection (Critical priority), RBAC access control, AES-256-GCM encryption at rest, audit logging, rate limiting, input sanitization via guardrails.
+- **Scalability** — Handle growth and distribution: distributed computing with CRDTs, memory persistence, QUIC networking for multi-node, container sandboxing for isolation.
+- **Observability** — See what is happening: OpenTelemetry tracing and cost attribution, metrics logging, agent devtools for step-through debugging.
+
+**Conditional recommendations**: Each recommendation carries a condition function that is evaluated against the environment and config. For example:
+- "Enable GPU acceleration" only appears if the environment scan detected a GPU.
+- "Enable PII detection" (Critical) only appears if `handles_user_data` is true and the `security` feature is not already active.
+- "Enable distributed computing" only appears if `multi_node` is true in the config.
+- "Enable HITL approval" only appears if `production` is true, because human oversight matters most in production.
+
+**Priority levels**: Each recommendation has one of four priorities — `Critical`, `High`, `Medium`, `Low`. PII detection when handling user data is the only Critical-priority recommendation. Security features generally rank High. Efficiency and quality features are Medium. Nice-to-haves like agent devtools are Low.
+
+**Output structure**: `ButlerAdvisor::analyze()` returns an `AdvisorReport` containing:
+- `recommendations: Vec<ButlerRecommendation>` — sorted by priority (Critical first)
+- `summary: AdvisorSummary` — aggregate counts: total, already_enabled, by_category (HashMap), by_priority (HashMap), top_priority
+
+Each `ButlerRecommendation` includes: `category` (OptimizationCategory), `priority` (RecommendationPriority), `title`, `description`, `action` (concrete next step), `feature_flag` (which Cargo feature to enable), and `already_enabled` (bool).
+
+**Filtering methods on AdvisorReport**:
+- `pending()` — returns only recommendations where `already_enabled == false`
+- `by_category(cat)` — returns recommendations matching a specific `OptimizationCategory`
+- `by_min_priority(min)` — returns recommendations at or above a priority level
+
+**Integration with AiAssistant**: Two convenience methods on `AiAssistant` run the full pipeline (scan + advise) in one call:
+- `butler_advise()` — uses default context (no AdvisorConfig)
+- `butler_advise_with_config(config)` — uses the provided AdvisorConfig for context-aware recommendations
+
+**Related concepts**: [37. Autonomous Agents (Butler subsection)](#37-autonomous-agents-self-directed-ai), [53. Guardrail Pipelines](#53-guardrail-pipelines-safety-at-every-stage), [150. Multi-Armed Bandit Routing](#150-multi-armed-bandit-routing), [6. RAG](#6-rag-giving-the-ai-your-knowledge), [46. Access Control](#46-access-control-who-can-do-what), [102. Human-in-the-Loop (HITL)](#102-human-in-the-loop-hitl)
+
+**Feature flag**: butler

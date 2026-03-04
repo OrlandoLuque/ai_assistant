@@ -576,7 +576,8 @@ body {
 <a href="#concept-118" class="nav-item" data-num="118">118. Plan Refinement Loop</a>
 <a href="#concept-122" class="nav-item" data-num="122">122. Multi-Backend Sandbox</a>
 <a href="#concept-123" class="nav-item" data-num="123">123. Agent Deployment Profiles</a>
-<a href="#concept-124" class="nav-item" data-num="124">124. Agent DevTools</a></div>
+<a href="#concept-124" class="nav-item" data-num="124">124. Agent DevTools</a>
+<a href="#concept-164" class="nav-item" data-num="164">164. Butler Advisor (Optimization Guidance)</a></div>
 </div>
 <div class="nav-category">
 <div class="nav-category-title" onclick="this.parentElement.classList.toggle('collapsed')">Quality &amp; Safety<span class="chevron"></span></div>
@@ -4176,6 +4177,27 @@ DFA:  D0{S0} ──[Domain(&quot;code&quot;)]──→ D1{S1,S2} (accept: &quot;
 <p><strong>Use case</strong>: Diagnostic output for operators. "Complexity is the most important routing feature (gain=2.4, 5 splits, 3 domains), while BoolFeature('needs_code') matters less (gain=0.3, 1 split, 1 domain)."</p>
 </div>
 <div class="related-concepts"><strong>Related:</strong> <a href="#concept-150" class="related-link">150. Multi-Armed Bandit Routing</a>, <a href="#concept-156" class="related-link">156. Closed-Loop Routing Pipeline</a></div>
+<a href="#top" class="back-to-top">Back to top</a>
+</article>
+<article class="concept-card" id="concept-164" data-num="164" data-title="Butler Advisor (Optimization Guidance)" data-category="Agents &amp; Tools">
+<div class="card-header">
+<h3><span class="concept-num">164</span>Butler Advisor (Optimization Guidance)</h3>
+<div class="card-badges"><span class="badge badge-cat">Agents &amp; Tools</span><span class="badge flag-feature">butler</span></div>
+</div>
+<div class="card-body"><p><strong>The fundamental idea</strong>: The Butler already auto-detects the runtime environment (Ollama, LM Studio, cloud APIs, GPU, Docker, network, etc.), but detection alone doesn&rsquo;t tell you what to <em>do</em> with that knowledge. The <code>ButlerAdvisor</code> bridges the gap &mdash; it analyzes both the environment and your current configuration to produce actionable optimization recommendations across six dimensions.</p>
+<p><strong>The six optimization categories</strong>:</p>
+<ul>
+<li><strong>Efficiency</strong> &mdash; Response caching, semantic deduplication, bandit-based routing, batch APIs, constrained decoding, GPU acceleration</li>
+<li><strong>Quality</strong> &mdash; Guardrail pipeline, RAG for factual accuracy, cloud routing for complex tasks, eval-suite, HITL approval, DSPy prompt optimization</li>
+<li><strong>Cost</strong> &mdash; Local model routing for simple tasks, budget limits, per-request cost tracking, cost benchmarking, cache TTL tuning</li>
+<li><strong>Security</strong> &mdash; PII detection (Critical priority), RBAC, AES-256-GCM encryption, audit logging, rate limiting, input sanitization</li>
+<li><strong>Scalability</strong> &mdash; Distributed computing, memory persistence, QUIC networking, container sandboxing</li>
+<li><strong>Observability</strong> &mdash; OpenTelemetry tracing, metrics logging, agent devtools</li>
+</ul>
+<p><strong>Conditional recommendations</strong>: Not all 30 recommendations apply to every setup. The advisor checks environment conditions: GPU recommendations only appear when GPU + local provider are detected; routing recommendations require 2+ providers; budget limits target cloud API users. The optional <code>AdvisorConfig</code> tracks which features are already enabled, so recommendations are marked <code>already_enabled</code> when appropriate.</p>
+<p><strong>Priority levels</strong>: Each recommendation carries a <code>RecommendationPriority</code> (Critical, High, Medium, Low). The <code>AdvisorReport</code> provides filtering methods: <code>pending()</code> for not-yet-enabled items, <code>by_category()</code> for dimension-specific guidance, and <code>by_min_priority()</code> for urgency-based triage.</p>
+</div>
+<div class="related-concepts"><strong>Related:</strong> <a href="#concept-37" class="related-link">37. Autonomous Agents</a>, <a href="#concept-53" class="related-link">53. Environment Detection (Butler)</a>, <a href="#concept-150" class="related-link">150. Multi-Armed Bandit Routing</a>, <a href="#concept-6" class="related-link">6. RAG</a></div>
 <a href="#top" class="back-to-top">Back to top</a>
 </article>
 

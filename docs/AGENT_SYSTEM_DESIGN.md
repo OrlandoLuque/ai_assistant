@@ -64,6 +64,7 @@
 52. [Arquitectura de Feature Gating Condicional (v12)](#52-arquitectura-de-feature-gating-condicional-v12)
 53. [Advanced Routing System Architecture (v27)](#53-advanced-routing-system-architecture-v27)
 54. [Routing Enhancement Architecture (v28)](#54-routing-enhancement-architecture-v28)
+55. [Butler Advisor — Optimization Guidance System](#55-butler-advisor--optimization-guidance-system)
 
 ---
 
@@ -8648,3 +8649,183 @@ All v28 additions are backward compatible with v27:
 - Private arms set is empty by default (no filtering)
 - `BanditBootstrapper` is behind `eval-suite` feature flag
 - `RoutingContext` has `Default` — all metadata fields are optional
+
+---
+
+## 55. Butler Advisor — Optimization Guidance System
+
+> Fecha: 2026-03-04
+
+### Overview
+
+The Butler module (section 29) provides environment auto-detection through 12 resource detectors. The Butler Advisor extends this with an optimization advisory system that analyzes the detected environment and generates actionable recommendations across 6 categories. Rather than simply reporting what is available, the advisor tells the user what they should *do* to improve their setup.
+
+### Architecture
+
+```
+EnvironmentReport (from Butler's 12 detectors)
+       │
+       ▼
+ButlerAdvisor::analyze(&report, Option<&AdvisorConfig>)
+       │
+       ├── generate_efficiency_recommendations()
+       ├── generate_quality_recommendations()
+       ├── generate_cost_recommendations()
+       ├── generate_security_recommendations()
+       ├── generate_scalability_recommendations()
+       └── generate_observability_recommendations()
+       │
+       ▼
+AdvisorReport {
+    recommendations: Vec<ButlerRecommendation>,  // up to 30
+    summary: AdvisorSummary,
+    generated_at: String,
+}
+```
+
+The `ButlerAdvisor` is a pure analyzer — it takes an `EnvironmentReport` snapshot and an optional `AdvisorConfig`, produces an `AdvisorReport`, and has no side effects. This makes it fully testable and deterministic for a given input.
+
+### The 6-Category Recommendation Model
+
+Each recommendation belongs to exactly one `OptimizationCategory`:
+
+| Category | Focus | Example Recommendations |
+|----------|-------|------------------------|
+| `Efficiency` | Throughput, latency, resource utilization | Enable multi-provider routing, use GPU acceleration for local models |
+| `Quality` | Output accuracy, consistency, reliability | Enable constrained decoding, add evaluation pipelines |
+| `Cost` | Spend optimization, budget management | Set budget alerts, use local models for exploration |
+| `Security` | Access control, data protection, compliance | Enable PII detection, add guardrail pipelines |
+| `Scalability` | Growth, distribution, fault tolerance | Enable distributed agents, add container sandboxing |
+| `Observability` | Monitoring, logging, diagnostics | Enable OpenTelemetry, add health checks |
+
+Both `OptimizationCategory` and `RecommendationPriority` implement `Display` and `Ord` for sorting and filtering.
+
+### Recommendation Structure
+
+```rust
+struct ButlerRecommendation {
+    category: OptimizationCategory,
+    priority: RecommendationPriority,  // Critical, High, Medium, Low
+    title: String,
+    description: String,
+    action: String,                    // concrete step the user should take
+}
+```
+
+### Priority Levels
+
+```rust
+enum RecommendationPriority {
+    Critical,  // Must fix — security or correctness issue
+    High,      // Strongly recommended for production
+    Medium,    // Beneficial improvement
+    Low,       // Nice-to-have optimization
+}
+```
+
+Priorities are orderable (`Critical > High > Medium > Low`) so the report can be sorted by urgency.
+
+### Conditional Recommendation Logic
+
+Recommendations are environment-aware. The advisor examines the `EnvironmentReport` fields and only emits recommendations that are relevant:
+
+```
+EnvironmentReport fields → Conditional logic → Recommendation emitted?
+─────────────────────────────────────────────────────────────────────
+providers.len() > 1       → Multi-provider detected  → "Enable routing between providers"
+providers.len() == 1      → Single provider           → "Add a second provider for fallback"
+gpu_detected == true       → GPU available             → "Use GPU-accelerated local models"
+  + local_models.is_empty()  → but no local models     → "Install local models to use GPU"
+gpu_detected == false      → No GPU                    → "Consider cloud providers for heavy tasks"
+docker_available == true   → Docker present            → "Enable container sandboxing"
+cloud_providers.len() > 0  → Cloud in use              → "Set budget alerts for cloud spend"
+```
+
+This prevents the advisor from generating irrelevant suggestions (e.g., "use GPU acceleration" when no GPU is detected).
+
+### AdvisorConfig
+
+`AdvisorConfig` provides optional context about which features the user has enabled, allowing more targeted recommendations:
+
+```rust
+struct AdvisorConfig {
+    rag_enabled: bool,
+    multi_agent_enabled: bool,
+    streaming_enabled: bool,
+    security_enabled: bool,
+    analytics_enabled: bool,
+    distributed_enabled: bool,
+    constrained_decoding_enabled: bool,
+    observability_enabled: bool,
+}
+```
+
+When all features are enabled, the advisor shifts from "you should enable X" to "you should optimize X". When a config is not provided, the advisor generates a broader set of general recommendations.
+
+### AdvisorReport Filtering and Summary
+
+The `AdvisorReport` supports three filtering methods for consumers:
+
+```rust
+impl AdvisorReport {
+    /// Only recommendations not yet acted upon
+    fn pending(&self) -> Vec<&ButlerRecommendation>;
+
+    /// Filter by category
+    fn by_category(&self, cat: OptimizationCategory) -> Vec<&ButlerRecommendation>;
+
+    /// Only recommendations at or above a minimum priority
+    fn by_min_priority(&self, min: RecommendationPriority) -> Vec<&ButlerRecommendation>;
+}
+```
+
+The `AdvisorSummary` provides aggregate statistics:
+
+```rust
+struct AdvisorSummary {
+    total_recommendations: usize,
+    critical_count: usize,
+    high_count: usize,
+    medium_count: usize,
+    low_count: usize,
+    top_category: OptimizationCategory,  // category with most recommendations
+}
+```
+
+### Integration Points
+
+The advisor integrates at two levels:
+
+```
+Butler (butler.rs)
+  │
+  ├── detect() → EnvironmentReport          // existing
+  │
+  └── advise() → AdvisorReport              // NEW
+        │
+        ├── Calls detect() internally
+        ├── Passes EnvironmentReport to ButlerAdvisor::analyze()
+        └── Returns AdvisorReport
+
+AiAssistant (assistant.rs)
+  │
+  └── butler_advise() → AdvisorReport       // NEW convenience method
+        │
+        └── Delegates to Butler::advise()
+```
+
+This follows the existing pattern where `AiAssistant` provides convenience methods that delegate to subsystem modules (similar to `butler_detect()` delegating to `Butler::detect()`).
+
+### Test Coverage
+
+18 tests covering the full advisor system:
+
+| Tests | What they verify |
+|-------|-----------------|
+| 1-3 | `Display` and `Ord` implementations for `OptimizationCategory` and `RecommendationPriority` |
+| 4-6 | `AdvisorReport` filtering: `pending()`, `by_category()`, `by_min_priority()` |
+| 7-8 | Edge cases: empty environment report, all-features-enabled config |
+| 9-15 | Conditional recommendation logic: multi-provider routing, single provider fallback, constrained decoding suggestion, GPU+local models, GPU without local models, Docker detected, cloud budget alerts |
+| 16 | `AdvisorSummary` statistics correctness (counts, top_category) |
+| 17 | Priority sorting (Critical > High > Medium > Low) |
+| 18 | `Butler.advise()` integration (end-to-end from Butler to AdvisorReport) |
