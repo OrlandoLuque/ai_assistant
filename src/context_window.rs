@@ -44,10 +44,9 @@ impl ContextMessage {
     }
 }
 
-/// Estimate tokens in text (rough approximation)
+/// Estimate tokens in text — delegates to the canonical implementation.
 fn estimate_tokens(text: &str) -> usize {
-    // Rough estimate: ~4 chars per token for English
-    (text.len() + 3) / 4
+    crate::context::estimate_tokens(text)
 }
 
 /// Split text into sentences by punctuation boundaries
@@ -1139,5 +1138,13 @@ mod tests {
         // 16000 - 1024 (default reserve) = 14976
         assert_eq!(monitor.max_tokens(), 14_976);
         assert_eq!(monitor.check_level(), OverflowLevel::Normal);
+    }
+
+    #[test]
+    fn test_context_message_uses_unified_estimate() {
+        // ContextMessage should use the same estimate as context::estimate_tokens
+        let text = "This is a test message for verifying unified token estimation.";
+        let msg = ContextMessage::new("user", text);
+        assert_eq!(msg.token_count, crate::context::estimate_tokens(text));
     }
 }

@@ -1707,8 +1707,7 @@ fn truncate(s: &str, max_len: usize) -> String {
 }
 
 fn estimate_tokens(text: &str) -> usize {
-    // Rough estimate: ~4 chars per token on average
-    (text.len() + 3) / 4
+    crate::context::estimate_tokens(text)
 }
 
 fn count_by_score_type(chunks: &[RetrievedChunk]) -> (usize, usize) {

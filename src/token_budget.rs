@@ -469,10 +469,9 @@ pub struct BudgetStats {
 pub struct TokenEstimator;
 
 impl TokenEstimator {
-    /// Estimate tokens for text
+    /// Estimate tokens for text — delegates to canonical implementation.
     pub fn estimate_text(text: &str) -> usize {
-        // Rough estimate: ~4 characters per token for English
-        text.len() / 4
+        crate::context::estimate_tokens(text)
     }
 
     /// Estimate tokens for a chat message

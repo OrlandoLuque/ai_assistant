@@ -963,9 +963,9 @@ impl AutoIndexer {
         result
     }
 
-    /// Estimate the number of tokens in a text (approximation: chars / 4).
+    /// Estimate the number of tokens in a text — delegates to canonical implementation.
     fn estimate_tokens(text: &str) -> usize {
-        (text.len() + 3) / 4
+        crate::context::estimate_tokens(text)
     }
 
     /// Determine the position of a chunk given its index and total count.
@@ -1221,10 +1221,10 @@ mod tests {
     #[test]
     fn test_estimate_tokens() {
         assert_eq!(AutoIndexer::estimate_tokens(""), 0);
-        assert_eq!(AutoIndexer::estimate_tokens("abcd"), 1);
-        assert_eq!(AutoIndexer::estimate_tokens("abcdefgh"), 2);
-        // chars / 4, rounded up
-        assert_eq!(AutoIndexer::estimate_tokens("hello world!"), 3);
+        assert_eq!(AutoIndexer::estimate_tokens("abcd"), 2); // ceil(4/3.5)
+        assert_eq!(AutoIndexer::estimate_tokens("abcdefgh"), 3); // ceil(8/3.5)
+        // chars / 3.5, rounded up
+        assert_eq!(AutoIndexer::estimate_tokens("hello world!"), 4); // ceil(12/3.5)
     }
 
     #[test]

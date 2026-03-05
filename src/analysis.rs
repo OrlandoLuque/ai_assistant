@@ -1021,6 +1021,463 @@ impl SessionSummarizer {
 }
 
 // ============================================================================
+// Emoticon & Emoji Detection, Classification, and Sentiment
+// ============================================================================
+
+/// Emotion category for emoticons and emoji
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum EmojiCategory {
+    Happy,
+    Sad,
+    Angry,
+    Surprised,
+    Love,
+    Laughing,
+    Thinking,
+    Winking,
+    Cool,
+    Fearful,
+    Playful,
+    Neutral,
+    Custom(String),
+}
+
+impl std::fmt::Display for EmojiCategory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Happy => write!(f, "Happy"),
+            Self::Sad => write!(f, "Sad"),
+            Self::Angry => write!(f, "Angry"),
+            Self::Surprised => write!(f, "Surprised"),
+            Self::Love => write!(f, "Love"),
+            Self::Laughing => write!(f, "Laughing"),
+            Self::Thinking => write!(f, "Thinking"),
+            Self::Winking => write!(f, "Winking"),
+            Self::Cool => write!(f, "Cool"),
+            Self::Fearful => write!(f, "Fearful"),
+            Self::Playful => write!(f, "Playful"),
+            Self::Neutral => write!(f, "Neutral"),
+            Self::Custom(s) => write!(f, "{}", s),
+        }
+    }
+}
+
+impl EmojiCategory {
+    /// Sentiment score for this category (-1.0 to 1.0)
+    pub fn sentiment_score(&self) -> f32 {
+        match self {
+            Self::Happy => 0.7,
+            Self::Sad => -0.7,
+            Self::Angry => -0.8,
+            Self::Surprised => 0.1,
+            Self::Love => 0.9,
+            Self::Laughing => 0.8,
+            Self::Thinking => -0.1,
+            Self::Winking => 0.5,
+            Self::Cool => 0.6,
+            Self::Fearful => -0.6,
+            Self::Playful => 0.4,
+            Self::Neutral => 0.0,
+            Self::Custom(_) => 0.0,
+        }
+    }
+
+    /// Representative emoji for this category
+    pub fn emoji(&self) -> &str {
+        match self {
+            Self::Happy => "😊",
+            Self::Sad => "😢",
+            Self::Angry => "😠",
+            Self::Surprised => "😮",
+            Self::Love => "❤️",
+            Self::Laughing => "😂",
+            Self::Thinking => "🤔",
+            Self::Winking => "😉",
+            Self::Cool => "😎",
+            Self::Fearful => "😰",
+            Self::Playful => "😜",
+            Self::Neutral => "😐",
+            Self::Custom(_) => "❓",
+        }
+    }
+}
+
+/// A detected emoticon or emoji in text
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmoticonMatch {
+    /// The matched text (e.g. ":)" or "😊")
+    pub original: String,
+    /// Unicode emoji equivalent
+    pub emoji: String,
+    /// Emotion classification
+    pub category: EmojiCategory,
+    /// Sentiment score for this match (-1.0 to 1.0)
+    pub sentiment_score: f32,
+    /// Byte offset in original text
+    pub byte_offset: usize,
+    /// true if Unicode emoji, false if text emoticon
+    pub is_unicode: bool,
+}
+
+/// Aggregate result of emoticon/emoji analysis
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmoticonAnalysis {
+    /// All detected matches
+    pub matches: Vec<EmoticonMatch>,
+    /// Weighted average sentiment from emoticons/emoji
+    pub overall_sentiment: f32,
+    /// Most frequent category (None if no matches)
+    pub dominant_category: Option<EmojiCategory>,
+    /// Original text with text emoticons replaced by Unicode emoji
+    pub converted_text: String,
+    /// Count per category
+    pub category_counts: HashMap<String, usize>,
+}
+
+/// Detects, classifies, and converts emoticons and Unicode emoji
+pub struct EmoticonDetector {
+    /// (text_emoticon, emoji_replacement, category) — sorted by length desc
+    emoticons: Vec<(&'static str, &'static str, EmojiCategory)>,
+    /// (unicode_char, emoji_str, category)
+    emoji_categories: Vec<(char, &'static str, EmojiCategory)>,
+}
+
+impl Default for EmoticonDetector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl EmoticonDetector {
+    /// Create with built-in emoticon and emoji databases
+    pub fn new() -> Self {
+        // Text emoticons — order matters: longer patterns first for correct matching
+        let mut emoticons: Vec<(&str, &str, EmojiCategory)> = vec![
+            // Happy (longer first)
+            (":-)", "😊", EmojiCategory::Happy),
+            (":)", "😊", EmojiCategory::Happy),
+            ("=)", "😊", EmojiCategory::Happy),
+            ("(:", "😊", EmojiCategory::Happy),
+            ("^_^", "😊", EmojiCategory::Happy),
+            ("^^", "😊", EmojiCategory::Happy),
+            // Sad
+            (":-(", "😢", EmojiCategory::Sad),
+            (":(", "😢", EmojiCategory::Sad),
+            (":'(", "😢", EmojiCategory::Sad),
+            ("T_T", "😢", EmojiCategory::Sad),
+            ("T.T", "😢", EmojiCategory::Sad),
+            (";_;", "😢", EmojiCategory::Sad),
+            ("QQ", "😢", EmojiCategory::Sad),
+            // Angry
+            (">:-(", "😠", EmojiCategory::Angry),
+            (">:(", "😠", EmojiCategory::Angry),
+            ("D:<", "😠", EmojiCategory::Angry),
+            (">.<", "😠", EmojiCategory::Angry),
+            // Surprised
+            (":-O", "😮", EmojiCategory::Surprised),
+            (":O", "😮", EmojiCategory::Surprised),
+            (":o", "😮", EmojiCategory::Surprised),
+            ("O_O", "😮", EmojiCategory::Surprised),
+            ("o_O", "😮", EmojiCategory::Surprised),
+            ("O.O", "😮", EmojiCategory::Surprised),
+            // Love
+            ("<33", "❤️", EmojiCategory::Love),
+            ("<3", "❤️", EmojiCategory::Love),
+            // Laughing
+            (":-D", "😄", EmojiCategory::Laughing),
+            (":D", "😄", EmojiCategory::Laughing),
+            (":')", "😂", EmojiCategory::Laughing),
+            ("XD", "😂", EmojiCategory::Laughing),
+            ("xD", "😂", EmojiCategory::Laughing),
+            ("xd", "😂", EmojiCategory::Laughing),
+            // Thinking
+            (":-/", "🤔", EmojiCategory::Thinking),
+            (":/", "🤔", EmojiCategory::Thinking),
+            (":-\\", "🤔", EmojiCategory::Thinking),
+            (":\\", "🤔", EmojiCategory::Thinking),
+            // Winking
+            (";-)", "😉", EmojiCategory::Winking),
+            (";)", "😉", EmojiCategory::Winking),
+            (";D", "😉", EmojiCategory::Winking),
+            // Cool
+            ("B-)", "😎", EmojiCategory::Cool),
+            ("B)", "😎", EmojiCategory::Cool),
+            ("8)", "😎", EmojiCategory::Cool),
+            // Fearful
+            ("D;", "😰", EmojiCategory::Fearful),
+            ("D:", "😰", EmojiCategory::Fearful),
+            (":-S", "😰", EmojiCategory::Fearful),
+            (":S", "😰", EmojiCategory::Fearful),
+            // Playful
+            (":-P", "😜", EmojiCategory::Playful),
+            (":P", "😜", EmojiCategory::Playful),
+            (":-p", "😜", EmojiCategory::Playful),
+            (":p", "😜", EmojiCategory::Playful),
+            ("xP", "😜", EmojiCategory::Playful),
+            // Neutral
+            (":-|", "😐", EmojiCategory::Neutral),
+            (":|", "😐", EmojiCategory::Neutral),
+            ("-_-", "😐", EmojiCategory::Neutral),
+            ("._.", "😐", EmojiCategory::Neutral),
+        ];
+
+        // Sort by length descending for longest-match-first
+        emoticons.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+
+        // Unicode emoji → category
+        let emoji_categories = vec![
+            // Happy
+            ('😀', "😀", EmojiCategory::Happy),
+            ('😃', "😃", EmojiCategory::Happy),
+            ('😄', "😄", EmojiCategory::Happy),
+            ('😁', "😁", EmojiCategory::Happy),
+            ('😊', "😊", EmojiCategory::Happy),
+            ('🙂', "🙂", EmojiCategory::Happy),
+            ('😇', "😇", EmojiCategory::Happy),
+            ('🤗', "🤗", EmojiCategory::Happy),
+            ('🥳', "🥳", EmojiCategory::Happy),
+            ('👍', "👍", EmojiCategory::Happy),
+            ('✅', "✅", EmojiCategory::Happy),
+            ('🎉', "🎉", EmojiCategory::Happy),
+            // Sad
+            ('😢', "😢", EmojiCategory::Sad),
+            ('😭', "😭", EmojiCategory::Sad),
+            ('😥', "😥", EmojiCategory::Sad),
+            ('😿', "😿", EmojiCategory::Sad),
+            ('💔', "💔", EmojiCategory::Sad),
+            ('😞', "😞", EmojiCategory::Sad),
+            ('😔', "😔", EmojiCategory::Sad),
+            ('👎', "👎", EmojiCategory::Sad),
+            // Angry
+            ('😠', "😠", EmojiCategory::Angry),
+            ('😡', "😡", EmojiCategory::Angry),
+            ('🤬', "🤬", EmojiCategory::Angry),
+            ('👿', "👿", EmojiCategory::Angry),
+            ('💢', "💢", EmojiCategory::Angry),
+            // Surprised
+            ('😮', "😮", EmojiCategory::Surprised),
+            ('😲', "😲", EmojiCategory::Surprised),
+            ('🤯', "🤯", EmojiCategory::Surprised),
+            ('😱', "😱", EmojiCategory::Surprised),
+            ('😵', "😵", EmojiCategory::Surprised),
+            // Love
+            ('❤', "❤️", EmojiCategory::Love),
+            ('💕', "💕", EmojiCategory::Love),
+            ('💖', "💖", EmojiCategory::Love),
+            ('😍', "😍", EmojiCategory::Love),
+            ('🥰', "🥰", EmojiCategory::Love),
+            ('💘', "💘", EmojiCategory::Love),
+            ('💗', "💗", EmojiCategory::Love),
+            ('💝', "💝", EmojiCategory::Love),
+            ('💞', "💞", EmojiCategory::Love),
+            ('😘', "😘", EmojiCategory::Love),
+            // Laughing
+            ('😂', "😂", EmojiCategory::Laughing),
+            ('🤣', "🤣", EmojiCategory::Laughing),
+            ('😆', "😆", EmojiCategory::Laughing),
+            ('😹', "😹", EmojiCategory::Laughing),
+            // Thinking
+            ('🤔', "🤔", EmojiCategory::Thinking),
+            ('🧐', "🧐", EmojiCategory::Thinking),
+            ('💭', "💭", EmojiCategory::Thinking),
+            // Winking
+            ('😉', "😉", EmojiCategory::Winking),
+            // Cool
+            ('😎', "😎", EmojiCategory::Cool),
+            ('🤙', "🤙", EmojiCategory::Cool),
+            ('🕶', "🕶️", EmojiCategory::Cool),
+            // Fearful
+            ('😰', "😰", EmojiCategory::Fearful),
+            ('😨', "😨", EmojiCategory::Fearful),
+            ('😱', "😱", EmojiCategory::Fearful),
+            ('🫣', "🫣", EmojiCategory::Fearful),
+            // Playful
+            ('😜', "😜", EmojiCategory::Playful),
+            ('😝', "😝", EmojiCategory::Playful),
+            ('😛', "😛", EmojiCategory::Playful),
+            ('🤪', "🤪", EmojiCategory::Playful),
+            // Neutral
+            ('😐', "😐", EmojiCategory::Neutral),
+            ('😑', "😑", EmojiCategory::Neutral),
+            ('😶', "😶", EmojiCategory::Neutral),
+            ('🫤', "🫤", EmojiCategory::Neutral),
+        ];
+
+        Self {
+            emoticons,
+            emoji_categories,
+        }
+    }
+
+    /// Detect all emoticons and emoji in text
+    pub fn detect(&self, text: &str) -> Vec<EmoticonMatch> {
+        let mut matches = Vec::new();
+        let mut consumed = vec![false; text.len()]; // Track consumed byte positions
+
+        // Pass 1: Detect text emoticons (longest match first)
+        for &(pattern, emoji, ref category) in &self.emoticons {
+            let pattern_bytes = pattern.len();
+            let mut search_from = 0;
+            while let Some(pos) = text[search_from..].find(pattern) {
+                let abs_pos = search_from + pos;
+                // Check none of these bytes are already consumed
+                if (abs_pos..abs_pos + pattern_bytes).all(|i| !consumed[i]) {
+                    matches.push(EmoticonMatch {
+                        original: pattern.to_string(),
+                        emoji: emoji.to_string(),
+                        category: category.clone(),
+                        sentiment_score: category.sentiment_score(),
+                        byte_offset: abs_pos,
+                        is_unicode: false,
+                    });
+                    for i in abs_pos..abs_pos + pattern_bytes {
+                        consumed[i] = true;
+                    }
+                }
+                search_from = abs_pos + pattern_bytes;
+                if search_from >= text.len() {
+                    break;
+                }
+            }
+        }
+
+        // Pass 2: Detect Unicode emoji
+        for (idx, ch) in text.char_indices() {
+            let char_len = ch.len_utf8();
+            // Skip if already consumed by a text emoticon
+            if consumed[idx] {
+                continue;
+            }
+            if let Some(&(_, emoji_str, ref category)) =
+                self.emoji_categories.iter().find(|(c, _, _)| *c == ch)
+            {
+                matches.push(EmoticonMatch {
+                    original: ch.to_string(),
+                    emoji: emoji_str.to_string(),
+                    category: category.clone(),
+                    sentiment_score: category.sentiment_score(),
+                    byte_offset: idx,
+                    is_unicode: true,
+                });
+                for i in idx..idx + char_len {
+                    if i < consumed.len() {
+                        consumed[i] = true;
+                    }
+                }
+            }
+        }
+
+        // Sort by position
+        matches.sort_by_key(|m| m.byte_offset);
+        matches
+    }
+
+    /// Full analysis: detect + classify + convert + aggregate
+    pub fn analyze(&self, text: &str) -> EmoticonAnalysis {
+        let matches = self.detect(text);
+
+        // Overall sentiment: average of all matches
+        let overall_sentiment = if matches.is_empty() {
+            0.0
+        } else {
+            let sum: f32 = matches.iter().map(|m| m.sentiment_score).sum();
+            (sum / matches.len() as f32).clamp(-1.0, 1.0)
+        };
+
+        // Category counts
+        let mut category_counts: HashMap<String, usize> = HashMap::new();
+        for m in &matches {
+            *category_counts.entry(m.category.to_string()).or_insert(0) += 1;
+        }
+
+        // Dominant category
+        let dominant_category = category_counts
+            .iter()
+            .max_by_key(|(_, count)| *count)
+            .map(|(cat_name, _)| {
+                matches
+                    .iter()
+                    .find(|m| m.category.to_string() == *cat_name)
+                    .map(|m| m.category.clone())
+                    .unwrap_or(EmojiCategory::Neutral)
+            });
+
+        // Convert text emoticons to emoji
+        let converted_text = self.convert_emoticons(text);
+
+        EmoticonAnalysis {
+            matches,
+            overall_sentiment,
+            dominant_category,
+            converted_text,
+            category_counts,
+        }
+    }
+
+    /// Convert all text emoticons to Unicode emoji, preserving the rest
+    pub fn convert_emoticons(&self, text: &str) -> String {
+        let mut result = text.to_string();
+        // Replace longest patterns first (self.emoticons is already sorted by length desc)
+        for &(pattern, emoji, _) in &self.emoticons {
+            result = result.replace(pattern, emoji);
+        }
+        result
+    }
+
+    /// Classify a single emoji or emoticon string
+    pub fn classify(&self, token: &str) -> Option<EmojiCategory> {
+        // Check text emoticons
+        for &(pattern, _, ref category) in &self.emoticons {
+            if pattern == token {
+                return Some(category.clone());
+            }
+        }
+        // Check Unicode emoji (single char)
+        if let Some(ch) = token.chars().next() {
+            if token.chars().count() == 1 {
+                if let Some((_, _, ref category)) =
+                    self.emoji_categories.iter().find(|(c, _, _)| *c == ch)
+                {
+                    return Some(category.clone());
+                }
+            }
+        }
+        None
+    }
+
+    /// Get sentiment score from emoticons/emoji only (ignoring words)
+    pub fn sentiment_score(&self, text: &str) -> f32 {
+        let matches = self.detect(text);
+        if matches.is_empty() {
+            return 0.0;
+        }
+        let sum: f32 = matches.iter().map(|m| m.sentiment_score).sum();
+        (sum / matches.len() as f32).clamp(-1.0, 1.0)
+    }
+}
+
+impl SentimentAnalyzer {
+    /// Analyze sentiment with explicit emoticon/emoji integration
+    ///
+    /// Returns both the keyword-based sentiment analysis and the emoticon analysis.
+    /// The sentiment score is blended: 70% keyword + 30% emoticon (when emoticons are present).
+    pub fn analyze_with_emoticons(&self, text: &str) -> (SentimentAnalysis, EmoticonAnalysis) {
+        let mut sentiment = self.analyze_message(text);
+        let detector = EmoticonDetector::new();
+        let emoticon_analysis = detector.analyze(text);
+
+        // Blend scores when emoticons are present
+        if !emoticon_analysis.matches.is_empty() {
+            let blended = sentiment.score * 0.7 + emoticon_analysis.overall_sentiment * 0.3;
+            sentiment.score = blended.clamp(-1.0, 1.0);
+            sentiment.sentiment = Sentiment::from_score(sentiment.score);
+        }
+
+        (sentiment, emoticon_analysis)
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -1596,5 +2053,167 @@ mod tests {
             !disabled_summarizer.should_summarize(100),
             "Disabled summarizer should never trigger",
         );
+    }
+
+    // ========================================================================
+    // Emoticon & Emoji Detection Tests
+    // ========================================================================
+
+    #[test]
+    fn test_detect_simple_smiley() {
+        let detector = EmoticonDetector::new();
+        let matches = detector.detect("hello :)");
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].original, ":)");
+        assert_eq!(matches[0].category, EmojiCategory::Happy);
+        assert!(!matches[0].is_unicode);
+    }
+
+    #[test]
+    fn test_detect_sad_emoticon() {
+        let detector = EmoticonDetector::new();
+        let matches = detector.detect("oh no :(");
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].category, EmojiCategory::Sad);
+        assert_eq!(matches[0].emoji, "😢");
+    }
+
+    #[test]
+    fn test_detect_love_heart() {
+        let detector = EmoticonDetector::new();
+        let matches = detector.detect("I love you <3");
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].category, EmojiCategory::Love);
+        assert_eq!(matches[0].emoji, "❤️");
+    }
+
+    #[test]
+    fn test_detect_laughing() {
+        let detector = EmoticonDetector::new();
+        let matches = detector.detect("that was funny XD");
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].category, EmojiCategory::Laughing);
+    }
+
+    #[test]
+    fn test_detect_unicode_emoji() {
+        let detector = EmoticonDetector::new();
+        let matches = detector.detect("great job 😊");
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].category, EmojiCategory::Happy);
+        assert!(matches[0].is_unicode);
+    }
+
+    #[test]
+    fn test_detect_unicode_sad() {
+        let detector = EmoticonDetector::new();
+        let matches = detector.detect("so sad 😢");
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].category, EmojiCategory::Sad);
+        assert!(matches[0].is_unicode);
+    }
+
+    #[test]
+    fn test_detect_multiple() {
+        let detector = EmoticonDetector::new();
+        let matches = detector.detect("I'm happy :) and excited <3");
+        assert_eq!(matches.len(), 2);
+        assert_eq!(matches[0].category, EmojiCategory::Happy);
+        assert_eq!(matches[1].category, EmojiCategory::Love);
+    }
+
+    #[test]
+    fn test_convert_emoticons() {
+        let detector = EmoticonDetector::new();
+        let result = detector.convert_emoticons(":) hello :(");
+        assert_eq!(result, "😊 hello 😢");
+    }
+
+    #[test]
+    fn test_classify_known() {
+        let detector = EmoticonDetector::new();
+        assert_eq!(detector.classify(":)"), Some(EmojiCategory::Happy));
+        assert_eq!(detector.classify(":("), Some(EmojiCategory::Sad));
+        assert_eq!(detector.classify("<3"), Some(EmojiCategory::Love));
+    }
+
+    #[test]
+    fn test_classify_unknown() {
+        let detector = EmoticonDetector::new();
+        assert_eq!(detector.classify("???"), None);
+        assert_eq!(detector.classify("hello"), None);
+    }
+
+    #[test]
+    fn test_sentiment_positive_emoticons() {
+        let detector = EmoticonDetector::new();
+        let score = detector.sentiment_score(":) :D <3");
+        assert!(score > 0.5, "Positive emoticons should give positive score, got {}", score);
+    }
+
+    #[test]
+    fn test_sentiment_negative_emoticons() {
+        let detector = EmoticonDetector::new();
+        let score = detector.sentiment_score(":( >:( D:");
+        assert!(score < -0.5, "Negative emoticons should give negative score, got {}", score);
+    }
+
+    #[test]
+    fn test_sentiment_mixed() {
+        let detector = EmoticonDetector::new();
+        let score = detector.sentiment_score(":) :(");
+        assert!(score.abs() < 0.3, "Mixed emoticons should be near-neutral, got {}", score);
+    }
+
+    #[test]
+    fn test_analyze_full() {
+        let detector = EmoticonDetector::new();
+        let analysis = detector.analyze("Great :) I love it <3 but also :(");
+        assert_eq!(analysis.matches.len(), 3);
+        assert!(analysis.category_counts.contains_key("Happy"));
+        assert!(analysis.category_counts.contains_key("Love"));
+        assert!(analysis.category_counts.contains_key("Sad"));
+        assert!(!analysis.converted_text.contains(":)"));
+        assert!(analysis.converted_text.contains("😊"));
+    }
+
+    #[test]
+    fn test_dominant_category() {
+        let detector = EmoticonDetector::new();
+        let analysis = detector.analyze(":) :D =) :(");
+        assert_eq!(
+            analysis.dominant_category,
+            Some(EmojiCategory::Happy),
+            "3 happy vs 1 sad → dominant should be Happy"
+        );
+    }
+
+    #[test]
+    fn test_no_emoticons() {
+        let detector = EmoticonDetector::new();
+        let analysis = detector.analyze("Just plain text here.");
+        assert!(analysis.matches.is_empty());
+        assert_eq!(analysis.overall_sentiment, 0.0);
+        assert!(analysis.dominant_category.is_none());
+    }
+
+    #[test]
+    fn test_longest_match_priority() {
+        let detector = EmoticonDetector::new();
+        // :-( should be matched as one emoticon, not :- + (
+        let matches = detector.detect(":-(");
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].original, ":-(");
+        assert_eq!(matches[0].category, EmojiCategory::Sad);
+    }
+
+    #[test]
+    fn test_analyzer_with_emoticons() {
+        let analyzer = SentimentAnalyzer::new();
+        let (sentiment, emoticon_analysis) =
+            analyzer.analyze_with_emoticons("This is great! :) <3");
+        assert!(sentiment.score > 0.0, "Blended score should be positive");
+        assert!(!emoticon_analysis.matches.is_empty());
+        assert!(emoticon_analysis.overall_sentiment > 0.0);
     }
 }
