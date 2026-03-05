@@ -962,11 +962,87 @@ pub fn generate_server_api_spec() -> serde_json::Value {
         }
     });
 
+    // OpenAI-compatible endpoints
+    let openai_chat_completions_path = serde_json::json!({
+        "post": {
+            "summary": "Create chat completion (OpenAI-compatible)",
+            "description": "OpenAI-compatible chat completions endpoint. Supports streaming via `stream: true`. Drop-in replacement for the OpenAI API.",
+            "operationId": "createChatCompletion",
+            "tags": ["openai"],
+            "security": [{ "BearerAuth": [] }],
+            "requestBody": {
+                "required": true,
+                "content": {
+                    "application/json": {
+                        "schema": { "$ref": "#/components/schemas/OpenAIChatRequest" }
+                    }
+                }
+            },
+            "responses": {
+                "200": {
+                    "description": "Chat completion response (or SSE stream if stream=true)",
+                    "content": {
+                        "application/json": {
+                            "schema": { "$ref": "#/components/schemas/OpenAIChatResponse" }
+                        },
+                        "text/event-stream": {
+                            "schema": { "type": "string", "description": "SSE stream of chat.completion.chunk objects" }
+                        }
+                    }
+                },
+                "400": {
+                    "description": "Invalid request",
+                    "content": {
+                        "application/json": {
+                            "schema": { "$ref": "#/components/schemas/OpenAIErrorResponse" }
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    let openai_models_path = serde_json::json!({
+        "get": {
+            "summary": "List models (OpenAI-compatible)",
+            "description": "Returns models in OpenAI-compatible format with object='list'.",
+            "operationId": "listModelsOpenAI",
+            "tags": ["openai"],
+            "responses": {
+                "200": {
+                    "description": "Model list",
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "object": { "type": "string", "enum": ["list"] },
+                                    "data": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "id": { "type": "string" },
+                                                "object": { "type": "string", "enum": ["model"] },
+                                                "created": { "type": "integer" },
+                                                "owned_by": { "type": "string" }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
+
     serde_json::json!({
         "openapi": "3.0.0",
         "info": {
             "title": "AI Assistant API",
-            "description": "Embedded HTTP server API for the ai_assistant Rust crate. Provides chat completions, model listing, configuration management, metrics, and WebSocket streaming.",
+            "description": "Embedded HTTP server API for the ai_assistant Rust crate. Provides chat completions, model listing, configuration management, metrics, and WebSocket streaming. Includes OpenAI-compatible endpoints at /v1/chat/completions and /v1/models.",
             "version": "1.0.0",
             "license": {
                 "name": "PolyForm Noncommercial 1.0.0",
@@ -981,6 +1057,7 @@ pub fn generate_server_api_spec() -> serde_json::Value {
         ],
         "tags": [
             { "name": "chat", "description": "Chat completion endpoints" },
+            { "name": "openai", "description": "OpenAI-compatible API endpoints" },
             { "name": "models", "description": "Model management" },
             { "name": "config", "description": "Server configuration" },
             { "name": "server", "description": "Health, metrics and metadata" },
@@ -995,8 +1072,9 @@ pub fn generate_server_api_spec() -> serde_json::Value {
             "/metrics": metrics_path,
             "/ws": ws_path,
             "/openapi.json": openapi_path,
+            "/v1/chat/completions": openai_chat_completions_path,
+            "/v1/models": openai_models_path,
             "/api/v1/health": health_path,
-            "/api/v1/models": models_path,
             "/api/v1/chat": chat_path,
             "/api/v1/chat/stream": chat_stream_path,
             "/api/v1/config": config_path,
@@ -1008,7 +1086,75 @@ pub fn generate_server_api_spec() -> serde_json::Value {
                 "ChatRequest": chat_request_schema,
                 "ChatResponse": chat_response_schema,
                 "ErrorResponse": error_response_schema,
-                "HealthResponse": health_response_schema
+                "HealthResponse": health_response_schema,
+                "OpenAIChatRequest": serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "model": { "type": "string", "description": "Model to use (optional, defaults to server config)" },
+                        "messages": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "role": { "type": "string", "enum": ["system", "user", "assistant"] },
+                                    "content": { "type": "string" }
+                                },
+                                "required": ["role", "content"]
+                            }
+                        },
+                        "temperature": { "type": "number", "minimum": 0.0, "maximum": 2.0 },
+                        "max_tokens": { "type": "integer" },
+                        "stream": { "type": "boolean", "default": false }
+                    },
+                    "required": ["messages"]
+                }),
+                "OpenAIChatResponse": serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "string", "example": "chatcmpl-0000000067c8a9f0" },
+                        "object": { "type": "string", "enum": ["chat.completion"] },
+                        "created": { "type": "integer" },
+                        "model": { "type": "string" },
+                        "choices": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "index": { "type": "integer" },
+                                    "message": {
+                                        "type": "object",
+                                        "properties": {
+                                            "role": { "type": "string" },
+                                            "content": { "type": "string" }
+                                        }
+                                    },
+                                    "finish_reason": { "type": "string" }
+                                }
+                            }
+                        },
+                        "usage": {
+                            "type": "object",
+                            "properties": {
+                                "prompt_tokens": { "type": "integer" },
+                                "completion_tokens": { "type": "integer" },
+                                "total_tokens": { "type": "integer" }
+                            }
+                        }
+                    }
+                }),
+                "OpenAIErrorResponse": serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "error": {
+                            "type": "object",
+                            "properties": {
+                                "message": { "type": "string" },
+                                "type": { "type": "string" },
+                                "code": { "type": "string" }
+                            }
+                        }
+                    }
+                })
             },
             "securitySchemes": {
                 "BearerAuth": {
