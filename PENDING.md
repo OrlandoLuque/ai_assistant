@@ -1,6 +1,6 @@
 # AI Assistant — Documentacion de modulos y funcionalidad pendiente
 
-**Ultima actualizacion**: 2026-02-21
+**Ultima actualizacion**: 2026-03-06
 
 ---
 
@@ -47,7 +47,7 @@
 | `log_redaction` | Redaccion automatica de API keys, tokens, passwords, PEM keys en logs; macro `safe_log!` | - | 8 |
 | `internal_storage` | Almacenamiento bincode+gzip con auto-deteccion de formato, herramientas de debug, macros | `binary-storage` | 8 |
 | `request_queue` | Cola thread-safe con prioridad (Low/Normal/High), Condvar blocking, session removal | - | 13 |
-| `server` | Servidor HTTP embebido con TcpListener, endpoints REST (/health, /models, /chat, /config), CORS | - | 9 |
+| `server` | Servidor HTTP embebido: REST API, OpenAI-compatible `/v1/chat/completions` + `/v1/models`, SSE streaming, auth, CORS, rate limiting, enrichment pipeline (52 campos), guardrails, RAG, budget manager, TLS | - | 85+ |
 | `events` | Event bus con EventHandler trait, 20+ variantes AiEvent, handlers filtered/logging/collecting | - | 12 |
 | `unified_tools` | Sistema de herramientas unificado: builder, registry, validacion, multi-format parsing, built-ins | `tools` | 39 |
 
@@ -65,7 +65,7 @@
 | `agent_policy` | Politicas de seguridad: internet modes, risk levels, cost caps, command allowlists | `autonomous` | 12 |
 | `scheduler` | Cron scheduler con parser de expresiones, jobs con lifecycle completo | `scheduler` | 16 |
 | `trigger_system` | Triggers por evento (Manual/Cron/FileChange/FeedUpdate), cooldowns, max-fires | `scheduler` | 20 |
-| `butler` | Auto-deteccion de entorno: Ollama/LM Studio (HTTP real), GPU (nvidia-smi), Docker, Browser, Network | `butler` | 18 |
+| `butler` | Auto-deteccion de entorno + ButlerAdvisor: 30 recomendaciones en 6 categorias (Efficiency, Quality, Cost, Security, Scalability, Observability) | `butler` | 36 |
 | `os_tools` | Operaciones del SO con validacion sandbox: archivos, procesos, HTTP | `autonomous` | 11 |
 | `browser_tools` | Chrome DevTools Protocol real via WebSocket, lanzamiento de Chrome, CDP JSON-RPC | `browser` | 19 |
 | `distributed_agents` | Distribucion de tareas entre nodos, heartbeats, MapReduce distribuido | `distributed-agents` | 17 |
@@ -524,10 +524,10 @@ Modulos de networking real para sistema distribuido:
 - **Relevancia**: Necesario para documentos antiguos escaneados
 
 ### 2. Audio/Voz
-- **Estado**: No implementado
-- **TTS**: Sintesis de voz para respuestas
-- **STT**: Transcripcion de audio como input
-- **Relevancia**: Baja para uso actual (asistente de texto)
+- **Estado**: IMPLEMENTADO (ver `speech.rs`, `voice_agent.rs`, features `audio`, `voice-agent`)
+- **TTS**: Sintesis de voz con proveedores cloud y locales
+- **STT**: Transcripcion via cloud APIs y whisper local (feature `whisper-local`)
+- **Voice Agent**: Agente conversacional de voz con flujo bidireccional
 
 ### 3. Video understanding
 - **Estado**: No implementado
@@ -558,8 +558,9 @@ Modulos de networking real para sistema distribuido:
 - **Relevancia**: Baja para uso actual
 
 ### 7. Model distillation / Compression
-- **Estado**: Solo deteccion de formato en `quantization.rs`
-- **Pendiente**: Knowledge distillation, pruning real
+- **Estado**: IMPLEMENTADO parcialmente (ver `distillation.rs`, feature `distillation`)
+- **Completado**: Teacher-student pipeline, trajectory collection, training data export
+- **Pendiente**: Pruning real, quantization-aware training
 - **Relevancia**: Fuera de alcance (se usan modelos pre-entrenados)
 
 ### 8. Reinforcement Learning
@@ -568,10 +569,10 @@ Modulos de networking real para sistema distribuido:
 - **Relevancia**: Baja - complejo y requiere infraestructura dedicada
 
 ### 9. Orquestacion DAG de workflows
-- **Estado**: Parcial (`prompt_chaining` + `agentic_loop` + `decision_tree` + ejemplo `dag_workflow`)
-- **Completado**: Ejemplo `dag_workflow` demuestra orquestacion basica de grafos dirigidos
-- **Pendiente**: Paralelismo real en ramas del DAG, human-in-the-loop avanzado
-- **Relevancia**: Media
+- **Estado**: IMPLEMENTADO (ver `event_workflow.rs`, feature `workflows`)
+- **Completado**: Event-driven workflows con condiciones, DAG execution, durable execution
+- **Completado**: HITL approval gates (feature `hitl`), MCTS planning (feature `devtools`)
+- **Pendiente**: Paralelismo real en ramas del DAG
 
 ### 10. Monitorizacion automatica de cambios web
 - **Estado**: `content_versioning` + `feed_monitor` implementados
@@ -639,9 +640,9 @@ Modulos de networking real para sistema distribuido:
 - **Integracion**: `AiAssistant::init_cost_tracking()`, `cost_dashboard()`, `cost_dashboard_mut()`, `cost_report()`
 
 ### 17. Audio/Speech (TTS/STT)
-- **Estado**: No implementado (ver item 2)
-- **Descripcion**: Integracion con APIs de speech-to-text y text-to-speech
-- **Relevancia**: Baja para uso actual
+- **Estado**: IMPLEMENTADO (ver items 2 y 88 del GUIDE)
+- **Descripcion**: Cloud + local speech providers, voice agent con flujo bidireccional
+- **Features**: `audio`, `voice-agent`, `whisper-local`
 
 ### 18. UI Framework Hooks
 - **Estado**: IMPLEMENTADO (ver `ui_hooks.rs`)
@@ -705,7 +706,7 @@ Modulos de networking real para sistema distribuido:
 - Tests unitarios en cada modulo (`#[cfg(test)] mod tests`)
 - Total de tests en los 13 nuevos modulos de contenido: **240+**
 - Total de tests en los 14 modulos de agentes autonomos: **255**
-- **Total de tests (Phase 11)**: 2393 lib + 38 integration = **2431 tests**
+- **Total de tests (v29)**: 6565 lib + 38 integration = **6603 tests**
 - Compilacion verificada con todas las combinaciones de features
 - **Zero `.unwrap()` en codigo de produccion**: 554 llamadas `.unwrap()` reemplazadas en 76 archivos con manejo apropiado de errores:
   - Lock poisoning: `.unwrap_or_else(|e| e.into_inner())` — recupera datos del Mutex/RwLock envenenado

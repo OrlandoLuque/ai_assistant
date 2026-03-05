@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - v29 (2026-03-06)
+
+### Added
+- OpenAI-compatible API: `/v1/chat/completions` (streaming + non-streaming), `/v1/models`
+- Full enrichment pipeline: 7 sub-configs, 52 configurable fields
+- Selective guardrail pipeline: individual guard toggles, rate limiting, pattern blocking
+- Budget manager: daily/monthly/per-request cost limits with HTTP 429
+- Output guardrails: configurable PII redaction (per-type toggles) and toxicity filtering
+- Butler Advisor: 30 optimization recommendations across 6 categories
+- Advanced routing: Thompson Sampling, UCB1, NFA/DFA pipeline, 10 MCP routing tools
+- Routing enhancements: composite rewards, per-query preferences, private arms, context-aware routing
+- 5 new benchmark suites: LiveCodeBench, AiderPolyglot, TerminalBench, APPS, CodeContests
+- RAG tier expansion: 20 → 28 features (discourse chunking, dedup, cascade reranking, etc.)
+- 12 MCP tools: 6 config management + 6 evaluation tools
+- Unified BPE tokenizer with model-aware routing (GPT, Claude, Gemini, Mistral, DeepSeek)
+- Emoticon/emoji detection and sentiment analysis
+
+### Changed
+- Token estimation unified across 7 modules → central `crate::context::estimate_tokens`
+- `concepts.html` rendering fix for unescaped HTML in code blocks
+- `framework_comparison.html` new "Documentation, DX & Economics" category
+
+### Stats
+- 220+ source modules
+- 6,565+ passing tests (from 6,401 in v28)
+- 20+ Cargo feature flags
+- 0 clippy warnings
+
 ## [0.1.0] - 2026-02-19
 
 ### Added
