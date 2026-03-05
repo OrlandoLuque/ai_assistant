@@ -199,8 +199,9 @@ pub mod wasm_hooks;
 pub use assistant::{AiAssistant, SummaryResult};
 pub use config::{AiConfig, AiProvider};
 pub use context::{
-    clear_context_size_cache, context_size_cache_len, estimate_tokens, get_model_context_size,
-    get_model_context_size_cached, ContextUsage,
+    clear_context_size_cache, context_size_cache_len, estimate_tokens,
+    estimate_tokens_for_model, get_model_context_size, get_model_context_size_cached,
+    ContextUsage,
 };
 pub use messages::{AiResponse, ChatMessage};
 pub use models::{ModelCapabilityInfo, ModelInfo, ModelRegistry};
@@ -234,10 +235,10 @@ pub use events::{
 };
 
 pub use config_file::{
-    default_config_path, load_config, save_config, CacheConfig as FileCacheConfig, ConfigFile,
-    ConfigFormat, ConfigValidationError, ConfigWatcher, GenerationConfig, HybridConfig,
-    LoggingConfig, ProviderConfig, RagFileConfig, ReloadResult, ReloadScope, SecurityConfig,
-    UrlConfig,
+    default_config_path, load_config, register_config_tools, save_config,
+    CacheConfig as FileCacheConfig, ConfigFile, ConfigFormat, ConfigValidationError, ConfigWatcher,
+    GenerationConfig, HybridConfig, LoggingConfig, ProviderConfig, RagFileConfig, ReloadResult,
+    ReloadScope, SecurityConfig, UrlConfig,
 };
 
 pub use memory_management::{
@@ -778,7 +779,8 @@ pub use metrics::{
 
 #[cfg(feature = "analytics")]
 pub use analysis::{
-    ConversationSentimentAnalysis, Sentiment, SentimentAnalysis, SentimentAnalyzer, SentimentTrend,
+    ConversationSentimentAnalysis, EmojiCategory, EmoticonAnalysis, EmoticonDetector,
+    EmoticonMatch, Sentiment, SentimentAnalysis, SentimentAnalyzer, SentimentTrend,
     SessionSummarizer, SessionSummary, SummaryConfig, Topic, TopicDetector,
 };
 
@@ -1262,7 +1264,7 @@ pub mod eval_suite;
 #[cfg(feature = "eval-suite")]
 pub use eval_suite::{
     filter_by_contamination_cutoff, filter_by_language, make_code_edit_problem,
-    make_competitive_problem, make_livecode_problem, make_terminal_problem,
+    make_competitive_problem, make_livecode_problem, make_terminal_problem, register_eval_tools,
     AblationEngine, AblationRecommendation, AblationResult, AblationStudy, AnswerFormat,
     BenchmarkDataset, BenchmarkProblem, BenchmarkRunResult, BenchmarkSuiteRunner,
     BenchmarkSuiteType, ComparisonConfig, ComparisonMatrix, ConfigMeasurement, ConfigSearchConfig,

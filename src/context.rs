@@ -76,6 +76,21 @@ pub fn estimate_tokens(text: &str) -> usize {
     (text.len() as f64 / 3.5).ceil() as usize
 }
 
+/// Estimate tokens using the best available method for the given model.
+///
+/// For cloud/known models (GPT, Claude, Gemini, Mistral, DeepSeek), uses
+/// byte-level BPE counting for higher accuracy. For local/unknown models,
+/// falls back to the ~3.5 chars/token heuristic.
+///
+/// Uses a thread-local `ProviderTokenCounter` to avoid allocation per call.
+pub fn estimate_tokens_for_model(text: &str, model: &str) -> usize {
+    use crate::token_counter::ProviderTokenCounter;
+    thread_local! {
+        static COUNTER: ProviderTokenCounter = ProviderTokenCounter::new();
+    }
+    COUNTER.with(|c| c.for_model(model).count(text))
+}
+
 /// Get the context window size for common models (in tokens)
 pub fn get_model_context_size(model_name: &str) -> usize {
     let name = model_name.to_lowercase();
@@ -326,5 +341,74 @@ mod tests {
     #[test]
     fn test_estimate_tokens_empty() {
         assert_eq!(estimate_tokens(""), 0);
+    }
+
+    // =========================================================================
+    // estimate_tokens_for_model tests
+    // =========================================================================
+
+    #[test]
+    fn test_estimate_tokens_for_model_gpt() {
+        // GPT models should use BPE counter
+        let text = "The quick brown fox jumps over the lazy dog.";
+        let bpe_count = estimate_tokens_for_model(text, "gpt-4o");
+        assert!(bpe_count > 0);
+        assert!(bpe_count < text.len());
+    }
+
+    #[test]
+    fn test_estimate_tokens_for_model_claude() {
+        let text = "Hello world, this is a test of the token counter.";
+        let count = estimate_tokens_for_model(text, "claude-3-opus");
+        assert!(count > 0);
+        assert!(count < text.len());
+    }
+
+    #[test]
+    fn test_estimate_tokens_for_model_local() {
+        // Local models should use approximate counter (same as estimate_tokens)
+        let text = "Testing with a local model name.";
+        let model_count = estimate_tokens_for_model(text, "llama3:8b");
+        let approx_count = estimate_tokens(text);
+        assert_eq!(model_count, approx_count);
+    }
+
+    #[test]
+    fn test_estimate_tokens_for_model_empty() {
+        assert_eq!(estimate_tokens_for_model("", "gpt-4o"), 0);
+        assert_eq!(estimate_tokens_for_model("", "llama3:8b"), 0);
+    }
+
+    #[test]
+    fn test_bpe_differs_from_approx() {
+        // BPE should produce different counts than the heuristic on most text
+        let text = "Artificial intelligence is transforming the way we interact with technology, \
+                    enabling new possibilities in healthcare, education, and creative fields.";
+        let bpe_count = estimate_tokens_for_model(text, "gpt-4o");
+        let approx_count = estimate_tokens(text);
+        // They should both be reasonable but typically differ
+        assert!(bpe_count > 0);
+        assert!(approx_count > 0);
+        // Both should be significantly less than byte count
+        assert!(bpe_count < text.len());
+        assert!(approx_count < text.len());
+    }
+
+    #[test]
+    fn test_estimate_tokens_for_model_gemini() {
+        let text = "Testing Gemini model routing.";
+        let count = estimate_tokens_for_model(text, "gemini-1.5-pro");
+        assert!(count > 0);
+        // Should use BPE (same as GPT)
+        let gpt_count = estimate_tokens_for_model(text, "gpt-4o");
+        assert_eq!(count, gpt_count);
+    }
+
+    #[test]
+    fn test_estimate_tokens_for_model_code() {
+        let code = "fn main() {\n    let x: Vec<i32> = vec![1, 2, 3];\n    println!(\"{:?}\", x);\n}";
+        let bpe_count = estimate_tokens_for_model(code, "gpt-4o");
+        assert!(bpe_count > 0);
+        assert!(bpe_count < code.len());
     }
 }

@@ -405,6 +405,8 @@ impl ProviderTokenCounter {
     }
 
     /// Return the appropriate counter for `model`.
+    ///
+    /// Uses BPE for cloud/known models (more accurate), approximate for local/unknown.
     pub fn for_model(&self, model: &str) -> &dyn TokenCounter {
         let name = model.to_lowercase();
 
@@ -412,8 +414,14 @@ impl ProviderTokenCounter {
             || name.starts_with("gpt4")
             || name.starts_with("o1")
             || name.starts_with("o3")
+            || name.starts_with("o4")
             || name.starts_with("claude-")
             || name.starts_with("claude3")
+            || name.starts_with("claude4")
+            || name.contains("gemini")
+            || name.contains("mistral")
+            || name.contains("deepseek")
+            || name.contains("command-r")
         {
             &self.bpe
         } else {
@@ -686,5 +694,41 @@ mod tests {
 
         // Overhead = 4 tokens per message * 2 messages = 8
         assert_eq!(total, content_only + 8);
+    }
+
+    // 16. ProviderTokenCounter routes Gemini to BPE
+    #[test]
+    fn test_provider_counter_gemini() {
+        let provider = ProviderTokenCounter::new();
+        let bpe = BpeTokenCounter::new();
+        let text = "Gemini model routing test.";
+        assert_eq!(provider.for_model("gemini-1.5-pro").count(text), bpe.count(text));
+    }
+
+    // 17. ProviderTokenCounter routes DeepSeek to BPE
+    #[test]
+    fn test_provider_counter_deepseek() {
+        let provider = ProviderTokenCounter::new();
+        let bpe = BpeTokenCounter::new();
+        let text = "DeepSeek routing test.";
+        assert_eq!(provider.for_model("deepseek-v2").count(text), bpe.count(text));
+    }
+
+    // 18. ProviderTokenCounter routes Mistral to BPE
+    #[test]
+    fn test_provider_counter_mistral() {
+        let provider = ProviderTokenCounter::new();
+        let bpe = BpeTokenCounter::new();
+        let text = "Mistral routing test.";
+        assert_eq!(provider.for_model("mistral-large").count(text), bpe.count(text));
+    }
+
+    // 19. ProviderTokenCounter routes o4-* to BPE
+    #[test]
+    fn test_provider_counter_o4() {
+        let provider = ProviderTokenCounter::new();
+        let bpe = BpeTokenCounter::new();
+        let text = "o4-mini model test.";
+        assert_eq!(provider.for_model("o4-mini").count(text), bpe.count(text));
     }
 }

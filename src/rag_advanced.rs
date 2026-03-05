@@ -117,9 +117,9 @@ impl SmartChunker {
         self
     }
 
-    /// Estimate tokens in text (rough: ~4 chars per token)
+    /// Estimate tokens in text — delegates to canonical implementation.
     fn estimate_tokens(text: &str) -> usize {
-        text.len() / 4
+        crate::context::estimate_tokens(text)
     }
 
     /// Chunk a document

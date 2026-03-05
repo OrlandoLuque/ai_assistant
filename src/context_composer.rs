@@ -240,9 +240,9 @@ impl ComposedContext {
 // Token estimation helper
 // ---------------------------------------------------------------------------
 
-/// Rough token estimate: ~4 characters per token, rounded up.
+/// Estimate tokens — delegates to the canonical implementation.
 pub fn estimate_tokens(text: &str) -> usize {
-    (text.len() + 3) / 4
+    crate::context::estimate_tokens(text)
 }
 
 // ---------------------------------------------------------------------------
@@ -1691,7 +1691,7 @@ mod tests {
     #[test]
     fn test_estimate_tokens_longer() {
         let text = "a".repeat(100);
-        assert_eq!(estimate_tokens(&text), (100 + 3) / 4);
+        assert_eq!(estimate_tokens(&text), (100_f64 / 3.5).ceil() as usize); // 29
     }
 
     // -- BudgetAllocation surplus ------------------------------------------
