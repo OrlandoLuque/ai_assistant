@@ -144,6 +144,10 @@ This guide covers every feature in the `ai_assistant` crate. Each section explai
 136. [Advanced Model Routing (Bandit + NFA/DFA Pipeline)](#136-advanced-model-routing-bandit--nfadfa-pipeline)
 137. [Routing Enhancements: Composite Rewards, Preferences, and Context](#137-routing-enhancements-composite-rewards-preferences-and-context)
 138. [Butler Advisor — Optimization Guidance](#138-butler-advisor--optimization-guidance)
+139. [Eval Suite — Benchmark Suites](#139-eval-suite--benchmark-suites)
+140. [MCP Configuration & Evaluation Tools](#140-mcp-configuration--evaluation-tools)
+141. [OpenAI-Compatible API Server](#141-openai-compatible-api-server)
+142. [Enrichment Config — Full Pipeline Configuration](#142-enrichment-config--full-pipeline-configuration)
 
 ---
 
@@ -7773,3 +7777,604 @@ println!("By priority: {:?}", advisor_report.summary.by_priority);
 | **Observability** | Visibility into behavior | OpenTelemetry tracing, metrics logging, agent devtools |
 
 **Feature flags**: `butler` (required), `autonomous` (Butler depends on autonomous)
+
+---
+
+## 139. Eval Suite — Benchmark Suites
+
+The `eval-suite` feature provides a comprehensive benchmark framework for evaluating LLM performance across multiple domains.
+
+### Available Benchmark Suites
+
+| Suite | Focus | Description |
+|-------|-------|-------------|
+| `HumanEval` | Code generation | Python function synthesis from docstrings |
+| `MBPP` | Basic programming | Short Python programs from descriptions |
+| `MMLU` | General knowledge | Multi-task language understanding across 57 subjects |
+| `GSM8K` | Math reasoning | Grade-school math word problems |
+| `TruthfulQA` | Factual accuracy | Questions designed to test truthfulness vs. common misconceptions |
+| `LiveCodeBench` | Live coding | Real-time coding tasks with live evaluation |
+| `AiderPolyglot` | Multi-language | Cross-language coding assessment (Python, JS, Rust, Go, etc.) |
+| `TerminalBench` | Command-line | Shell and terminal interaction tasks |
+| `APPS` | Algorithms | Algorithm and competitive programming problems |
+| `CodeContests` | Competitions | Contest-level programming challenges |
+
+### Running Benchmarks
+
+```rust
+use ai_assistant::eval_suite::{
+    BenchmarkRunner, BenchmarkConfig, BenchmarkSuiteType,
+    ComparisonMatrix, SubtaskAnalysis,
+};
+
+// Configure the benchmark
+let config = BenchmarkConfig {
+    suite: BenchmarkSuiteType::HumanEval,
+    num_samples: 50,
+    temperature: 0.2,
+    max_tokens: 1024,
+    ..Default::default()
+};
+
+// Run benchmark with a model
+let runner = BenchmarkRunner::new();
+let result = runner.run(&config, &model_provider)?;
+
+println!("Suite: {:?}", result.suite);
+println!("Score: {:.1}%", result.overall_score * 100.0);
+println!("Mean latency: {:.0}ms", result.mean_latency_ms);
+println!("Total cost: ${:.4}", result.total_cost);
+
+// Compare multiple models
+let matrix = ComparisonMatrix::from_results(&[result_a, result_b, result_c]);
+println!("{}", matrix.to_markdown());
+
+// Per-subtask analysis
+let analysis = SubtaskAnalysis::from_results(&results);
+for perf in analysis.by_subtask() {
+    println!("{}: {:.1}%", perf.subtask, perf.score * 100.0);
+}
+```
+
+### Heuristic Scoring
+
+When full execution is not possible, the benchmark runner uses heuristic scoring that analyzes code structure, correctness patterns, and edge case handling.
+
+### Integration with Advanced Routing
+
+The `BanditBootstrapper` (feature `eval-suite`) converts benchmark results into bandit priors, eliminating the cold-start exploration penalty:
+
+```rust
+use ai_assistant::advanced_routing::BanditBootstrapper;
+
+let priors = BanditBootstrapper::from_comparison_matrix(&matrix, &reward_policy);
+let pipeline = BanditBootstrapper::bootstrap_pipeline(priors, bandit_config, pipeline_config)?;
+// Pipeline starts with warm priors — no cold-start waste
+```
+
+**Feature flags**: `eval-suite`
+
+---
+
+## 140. MCP Configuration & Evaluation Tools
+
+The MCP protocol exposes 12 additional tools for runtime configuration management and benchmark evaluation.
+
+### Configuration Tools (6)
+
+| Tool | Description |
+|------|-------------|
+| `get_provider_config` | Read the current configuration for a specific provider |
+| `set_provider_config` | Update provider URL, API key, or model settings (requires write permission) |
+| `list_providers_config` | List all configured providers with their URLs and active status |
+| `validate_config` | Validate configuration consistency (missing API keys, unreachable URLs) |
+| `get_provider_url` | Get the endpoint URL for a given provider |
+| `can_write_provider_config` | Check whether config writes are allowed (security gate) |
+
+### Evaluation Tools (6)
+
+| Tool | Description |
+|------|-------------|
+| `list_eval_suites` | List all available benchmark suites with descriptions |
+| `create_eval_dataset` | Create a new evaluation dataset from provided examples |
+| `run_eval_suite` | Execute a benchmark suite against a model with configurable parameters |
+| `get_eval_result` | Retrieve the result of a completed evaluation run |
+| `compare_eval_results` | Compare results from multiple evaluation runs in a matrix view |
+| `generate_eval_report` | Generate a formatted Markdown report from evaluation results |
+
+### Usage via MCP
+
+```json
+{
+  "method": "tools/call",
+  "params": {
+    "name": "list_providers_config",
+    "arguments": {}
+  }
+}
+```
+
+```json
+{
+  "method": "tools/call",
+  "params": {
+    "name": "run_eval_suite",
+    "arguments": {
+      "suite": "human_eval",
+      "model": "llama3",
+      "num_samples": 20
+    }
+  }
+}
+```
+
+### Security
+
+Configuration write tools require the `allow_writes` flag to be enabled in the MCP server configuration. Read-only tools are always available.
+
+**Feature flags**: `full` (config tools), `eval-suite` (eval tools)
+
+---
+
+## 141. OpenAI-Compatible API Server
+
+The embedded HTTP server can serve as a **drop-in OpenAI-compatible provider**, allowing any tool in the OpenAI ecosystem to connect — Open WebUI, LangChain, LiteLLM, Cursor, Continue, and more.
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/v1/chat/completions` | Chat completion (streaming and non-streaming) |
+| GET | `/v1/models` | List available models |
+
+Both also available at `/api/v1/` prefix.
+
+### Starting the Server
+
+```rust
+use ai_assistant::server::{ServerConfig, AiServer, ServerEnrichmentConfig};
+use ai_assistant::server::{
+    GuardrailEnrichmentConfig, RagEnrichmentConfig, CostEnrichmentConfig,
+};
+
+let config = ServerConfig {
+    host: "0.0.0.0".to_string(),
+    port: 8090,
+    enrichment: ServerEnrichmentConfig {
+        enable_guardrails: true,
+        enable_rag: true,
+        enable_memory: false,
+        block_on_input_violation: true,
+        redact_output_pii: true,
+        guardrail_threshold: 0.8,
+        ..Default::default()
+    },
+    ..Default::default()
+};
+
+let server = AiServer::new(config);
+let handle = server.start_background().unwrap();
+println!("OpenAI-compatible server at {}/v1/chat/completions", handle.url());
+```
+
+### Client Usage
+
+**curl:**
+
+```bash
+curl http://localhost:8090/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llama3",
+    "messages": [
+      {"role": "system", "content": "You are a helpful assistant."},
+      {"role": "user", "content": "What is Rust?"}
+    ],
+    "temperature": 0.7,
+    "max_tokens": 1024
+  }'
+```
+
+**Python (OpenAI SDK):**
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:8090/v1", api_key="not-needed")
+
+response = client.chat.completions.create(
+    model="llama3",
+    messages=[
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "Explain ownership in Rust."},
+    ],
+    temperature=0.7,
+)
+print(response.choices[0].message.content)
+```
+
+**Python (streaming):**
+
+```python
+stream = client.chat.completions.create(
+    model="llama3",
+    messages=[{"role": "user", "content": "Tell me a story"}],
+    stream=True,
+)
+for chunk in stream:
+    if chunk.choices[0].delta.content:
+        print(chunk.choices[0].delta.content, end="")
+```
+
+**JavaScript:**
+
+```javascript
+const response = await fetch('http://localhost:8090/v1/chat/completions', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    model: 'llama3',
+    messages: [{ role: 'user', content: 'Hello!' }],
+  }),
+});
+const data = await response.json();
+console.log(data.choices[0].message.content);
+```
+
+### Response Format
+
+**Non-streaming:**
+
+```json
+{
+  "id": "chatcmpl-abc123",
+  "object": "chat.completion",
+  "created": 1709654400,
+  "model": "llama3",
+  "choices": [{
+    "index": 0,
+    "message": { "role": "assistant", "content": "Rust is..." },
+    "finish_reason": "stop"
+  }],
+  "usage": {
+    "prompt_tokens": 25,
+    "completion_tokens": 150,
+    "total_tokens": 175
+  }
+}
+```
+
+**Streaming (SSE):**
+
+```
+data: {"id":"chatcmpl-abc123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-abc123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Rust"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-abc123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":" is"},"finish_reason":null}]}
+
+data: [DONE]
+```
+
+### Enrichment Pipeline
+
+When enrichment is enabled, requests go through a full pipeline:
+
+1. **Cost pre-check** — reject if budget exceeded (HTTP 429)
+2. **Input guardrails** — block jailbreaks, PII, toxicity, injection
+3. **RAG context** — retrieve and inject relevant knowledge
+4. **LLM generation** — forward to the configured provider
+5. **Output guardrails** — redact PII, filter toxic responses
+
+All enrichment features are configurable — see section 142 for full details.
+
+### Compatible Tools
+
+Any tool that speaks the OpenAI API can connect:
+
+| Tool | Configuration |
+|------|--------------|
+| Open WebUI | Set "OpenAI API URL" to `http://host:8090/v1` |
+| LangChain | `ChatOpenAI(base_url="http://host:8090/v1")` |
+| LiteLLM | `model="openai/llama3"`, `api_base="http://host:8090/v1"` |
+| Cursor | Custom API endpoint in settings |
+| Continue | `"apiBase": "http://host:8090/v1"` |
+
+### Error Format
+
+Errors follow the OpenAI format:
+
+```json
+{
+  "error": {
+    "message": "Input blocked by guardrails: injection attempt detected",
+    "type": "invalid_request_error",
+    "code": 400
+  }
+}
+```
+
+**Feature flags**: `full`
+
+---
+
+## 142. Enrichment Config — Full Pipeline Configuration
+
+The `EnrichmentConfig` exposes **52 configurable fields** across 7 sub-configs, giving full control over the enrichment pipeline applied to OpenAI-compatible endpoints.
+
+### Overview
+
+```
+EnrichmentConfig
+├── 6 top-level fields (enable_rag, enable_guardrails, ...)
+├── guardrails: GuardrailEnrichmentConfig (18 fields)
+├── rag: RagEnrichmentConfig (8 fields)
+├── context: ContextEnrichmentConfig (5 fields)
+├── compaction: CompactionEnrichmentConfig (6 fields)
+├── model_selection: ModelSelectionEnrichmentConfig (5 fields)
+├── cost: CostEnrichmentConfig (5 fields)
+└── thinking: ThinkingEnrichmentConfig (7 fields)
+```
+
+### Top-Level Fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enable_rag` | bool | false | Enable RAG context retrieval for every request |
+| `enable_guardrails` | bool | false | Enable input guardrail pipeline |
+| `enable_memory` | bool | false | Enable conversation memory (future) |
+| `block_on_input_violation` | bool | true | Return 400 when guardrails detect violations |
+| `redact_output_pii` | bool | true | Mask PII in generated responses |
+| `guardrail_threshold` | f32 | 0.8 | Minimum confidence to trigger a guardrail |
+
+### Guardrails Sub-Config (`guardrails`)
+
+Individual toggles for each guard type, plus output guardrail configuration:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `attack_guard` | bool | true | Detect prompt injection and jailbreak attempts |
+| `pii_guard` | bool | true | Detect PII in input (emails, phones, SSNs) |
+| `toxicity_guard` | bool | true | Detect toxic or offensive content |
+| `content_length_guard` | bool | true | Reject excessively long inputs |
+| `rate_limit_guard` | bool | false | Enable per-IP rate limiting |
+| `rate_limit_max_requests` | usize | 60 | Max requests per window |
+| `rate_limit_window_secs` | u64 | 60 | Rate limit window in seconds |
+| `blocked_patterns` | Vec\<String\> | [] | Custom regex patterns to block (e.g., `["DROP TABLE", "rm -rf"]`) |
+| `output_pii_guard` | bool | true | Enable PII detection on responses |
+| `output_pii_action` | String | "redact" | `"redact"` (mask with char) or `"block"` (reject response) |
+| `output_pii_redact_char` | char | '*' | Character used for PII masking |
+| `output_pii_check_emails` | bool | true | Check for email addresses |
+| `output_pii_check_phones` | bool | true | Check for phone numbers |
+| `output_pii_check_ssns` | bool | true | Check for SSN patterns |
+| `output_pii_check_credit_cards` | bool | true | Check for credit card numbers |
+| `output_pii_check_ip_addresses` | bool | true | Check for IP addresses |
+| `output_toxicity_guard` | bool | false | Enable toxicity filtering on responses |
+| `output_toxicity_threshold` | f64 | 0.7 | Toxicity score threshold (0.0-1.0) |
+
+### RAG Sub-Config (`rag`)
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `knowledge_rag` | bool | true | Enable knowledge base retrieval |
+| `conversation_rag` | bool | false | Enable conversation history retrieval |
+| `max_knowledge_tokens` | usize | 2000 | Max tokens for knowledge context |
+| `max_conversation_tokens` | usize | 1500 | Max tokens for conversation context |
+| `top_k_chunks` | usize | 5 | Number of top chunks to retrieve |
+| `min_relevance_score` | f32 | 0.1 | Minimum relevance score for chunks |
+| `dynamic_context` | bool | false | Adjust context size based on query complexity |
+| `auto_store_messages` | bool | false | Automatically store messages in RAG database |
+
+### Context Sub-Config (`context`)
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | false | Enable context window management |
+| `total_budget` | usize | 4096 | Total token budget for context |
+| `response_reserve` | usize | 1024 | Tokens reserved for the response |
+| `overflow_detection` | bool | true | Detect and handle context overflow |
+| `hybrid_compaction` | bool | false | Use hybrid compaction strategy |
+
+### Compaction Sub-Config (`compaction`)
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | false | Enable conversation compaction |
+| `max_messages` | usize | 50 | Trigger compaction above this count |
+| `target_messages` | usize | 20 | Target message count after compaction |
+| `preserve_recent` | usize | 10 | Always preserve the N most recent messages |
+| `preserve_first` | usize | 2 | Always preserve the first N messages |
+| `min_importance` | f64 | 0.8 | Minimum importance score to preserve a message |
+
+### Model Selection Sub-Config (`model_selection`)
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | false | Enable automatic model selection |
+| `optimize_cost` | bool | false | Prefer cheaper models when quality allows |
+| `optimize_speed` | bool | false | Prefer faster models when quality allows |
+| `min_quality` | f64 | 0.7 | Minimum quality threshold (0.0-1.0) |
+| `enable_learning` | bool | true | Learn from past selections to improve routing |
+
+### Cost Sub-Config (`cost`)
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | false | Enable cost tracking and budget limits |
+| `daily_limit` | Option\<f64\> | None | Maximum daily spend (USD) |
+| `monthly_limit` | Option\<f64\> | None | Maximum monthly spend (USD) |
+| `per_request_limit` | Option\<f64\> | None | Maximum cost per request (USD) |
+| `warning_threshold` | f64 | 0.8 | Percentage of limit to trigger warnings |
+
+When the budget is exceeded, the server returns HTTP 429 with:
+
+```json
+{
+  "error": {
+    "message": "Cost budget exceeded",
+    "type": "rate_limit_error",
+    "code": 429
+  }
+}
+```
+
+### Thinking Sub-Config (`thinking`)
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | false | Enable adaptive thinking |
+| `min_depth` | ThinkingDepth | Trivial | Minimum reasoning depth |
+| `max_depth` | ThinkingDepth | Expert | Maximum reasoning depth |
+| `inject_cot_instructions` | bool | true | Add chain-of-thought instructions to prompts |
+| `parse_thinking_tags` | bool | true | Parse `<think>...</think>` tags in responses |
+| `strip_thinking_from_response` | bool | true | Remove thinking tags from final response |
+| `adjust_temperature` | bool | true | Auto-adjust temperature based on depth |
+
+`ThinkingDepth` values: `trivial`, `simple`, `moderate`, `complex`, `expert`.
+
+### Full JSON Example
+
+```json
+{
+  "enrichment": {
+    "enable_rag": true,
+    "enable_guardrails": true,
+    "enable_memory": false,
+    "block_on_input_violation": true,
+    "redact_output_pii": true,
+    "guardrail_threshold": 0.8,
+    "guardrails": {
+      "attack_guard": true,
+      "pii_guard": true,
+      "toxicity_guard": true,
+      "content_length_guard": true,
+      "rate_limit_guard": true,
+      "rate_limit_max_requests": 100,
+      "rate_limit_window_secs": 60,
+      "blocked_patterns": ["DROP TABLE", "rm -rf"],
+      "output_pii_guard": true,
+      "output_pii_action": "redact",
+      "output_pii_redact_char": "*",
+      "output_pii_check_emails": true,
+      "output_pii_check_phones": true,
+      "output_pii_check_ssns": true,
+      "output_pii_check_credit_cards": true,
+      "output_pii_check_ip_addresses": true,
+      "output_toxicity_guard": false,
+      "output_toxicity_threshold": 0.7
+    },
+    "rag": {
+      "knowledge_rag": true,
+      "conversation_rag": false,
+      "max_knowledge_tokens": 2000,
+      "max_conversation_tokens": 1500,
+      "top_k_chunks": 5,
+      "min_relevance_score": 0.1,
+      "dynamic_context": false,
+      "auto_store_messages": false
+    },
+    "context": {
+      "enabled": false,
+      "total_budget": 4096,
+      "response_reserve": 1024,
+      "overflow_detection": true,
+      "hybrid_compaction": false
+    },
+    "compaction": {
+      "enabled": true,
+      "max_messages": 50,
+      "target_messages": 20,
+      "preserve_recent": 10,
+      "preserve_first": 2,
+      "min_importance": 0.8
+    },
+    "model_selection": {
+      "enabled": false,
+      "optimize_cost": false,
+      "optimize_speed": false,
+      "min_quality": 0.7,
+      "enable_learning": true
+    },
+    "cost": {
+      "enabled": true,
+      "daily_limit": 10.0,
+      "monthly_limit": 100.0,
+      "per_request_limit": 0.50,
+      "warning_threshold": 0.8
+    },
+    "thinking": {
+      "enabled": true,
+      "min_depth": "trivial",
+      "max_depth": "expert",
+      "inject_cot_instructions": true,
+      "parse_thinking_tags": true,
+      "strip_thinking_from_response": true,
+      "adjust_temperature": true
+    }
+  }
+}
+```
+
+### Backward Compatibility
+
+All 46 sub-config fields use `#[serde(default)]`. An empty JSON `{}` or old 6-field config works exactly as before — all sub-features disabled.
+
+### Programmatic Configuration
+
+```rust
+use ai_assistant::server::{
+    ServerConfig, ServerEnrichmentConfig,
+    GuardrailEnrichmentConfig, RagEnrichmentConfig, CostEnrichmentConfig,
+    ThinkingEnrichmentConfig,
+};
+
+let config = ServerConfig {
+    port: 8090,
+    enrichment: ServerEnrichmentConfig {
+        enable_guardrails: true,
+        enable_rag: true,
+        guardrails: GuardrailEnrichmentConfig {
+            attack_guard: true,
+            pii_guard: true,
+            toxicity_guard: false,    // disable toxicity checking
+            rate_limit_guard: true,   // enable rate limiting
+            rate_limit_max_requests: 100,
+            blocked_patterns: vec!["DROP TABLE".into(), "rm -rf".into()],
+            output_pii_action: "block".to_string(),  // block instead of redact
+            ..Default::default()
+        },
+        rag: RagEnrichmentConfig {
+            knowledge_rag: true,
+            top_k_chunks: 10,
+            min_relevance_score: 0.3,
+            ..Default::default()
+        },
+        cost: CostEnrichmentConfig {
+            enabled: true,
+            daily_limit: Some(10.0),
+            monthly_limit: Some(100.0),
+            ..Default::default()
+        },
+        thinking: ThinkingEnrichmentConfig {
+            enabled: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    },
+    ..Default::default()
+};
+```
+
+### What Each Sub-Config Controls
+
+| Sub-Config | Pipeline Stage | Effect |
+|------------|---------------|--------|
+| `guardrails` | Input + Output | Selects which guards are active, configures rate limits and patterns |
+| `rag` | Pre-generation | Controls knowledge retrieval parameters |
+| `context` | Pre-generation | Manages context window budget and overflow |
+| `compaction` | Pre-generation | Compacts long conversation histories |
+| `model_selection` | Pre-generation | Auto-selects optimal model for the query |
+| `cost` | Pre-check + Post | Budget enforcement with automatic HTTP 429 |
+| `thinking` | Pre-generation | Adjusts reasoning depth and chain-of-thought |
+
+**Feature flags**: `full`

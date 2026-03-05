@@ -3,117 +3,89 @@
 A reusable Rust library for local LLM integration. Supports multiple providers including Ollama, LM Studio, text-generation-webui, Kobold.cpp, LocalAI, and any OpenAI-compatible API.
 
 ![Rust](https://img.shields.io/badge/Rust-Edition%202021-orange)
-![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)
+![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue)
 
 ## Features
 
 ### Core Features
-- **Multi-provider support**: Automatically discovers and connects to available local LLM providers
-- **Provider failover**: Automatic fallback to secondary providers when the primary fails, with configurable retry
-- **Retry with backoff**: Exponential backoff retry for transient HTTP errors (5xx, timeouts) with error classification
-- **API key rotation**: Multiple API keys per provider with automatic rotation on rate-limit (HTTP 429)
-- **Streaming responses**: Real-time streaming with cancellation support via `CancellationToken`
-- **Session management**: Save and load conversation sessions to/from files (JSON or binary)
-- **Journal sessions**: Append-only JSONL sessions for crash-resistant, efficient conversation storage
-- **Encrypted sessions**: AES-256-GCM session encryption at rest (feature `rag`)
-- **Context management**: Automatic context usage tracking with warning/critical thresholds
-- **Conversation compaction**: Lightweight automatic compaction when context gets full (no LLM call required)
-- **Summarization**: Background conversation summarization when context gets full
-- **Context size cache**: Dynamic model context window detection with global cache and provider fallback
-- **Preference learning**: Extract and remember user preferences from conversations
-- **Model-aware context**: Knows context window sizes for popular models (Llama, Qwen, Mistral, etc.)
-- **Adaptive thinking**: Automatic reasoning depth adjustment — classifies query complexity and adapts temperature, max tokens, RAG tier, and chain-of-thought prompting
+- **Multi-provider support**: 13+ LLM providers — Ollama, LM Studio, OpenAI, Anthropic, Google Gemini, Mistral, HuggingFace, AWS Bedrock, DeepSeek, Groq, Together AI, and any OpenAI-compatible API
+- **Provider failover**: Automatic fallback with configurable retry and API key rotation
+- **Streaming responses**: Real-time SSE and WebSocket (RFC 6455) streaming with cancellation support
+- **Resumable streaming**: Checkpoint/replay for long-running generations with `Last-Event-ID`
+- **Session management**: Save/load sessions (JSON, binary, JSONL journal, AES-256-GCM encrypted)
+- **Context management**: Auto-truncation, compaction, summarization, context size cache
+- **Adaptive thinking**: Automatic reasoning depth adjustment (5 levels: Trivial to Expert)
 
-### RAG & Knowledge (optional `rag` feature)
-- **RAG support**: SQLite FTS5-based knowledge base and conversation retrieval
-- **Hybrid search**: Combine BM25 keyword search with semantic similarity (local embeddings)
-- **Persistent cache**: SQLite-backed response cache with TTL and compression
-- **Multi-user support**: User isolation for notes, preferences, and conversation history
-- **Notes system**: Session notes, global notes, and knowledge-specific notes per user
+### RAG & Knowledge (`rag` feature)
+- **5-tier RAG**: Self-RAG, CRAG, Graph RAG, RAPTOR, auto-selection (28 configurable features)
+- **7 vector DB backends**: InMemory, Qdrant, LanceDB, Pinecone, Chroma, Milvus, pgvector
+- **Document parsing**: PDF, EPUB, DOCX, ODT, HTML, TXT, CSV, EML, PPTX, XLSX
+- **Knowledge graphs**: Entity/relation extraction, multi-layer graphs, graph traversal
+- **Encrypted packages**: AES-256-GCM knowledge packages (.kpkg)
+- **Hybrid search**: BM25 + semantic similarity, query expansion, reranking (MMR, RRF, cascade)
 
-### Analysis & Quality
-- **Sentiment analysis**: Detect emotional tone (positive, negative, neutral) with trend tracking
-- **Topic detection**: Automatically identify conversation topics
-- **Quality analysis**: Evaluate response quality (relevance, coherence, fluency, completeness, consistency)
-- **Entity extraction**: Extract emails, URLs, phones, versions, programming languages, money, percentages
-- **Fact tracking**: Extract and reinforce facts, preferences, and goals from conversations
+### OpenAI-Compatible API Server
+- **Drop-in replacement**: Serve `/v1/chat/completions` and `/v1/models` — works with Open WebUI, LangChain, LiteLLM, Cursor, etc.
+- **Enrichment pipeline**: 52 configurable fields across 7 sub-configs (guardrails, RAG, context, compaction, model selection, cost, thinking)
+- **Selective guards**: Toggle individual input/output guardrails (attack, PII, toxicity, rate limit, patterns)
+- **Budget manager**: Daily/monthly/per-request cost limits with automatic HTTP 429
+
+### Multi-Agent & Autonomous
+- **5-role orchestration**: Coordinator, Researcher, Analyst, Writer, Reviewer
+- **Autonomous agent**: 5 autonomy levels, policy-based sandbox, cron scheduler
+- **Browser automation**: Chrome DevTools Protocol (CDP) via WebSocket
+- **Butler Advisor**: 30 optimization recommendations across 6 categories
+- **Distributed agents**: Task distribution across nodes with heartbeats and MapReduce
+
+### Advanced Model Routing (`full` feature)
+- **Bandit algorithms**: Thompson Sampling, UCB1, epsilon-greedy
+- **NFA/DFA routing**: Automaton-based rule matching with Hopcroft minimization
+- **Composite rewards**: Configurable quality + latency + cost scoring
+- **Per-query preferences**: Arm exclusion/boosting, weight overrides
+- **10 MCP tools**: Runtime routing management
 
 ### Security & Safety
-- **Rate limiting**: Configurable rate limits per minute/hour/day
-- **Input sanitization**: Remove prompt injection attempts, PII, and sensitive data
-- **Log redaction**: Automatic redaction of API keys, tokens, passwords, and PEM keys in debug output
-- **Audit logging**: Complete audit trail of all AI interactions
-- **Hook system**: Pre/post processing hooks for custom validation
+- **RBAC**: MFA, CIDR ranges, time windows, usage limits
+- **Guardrail pipeline**: Constitutional AI, bias detection, toxicity (9 categories), injection detection (6 types)
+- **PII detection**: 4 redaction strategies with configurable per-type toggles
+- **Content encryption**: AES-256-GCM for sessions and knowledge
+- **Output guardrails**: PII redaction and toxicity filtering on responses
 
-### Persistence & Export
-- **Binary storage**: Bincode+gzip internal storage with auto-detection (JSON backward-compatible)
-- **Backup manager**: Automatic session backups with configurable retention
-- **Database compaction**: Optimize storage by removing old/orphaned data
-- **Session migration**: Import/export sessions between formats
-- **Multi-format export**: Export to JSON, Markdown, CSV, or HTML with optional PII redaction
+### Streaming & Protocols
+- **SSE streaming**: With gzip compression and aggregation
+- **WebSocket**: RFC 6455 with handshake from scratch
+- **MCP protocol**: 2025-03-26 spec with 40+ tools, annotations, pagination
+- **A2A protocol**: Agent-to-agent communication
 
-### Internationalization
-- **Language detection**: Detect 10+ languages (en, es, fr, de, it, pt, ru, zh, ja, ko)
-- **Localized strings**: Built-in translations for common UI strings
-- **Multilingual prompts**: Build prompts with language-specific instructions
+### Distributed Computing (`distributed`, `distributed-network` features)
+- **CRDTs**: GCounter, PNCounter, LWWRegister, ORSet, LWWMap
+- **DHT**: Kademlia with consistent hashing
+- **QUIC/TLS 1.3**: Mutual TLS transport with node security
+- **P2P**: STUN/UPnP/NAT-PMP, ICE, knowledge broadcast, consensus
 
-### Provider Plugins
-- **Ollama**: Full support with streaming
-- **LM Studio**: OpenAI-compatible with model listing
-- **text-generation-webui**: OpenAI-compatible API
-- **Kobold.cpp**: Native API support
-- **OpenAI-compatible**: Any custom endpoint
-- **OpenAI (cloud)**: Native API with Bearer token auth, model listing
-- **Anthropic (cloud)**: Native Messages API with x-api-key auth, system prompt as top-level parameter
+### Analytics & Observability
+- **OpenTelemetry**: GenAI semantic conventions for traces, spans, metrics
+- **Prometheus metrics**: Request counts, latency, status codes
+- **Eval suite**: Benchmark runner with 10+ suites (LiveCodeBench, AiderPolyglot, APPS, etc.)
+- **LLM-as-judge**: Multi-criteria evaluation
+- **A/B testing**: Experiment framework with Welch's t-test significance
 
-### Async Support (optional `async-runtime` feature)
-- **Async providers**: `AsyncHttpClient` trait with `ReqwestClient` implementation
-- **Async model fetching**: Fetch models from all providers asynchronously
-- **Async generation**: Non-streaming and streaming response generation
-- **Blocking bridge**: `block_on_async()` for calling async code from sync contexts
-
-### Event System
-- **Event bus**: Register handlers for lifecycle events with `EventBus`
-- **20+ event types**: Message, response, provider, session, context, model, RAG, and tool events
-- **Filtered handlers**: Subscribe to specific event categories
-- **Built-in handlers**: Logging handler, collecting handler (for tests)
-- **Event history**: Optional event history with configurable capacity
-
-### Request Queue
-- **Priority queue**: Thread-safe queue with Low/Normal/High priority levels
-- **Blocking dequeue**: `Condvar`-based blocking with timeout support
-- **Session management**: Remove all requests for a specific session
-- **Statistics**: Track pending, processed, and dropped request counts
-
-### Embedded HTTP Server
-- **REST API**: Expose AiAssistant as HTTP endpoints (`/health`, `/models`, `/chat`, `/config`)
-- **Zero dependencies**: Uses `std::net::TcpListener` with manual HTTP parsing
-- **Background mode**: Start server in a separate thread with auto-port allocation
-- **CORS support**: Pre-flight OPTIONS handling
-
-### Development Tools
-- **Unified tool system**: Define, validate, and execute tools with multi-format parsing (JSON, [TOOL:], XML, OpenAI function_call)
-- **HTTP client abstraction**: `HttpClient` trait with `UreqClient` (production) and `MockHttpClient` (tests) for provider-independent testing
-- **Benchmarking**: Built-in benchmark suite for performance testing
-- **Metrics tracking**: Performance and quality metrics collection
-
-### Autonomous Agent System (optional features: `autonomous`, `scheduler`, `butler`, `browser`, `distributed-agents`)
-- **Autonomous execution loop**: Self-directed agent with 5 autonomy levels (Chat to Autonomous)
-- **Task board**: Kanban-style task management with priorities, Markdown export, and full undo support
-- **Agent profiles**: Pre-configured personalities (coding-assistant, research-agent, devops-agent, paranoid)
-- **Safety policies**: Internet access modes, risk levels, cost caps, command allowlists
-- **Cron scheduler**: Schedule agent tasks with full cron expression support
-- **Event triggers**: React to file changes, RSS feed updates, or manual triggers with cooldowns
-- **Browser automation**: Real Chrome DevTools Protocol (CDP) via WebSocket for headless browsing
-- **Environment detection**: Auto-detect Ollama, LM Studio, GPU, Docker, Chrome, network connectivity
-- **Interactive commands**: Bilingual (EN/ES) natural language command parser with undo
-- **Distributed agents**: Task distribution across multiple nodes with heartbeats and MapReduce
+### More Features
+- **Voice agent**: STT/TTS with cloud and local providers
+- **Media generation**: Image/audio/video generation pipelines
+- **Event workflows**: DAG-based event-driven workflows with conditions
+- **Prompt signatures**: DSPy-style optimizable prompt templates
+- **Constrained decoding**: Grammar-guided generation (JSON, regex, CFG)
+- **HITL**: Human-in-the-loop approval gates
+- **Distillation**: Teacher-student model training data collection
+- **WASM support**: web-sys, js-sys, wasm-bindgen
+- **egui widgets**: Pre-built chat UI components
 
 ### Code Quality
-- **Zero `.unwrap()` in production**: All 554 `.unwrap()` calls replaced with proper error handling across 76 files
-- **Zero stubs or TODOs**: Every module is fully implemented with real functionality
-- **1,786+ tests**: Comprehensive unit tests across all modules with 0 failures
-- **Zero compiler warnings**: Clean compilation across all feature flag combinations
+- **Zero `.unwrap()` in production**: Proper error handling across all files
+- **6,565+ tests**: Comprehensive unit tests with 0 clippy warnings
+- **220+ source files**: Fully implemented — zero stubs or TODOs
+- **20+ feature flags**: Granular dependency control
 
 ## Installation
 
@@ -413,13 +385,20 @@ assistant.load_config(config);
 | text-generation-webui | OpenAI-compatible | `http://localhost:5000` | Yes |
 | Kobold.cpp | Native | `http://localhost:5001` | No* |
 | LocalAI | OpenAI-compatible | `http://localhost:8080` | Yes |
-| Custom | OpenAI-compatible | User-defined | Yes |
 | OpenAI (cloud) | Native | `https://api.openai.com` | Yes |
 | Anthropic (cloud) | Native | `https://api.anthropic.com` | Yes |
+| Google Gemini (cloud) | Native | `https://generativelanguage.googleapis.com` | Yes |
+| Mistral AI (cloud) | OpenAI-compatible | `https://api.mistral.ai` | Yes |
+| HuggingFace (cloud) | Native | `https://api-inference.huggingface.co` | Yes |
+| AWS Bedrock (cloud) | SigV4 | Region-based | Yes |
+| DeepSeek (cloud) | OpenAI-compatible | `https://api.deepseek.com` | Yes |
+| Groq (cloud) | OpenAI-compatible | `https://api.groq.com/openai` | Yes |
+| Together AI (cloud) | OpenAI-compatible | `https://api.together.xyz` | Yes |
+| Custom | OpenAI-compatible | User-defined | Yes |
 
 *Kobold.cpp falls back to non-streaming responses.
 
-Cloud providers require API keys. Set them via `AiConfig.api_key` or environment variables (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`).
+Cloud providers require API keys. Set them via `AiConfig.api_key` or environment variables (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, etc.).
 
 ## Known Model Context Sizes
 
@@ -1610,26 +1589,32 @@ println!("Found {} models", models.len());
 
 ### Embedded HTTP Server
 
-Expose the assistant as a REST API:
+Expose the assistant as a REST API with OpenAI-compatible endpoints:
 
 ```rust
-use ai_assistant::server::{ServerConfig, AiServer};
+use ai_assistant::server::{ServerConfig, AiServer, ServerEnrichmentConfig};
 
-// Start server in background
 let config = ServerConfig {
-    port: 0, // auto-allocate port
+    port: 8090,
+    enrichment: ServerEnrichmentConfig {
+        enable_guardrails: true,
+        enable_rag: true,
+        ..Default::default()
+    },
     ..Default::default()
 };
 let server = AiServer::new(config);
 let handle = server.start_background().unwrap();
 println!("Server at {}", handle.url());
 
-// Endpoints:
-// GET  /health  -> {"status":"ok","version":"...","model":"...","provider":"..."}
-// GET  /models  -> [{"name":"...","provider":"...","size":"..."}]
-// POST /chat    -> {"message":"Hello","system_prompt":"","knowledge_context":""}
-// GET  /config  -> {"provider":"...","selected_model":"...","temperature":0.7}
-// POST /config  -> {"model":"new-model","temperature":0.5}
+// Native endpoints:
+// GET  /health, /models, /config, /metrics, /sessions, /openapi.json
+// POST /chat, /chat/stream, /config
+// GET  /ws (WebSocket)
+//
+// OpenAI-compatible endpoints:
+// POST /v1/chat/completions  (drop-in for any OpenAI-compatible tool)
+// GET  /v1/models
 ```
 
 ## Database Schema
@@ -1658,4 +1643,4 @@ Migrations are automatic when opening an existing database with schema changes.
 
 ## License
 
-Dual-licensed under MIT OR Apache-2.0. Choose the license that best suits your needs.
+Licensed under [PolyForm Noncommercial 1.0.0](LICENSE). Commercial use requires a separate license — contact orlando.luque@gmail.com for inquiries.

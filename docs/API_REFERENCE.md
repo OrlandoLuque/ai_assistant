@@ -1,6 +1,6 @@
 # API Reference — ai_assistant HTTP Server
 
-> Version: v10 (2026-02-24)
+> Version: v29 (2026-03-06)
 >
 > Base URL: `http://localhost:8090` (default)
 >
@@ -27,6 +27,10 @@
   - [DELETE /sessions/{id}](#delete-sessionsid)
   - [GET /ws](#get-ws)
   - [GET /openapi.json](#get-openapijson)
+- [OpenAI-Compatible Endpoints](#openai-compatible-endpoints)
+  - [POST /v1/chat/completions](#post-v1chatcompletions)
+  - [GET /v1/models](#get-v1models)
+- [Enrichment Pipeline](#enrichment-pipeline)
 
 ---
 
@@ -343,6 +347,146 @@ Delete a specific session.
 
 ---
 
+---
+
+## OpenAI-Compatible Endpoints
+
+These endpoints follow the OpenAI API format, enabling drop-in compatibility with tools like Open WebUI, LangChain, LiteLLM, Cursor, etc.
+
+### POST /v1/chat/completions
+
+OpenAI-compatible chat completion. Supports both streaming and non-streaming.
+
+**Request Body**:
+
+```json
+{
+  "model": "llama3",
+  "messages": [
+    {"role": "system", "content": "You are a helpful assistant."},
+    {"role": "user", "content": "What is Rust?"}
+  ],
+  "temperature": 0.7,
+  "max_tokens": 1024,
+  "stream": false
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|---------|-----------|
+| `model` | string | No | Model name (uses server default if omitted) |
+| `messages` | array | Yes | Array of `{role, content}` message objects |
+| `temperature` | float | No | Generation temperature (0.0-2.0) |
+| `max_tokens` | integer | No | Maximum tokens to generate |
+| `stream` | boolean | No | Enable SSE streaming (default: false) |
+
+**Response (non-streaming)**: `200 OK`
+
+```json
+{
+  "id": "chatcmpl-abc123",
+  "object": "chat.completion",
+  "created": 1709654400,
+  "model": "llama3",
+  "choices": [{
+    "index": 0,
+    "message": {"role": "assistant", "content": "Rust is..."},
+    "finish_reason": "stop"
+  }],
+  "usage": {
+    "prompt_tokens": 25,
+    "completion_tokens": 150,
+    "total_tokens": 175
+  }
+}
+```
+
+**Response (streaming)**: `200 OK` with `Content-Type: text/event-stream`
+
+```
+data: {"id":"chatcmpl-abc123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-abc123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Rust"},"finish_reason":null}]}
+
+data: [DONE]
+```
+
+**Errors**:
+- `400` — Input blocked by guardrails (when `block_on_input_violation` is true)
+- `429` — Cost budget exceeded
+- `500` — LLM provider error
+
+**Error format**:
+
+```json
+{
+  "error": {
+    "message": "Input blocked by guardrails: injection attempt detected",
+    "type": "invalid_request_error",
+    "code": 400
+  }
+}
+```
+
+---
+
+### GET /v1/models
+
+List available models in OpenAI format.
+
+**Response**: `200 OK`
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "llama3",
+      "object": "model",
+      "created": 1709654400,
+      "owned_by": "ollama"
+    },
+    {
+      "id": "gpt-4",
+      "object": "model",
+      "created": 1709654400,
+      "owned_by": "openai"
+    }
+  ]
+}
+```
+
+---
+
+## Enrichment Pipeline
+
+When enrichment is enabled via `ServerConfig.enrichment`, both OpenAI-compatible endpoints apply a full processing pipeline:
+
+### Pipeline Flow
+
+```
+Request → Cost Pre-check → Input Guardrails → RAG Context → LLM Generation → Output Guardrails → Response
+```
+
+### Configuration
+
+The enrichment config has 52 configurable fields across 7 sub-configs. See the [GUIDE section 142](GUIDE.md#142-enrichment-config--full-pipeline-configuration) for full documentation.
+
+**Quick reference** — top-level fields:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enable_rag` | bool | false | Enable RAG context retrieval |
+| `enable_guardrails` | bool | false | Enable input guardrails |
+| `enable_memory` | bool | false | Enable conversation memory |
+| `block_on_input_violation` | bool | true | Return 400 on guardrail violations |
+| `redact_output_pii` | bool | true | Mask PII in responses |
+| `guardrail_threshold` | f32 | 0.8 | Guardrail confidence threshold |
+
+**Sub-configs**: `guardrails` (18 fields), `rag` (8), `context` (5), `compaction` (6), `model_selection` (5), `cost` (5), `thinking` (7).
+
+---
+
 ## CORS
 
 The server handles CORS preflight (`OPTIONS`) requests automatically based on `CorsConfig`:
@@ -379,6 +523,8 @@ All endpoints are available under both root (`/`) and versioned (`/api/v1/`) pat
 | `GET /sessions` | `GET /api/v1/sessions` |
 | `GET /sessions/{id}` | `GET /api/v1/sessions/{id}` |
 | `DELETE /sessions/{id}` | `DELETE /api/v1/sessions/{id}` |
+| `POST /v1/chat/completions` | `POST /api/v1/chat/completions` |
+| `GET /v1/models` | `GET /api/v1/models` |
 
 The `X-API-Version` response header indicates the API version (`v1`).
 
