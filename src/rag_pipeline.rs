@@ -507,6 +507,11 @@ impl RagPipeline {
                 RagRequirement::SynonymDictionary => true,
                 RagRequirement::DocumentHierarchy => true,
                 RagRequirement::SentenceBoundaries => true,
+                RagRequirement::DiscourseBoundaries => true,
+                RagRequirement::WebSearchProvider => true,
+                RagRequirement::MultipleRerankerModels => true,
+                RagRequirement::AdvancedMemorySystem => true,
+                RagRequirement::MultiLayerGraphSetup => true,
             };
 
             if !met {

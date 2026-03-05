@@ -1261,6 +1261,8 @@ pub mod eval_suite;
 
 #[cfg(feature = "eval-suite")]
 pub use eval_suite::{
+    filter_by_contamination_cutoff, filter_by_language, make_code_edit_problem,
+    make_competitive_problem, make_livecode_problem, make_terminal_problem,
     AblationEngine, AblationRecommendation, AblationResult, AblationStudy, AnswerFormat,
     BenchmarkDataset, BenchmarkProblem, BenchmarkRunResult, BenchmarkSuiteRunner,
     BenchmarkSuiteType, ComparisonConfig, ComparisonMatrix, ConfigMeasurement, ConfigSearchConfig,

@@ -33,8 +33,10 @@ mod config_search;
 mod feature_combos;
 
 pub use dataset::{
-    make_code_problem, make_mc_problem, make_numeric_problem, AnswerFormat, BenchmarkDataset,
-    BenchmarkProblem, BenchmarkSuiteType, ProblemCategory,
+    filter_by_contamination_cutoff, filter_by_language, make_code_edit_problem, make_code_problem,
+    make_competitive_problem, make_livecode_problem, make_mc_problem, make_numeric_problem,
+    make_terminal_problem, AnswerFormat, BenchmarkDataset, BenchmarkProblem, BenchmarkSuiteType,
+    ProblemCategory,
 };
 
 pub use scoring::{

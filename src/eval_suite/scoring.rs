@@ -48,6 +48,25 @@ impl ProblemScorer for DefaultScorer {
                 // Agent trajectory scoring requires custom implementation
                 0.0
             }
+            AnswerFormat::CompetitiveProgrammingCode { test_cases, .. } => {
+                score_competitive_programming(
+                    response,
+                    problem.reference_solution.as_deref(),
+                    test_cases,
+                )
+            }
+            AnswerFormat::CodeEdit { original_code, .. } => {
+                score_code_edit(
+                    response,
+                    problem.reference_solution.as_deref(),
+                    original_code,
+                )
+            }
+            AnswerFormat::TerminalSequence {
+                expected_commands,
+                verification,
+                ..
+            } => score_terminal_sequence(response, expected_commands, verification.as_ref()),
         }
     }
 }
@@ -351,6 +370,319 @@ fn normalize_code(code: &str) -> String {
         .filter(|l| !l.is_empty() && !l.starts_with('#') && !l.starts_with("//"))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+// ---------------------------------------------------------------------------
+// Competitive programming scoring
+// ---------------------------------------------------------------------------
+
+/// Score competitive programming code by comparing against reference and test cases.
+///
+/// Since we cannot execute code, we use a heuristic:
+/// - 0.7 weight: code similarity to reference solution (reuses `score_code_heuristic`)
+/// - 0.3 weight: test case output matching bonus (checks if expected outputs appear in response)
+fn score_competitive_programming(
+    response: &str,
+    reference: Option<&str>,
+    test_cases: &[(String, String)],
+) -> f64 {
+    let code_score = score_code_heuristic(response, reference);
+
+    // Test case output matching: check if the expected output appears in the response
+    let tc_score = if test_cases.is_empty() {
+        0.0
+    } else {
+        let matches = test_cases
+            .iter()
+            .filter(|(_, expected)| {
+                let expected_trimmed = expected.trim();
+                if expected_trimmed.is_empty() {
+                    return false;
+                }
+                response.contains(expected_trimmed)
+            })
+            .count();
+        matches as f64 / test_cases.len() as f64
+    };
+
+    if reference.is_some() {
+        0.7 * code_score + 0.3 * tc_score
+    } else {
+        // Without reference, rely more on test case matching
+        tc_score
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Code edit scoring
+// ---------------------------------------------------------------------------
+
+/// Score code editing by comparing the edit delta against the reference edit.
+///
+/// Measures how well the response matches the intended edit by comparing:
+/// - Token-level similarity between the response and reference edit
+/// - Preservation of code that should remain unchanged
+/// - A penalty if the response is identical to the original (no edit was made)
+fn score_code_edit(response: &str, reference: Option<&str>, original_code: &str) -> f64 {
+    let reference = match reference {
+        Some(r) if !r.is_empty() => r,
+        _ => return 0.0,
+    };
+
+    let norm_response = normalize_code(response);
+    let norm_original = normalize_code(original_code);
+    let norm_reference = normalize_code(reference);
+
+    // If response is identical to original, no edit was made → 0
+    if norm_response == norm_original {
+        return 0.0;
+    }
+
+    // If response exactly matches reference edit → 1.0
+    if norm_response == norm_reference {
+        return 1.0;
+    }
+
+    // Compute edit diff similarity
+    edit_diff_similarity(original_code, response, reference)
+}
+
+/// Compare edits: how similar is the diff(original→response) to diff(original→reference)?
+///
+/// Works at the token level: identifies tokens added/removed in each diff, then
+/// computes Jaccard similarity between the two sets of changes.
+fn edit_diff_similarity(original: &str, response: &str, reference: &str) -> f64 {
+    let orig_tokens: Vec<&str> = original.split_whitespace().collect();
+    let resp_tokens: Vec<&str> = response.split_whitespace().collect();
+    let ref_tokens: Vec<&str> = reference.split_whitespace().collect();
+
+    let orig_set: std::collections::HashSet<&str> = orig_tokens.iter().copied().collect();
+    let resp_set: std::collections::HashSet<&str> = resp_tokens.iter().copied().collect();
+    let ref_set: std::collections::HashSet<&str> = ref_tokens.iter().copied().collect();
+
+    // Tokens added by response (not in original)
+    let resp_added: std::collections::HashSet<&str> =
+        resp_set.difference(&orig_set).copied().collect();
+    // Tokens added by reference (not in original)
+    let ref_added: std::collections::HashSet<&str> =
+        ref_set.difference(&orig_set).copied().collect();
+
+    // Tokens removed by response (in original but not in response)
+    let resp_removed: std::collections::HashSet<&str> =
+        orig_set.difference(&resp_set).copied().collect();
+    // Tokens removed by reference (in original but not in reference)
+    let ref_removed: std::collections::HashSet<&str> =
+        orig_set.difference(&ref_set).copied().collect();
+
+    // Similarity of additions
+    let add_similarity = jaccard_similarity(&resp_added, &ref_added);
+
+    // Similarity of removals
+    let rem_similarity = jaccard_similarity(&resp_removed, &ref_removed);
+
+    // Overall reference-response similarity (Jaccard on full token sets)
+    let overall_similarity = jaccard_similarity(&resp_set, &ref_set);
+
+    // Weighted combination: overall similarity dominates, with edit delta as bonus
+    0.5 * overall_similarity + 0.25 * add_similarity + 0.25 * rem_similarity
+}
+
+/// Jaccard similarity between two sets.
+fn jaccard_similarity(a: &std::collections::HashSet<&str>, b: &std::collections::HashSet<&str>) -> f64 {
+    let intersection = a.intersection(b).count() as f64;
+    let union = a.union(b).count() as f64;
+    if union == 0.0 {
+        1.0 // Both empty → perfect match
+    } else {
+        intersection / union
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Terminal sequence scoring
+// ---------------------------------------------------------------------------
+
+/// Score terminal command sequences by comparing extracted commands against expected.
+///
+/// Scoring breakdown:
+/// - 0.5 weight: command overlap (Jaccard similarity between extracted and expected)
+/// - 0.3 weight: order bonus (longest common subsequence ratio)
+/// - 0.2 weight: verification bonus (if verification command/output present)
+fn score_terminal_sequence(
+    response: &str,
+    expected_commands: &[String],
+    verification: Option<&(String, String)>,
+) -> f64 {
+    let extracted = extract_commands(response);
+
+    if expected_commands.is_empty() && extracted.is_empty() {
+        return 1.0;
+    }
+    if expected_commands.is_empty() {
+        return 0.0;
+    }
+
+    // Command overlap (normalize by trimming and lowering)
+    let expected_norm: Vec<String> = expected_commands
+        .iter()
+        .map(|c| c.trim().to_lowercase())
+        .collect();
+    let extracted_norm: Vec<String> = extracted.iter().map(|c| c.trim().to_lowercase()).collect();
+
+    let expected_set: std::collections::HashSet<&str> =
+        expected_norm.iter().map(|s| s.as_str()).collect();
+    let extracted_set: std::collections::HashSet<&str> =
+        extracted_norm.iter().map(|s| s.as_str()).collect();
+
+    let overlap = expected_set
+        .intersection(&extracted_set)
+        .count() as f64
+        / expected_set.len() as f64;
+
+    // Order bonus: LCS ratio
+    let lcs_len = longest_common_subsequence(&extracted_norm, &expected_norm);
+    let order_bonus = lcs_len as f64 / expected_norm.len() as f64;
+
+    // Verification bonus
+    let verify_bonus = match verification {
+        Some((cmd, expected_output)) => {
+            let has_cmd = response.to_lowercase().contains(&cmd.to_lowercase());
+            let has_output = response.to_lowercase().contains(&expected_output.to_lowercase());
+            if has_cmd && has_output {
+                1.0
+            } else if has_cmd || has_output {
+                0.5
+            } else {
+                0.0
+            }
+        }
+        None => 0.0,
+    };
+
+    let base = 0.5 * overlap + 0.3 * order_bonus;
+    if verification.is_some() {
+        base + 0.2 * verify_bonus
+    } else {
+        // Redistribute verification weight to overlap and order
+        let adjusted = 0.625 * overlap + 0.375 * order_bonus;
+        adjusted.min(1.0)
+    }
+}
+
+/// Extract shell commands from an LLM response.
+///
+/// Handles common patterns:
+/// - Lines starting with `$ ` (shell prompt)
+/// - Code blocks (```bash ... ```, ```sh ... ```, ``` ... ```)
+/// - Numbered steps like `1. command` or `1) command`
+fn extract_commands(response: &str) -> Vec<String> {
+    let mut commands = Vec::new();
+    let mut in_code_block = false;
+    let mut code_block_is_shell = false;
+
+    for line in response.lines() {
+        let trimmed = line.trim();
+
+        // Handle code block boundaries
+        if trimmed.starts_with("```") {
+            if in_code_block {
+                in_code_block = false;
+                code_block_is_shell = false;
+                continue;
+            }
+            in_code_block = true;
+            let lang = trimmed.trim_start_matches('`').trim().to_lowercase();
+            code_block_is_shell = lang.is_empty()
+                || lang.starts_with("bash")
+                || lang.starts_with("sh")
+                || lang.starts_with("shell")
+                || lang.starts_with("zsh")
+                || lang.starts_with("terminal")
+                || lang.starts_with("console");
+            continue;
+        }
+
+        if in_code_block && code_block_is_shell {
+            let cmd = trimmed.strip_prefix("$ ").unwrap_or(trimmed);
+            if !cmd.is_empty() && !cmd.starts_with('#') {
+                commands.push(cmd.to_string());
+            }
+            continue;
+        }
+
+        // Lines starting with $ outside code blocks
+        if let Some(cmd) = trimmed.strip_prefix("$ ") {
+            if !cmd.is_empty() {
+                commands.push(cmd.to_string());
+            }
+            continue;
+        }
+
+        // Numbered steps: "1. command" or "1) command"
+        if let Some(rest) = strip_numbered_prefix(trimmed) {
+            let rest = rest.trim();
+            // Only treat as command if it looks like a shell command (starts with a known command)
+            if looks_like_command(rest) {
+                commands.push(rest.to_string());
+            }
+        }
+    }
+
+    commands
+}
+
+/// Strip a numbered prefix like "1. ", "2) ", "3: " from a string.
+fn strip_numbered_prefix(s: &str) -> Option<&str> {
+    let mut chars = s.chars();
+    // Expect one or more digits
+    let first = chars.next()?;
+    if !first.is_ascii_digit() {
+        return None;
+    }
+    let rest = s.trim_start_matches(|c: char| c.is_ascii_digit());
+    // Expect . or ) or : followed by space
+    let sep = rest.chars().next()?;
+    if sep == '.' || sep == ')' || sep == ':' {
+        let after = &rest[1..];
+        if after.starts_with(' ') {
+            return Some(after.trim_start());
+        }
+    }
+    None
+}
+
+/// Simple heuristic to check if a string looks like a shell command.
+fn looks_like_command(s: &str) -> bool {
+    let cmd_starters = [
+        "ls", "cd", "cp", "mv", "rm", "mkdir", "cat", "echo", "grep", "find", "sed", "awk",
+        "tar", "gzip", "chmod", "chown", "curl", "wget", "ssh", "scp", "git", "docker",
+        "npm", "pip", "apt", "yum", "brew", "make", "cargo", "python", "node", "java",
+        "sudo", "touch", "head", "tail", "sort", "uniq", "wc", "diff", "patch", "export",
+        "source", "which", "xargs", "tee", "kill", "ps", "top", "df", "du", "mount",
+    ];
+    let first_word = s.split_whitespace().next().unwrap_or("");
+    cmd_starters.iter().any(|&c| first_word == c || first_word.ends_with(c))
+}
+
+/// Compute the length of the longest common subsequence of two string slices.
+fn longest_common_subsequence(a: &[String], b: &[String]) -> usize {
+    let m = a.len();
+    let n = b.len();
+    if m == 0 || n == 0 {
+        return 0;
+    }
+    // Standard DP LCS
+    let mut dp = vec![vec![0usize; n + 1]; m + 1];
+    for i in 1..=m {
+        for j in 1..=n {
+            if a[i - 1] == b[j - 1] {
+                dp[i][j] = dp[i - 1][j - 1] + 1;
+            } else {
+                dp[i][j] = dp[i - 1][j].max(dp[i][j - 1]);
+            }
+        }
+    }
+    dp[m][n]
 }
 
 // ---------------------------------------------------------------------------
@@ -801,5 +1133,161 @@ mod tests {
         let scorer = DefaultScorer;
         assert!(scorer.passed(&problem, "A"));
         assert!(!scorer.passed(&problem, "B"));
+    }
+
+    // ── Competitive programming scoring tests ──
+
+    #[test]
+    fn test_score_cp_exact_reference() {
+        let score = score_competitive_programming(
+            "n = int(input())\nprint(sum(range(n)))",
+            Some("n = int(input())\nprint(sum(range(n)))"),
+            &[("5".to_string(), "10".to_string())],
+        );
+        assert!(score >= 0.7); // At least the reference similarity portion
+    }
+
+    #[test]
+    fn test_score_cp_partial_match() {
+        let score = score_competitive_programming(
+            "x = input()\nresult = sum(range(int(x)))\nprint(result)",
+            Some("n = int(input())\nprint(sum(range(n)))"),
+            &[],
+        );
+        assert!(score > 0.0 && score < 1.0);
+    }
+
+    #[test]
+    fn test_score_cp_no_reference_with_test_cases() {
+        // No reference → rely on test case output matching
+        let score = score_competitive_programming(
+            "The output would be 42 for the given input.",
+            None,
+            &[("10".to_string(), "42".to_string())],
+        );
+        assert!(score > 0.0); // Should find "42" in response
+    }
+
+    #[test]
+    fn test_score_cp_test_case_outputs_in_response() {
+        let score = score_competitive_programming(
+            "def solve():\n  # For input 3 1 2 3, output is 6\n  n = int(input())\n  print(sum(map(int, input().split())))",
+            Some("n = int(input())\nprint(sum(map(int, input().split())))"),
+            &[
+                ("3\n1 2 3".to_string(), "6".to_string()),
+                ("1\n42".to_string(), "42".to_string()),
+            ],
+        );
+        // Should get both code similarity and test case bonus
+        assert!(score > 0.3);
+    }
+
+    // ── Code edit scoring tests ──
+
+    #[test]
+    fn test_score_code_edit_exact() {
+        let score = score_code_edit(
+            "def divide(a, b):\n    if b == 0:\n        return None\n    return a / b",
+            Some("def divide(a, b):\n    if b == 0:\n        return None\n    return a / b"),
+            "def divide(a, b):\n    return a / b",
+        );
+        assert_eq!(score, 1.0);
+    }
+
+    #[test]
+    fn test_score_code_edit_partial() {
+        let score = score_code_edit(
+            "def divide(a, b):\n    if b == 0:\n        raise ValueError('zero')\n    return a / b",
+            Some("def divide(a, b):\n    if b == 0:\n        return None\n    return a / b"),
+            "def divide(a, b):\n    return a / b",
+        );
+        assert!(score > 0.0 && score < 1.0); // Partial match (added guard but different handling)
+    }
+
+    #[test]
+    fn test_score_code_edit_no_change() {
+        let score = score_code_edit(
+            "def divide(a, b):\n    return a / b",
+            Some("def divide(a, b):\n    if b == 0:\n        return None\n    return a / b"),
+            "def divide(a, b):\n    return a / b",
+        );
+        assert_eq!(score, 0.0); // Response identical to original → no edit made
+    }
+
+    // ── Terminal sequence scoring tests ──
+
+    #[test]
+    fn test_score_terminal_all_commands() {
+        let score = score_terminal_sequence(
+            "```bash\n$ find . -name '*.py'\n$ grep TODO *.py\n```",
+            &["find . -name '*.py'".to_string(), "grep TODO *.py".to_string()],
+            None,
+        );
+        assert!(score > 0.8); // Both commands found in order
+    }
+
+    #[test]
+    fn test_score_terminal_partial_commands() {
+        let score = score_terminal_sequence(
+            "```bash\n$ find . -name '*.py'\n```",
+            &["find . -name '*.py'".to_string(), "grep TODO *.py".to_string()],
+            None,
+        );
+        let full_score = score_terminal_sequence(
+            "```bash\n$ find . -name '*.py'\n$ grep TODO *.py\n```",
+            &["find . -name '*.py'".to_string(), "grep TODO *.py".to_string()],
+            None,
+        );
+        assert!(score < full_score); // Partial < full
+        assert!(score > 0.0);
+    }
+
+    #[test]
+    fn test_score_terminal_order_matters() {
+        let ordered = score_terminal_sequence(
+            "```bash\n$ cd /tmp\n$ mkdir test\n$ touch test/file.txt\n```",
+            &["cd /tmp".to_string(), "mkdir test".to_string(), "touch test/file.txt".to_string()],
+            None,
+        );
+        let reversed = score_terminal_sequence(
+            "```bash\n$ touch test/file.txt\n$ mkdir test\n$ cd /tmp\n```",
+            &["cd /tmp".to_string(), "mkdir test".to_string(), "touch test/file.txt".to_string()],
+            None,
+        );
+        // Same commands but correct order should score >= reversed
+        assert!(ordered >= reversed);
+    }
+
+    // ── Utility tests ──
+
+    #[test]
+    fn test_extract_commands_from_response() {
+        let response = "Here's how to do it:\n\n```bash\n$ ls -la\n$ grep foo bar.txt\n```\n\nYou can also run:\n$ echo hello";
+        let cmds = extract_commands(response);
+        assert_eq!(cmds.len(), 3);
+        assert_eq!(cmds[0], "ls -la");
+        assert_eq!(cmds[1], "grep foo bar.txt");
+        assert_eq!(cmds[2], "echo hello");
+    }
+
+    #[test]
+    fn test_default_scorer_handles_new_formats() {
+        use super::super::dataset::*;
+
+        // CompetitiveProgrammingCode
+        let cp = make_competitive_problem("cp/1", "Sum of N", "print(sum(range(int(input()))))", "python", vec![("5", "10")], "easy");
+        let scorer = DefaultScorer;
+        let score = scorer.score(&cp, "print(sum(range(int(input()))))");
+        assert!(score > 0.5);
+
+        // CodeEdit
+        let ce = make_code_edit_problem("ce/1", "Add guard", "fn f() {}", "fn f() { guard(); }", "rust");
+        let score = scorer.score(&ce, "fn f() { guard(); }");
+        assert_eq!(score, 1.0);
+
+        // TerminalSequence
+        let ts = make_terminal_problem("ts/1", "List files", "Ubuntu", vec!["ls -la"], "ls -la");
+        let score = scorer.score(&ts, "```bash\n$ ls -la\n```");
+        assert!(score > 0.5);
     }
 }

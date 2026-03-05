@@ -355,7 +355,60 @@ impl BenchmarkSuiteRunner {
             base_prompt.clone()
         };
 
-        prompt
+        // Enrich prompt with format-specific context
+        self.enrich_prompt(&prompt, &problem.answer_format)
+    }
+
+    /// Enrich a prompt with format-specific context for better LLM responses.
+    fn enrich_prompt(
+        &self,
+        prompt: &str,
+        answer_format: &super::dataset::AnswerFormat,
+    ) -> String {
+        use super::dataset::AnswerFormat;
+        match answer_format {
+            AnswerFormat::CompetitiveProgrammingCode {
+                language,
+                test_cases,
+                time_limit_ms,
+                memory_limit_mb,
+                ..
+            } => {
+                let mut enriched = prompt.to_string();
+                if let Some(tl) = time_limit_ms {
+                    enriched.push_str(&format!("\n\nTime limit: {} ms", tl));
+                }
+                if let Some(ml) = memory_limit_mb {
+                    enriched.push_str(&format!("\nMemory limit: {} MB", ml));
+                }
+                enriched.push_str(&format!("\nLanguage: {}", language));
+                // Show up to 2 sample test cases
+                for (i, (input, output)) in test_cases.iter().take(2).enumerate() {
+                    enriched.push_str(&format!(
+                        "\n\nSample Input {}:\n{}\nSample Output {}:\n{}",
+                        i + 1,
+                        input,
+                        i + 1,
+                        output
+                    ));
+                }
+                enriched
+            }
+            AnswerFormat::CodeEdit {
+                language,
+                original_code,
+                ..
+            } => {
+                format!(
+                    "## Original Code ({})\n```{}\n{}\n```\n\n## Instruction\n{}",
+                    language, language, original_code, prompt
+                )
+            }
+            AnswerFormat::TerminalSequence { environment, .. } => {
+                format!("## Environment\n{}\n\n## Task\n{}", environment, prompt)
+            }
+            _ => prompt.to_string(),
+        }
     }
 }
 
@@ -589,5 +642,76 @@ mod tests {
         assert_eq!(run.problem_count(), 2);
         assert_eq!(run.error_count(), 1);
         assert!((run.mean_latency_ms() - 150.0).abs() < 0.01);
+    }
+
+    // ── Tests for new benchmark format prompt enrichment ──
+
+    #[test]
+    fn test_run_competitive_programming_problem() {
+        let gen = mock_generator(vec!["n = int(input())\nprint(sum(range(n)))"]);
+        let runner = BenchmarkSuiteRunner { generator: gen, scorer: Box::new(DefaultScorer) };
+        let problem = make_competitive_problem(
+            "cp/1", "Read N and print sum of 0..N-1",
+            "n = int(input())\nprint(sum(range(n)))", "python",
+            vec![("5", "10"), ("3", "3")], "easy",
+        );
+        let config = RunConfig {
+            model_id: ModelIdentifier { name: "test".into(), provider: "mock".into(), variant: None },
+            ..Default::default()
+        };
+        let result = runner.run_problem(&problem, &config);
+        assert_eq!(result.problem_id, "cp/1");
+        assert!(!result.scores.is_empty());
+        // The prompt should have been enriched with sample I/O
+        let prompt = runner.build_prompt(&problem, &config);
+        assert!(prompt.contains("Sample Input 1:"));
+        assert!(prompt.contains("Sample Output 1:"));
+        assert!(prompt.contains("Language: python"));
+    }
+
+    #[test]
+    fn test_run_code_edit_problem() {
+        let gen = mock_generator(vec!["def divide(a, b):\n    if b == 0: return None\n    return a / b"]);
+        let runner = BenchmarkSuiteRunner { generator: gen, scorer: Box::new(DefaultScorer) };
+        let problem = make_code_edit_problem(
+            "ce/1", "Add zero division guard",
+            "def divide(a, b):\n    return a / b",
+            "def divide(a, b):\n    if b == 0:\n        return None\n    return a / b",
+            "python",
+        );
+        let config = RunConfig {
+            model_id: ModelIdentifier { name: "test".into(), provider: "mock".into(), variant: None },
+            ..Default::default()
+        };
+        let result = runner.run_problem(&problem, &config);
+        assert_eq!(result.problem_id, "ce/1");
+        // The prompt should have original code
+        let prompt = runner.build_prompt(&problem, &config);
+        assert!(prompt.contains("## Original Code (python)"));
+        assert!(prompt.contains("def divide(a, b):"));
+        assert!(prompt.contains("## Instruction"));
+    }
+
+    #[test]
+    fn test_run_terminal_problem() {
+        let gen = mock_generator(vec!["```bash\n$ find . -name '*.py'\n$ wc -l\n```"]);
+        let runner = BenchmarkSuiteRunner { generator: gen, scorer: Box::new(DefaultScorer) };
+        let problem = make_terminal_problem(
+            "tb/1", "Count lines of Python code",
+            "Ubuntu 22.04, bash, ~/project",
+            vec!["find . -name '*.py'", "wc -l"],
+            "find . -name '*.py' | xargs wc -l",
+        );
+        let config = RunConfig {
+            model_id: ModelIdentifier { name: "test".into(), provider: "mock".into(), variant: None },
+            ..Default::default()
+        };
+        let result = runner.run_problem(&problem, &config);
+        assert_eq!(result.problem_id, "tb/1");
+        // The prompt should have environment context
+        let prompt = runner.build_prompt(&problem, &config);
+        assert!(prompt.contains("## Environment"));
+        assert!(prompt.contains("Ubuntu 22.04"));
+        assert!(prompt.contains("## Task"));
     }
 }
