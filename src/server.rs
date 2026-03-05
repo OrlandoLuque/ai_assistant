@@ -211,12 +211,320 @@ pub struct ServerConfig {
     /// Guardrail pipeline (built automatically when enrichment.enable_guardrails is true).
     #[serde(skip)]
     pub guardrail_pipeline: Option<Arc<Mutex<crate::guardrail_pipeline::GuardrailPipeline>>>,
+    /// Cost budget manager (built automatically when enrichment.cost.enabled is true).
+    #[serde(skip)]
+    pub budget_manager: Option<Arc<Mutex<crate::cost::BudgetManager>>>,
 }
+
+// ── Enrichment sub-config structs ────────────────────────────────────
+
+/// Granular guardrail configuration for the enrichment pipeline.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GuardrailEnrichmentConfig {
+    /// Enable attack/injection detection guard. Default: true (when guardrails enabled).
+    #[serde(default = "default_true")]
+    pub attack_guard: bool,
+    /// Enable PII detection on input. Default: true.
+    #[serde(default = "default_true")]
+    pub pii_guard: bool,
+    /// Enable toxicity detection on input. Default: true.
+    #[serde(default = "default_true")]
+    pub toxicity_guard: bool,
+    /// Enable content length guard. Default: true.
+    #[serde(default = "default_true")]
+    pub content_length_guard: bool,
+    /// Enable rate-limit guard inside the guardrail pipeline. Default: false.
+    #[serde(default)]
+    pub rate_limit_guard: bool,
+    /// Max requests for rate-limit window. Default: 60.
+    #[serde(default = "default_rate_limit_max")]
+    pub rate_limit_max_requests: usize,
+    /// Rate-limit window in seconds. Default: 60.
+    #[serde(default = "default_rate_limit_window")]
+    pub rate_limit_window_secs: u64,
+    /// Blocked substring patterns (case-insensitive). If non-empty, PatternGuard is added.
+    #[serde(default)]
+    pub blocked_patterns: Vec<String>,
+    /// Enable output PII guard. Default: true.
+    #[serde(default = "default_true")]
+    pub output_pii_guard: bool,
+    /// PII action: "block" or "redact". Default: "redact".
+    #[serde(default = "default_pii_action")]
+    pub output_pii_action: String,
+    /// Redaction character when action is "redact". Default: '*'.
+    #[serde(default = "default_redact_char")]
+    pub output_pii_redact_char: char,
+    /// Check for email addresses. Default: true.
+    #[serde(default = "default_true")]
+    pub output_pii_check_emails: bool,
+    /// Check for phone numbers. Default: true.
+    #[serde(default = "default_true")]
+    pub output_pii_check_phones: bool,
+    /// Check for SSNs. Default: true.
+    #[serde(default = "default_true")]
+    pub output_pii_check_ssns: bool,
+    /// Check for credit card numbers. Default: true.
+    #[serde(default = "default_true")]
+    pub output_pii_check_credit_cards: bool,
+    /// Check for IP addresses. Default: true.
+    #[serde(default = "default_true")]
+    pub output_pii_check_ip_addresses: bool,
+    /// Enable output toxicity guard. Default: false.
+    #[serde(default)]
+    pub output_toxicity_guard: bool,
+    /// Toxicity severity threshold (0.0-1.0). Default: 0.7.
+    #[serde(default = "default_toxicity_threshold")]
+    pub output_toxicity_threshold: f64,
+}
+
+impl Default for GuardrailEnrichmentConfig {
+    fn default() -> Self {
+        Self {
+            attack_guard: true,
+            pii_guard: true,
+            toxicity_guard: true,
+            content_length_guard: true,
+            rate_limit_guard: false,
+            rate_limit_max_requests: 60,
+            rate_limit_window_secs: 60,
+            blocked_patterns: Vec::new(),
+            output_pii_guard: true,
+            output_pii_action: "redact".to_string(),
+            output_pii_redact_char: '*',
+            output_pii_check_emails: true,
+            output_pii_check_phones: true,
+            output_pii_check_ssns: true,
+            output_pii_check_credit_cards: true,
+            output_pii_check_ip_addresses: true,
+            output_toxicity_guard: false,
+            output_toxicity_threshold: 0.7,
+        }
+    }
+}
+
+/// RAG retrieval configuration for enrichment.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RagEnrichmentConfig {
+    /// Enable knowledge-base RAG retrieval. Default: true (when RAG enabled).
+    #[serde(default = "default_true")]
+    pub knowledge_rag: bool,
+    /// Enable conversation-history RAG. Default: false.
+    #[serde(default)]
+    pub conversation_rag: bool,
+    /// Max tokens for knowledge context. Default: 2000.
+    #[serde(default = "default_knowledge_tokens")]
+    pub max_knowledge_tokens: usize,
+    /// Max tokens for conversation context. Default: 1500.
+    #[serde(default = "default_conversation_tokens")]
+    pub max_conversation_tokens: usize,
+    /// Top-K chunks to retrieve. Default: 5.
+    #[serde(default = "default_top_k")]
+    pub top_k_chunks: usize,
+    /// Minimum relevance score (0.0-1.0). Default: 0.1.
+    #[serde(default = "default_min_relevance")]
+    pub min_relevance_score: f32,
+    /// Enable dynamic context sizing. Default: false.
+    #[serde(default)]
+    pub dynamic_context: bool,
+    /// Auto-store user messages in RAG. Default: false.
+    #[serde(default)]
+    pub auto_store_messages: bool,
+}
+
+impl Default for RagEnrichmentConfig {
+    fn default() -> Self {
+        Self {
+            knowledge_rag: true,
+            conversation_rag: false,
+            max_knowledge_tokens: 2000,
+            max_conversation_tokens: 1500,
+            top_k_chunks: 5,
+            min_relevance_score: 0.1,
+            dynamic_context: false,
+            auto_store_messages: false,
+        }
+    }
+}
+
+/// Context composition / token budget configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextEnrichmentConfig {
+    /// Enable context budget management. Default: false.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Total token budget for the entire prompt. Default: 4096.
+    #[serde(default = "default_total_budget")]
+    pub total_budget: usize,
+    /// Tokens reserved for the model response. Default: 1024.
+    #[serde(default = "default_response_reserve")]
+    pub response_reserve: usize,
+    /// Enable overflow detection. Default: true.
+    #[serde(default = "default_true")]
+    pub overflow_detection: bool,
+    /// Enable hybrid compaction on overflow. Default: false.
+    #[serde(default)]
+    pub hybrid_compaction: bool,
+}
+
+impl Default for ContextEnrichmentConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            total_budget: 4096,
+            response_reserve: 1024,
+            overflow_detection: true,
+            hybrid_compaction: false,
+        }
+    }
+}
+
+/// Conversation compaction configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompactionEnrichmentConfig {
+    /// Enable conversation compaction. Default: false.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Max messages before compaction triggers. Default: 50.
+    #[serde(default = "default_max_messages")]
+    pub max_messages: usize,
+    /// Target message count after compaction. Default: 20.
+    #[serde(default = "default_target_messages")]
+    pub target_messages: usize,
+    /// Number of recent messages to always preserve. Default: 10.
+    #[serde(default = "default_preserve_recent")]
+    pub preserve_recent: usize,
+    /// Number of initial messages to always preserve. Default: 2.
+    #[serde(default = "default_preserve_first")]
+    pub preserve_first: usize,
+    /// Minimum importance to preserve (0.0-1.0). Default: 0.8.
+    #[serde(default = "default_min_importance")]
+    pub min_importance: f64,
+}
+
+impl Default for CompactionEnrichmentConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_messages: 50,
+            target_messages: 20,
+            preserve_recent: 10,
+            preserve_first: 2,
+            min_importance: 0.8,
+        }
+    }
+}
+
+/// Auto model selection configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelSelectionEnrichmentConfig {
+    /// Enable auto model selection. Default: false.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Optimize for cost. Default: false.
+    #[serde(default)]
+    pub optimize_cost: bool,
+    /// Optimize for speed. Default: false.
+    #[serde(default)]
+    pub optimize_speed: bool,
+    /// Minimum quality threshold (0.0-1.0). Default: 0.7.
+    #[serde(default = "default_min_quality")]
+    pub min_quality: f64,
+    /// Enable learning from outcomes. Default: true.
+    #[serde(default = "default_true")]
+    pub enable_learning: bool,
+}
+
+impl Default for ModelSelectionEnrichmentConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            optimize_cost: false,
+            optimize_speed: false,
+            min_quality: 0.7,
+            enable_learning: true,
+        }
+    }
+}
+
+/// Cost tracking and budget configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CostEnrichmentConfig {
+    /// Enable cost tracking/budget enforcement. Default: false.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Daily spending limit (USD). Default: None (unlimited).
+    #[serde(default)]
+    pub daily_limit: Option<f64>,
+    /// Monthly spending limit (USD). Default: None (unlimited).
+    #[serde(default)]
+    pub monthly_limit: Option<f64>,
+    /// Per-request spending limit (USD). Default: None (unlimited).
+    #[serde(default)]
+    pub per_request_limit: Option<f64>,
+    /// Warning threshold ratio (0.0-1.0). Default: 0.8.
+    #[serde(default = "default_cost_warning")]
+    pub warning_threshold: f32,
+}
+
+impl Default for CostEnrichmentConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            daily_limit: None,
+            monthly_limit: None,
+            per_request_limit: None,
+            warning_threshold: 0.8,
+        }
+    }
+}
+
+/// Adaptive thinking / chain-of-thought configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThinkingEnrichmentConfig {
+    /// Enable adaptive thinking. Default: false.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Minimum thinking depth. Default: Trivial.
+    #[serde(default = "default_depth_trivial")]
+    pub min_depth: crate::adaptive_thinking::ThinkingDepth,
+    /// Maximum thinking depth. Default: Expert.
+    #[serde(default = "default_depth_expert")]
+    pub max_depth: crate::adaptive_thinking::ThinkingDepth,
+    /// Inject chain-of-thought instructions. Default: true.
+    #[serde(default = "default_true")]
+    pub inject_cot_instructions: bool,
+    /// Parse <think>...</think> tags. Default: true.
+    #[serde(default = "default_true")]
+    pub parse_thinking_tags: bool,
+    /// Strip thinking tags from visible response. Default: true.
+    #[serde(default = "default_true")]
+    pub strip_thinking_from_response: bool,
+    /// Adjust temperature based on depth. Default: true.
+    #[serde(default = "default_true")]
+    pub adjust_temperature: bool,
+}
+
+impl Default for ThinkingEnrichmentConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            min_depth: crate::adaptive_thinking::ThinkingDepth::Trivial,
+            max_depth: crate::adaptive_thinking::ThinkingDepth::Expert,
+            inject_cot_instructions: true,
+            parse_thinking_tags: true,
+            strip_thinking_from_response: true,
+            adjust_temperature: true,
+        }
+    }
+}
+
+// ── Enrichment config (top-level) ────────────────────────────────────
 
 /// Enrichment configuration for the OpenAI-compatible endpoints.
 ///
 /// Controls whether RAG knowledge retrieval, guardrails (PII/toxicity/attack
-/// detection), and conversation memory are applied to incoming requests.
+/// detection), conversation memory, adaptive thinking, cost budgets, and more
+/// are applied to incoming requests.
 /// All features are disabled by default for backward compatibility.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnrichmentConfig {
@@ -238,10 +546,58 @@ pub struct EnrichmentConfig {
     /// Guardrail score threshold (0.0–1.0). Higher = more permissive.
     #[serde(default = "default_threshold")]
     pub guardrail_threshold: f32,
+
+    /// Granular guardrail configuration (individual guard toggles).
+    #[serde(default)]
+    pub guardrails: GuardrailEnrichmentConfig,
+    /// RAG retrieval configuration (top_k, relevance, etc.).
+    #[serde(default)]
+    pub rag: RagEnrichmentConfig,
+    /// Context composition / token budget configuration.
+    #[serde(default)]
+    pub context: ContextEnrichmentConfig,
+    /// Conversation compaction configuration.
+    #[serde(default)]
+    pub compaction: CompactionEnrichmentConfig,
+    /// Auto model selection configuration.
+    #[serde(default)]
+    pub model_selection: ModelSelectionEnrichmentConfig,
+    /// Cost tracking and budget configuration.
+    #[serde(default)]
+    pub cost: CostEnrichmentConfig,
+    /// Adaptive thinking / chain-of-thought configuration.
+    #[serde(default)]
+    pub thinking: ThinkingEnrichmentConfig,
 }
+
+// ── Default helper functions ─────────────────────────────────────────
 
 fn default_true() -> bool { true }
 fn default_threshold() -> f32 { 0.8 }
+fn default_rate_limit_max() -> usize { 60 }
+fn default_rate_limit_window() -> u64 { 60 }
+fn default_pii_action() -> String { "redact".to_string() }
+fn default_redact_char() -> char { '*' }
+fn default_toxicity_threshold() -> f64 { 0.7 }
+fn default_knowledge_tokens() -> usize { 2000 }
+fn default_conversation_tokens() -> usize { 1500 }
+fn default_top_k() -> usize { 5 }
+fn default_min_relevance() -> f32 { 0.1 }
+fn default_total_budget() -> usize { 4096 }
+fn default_response_reserve() -> usize { 1024 }
+fn default_max_messages() -> usize { 50 }
+fn default_target_messages() -> usize { 20 }
+fn default_preserve_recent() -> usize { 10 }
+fn default_preserve_first() -> usize { 2 }
+fn default_min_importance() -> f64 { 0.8 }
+fn default_min_quality() -> f64 { 0.7 }
+fn default_cost_warning() -> f32 { 0.8 }
+fn default_depth_trivial() -> crate::adaptive_thinking::ThinkingDepth {
+    crate::adaptive_thinking::ThinkingDepth::Trivial
+}
+fn default_depth_expert() -> crate::adaptive_thinking::ThinkingDepth {
+    crate::adaptive_thinking::ThinkingDepth::Expert
+}
 
 impl Default for EnrichmentConfig {
     fn default() -> Self {
@@ -252,6 +608,13 @@ impl Default for EnrichmentConfig {
             block_on_input_violation: true,
             redact_output_pii: true,
             guardrail_threshold: 0.8,
+            guardrails: GuardrailEnrichmentConfig::default(),
+            rag: RagEnrichmentConfig::default(),
+            context: ContextEnrichmentConfig::default(),
+            compaction: CompactionEnrichmentConfig::default(),
+            model_selection: ModelSelectionEnrichmentConfig::default(),
+            cost: CostEnrichmentConfig::default(),
+            thinking: ThinkingEnrichmentConfig::default(),
         }
     }
 }
@@ -273,6 +636,7 @@ impl Default for ServerConfig {
             tls: None,
             rate_limiter: None,
             guardrail_pipeline: None,
+            budget_manager: None,
         }
     }
 }
@@ -938,7 +1302,7 @@ impl AiServer {
     /// When the `server-tls` feature is enabled and `config.tls` is set,
     /// the TLS certificates are loaded eagerly so errors surface early.
     pub fn new(config: ServerConfig) -> Self {
-        let config = Self::init_guardrail_pipeline(config);
+        let config = Self::init_enrichment(config);
         #[cfg(feature = "server-tls")]
         let tls_server_config = config.tls.as_ref().map(|tls| {
             load_tls_config(tls).expect("Failed to load TLS configuration")
@@ -955,7 +1319,7 @@ impl AiServer {
 
     /// Create a server with a pre-configured assistant.
     pub fn with_assistant(config: ServerConfig, assistant: AiAssistant) -> Self {
-        let config = Self::init_guardrail_pipeline(config);
+        let config = Self::init_enrichment(config);
         #[cfg(feature = "server-tls")]
         let tls_server_config = config.tls.as_ref().map(|tls| {
             load_tls_config(tls).expect("Failed to load TLS configuration")
@@ -970,19 +1334,90 @@ impl AiServer {
         }
     }
 
+    /// Initialize all enrichment subsystems (guardrails, budget manager).
+    fn init_enrichment(config: ServerConfig) -> ServerConfig {
+        let config = Self::init_guardrail_pipeline(config);
+        Self::init_budget_manager(config)
+    }
+
     /// Build a `GuardrailPipeline` if enrichment.enable_guardrails is set.
+    /// Uses individual guard toggles from `enrichment.guardrails`.
     fn init_guardrail_pipeline(mut config: ServerConfig) -> ServerConfig {
         if config.enrichment.enable_guardrails && config.guardrail_pipeline.is_none() {
             use crate::guardrail_pipeline::{
-                AttackGuard, ContentLengthGuard, GuardrailPipeline, PiiGuard, ToxicityGuard,
+                AttackGuard, ContentLengthGuard, GuardrailPipeline, OutputPiiConfig,
+                OutputPiiGuard, OutputToxicityConfig, OutputToxicityGuard, PatternGuard,
+                PiiAction, PiiGuard, RateLimitGuard, ToxicityGuard,
             };
+
+            let gconf = &config.enrichment.guardrails;
             let mut pipeline =
                 GuardrailPipeline::new().with_threshold(config.enrichment.guardrail_threshold as f64);
-            pipeline.add_guard(Box::new(AttackGuard::new()));
-            pipeline.add_guard(Box::new(PiiGuard::new()));
-            pipeline.add_guard(Box::new(ToxicityGuard::new()));
-            pipeline.add_guard(Box::new(ContentLengthGuard::new(config.max_message_length)));
+
+            // Input guards
+            if gconf.attack_guard {
+                pipeline.add_guard(Box::new(AttackGuard::new()));
+            }
+            if gconf.pii_guard {
+                pipeline.add_guard(Box::new(PiiGuard::new()));
+            }
+            if gconf.toxicity_guard {
+                pipeline.add_guard(Box::new(ToxicityGuard::new()));
+            }
+            if gconf.content_length_guard {
+                pipeline.add_guard(Box::new(ContentLengthGuard::new(config.max_message_length)));
+            }
+            if gconf.rate_limit_guard {
+                pipeline.add_guard(Box::new(RateLimitGuard::new(
+                    gconf.rate_limit_max_requests,
+                    gconf.rate_limit_window_secs,
+                )));
+            }
+            if !gconf.blocked_patterns.is_empty() {
+                pipeline.add_guard(Box::new(PatternGuard::new(gconf.blocked_patterns.clone())));
+            }
+
+            // Output guards
+            if gconf.output_pii_guard {
+                let action = if gconf.output_pii_action == "block" {
+                    PiiAction::Block
+                } else {
+                    PiiAction::Redact(gconf.output_pii_redact_char)
+                };
+                pipeline.add_guard(Box::new(OutputPiiGuard::new(OutputPiiConfig {
+                    action,
+                    check_emails: gconf.output_pii_check_emails,
+                    check_phones: gconf.output_pii_check_phones,
+                    check_ssns: gconf.output_pii_check_ssns,
+                    check_credit_cards: gconf.output_pii_check_credit_cards,
+                    check_ip_addresses: gconf.output_pii_check_ip_addresses,
+                })));
+            }
+            if gconf.output_toxicity_guard {
+                pipeline.add_guard(Box::new(OutputToxicityGuard::new(OutputToxicityConfig {
+                    severity_threshold: gconf.output_toxicity_threshold,
+                })));
+            }
+
             config.guardrail_pipeline = Some(Arc::new(Mutex::new(pipeline)));
+        }
+        config
+    }
+
+    /// Build a `BudgetManager` if enrichment.cost.enabled is set.
+    fn init_budget_manager(mut config: ServerConfig) -> ServerConfig {
+        if config.enrichment.cost.enabled && config.budget_manager.is_none() {
+            let mut bm = crate::cost::BudgetManager::new();
+            if let Some(dl) = config.enrichment.cost.daily_limit {
+                bm = bm.with_daily_limit(dl);
+            }
+            if let Some(ml) = config.enrichment.cost.monthly_limit {
+                bm = bm.with_monthly_limit(ml);
+            }
+            if let Some(rl) = config.enrichment.cost.per_request_limit {
+                bm = bm.with_request_limit(rl);
+            }
+            config.budget_manager = Some(Arc::new(Mutex::new(bm)));
         }
         config
     }
@@ -1942,11 +2377,33 @@ fn handle_openai_chat_completions(
         }
     }
 
+    // -- Cost budget pre-check --
+    if let Some(ref bm) = config.budget_manager {
+        let bm = bm.lock().unwrap_or_else(|e| e.into_inner());
+        if bm.check(0.0).is_exceeded() {
+            return (
+                "429 Too Many Requests".to_string(),
+                openai_error_json("Budget exceeded", "rate_limit_error", "budget_exceeded"),
+            );
+        }
+    }
+
     // -- RAG enrichment --
     let mut knowledge_context = String::new();
     {
         let mut ass = assistant.lock().unwrap_or_else(|e| e.into_inner());
         if config.enrichment.enable_rag {
+            // Apply RAG sub-config
+            let rconf = &config.enrichment.rag;
+            ass.rag_config.knowledge_rag_enabled = rconf.knowledge_rag;
+            ass.rag_config.conversation_rag_enabled = rconf.conversation_rag;
+            ass.rag_config.max_knowledge_tokens = rconf.max_knowledge_tokens;
+            ass.rag_config.max_conversation_tokens = rconf.max_conversation_tokens;
+            ass.rag_config.top_k_chunks = rconf.top_k_chunks;
+            ass.rag_config.min_relevance_score = rconf.min_relevance_score;
+            ass.rag_config.dynamic_context_enabled = rconf.dynamic_context;
+            ass.rag_config.auto_store_messages = rconf.auto_store_messages;
+
             let (knowledge, _conversation) = ass.build_rag_context(&user_message);
             knowledge_context = knowledge;
         }
@@ -1958,6 +2415,30 @@ fn handle_openai_chat_completions(
         .model
         .clone()
         .unwrap_or_else(|| ass.config.selected_model.clone());
+
+    // Apply compaction config
+    if config.enrichment.compaction.enabled {
+        let cconf = &config.enrichment.compaction;
+        ass.set_compaction_config(crate::conversation_compaction::CompactionConfig {
+            max_messages: cconf.max_messages,
+            target_messages: cconf.target_messages,
+            preserve_recent: cconf.preserve_recent,
+            preserve_first: cconf.preserve_first,
+            min_importance: cconf.min_importance,
+        });
+    }
+
+    // Apply adaptive thinking config
+    if config.enrichment.thinking.enabled {
+        let tconf = &config.enrichment.thinking;
+        ass.adaptive_thinking.enabled = true;
+        ass.adaptive_thinking.min_depth = tconf.min_depth;
+        ass.adaptive_thinking.max_depth = tconf.max_depth;
+        ass.adaptive_thinking.inject_cot_instructions = tconf.inject_cot_instructions;
+        ass.adaptive_thinking.parse_thinking_tags = tconf.parse_thinking_tags;
+        ass.adaptive_thinking.strip_thinking_from_response = tconf.strip_thinking_from_response;
+        ass.adaptive_thinking.adjust_temperature = tconf.adjust_temperature;
+    }
 
     ass.send_message_with_notes(user_message.clone(), &knowledge_context, &system_prompt, "");
 
@@ -1985,13 +2466,24 @@ fn handle_openai_chat_completions(
             drop(gp);
 
             if !result.passed && config.enrichment.redact_output_pii {
-                // Run PII detector directly to get redacted text
-                let pii_result = crate::pii_detection::PiiDetector::new(crate::pii_detection::PiiConfig::default()).detect(&response_text);
-                if pii_result.has_pii {
-                    pii_result.redacted
+                // Use OutputPiiGuard to redact PII from the response
+                let gconf = &config.enrichment.guardrails;
+                let action = if gconf.output_pii_action == "block" {
+                    crate::guardrail_pipeline::PiiAction::Block
                 } else {
-                    response_text
-                }
+                    crate::guardrail_pipeline::PiiAction::Redact(gconf.output_pii_redact_char)
+                };
+                let output_pii = crate::guardrail_pipeline::OutputPiiGuard::new(
+                    crate::guardrail_pipeline::OutputPiiConfig {
+                        action,
+                        check_emails: gconf.output_pii_check_emails,
+                        check_phones: gconf.output_pii_check_phones,
+                        check_ssns: gconf.output_pii_check_ssns,
+                        check_credit_cards: gconf.output_pii_check_credit_cards,
+                        check_ip_addresses: gconf.output_pii_check_ip_addresses,
+                    },
+                );
+                output_pii.redact(&response_text)
             } else {
                 response_text
             }
@@ -2118,11 +2610,32 @@ fn handle_openai_chat_completions_stream(
         }
     }
 
+    // -- Cost budget pre-check --
+    if let Some(ref bm) = config.budget_manager {
+        let bm = bm.lock().unwrap_or_else(|e| e.into_inner());
+        if bm.check(0.0).is_exceeded() {
+            return Err((
+                "429 Too Many Requests".to_string(),
+                openai_error_json("Budget exceeded", "rate_limit_error", "budget_exceeded"),
+            ));
+        }
+    }
+
     // -- RAG enrichment --
     let mut knowledge_context = String::new();
     {
         let mut ass = assistant.lock().unwrap_or_else(|e| e.into_inner());
         if config.enrichment.enable_rag {
+            let rconf = &config.enrichment.rag;
+            ass.rag_config.knowledge_rag_enabled = rconf.knowledge_rag;
+            ass.rag_config.conversation_rag_enabled = rconf.conversation_rag;
+            ass.rag_config.max_knowledge_tokens = rconf.max_knowledge_tokens;
+            ass.rag_config.max_conversation_tokens = rconf.max_conversation_tokens;
+            ass.rag_config.top_k_chunks = rconf.top_k_chunks;
+            ass.rag_config.min_relevance_score = rconf.min_relevance_score;
+            ass.rag_config.dynamic_context_enabled = rconf.dynamic_context;
+            ass.rag_config.auto_store_messages = rconf.auto_store_messages;
+
             let (knowledge, _conversation) = ass.build_rag_context(&user_message);
             knowledge_context = knowledge;
         }
@@ -2134,6 +2647,30 @@ fn handle_openai_chat_completions_stream(
         .model
         .clone()
         .unwrap_or_else(|| ass.config.selected_model.clone());
+
+    // Apply compaction config
+    if config.enrichment.compaction.enabled {
+        let cconf = &config.enrichment.compaction;
+        ass.set_compaction_config(crate::conversation_compaction::CompactionConfig {
+            max_messages: cconf.max_messages,
+            target_messages: cconf.target_messages,
+            preserve_recent: cconf.preserve_recent,
+            preserve_first: cconf.preserve_first,
+            min_importance: cconf.min_importance,
+        });
+    }
+
+    // Apply adaptive thinking config
+    if config.enrichment.thinking.enabled {
+        let tconf = &config.enrichment.thinking;
+        ass.adaptive_thinking.enabled = true;
+        ass.adaptive_thinking.min_depth = tconf.min_depth;
+        ass.adaptive_thinking.max_depth = tconf.max_depth;
+        ass.adaptive_thinking.inject_cot_instructions = tconf.inject_cot_instructions;
+        ass.adaptive_thinking.parse_thinking_tags = tconf.parse_thinking_tags;
+        ass.adaptive_thinking.strip_thinking_from_response = tconf.strip_thinking_from_response;
+        ass.adaptive_thinking.adjust_temperature = tconf.adjust_temperature;
+    }
 
     ass.send_message_with_notes(user_message, &knowledge_context, &system_prompt, "");
 
@@ -2162,12 +2699,23 @@ fn handle_openai_chat_completions_stream(
             drop(gp);
 
             if !result.passed && config.enrichment.redact_output_pii {
-                let pii_result = crate::pii_detection::PiiDetector::new(crate::pii_detection::PiiConfig::default()).detect(&full_text);
-                if pii_result.has_pii {
-                    pii_result.redacted
+                let gconf = &config.enrichment.guardrails;
+                let action = if gconf.output_pii_action == "block" {
+                    crate::guardrail_pipeline::PiiAction::Block
                 } else {
-                    full_text
-                }
+                    crate::guardrail_pipeline::PiiAction::Redact(gconf.output_pii_redact_char)
+                };
+                let output_pii = crate::guardrail_pipeline::OutputPiiGuard::new(
+                    crate::guardrail_pipeline::OutputPiiConfig {
+                        action,
+                        check_emails: gconf.output_pii_check_emails,
+                        check_phones: gconf.output_pii_check_phones,
+                        check_ssns: gconf.output_pii_check_ssns,
+                        check_credit_cards: gconf.output_pii_check_credit_cards,
+                        check_ip_addresses: gconf.output_pii_check_ip_addresses,
+                    },
+                );
+                output_pii.redact(&full_text)
             } else {
                 full_text
             }
@@ -4788,6 +5336,7 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
             block_on_input_violation: true,
             redact_output_pii: false,
             guardrail_threshold: 0.6,
+            ..Default::default()
         };
         let json = serde_json::to_string(&config).unwrap();
         let parsed: EnrichmentConfig = serde_json::from_str(&json).unwrap();
@@ -5016,5 +5565,363 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         config.enrichment.guardrail_threshold = 0.5;
         config = AiServer::init_guardrail_pipeline(config);
         assert!(config.guardrail_pipeline.is_some());
+    }
+
+    // ── Sub-config expansion tests ───────────────────────────────────
+
+    #[test]
+    fn test_guardrail_sub_config_defaults() {
+        let gc = GuardrailEnrichmentConfig::default();
+        assert!(gc.attack_guard);
+        assert!(gc.pii_guard);
+        assert!(gc.toxicity_guard);
+        assert!(gc.content_length_guard);
+        assert!(!gc.rate_limit_guard);
+        assert_eq!(gc.rate_limit_max_requests, 60);
+        assert_eq!(gc.rate_limit_window_secs, 60);
+        assert!(gc.blocked_patterns.is_empty());
+        assert!(gc.output_pii_guard);
+        assert_eq!(gc.output_pii_action, "redact");
+        assert_eq!(gc.output_pii_redact_char, '*');
+        assert!(gc.output_pii_check_emails);
+        assert!(gc.output_pii_check_phones);
+        assert!(gc.output_pii_check_ssns);
+        assert!(gc.output_pii_check_credit_cards);
+        assert!(gc.output_pii_check_ip_addresses);
+        assert!(!gc.output_toxicity_guard);
+        assert!((gc.output_toxicity_threshold - 0.7).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_rag_sub_config_defaults() {
+        let rc = RagEnrichmentConfig::default();
+        assert!(rc.knowledge_rag);
+        assert!(!rc.conversation_rag);
+        assert_eq!(rc.max_knowledge_tokens, 2000);
+        assert_eq!(rc.max_conversation_tokens, 1500);
+        assert_eq!(rc.top_k_chunks, 5);
+        assert!((rc.min_relevance_score - 0.1).abs() < 0.01);
+        assert!(!rc.dynamic_context);
+        assert!(!rc.auto_store_messages);
+    }
+
+    #[test]
+    fn test_context_sub_config_defaults() {
+        let cc = ContextEnrichmentConfig::default();
+        assert!(!cc.enabled);
+        assert_eq!(cc.total_budget, 4096);
+        assert_eq!(cc.response_reserve, 1024);
+        assert!(cc.overflow_detection);
+        assert!(!cc.hybrid_compaction);
+    }
+
+    #[test]
+    fn test_compaction_sub_config_defaults() {
+        let cc = CompactionEnrichmentConfig::default();
+        assert!(!cc.enabled);
+        assert_eq!(cc.max_messages, 50);
+        assert_eq!(cc.target_messages, 20);
+        assert_eq!(cc.preserve_recent, 10);
+        assert_eq!(cc.preserve_first, 2);
+        assert!((cc.min_importance - 0.8).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_model_selection_sub_config_defaults() {
+        let ms = ModelSelectionEnrichmentConfig::default();
+        assert!(!ms.enabled);
+        assert!(!ms.optimize_cost);
+        assert!(!ms.optimize_speed);
+        assert!((ms.min_quality - 0.7).abs() < 0.01);
+        assert!(ms.enable_learning);
+    }
+
+    #[test]
+    fn test_cost_sub_config_defaults() {
+        let cc = CostEnrichmentConfig::default();
+        assert!(!cc.enabled);
+        assert!(cc.daily_limit.is_none());
+        assert!(cc.monthly_limit.is_none());
+        assert!(cc.per_request_limit.is_none());
+        assert!((cc.warning_threshold - 0.8).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_thinking_sub_config_defaults() {
+        let tc = ThinkingEnrichmentConfig::default();
+        assert!(!tc.enabled);
+        assert_eq!(tc.min_depth, crate::adaptive_thinking::ThinkingDepth::Trivial);
+        assert_eq!(tc.max_depth, crate::adaptive_thinking::ThinkingDepth::Expert);
+        assert!(tc.inject_cot_instructions);
+        assert!(tc.parse_thinking_tags);
+        assert!(tc.strip_thinking_from_response);
+        assert!(tc.adjust_temperature);
+    }
+
+    #[test]
+    fn test_enrichment_empty_json_defaults() {
+        // Empty JSON object should deserialize to all defaults
+        let config: EnrichmentConfig = serde_json::from_str("{}").unwrap();
+        assert!(!config.enable_rag);
+        assert!(!config.enable_guardrails);
+        assert!(!config.enable_memory);
+        assert!(config.block_on_input_violation);
+        assert!(config.redact_output_pii);
+        // Sub-configs should also be defaults
+        assert!(config.guardrails.attack_guard);
+        assert!(!config.cost.enabled);
+        assert!(!config.thinking.enabled);
+    }
+
+    #[test]
+    fn test_enrichment_old_format_compat() {
+        // JSON with only the original 6 fields should still work
+        let json = r#"{"enable_rag": true, "enable_guardrails": true, "guardrail_threshold": 0.5}"#;
+        let config: EnrichmentConfig = serde_json::from_str(json).unwrap();
+        assert!(config.enable_rag);
+        assert!(config.enable_guardrails);
+        assert!((config.guardrail_threshold - 0.5).abs() < 0.01);
+        // Sub-configs default
+        assert!(config.guardrails.attack_guard);
+        assert_eq!(config.rag.top_k_chunks, 5);
+        assert!(!config.compaction.enabled);
+    }
+
+    #[test]
+    fn test_enrichment_full_json_roundtrip() {
+        let config = EnrichmentConfig {
+            enable_rag: true,
+            enable_guardrails: true,
+            enable_memory: true,
+            block_on_input_violation: true,
+            redact_output_pii: true,
+            guardrail_threshold: 0.6,
+            guardrails: GuardrailEnrichmentConfig {
+                attack_guard: false,
+                rate_limit_guard: true,
+                rate_limit_max_requests: 100,
+                blocked_patterns: vec!["bad".to_string()],
+                output_toxicity_guard: true,
+                ..Default::default()
+            },
+            rag: RagEnrichmentConfig {
+                top_k_chunks: 10,
+                max_knowledge_tokens: 3000,
+                ..Default::default()
+            },
+            context: ContextEnrichmentConfig {
+                enabled: true,
+                total_budget: 8192,
+                ..Default::default()
+            },
+            compaction: CompactionEnrichmentConfig {
+                enabled: true,
+                max_messages: 100,
+                ..Default::default()
+            },
+            model_selection: ModelSelectionEnrichmentConfig {
+                enabled: true,
+                optimize_cost: true,
+                ..Default::default()
+            },
+            cost: CostEnrichmentConfig {
+                enabled: true,
+                daily_limit: Some(10.0),
+                ..Default::default()
+            },
+            thinking: ThinkingEnrichmentConfig {
+                enabled: true,
+                ..Default::default()
+            },
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let parsed: EnrichmentConfig = serde_json::from_str(&json).unwrap();
+        assert!(parsed.enable_rag);
+        assert!(!parsed.guardrails.attack_guard);
+        assert!(parsed.guardrails.rate_limit_guard);
+        assert_eq!(parsed.guardrails.rate_limit_max_requests, 100);
+        assert_eq!(parsed.guardrails.blocked_patterns, vec!["bad"]);
+        assert!(parsed.guardrails.output_toxicity_guard);
+        assert_eq!(parsed.rag.top_k_chunks, 10);
+        assert_eq!(parsed.rag.max_knowledge_tokens, 3000);
+        assert!(parsed.context.enabled);
+        assert_eq!(parsed.context.total_budget, 8192);
+        assert!(parsed.compaction.enabled);
+        assert_eq!(parsed.compaction.max_messages, 100);
+        assert!(parsed.model_selection.enabled);
+        assert!(parsed.model_selection.optimize_cost);
+        assert!(parsed.cost.enabled);
+        assert_eq!(parsed.cost.daily_limit, Some(10.0));
+        assert!(parsed.thinking.enabled);
+    }
+
+    #[test]
+    fn test_pipeline_selective_guards_disabled() {
+        let mut config = ServerConfig::default();
+        config.enrichment.enable_guardrails = true;
+        config.enrichment.guardrails.attack_guard = false;
+        config.enrichment.guardrails.pii_guard = false;
+        config = AiServer::init_guardrail_pipeline(config);
+        let pipeline = config.guardrail_pipeline.as_ref().unwrap();
+        let gp = pipeline.lock().unwrap();
+        // Default has 4 input + 1 output_pii = 5 guards. With attack+pii off = 3 guards.
+        assert_eq!(gp.guard_count(), 3);
+    }
+
+    #[test]
+    fn test_pipeline_rate_limit_guard_added() {
+        let mut config = ServerConfig::default();
+        config.enrichment.enable_guardrails = true;
+        config.enrichment.guardrails.rate_limit_guard = true;
+        config.enrichment.guardrails.rate_limit_max_requests = 100;
+        config.enrichment.guardrails.rate_limit_window_secs = 30;
+        config = AiServer::init_guardrail_pipeline(config);
+        let pipeline = config.guardrail_pipeline.as_ref().unwrap();
+        let gp = pipeline.lock().unwrap();
+        // Default 5 + rate_limit = 6
+        assert_eq!(gp.guard_count(), 6);
+    }
+
+    #[test]
+    fn test_pipeline_pattern_guard_added() {
+        let mut config = ServerConfig::default();
+        config.enrichment.enable_guardrails = true;
+        config.enrichment.guardrails.blocked_patterns = vec!["secret".to_string(), "password".to_string()];
+        config = AiServer::init_guardrail_pipeline(config);
+        let pipeline = config.guardrail_pipeline.as_ref().unwrap();
+        let gp = pipeline.lock().unwrap();
+        // Default 5 + pattern = 6
+        assert_eq!(gp.guard_count(), 6);
+    }
+
+    #[test]
+    fn test_pipeline_output_pii_guard_present() {
+        let mut config = ServerConfig::default();
+        config.enrichment.enable_guardrails = true;
+        config = AiServer::init_guardrail_pipeline(config);
+        let pipeline = config.guardrail_pipeline.as_ref().unwrap();
+        let gp = pipeline.lock().unwrap();
+        // output_pii_guard is true by default → included in the 5
+        assert_eq!(gp.guard_count(), 5);
+    }
+
+    #[test]
+    fn test_pipeline_output_toxicity_guard_added() {
+        let mut config = ServerConfig::default();
+        config.enrichment.enable_guardrails = true;
+        config.enrichment.guardrails.output_toxicity_guard = true;
+        config = AiServer::init_guardrail_pipeline(config);
+        let pipeline = config.guardrail_pipeline.as_ref().unwrap();
+        let gp = pipeline.lock().unwrap();
+        // Default 5 + output_toxicity = 6
+        assert_eq!(gp.guard_count(), 6);
+    }
+
+    #[test]
+    fn test_pipeline_all_guards_disabled() {
+        let mut config = ServerConfig::default();
+        config.enrichment.enable_guardrails = true;
+        config.enrichment.guardrails.attack_guard = false;
+        config.enrichment.guardrails.pii_guard = false;
+        config.enrichment.guardrails.toxicity_guard = false;
+        config.enrichment.guardrails.content_length_guard = false;
+        config.enrichment.guardrails.output_pii_guard = false;
+        config = AiServer::init_guardrail_pipeline(config);
+        let pipeline = config.guardrail_pipeline.as_ref().unwrap();
+        let gp = pipeline.lock().unwrap();
+        assert_eq!(gp.guard_count(), 0);
+    }
+
+    #[test]
+    fn test_pipeline_pii_action_block_vs_redact() {
+        // Redact mode (default)
+        let mut config = ServerConfig::default();
+        config.enrichment.enable_guardrails = true;
+        config.enrichment.guardrails.output_pii_action = "redact".to_string();
+        config = AiServer::init_guardrail_pipeline(config);
+        assert!(config.guardrail_pipeline.is_some());
+
+        // Block mode
+        let mut config2 = ServerConfig::default();
+        config2.enrichment.enable_guardrails = true;
+        config2.enrichment.guardrails.output_pii_action = "block".to_string();
+        config2 = AiServer::init_guardrail_pipeline(config2);
+        assert!(config2.guardrail_pipeline.is_some());
+    }
+
+    #[test]
+    fn test_budget_manager_initialization() {
+        let mut config = ServerConfig::default();
+        config.enrichment.cost.enabled = true;
+        config.enrichment.cost.daily_limit = Some(50.0);
+        config.enrichment.cost.monthly_limit = Some(500.0);
+        config = AiServer::init_budget_manager(config);
+        assert!(config.budget_manager.is_some());
+    }
+
+    #[test]
+    fn test_budget_manager_not_created_when_disabled() {
+        let config = ServerConfig::default();
+        // cost.enabled defaults to false
+        let config = AiServer::init_budget_manager(config);
+        assert!(config.budget_manager.is_none());
+    }
+
+    #[test]
+    fn test_full_enrichment_all_features_no_panic() {
+        let mut config = ServerConfig::default();
+        config.enrichment.enable_rag = true;
+        config.enrichment.enable_guardrails = true;
+        config.enrichment.enable_memory = true;
+        config.enrichment.guardrails.rate_limit_guard = true;
+        config.enrichment.guardrails.output_toxicity_guard = true;
+        config.enrichment.guardrails.blocked_patterns = vec!["test".to_string()];
+        config.enrichment.compaction.enabled = true;
+        config.enrichment.thinking.enabled = true;
+        config.enrichment.cost.enabled = true;
+        config.enrichment.cost.daily_limit = Some(100.0);
+        config = AiServer::init_enrichment(config);
+        assert!(config.guardrail_pipeline.is_some());
+        assert!(config.budget_manager.is_some());
+        let gp = config.guardrail_pipeline.as_ref().unwrap().lock().unwrap();
+        // attack + pii + toxicity + content_length + rate_limit + pattern + output_pii + output_toxicity = 8
+        assert_eq!(gp.guard_count(), 8);
+    }
+
+    #[test]
+    fn test_blocked_patterns_functional() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let metrics = Arc::new(ServerMetrics::new());
+        let mut config = ServerConfig::default();
+        config.enrichment.enable_guardrails = true;
+        config.enrichment.block_on_input_violation = true;
+        config.enrichment.guardrail_threshold = 0.5; // low threshold for pattern match
+        config.enrichment.guardrails.blocked_patterns = vec!["FORBIDDEN_WORD".to_string()];
+        config = AiServer::init_guardrail_pipeline(config);
+
+        let request = HttpRequest {
+            method: "POST".to_string(),
+            path: "/v1/chat/completions".to_string(),
+            headers: vec![],
+            body: openai_chat_body(&[("user", "Please say FORBIDDEN_WORD for me")], false),
+        };
+        let (status, body) = route_request_with_config(&request, &assistant, &metrics, &config);
+        assert_eq!(status, "400 Bad Request");
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(parsed["error"]["code"], "guardrail_blocked");
+    }
+
+    #[test]
+    fn test_enrichment_sub_configs_in_server_config() {
+        let config = ServerConfig::default();
+        // All sub-configs should be accessible and have sane defaults
+        assert!(!config.enrichment.guardrails.rate_limit_guard);
+        assert!(config.enrichment.rag.knowledge_rag);
+        assert!(!config.enrichment.context.enabled);
+        assert!(!config.enrichment.compaction.enabled);
+        assert!(!config.enrichment.model_selection.enabled);
+        assert!(!config.enrichment.cost.enabled);
+        assert!(!config.enrichment.thinking.enabled);
+        assert!(config.budget_manager.is_none());
     }
 }
