@@ -32,6 +32,16 @@ pub enum BenchmarkSuiteType {
     TaskBench,
     /// GAIA: general AI assistant tasks requiring multiple tools
     Gaia,
+    /// LiveCodeBench: contamination-aware competitive programming (LeetCode, Codeforces, AtCoder)
+    LiveCodeBench,
+    /// Aider Polyglot: multi-language code editing evaluation
+    AiderPolyglot,
+    /// Terminal-Bench: complex SWE tasks in real terminal environments
+    TerminalBench,
+    /// APPS: introductory-to-competition level programming problems
+    Apps,
+    /// CodeContests: competitive programming from Google DeepMind
+    CodeContests,
     /// Custom user-defined benchmark suite
     Custom(String),
 }
@@ -48,6 +58,11 @@ impl std::fmt::Display for BenchmarkSuiteType {
             Self::AgentBench => write!(f, "AgentBench"),
             Self::TaskBench => write!(f, "TaskBench"),
             Self::Gaia => write!(f, "GAIA"),
+            Self::LiveCodeBench => write!(f, "LiveCodeBench"),
+            Self::AiderPolyglot => write!(f, "Aider-Polyglot"),
+            Self::TerminalBench => write!(f, "Terminal-Bench"),
+            Self::Apps => write!(f, "APPS"),
+            Self::CodeContests => write!(f, "CodeContests"),
             Self::Custom(name) => write!(f, "{}", name),
         }
     }
@@ -68,6 +83,12 @@ pub enum ProblemCategory {
     AgentTask,
     /// Tool selection and usage
     ToolUse,
+    /// Competitive programming (algorithmic, stdin/stdout based)
+    CompetitiveProgramming,
+    /// Code editing and refactoring (given existing code + instructions)
+    CodeEditing,
+    /// Terminal/shell command sequence tasks
+    TerminalTask,
     /// Custom user-defined category
     Custom(String),
 }
@@ -81,6 +102,9 @@ impl std::fmt::Display for ProblemCategory {
             Self::Knowledge => write!(f, "Knowledge"),
             Self::AgentTask => write!(f, "AgentTask"),
             Self::ToolUse => write!(f, "ToolUse"),
+            Self::CompetitiveProgramming => write!(f, "CompetitiveProgramming"),
+            Self::CodeEditing => write!(f, "CodeEditing"),
+            Self::TerminalTask => write!(f, "TerminalTask"),
             Self::Custom(name) => write!(f, "{}", name),
         }
     }
@@ -114,6 +138,35 @@ pub enum AnswerFormat {
     AgentTrajectory {
         /// Description of what constitutes success
         success_criteria: String,
+    },
+    /// Competitive programming code with stdin/stdout test cases
+    CompetitiveProgrammingCode {
+        /// Programming language (e.g., "python", "cpp", "rust")
+        language: String,
+        /// Test case pairs: (input_stdin, expected_stdout)
+        test_cases: Vec<(String, String)>,
+        /// Optional time limit in milliseconds
+        time_limit_ms: Option<u64>,
+        /// Optional memory limit in megabytes
+        memory_limit_mb: Option<u64>,
+    },
+    /// Code editing: given original code, produce edited version
+    CodeEdit {
+        /// Programming language
+        language: String,
+        /// The original source code to be edited
+        original_code: String,
+        /// Test commands or expected outcomes after editing
+        verification: Option<String>,
+    },
+    /// Terminal command sequence: evaluated by matching expected commands or final state
+    TerminalSequence {
+        /// Initial environment description
+        environment: String,
+        /// Expected commands or actions (for trajectory matching)
+        expected_commands: Vec<String>,
+        /// Verification command and expected output (final state check)
+        verification: Option<(String, String)>,
     },
 }
 
@@ -406,6 +459,175 @@ pub fn make_code_problem(
     }
 }
 
+/// Create a LiveCodeBench competitive programming problem with contamination timestamp.
+pub fn make_livecode_problem(
+    id: &str,
+    prompt: &str,
+    reference: &str,
+    language: &str,
+    test_cases: Vec<(&str, &str)>,
+    timestamp_unix: u64,
+    difficulty: &str,
+    source_platform: &str,
+) -> BenchmarkProblem {
+    let mut metadata = HashMap::new();
+    metadata.insert("timestamp".to_string(), timestamp_unix.to_string());
+    metadata.insert("source_platform".to_string(), source_platform.to_string());
+    metadata.insert("language".to_string(), language.to_string());
+    BenchmarkProblem {
+        id: id.to_string(),
+        suite: BenchmarkSuiteType::LiveCodeBench,
+        category: ProblemCategory::CompetitiveProgramming,
+        prompt: prompt.to_string(),
+        system_prompt: None,
+        answer_format: AnswerFormat::CompetitiveProgrammingCode {
+            language: language.to_string(),
+            test_cases: test_cases
+                .into_iter()
+                .map(|(i, o)| (i.to_string(), o.to_string()))
+                .collect(),
+            time_limit_ms: None,
+            memory_limit_mb: None,
+        },
+        reference_solution: Some(reference.to_string()),
+        test_cases: None,
+        metadata,
+        difficulty: Some(difficulty.to_string()),
+        tags: Vec::new(),
+    }
+}
+
+/// Create an APPS / CodeContests competitive programming problem.
+pub fn make_competitive_problem(
+    id: &str,
+    prompt: &str,
+    reference: &str,
+    language: &str,
+    test_cases: Vec<(&str, &str)>,
+    difficulty: &str,
+) -> BenchmarkProblem {
+    let mut metadata = HashMap::new();
+    metadata.insert("language".to_string(), language.to_string());
+    BenchmarkProblem {
+        id: id.to_string(),
+        suite: BenchmarkSuiteType::Apps,
+        category: ProblemCategory::CompetitiveProgramming,
+        prompt: prompt.to_string(),
+        system_prompt: None,
+        answer_format: AnswerFormat::CompetitiveProgrammingCode {
+            language: language.to_string(),
+            test_cases: test_cases
+                .into_iter()
+                .map(|(i, o)| (i.to_string(), o.to_string()))
+                .collect(),
+            time_limit_ms: None,
+            memory_limit_mb: None,
+        },
+        reference_solution: Some(reference.to_string()),
+        test_cases: None,
+        metadata,
+        difficulty: Some(difficulty.to_string()),
+        tags: Vec::new(),
+    }
+}
+
+/// Create an Aider Polyglot code editing problem.
+pub fn make_code_edit_problem(
+    id: &str,
+    instruction: &str,
+    original_code: &str,
+    reference_edit: &str,
+    language: &str,
+) -> BenchmarkProblem {
+    let mut metadata = HashMap::new();
+    metadata.insert("language".to_string(), language.to_string());
+    BenchmarkProblem {
+        id: id.to_string(),
+        suite: BenchmarkSuiteType::AiderPolyglot,
+        category: ProblemCategory::CodeEditing,
+        prompt: instruction.to_string(),
+        system_prompt: None,
+        answer_format: AnswerFormat::CodeEdit {
+            language: language.to_string(),
+            original_code: original_code.to_string(),
+            verification: None,
+        },
+        reference_solution: Some(reference_edit.to_string()),
+        test_cases: None,
+        metadata,
+        difficulty: None,
+        tags: Vec::new(),
+    }
+}
+
+/// Create a Terminal-Bench terminal task problem.
+pub fn make_terminal_problem(
+    id: &str,
+    task_description: &str,
+    environment: &str,
+    expected_commands: Vec<&str>,
+    reference_solution: &str,
+) -> BenchmarkProblem {
+    BenchmarkProblem {
+        id: id.to_string(),
+        suite: BenchmarkSuiteType::TerminalBench,
+        category: ProblemCategory::TerminalTask,
+        prompt: task_description.to_string(),
+        system_prompt: None,
+        answer_format: AnswerFormat::TerminalSequence {
+            environment: environment.to_string(),
+            expected_commands: expected_commands
+                .into_iter()
+                .map(|s| s.to_string())
+                .collect(),
+            verification: None,
+        },
+        reference_solution: Some(reference_solution.to_string()),
+        test_cases: None,
+        metadata: HashMap::new(),
+        difficulty: None,
+        tags: Vec::new(),
+    }
+}
+
+/// Filter a LiveCodeBench dataset by contamination cutoff date.
+///
+/// Returns only problems with timestamps strictly after the given Unix timestamp,
+/// ensuring no data contamination from training data before the cutoff.
+pub fn filter_by_contamination_cutoff(
+    dataset: &BenchmarkDataset,
+    cutoff_unix: u64,
+) -> BenchmarkDataset {
+    dataset.filter(|p| {
+        p.metadata
+            .get("timestamp")
+            .and_then(|ts| ts.parse::<u64>().ok())
+            .map_or(false, |ts| ts > cutoff_unix)
+    })
+}
+
+/// Filter a dataset by programming language.
+///
+/// Checks both `metadata["language"]` and the language field in answer format variants.
+pub fn filter_by_language(dataset: &BenchmarkDataset, language: &str) -> BenchmarkDataset {
+    let lang_lower = language.to_lowercase();
+    dataset.filter(|p| {
+        // Check metadata first
+        if let Some(meta_lang) = p.metadata.get("language") {
+            if meta_lang.to_lowercase() == lang_lower {
+                return true;
+            }
+        }
+        // Check answer format language field
+        match &p.answer_format {
+            AnswerFormat::Code { language: l }
+            | AnswerFormat::CompetitiveProgrammingCode { language: l, .. }
+            | AnswerFormat::CodeEdit { language: l, .. } => l.to_lowercase() == lang_lower,
+            _ => false,
+        }
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -595,5 +817,222 @@ mod tests {
 
         let code = make_code_problem("t/3", "Q?", "ref", "python");
         assert!(matches!(code.answer_format, AnswerFormat::Code { .. }));
+    }
+
+    // ── New benchmark suite type display tests ──
+
+    #[test]
+    fn test_new_suite_type_display() {
+        assert_eq!(BenchmarkSuiteType::LiveCodeBench.to_string(), "LiveCodeBench");
+        assert_eq!(BenchmarkSuiteType::AiderPolyglot.to_string(), "Aider-Polyglot");
+        assert_eq!(BenchmarkSuiteType::TerminalBench.to_string(), "Terminal-Bench");
+        assert_eq!(BenchmarkSuiteType::Apps.to_string(), "APPS");
+        assert_eq!(BenchmarkSuiteType::CodeContests.to_string(), "CodeContests");
+    }
+
+    #[test]
+    fn test_new_category_display() {
+        assert_eq!(ProblemCategory::CompetitiveProgramming.to_string(), "CompetitiveProgramming");
+        assert_eq!(ProblemCategory::CodeEditing.to_string(), "CodeEditing");
+        assert_eq!(ProblemCategory::TerminalTask.to_string(), "TerminalTask");
+    }
+
+    // ── New helper constructor tests ──
+
+    #[test]
+    fn test_make_livecode_problem() {
+        let p = make_livecode_problem(
+            "lcb/1",
+            "Read N numbers and print their sum",
+            "n = int(input())\nnums = list(map(int, input().split()))\nprint(sum(nums))",
+            "python",
+            vec![("3\n1 2 3", "6"), ("1\n42", "42")],
+            1700000000,
+            "easy",
+            "codeforces",
+        );
+        assert_eq!(p.id, "lcb/1");
+        assert_eq!(p.suite, BenchmarkSuiteType::LiveCodeBench);
+        assert_eq!(p.category, ProblemCategory::CompetitiveProgramming);
+        assert_eq!(p.metadata.get("timestamp").unwrap(), "1700000000");
+        assert_eq!(p.metadata.get("source_platform").unwrap(), "codeforces");
+        assert_eq!(p.difficulty, Some("easy".to_string()));
+        if let AnswerFormat::CompetitiveProgrammingCode { language, test_cases, .. } = &p.answer_format {
+            assert_eq!(language, "python");
+            assert_eq!(test_cases.len(), 2);
+            assert_eq!(test_cases[0], ("3\n1 2 3".to_string(), "6".to_string()));
+        } else {
+            panic!("Expected CompetitiveProgrammingCode format");
+        }
+    }
+
+    #[test]
+    fn test_make_competitive_problem() {
+        let p = make_competitive_problem(
+            "apps/42",
+            "Given an array, find two numbers that add up to target.",
+            "def two_sum(nums, target): ...",
+            "python",
+            vec![("4 9\n2 7 11 15", "0 1")],
+            "interview",
+        );
+        assert_eq!(p.suite, BenchmarkSuiteType::Apps);
+        assert_eq!(p.category, ProblemCategory::CompetitiveProgramming);
+        assert_eq!(p.difficulty, Some("interview".to_string()));
+        assert!(matches!(p.answer_format, AnswerFormat::CompetitiveProgrammingCode { .. }));
+    }
+
+    #[test]
+    fn test_make_code_edit_problem() {
+        let p = make_code_edit_problem(
+            "aider/py/1",
+            "Add error handling for division by zero",
+            "def divide(a, b):\n    return a / b",
+            "def divide(a, b):\n    if b == 0:\n        return None\n    return a / b",
+            "python",
+        );
+        assert_eq!(p.suite, BenchmarkSuiteType::AiderPolyglot);
+        assert_eq!(p.category, ProblemCategory::CodeEditing);
+        assert_eq!(p.metadata.get("language").unwrap(), "python");
+        if let AnswerFormat::CodeEdit { language, original_code, .. } = &p.answer_format {
+            assert_eq!(language, "python");
+            assert!(original_code.contains("def divide"));
+        } else {
+            panic!("Expected CodeEdit format");
+        }
+        assert!(p.reference_solution.as_ref().unwrap().contains("if b == 0"));
+    }
+
+    #[test]
+    fn test_make_terminal_problem() {
+        let p = make_terminal_problem(
+            "tb/1",
+            "Find all Python files larger than 1MB and compress them",
+            "Ubuntu 22.04, bash, /home/user/project with 50 .py files",
+            vec![
+                "find /home/user/project -name '*.py' -size +1M",
+                "tar czf large_py.tar.gz $(find /home/user/project -name '*.py' -size +1M)",
+            ],
+            "find . -name '*.py' -size +1M -exec tar czf large.tar.gz {} +",
+        );
+        assert_eq!(p.suite, BenchmarkSuiteType::TerminalBench);
+        assert_eq!(p.category, ProblemCategory::TerminalTask);
+        if let AnswerFormat::TerminalSequence { environment, expected_commands, .. } = &p.answer_format {
+            assert!(environment.contains("Ubuntu"));
+            assert_eq!(expected_commands.len(), 2);
+        } else {
+            panic!("Expected TerminalSequence format");
+        }
+    }
+
+    // ── Serde round-trip tests for new AnswerFormat variants ──
+
+    #[test]
+    fn test_competitive_programming_code_serde() {
+        let fmt = AnswerFormat::CompetitiveProgrammingCode {
+            language: "cpp".to_string(),
+            test_cases: vec![
+                ("5\n1 2 3 4 5".to_string(), "15".to_string()),
+                ("1\n42".to_string(), "42".to_string()),
+            ],
+            time_limit_ms: Some(2000),
+            memory_limit_mb: Some(256),
+        };
+        let json = serde_json::to_string(&fmt).expect("serialize");
+        let back: AnswerFormat = serde_json::from_str(&json).expect("deserialize");
+        if let AnswerFormat::CompetitiveProgrammingCode { language, test_cases, time_limit_ms, memory_limit_mb } = back {
+            assert_eq!(language, "cpp");
+            assert_eq!(test_cases.len(), 2);
+            assert_eq!(time_limit_ms, Some(2000));
+            assert_eq!(memory_limit_mb, Some(256));
+        } else {
+            panic!("Wrong variant after deserialization");
+        }
+    }
+
+    #[test]
+    fn test_code_edit_serde() {
+        let fmt = AnswerFormat::CodeEdit {
+            language: "rust".to_string(),
+            original_code: "fn main() {}".to_string(),
+            verification: Some("cargo test".to_string()),
+        };
+        let json = serde_json::to_string(&fmt).expect("serialize");
+        let back: AnswerFormat = serde_json::from_str(&json).expect("deserialize");
+        if let AnswerFormat::CodeEdit { language, original_code, verification } = back {
+            assert_eq!(language, "rust");
+            assert_eq!(original_code, "fn main() {}");
+            assert_eq!(verification, Some("cargo test".to_string()));
+        } else {
+            panic!("Wrong variant after deserialization");
+        }
+    }
+
+    #[test]
+    fn test_terminal_sequence_serde() {
+        let fmt = AnswerFormat::TerminalSequence {
+            environment: "debian:latest".to_string(),
+            expected_commands: vec!["ls -la".to_string(), "grep foo bar.txt".to_string()],
+            verification: Some(("cat result.txt".to_string(), "success".to_string())),
+        };
+        let json = serde_json::to_string(&fmt).expect("serialize");
+        let back: AnswerFormat = serde_json::from_str(&json).expect("deserialize");
+        if let AnswerFormat::TerminalSequence { environment, expected_commands, verification } = back {
+            assert_eq!(environment, "debian:latest");
+            assert_eq!(expected_commands.len(), 2);
+            assert_eq!(verification, Some(("cat result.txt".to_string(), "success".to_string())));
+        } else {
+            panic!("Wrong variant after deserialization");
+        }
+    }
+
+    // ── Filter function tests ──
+
+    #[test]
+    fn test_filter_by_contamination_cutoff() {
+        let problems = vec![
+            make_livecode_problem("lcb/1", "P1", "ref1", "python", vec![("1", "1")], 1690000000, "easy", "leetcode"),
+            make_livecode_problem("lcb/2", "P2", "ref2", "python", vec![("2", "2")], 1700000000, "medium", "codeforces"),
+            make_livecode_problem("lcb/3", "P3", "ref3", "python", vec![("3", "3")], 1710000000, "hard", "atcoder"),
+        ];
+        let ds = BenchmarkDataset::from_problems("lcb", BenchmarkSuiteType::LiveCodeBench, problems);
+
+        // Cutoff at 1700000000 → only problems after that timestamp
+        let filtered = filter_by_contamination_cutoff(&ds, 1700000000);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered.problems[0].id, "lcb/3");
+
+        // Cutoff at 0 → all problems
+        let all = filter_by_contamination_cutoff(&ds, 0);
+        assert_eq!(all.len(), 3);
+
+        // Cutoff far in the future → no problems
+        let none = filter_by_contamination_cutoff(&ds, u64::MAX);
+        assert_eq!(none.len(), 0);
+    }
+
+    #[test]
+    fn test_filter_by_language() {
+        let problems = vec![
+            make_code_problem("he/1", "P1", "ref", "python"),
+            make_code_problem("he/2", "P2", "ref", "rust"),
+            make_competitive_problem("apps/1", "P3", "ref", "cpp", vec![("1", "1")], "easy"),
+            make_code_edit_problem("aider/1", "Edit", "code", "edited", "python"),
+        ];
+        let ds = BenchmarkDataset::from_problems("mixed", BenchmarkSuiteType::Custom("mixed".into()), problems);
+
+        let python = filter_by_language(&ds, "python");
+        assert_eq!(python.len(), 2); // he/1 + aider/1
+
+        let rust = filter_by_language(&ds, "rust");
+        assert_eq!(rust.len(), 1);
+        assert_eq!(rust.problems[0].id, "he/2");
+
+        let cpp = filter_by_language(&ds, "cpp");
+        assert_eq!(cpp.len(), 1);
+        assert_eq!(cpp.problems[0].id, "apps/1");
+
+        let java = filter_by_language(&ds, "java");
+        assert_eq!(java.len(), 0);
     }
 }

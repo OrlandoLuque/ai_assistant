@@ -64,6 +64,10 @@ pub struct RagFeatures {
     /// Cost: Both FTS and semantic | Requires: Both enabled
     pub hybrid_search: bool,
 
+    /// Discourse-aware chunking for better segment boundaries
+    /// Cost: None (preprocessing) | Requires: Discourse boundary data
+    pub discourse_chunking: bool,
+
     // === Query Enhancement ===
     /// Expand query with synonyms and related terms (no LLM)
     /// Cost: None | Requires: Synonym dictionary
@@ -106,6 +110,18 @@ pub struct RagFeatures {
     /// Cost: None | Requires: Parent-child relationships stored
     pub parent_document: bool,
 
+    /// Remove duplicate/near-duplicate chunks from results
+    /// Cost: None (compute) | Requires: None
+    pub deduplication: bool,
+
+    /// Maximal Marginal Relevance for diverse results
+    /// Cost: None (compute) | Requires: Multiple results
+    pub diversity_mmr: bool,
+
+    /// Multi-stage reranking pipeline (coarse → fine)
+    /// Cost: 2+ model calls | Requires: Multiple reranker models
+    pub cascade_reranking: bool,
+
     // === Self-Improvement ===
     /// Self-evaluate if more context is needed
     /// Cost: 1-2 LLM calls | Requires: None
@@ -119,6 +135,14 @@ pub struct RagFeatures {
     /// Cost: 1 LLM call | Requires: None
     pub adaptive_strategy: bool,
 
+    /// Augment retrieval with live web search
+    /// Cost: 1+ API calls | Requires: Web search provider
+    pub web_search_augmentation: bool,
+
+    /// Search advanced memory (episodic/semantic/procedural)
+    /// Cost: 0-1 LLM calls | Requires: Advanced memory system
+    pub memory_augmented: bool,
+
     // === Advanced (Tier 5+) ===
     /// Iterative agent that searches until satisfied
     /// Cost: N LLM calls (unbounded) | Requires: None
@@ -127,6 +151,14 @@ pub struct RagFeatures {
     /// Build and query knowledge graph
     /// Cost: Entity extraction + graph ops | Requires: Graph database
     pub graph_rag: bool,
+
+    /// Extract entities for graph enrichment during retrieval
+    /// Cost: 1 LLM call | Requires: None
+    pub entity_extraction: bool,
+
+    /// Multi-layer knowledge graph (user/session/internet/inferred)
+    /// Cost: Graph ops | Requires: Multi-layer graph setup
+    pub multi_layer_graph: bool,
 
     /// Hierarchical corpus summarization (RAPTOR)
     /// Cost: Pre-processing | Requires: Pre-built summary tree
@@ -149,6 +181,7 @@ impl RagFeatures {
             fts_search: true,
             semantic_search: true,
             hybrid_search: true,
+            discourse_chunking: true,
             synonym_expansion: true,
             query_expansion: true,
             multi_query: true,
@@ -159,11 +192,18 @@ impl RagFeatures {
             contextual_compression: true,
             sentence_window: true,
             parent_document: true,
+            deduplication: true,
+            diversity_mmr: true,
+            cascade_reranking: true,
             self_reflection: true,
             corrective_rag: true,
             adaptive_strategy: true,
+            web_search_augmentation: true,
+            memory_augmented: true,
             agentic_mode: true,
             graph_rag: true,
+            entity_extraction: true,
+            multi_layer_graph: true,
             raptor: true,
             multimodal: true,
         }
@@ -179,6 +219,9 @@ impl RagFeatures {
             count += 1;
         }
         if self.hybrid_search {
+            count += 1;
+        }
+        if self.discourse_chunking {
             count += 1;
         }
         if self.synonym_expansion {
@@ -211,6 +254,15 @@ impl RagFeatures {
         if self.parent_document {
             count += 1;
         }
+        if self.deduplication {
+            count += 1;
+        }
+        if self.diversity_mmr {
+            count += 1;
+        }
+        if self.cascade_reranking {
+            count += 1;
+        }
         if self.self_reflection {
             count += 1;
         }
@@ -220,10 +272,22 @@ impl RagFeatures {
         if self.adaptive_strategy {
             count += 1;
         }
+        if self.web_search_augmentation {
+            count += 1;
+        }
+        if self.memory_augmented {
+            count += 1;
+        }
         if self.agentic_mode {
             count += 1;
         }
         if self.graph_rag {
+            count += 1;
+        }
+        if self.entity_extraction {
+            count += 1;
+        }
+        if self.multi_layer_graph {
             count += 1;
         }
         if self.raptor {
@@ -246,6 +310,9 @@ impl RagFeatures {
         }
         if self.hybrid_search {
             features.push("hybrid_search");
+        }
+        if self.discourse_chunking {
+            features.push("discourse_chunking");
         }
         if self.synonym_expansion {
             features.push("synonym_expansion");
@@ -277,6 +344,15 @@ impl RagFeatures {
         if self.parent_document {
             features.push("parent_document");
         }
+        if self.deduplication {
+            features.push("deduplication");
+        }
+        if self.diversity_mmr {
+            features.push("diversity_mmr");
+        }
+        if self.cascade_reranking {
+            features.push("cascade_reranking");
+        }
         if self.self_reflection {
             features.push("self_reflection");
         }
@@ -286,11 +362,23 @@ impl RagFeatures {
         if self.adaptive_strategy {
             features.push("adaptive_strategy");
         }
+        if self.web_search_augmentation {
+            features.push("web_search_augmentation");
+        }
+        if self.memory_augmented {
+            features.push("memory_augmented");
+        }
         if self.agentic_mode {
             features.push("agentic_mode");
         }
         if self.graph_rag {
             features.push("graph_rag");
+        }
+        if self.entity_extraction {
+            features.push("entity_extraction");
+        }
+        if self.multi_layer_graph {
+            features.push("multi_layer_graph");
         }
         if self.raptor {
             features.push("raptor");
@@ -401,7 +489,9 @@ impl RagTier {
                 fts_search: true,
                 semantic_search: true,
                 hybrid_search: true,
+                discourse_chunking: true,
                 fusion_rrf: true,
+                deduplication: true,
                 ..Default::default()
             },
 
@@ -409,11 +499,15 @@ impl RagTier {
                 fts_search: true,
                 semantic_search: true,
                 hybrid_search: true,
+                discourse_chunking: true,
                 synonym_expansion: true,
                 query_expansion: true,
                 reranking: true,
-                sentence_window: true,
                 fusion_rrf: true,
+                sentence_window: true,
+                deduplication: true,
+                diversity_mmr: true,
+                memory_augmented: true,
                 ..Default::default()
             },
 
@@ -421,14 +515,20 @@ impl RagTier {
                 fts_search: true,
                 semantic_search: true,
                 hybrid_search: true,
+                discourse_chunking: true,
                 synonym_expansion: true,
                 multi_query: true,
                 reranking: true,
+                fusion_rrf: true,
                 contextual_compression: true,
                 sentence_window: true,
-                fusion_rrf: true,
+                deduplication: true,
+                diversity_mmr: true,
+                cascade_reranking: true,
                 self_reflection: true,
                 corrective_rag: true,
+                web_search_augmentation: true,
+                memory_augmented: true,
                 ..Default::default()
             },
 
@@ -436,15 +536,21 @@ impl RagTier {
                 fts_search: true,
                 semantic_search: true,
                 hybrid_search: true,
+                discourse_chunking: true,
                 synonym_expansion: true,
                 multi_query: true,
                 reranking: true,
+                fusion_rrf: true,
                 contextual_compression: true,
                 sentence_window: true,
-                fusion_rrf: true,
+                deduplication: true,
+                diversity_mmr: true,
+                cascade_reranking: true,
                 self_reflection: true,
                 corrective_rag: true,
                 adaptive_strategy: true,
+                web_search_augmentation: true,
+                memory_augmented: true,
                 agentic_mode: true,
                 ..Default::default()
             },
@@ -453,18 +559,26 @@ impl RagTier {
                 fts_search: true,
                 semantic_search: true,
                 hybrid_search: true,
+                discourse_chunking: true,
                 synonym_expansion: true,
                 multi_query: true,
                 reranking: true,
+                fusion_rrf: true,
                 contextual_compression: true,
                 sentence_window: true,
                 parent_document: true,
-                fusion_rrf: true,
+                deduplication: true,
+                diversity_mmr: true,
+                cascade_reranking: true,
                 self_reflection: true,
                 corrective_rag: true,
                 adaptive_strategy: true,
+                web_search_augmentation: true,
+                memory_augmented: true,
                 agentic_mode: true,
                 graph_rag: true,
+                entity_extraction: true,
+                multi_layer_graph: true,
                 ..Default::default()
             },
 
@@ -821,6 +935,21 @@ pub enum RagRequirement {
 
     /// Needs sentence boundary storage
     SentenceBoundaries,
+
+    /// Needs discourse boundary data from chunking
+    DiscourseBoundaries,
+
+    /// Needs a web search provider (DuckDuckGo, Brave, SearXNG, etc.)
+    WebSearchProvider,
+
+    /// Needs multiple reranker models for cascade pipeline
+    MultipleRerankerModels,
+
+    /// Needs advanced memory system (episodic/semantic/procedural)
+    AdvancedMemorySystem,
+
+    /// Needs multi-layer graph setup (user/session/internet/inferred)
+    MultiLayerGraphSetup,
 }
 
 impl RagRequirement {
@@ -835,6 +964,11 @@ impl RagRequirement {
             RagRequirement::SynonymDictionary => "Synonym Dictionary",
             RagRequirement::DocumentHierarchy => "Document Hierarchy",
             RagRequirement::SentenceBoundaries => "Sentence Boundaries",
+            RagRequirement::DiscourseBoundaries => "Discourse Boundaries",
+            RagRequirement::WebSearchProvider => "Web Search Provider",
+            RagRequirement::MultipleRerankerModels => "Multiple Reranker Models",
+            RagRequirement::AdvancedMemorySystem => "Advanced Memory System",
+            RagRequirement::MultiLayerGraphSetup => "Multi-Layer Graph Setup",
         }
     }
 
@@ -855,6 +989,21 @@ impl RagRequirement {
             RagRequirement::SynonymDictionary => "Built-in or custom synonym mappings",
             RagRequirement::DocumentHierarchy => "Store parent-child relationships during indexing",
             RagRequirement::SentenceBoundaries => "Store sentence offsets during chunking",
+            RagRequirement::DiscourseBoundaries => {
+                "Run discourse analysis during chunking to detect segment boundaries"
+            }
+            RagRequirement::WebSearchProvider => {
+                "Configure a web search provider (DuckDuckGo, Brave, SearXNG)"
+            }
+            RagRequirement::MultipleRerankerModels => {
+                "Multiple reranker models for cascade pipeline (coarse + fine)"
+            }
+            RagRequirement::AdvancedMemorySystem => {
+                "Advanced memory system with episodic, semantic, and procedural stores"
+            }
+            RagRequirement::MultiLayerGraphSetup => {
+                "Multi-layer graph with user, session, internet, and inferred layers"
+            }
         }
     }
 }
@@ -1027,6 +1176,21 @@ impl RagConfig {
             unbounded = true;
             min += 1;
         }
+        if f.cascade_reranking {
+            min += 2;
+            max += 3; // 2-3 reranking passes
+        }
+        if f.web_search_augmentation {
+            min += 1;
+            max += 2; // Web search + synthesis
+        }
+        if f.entity_extraction {
+            min += 1;
+            max += 1;
+        }
+        if f.memory_augmented {
+            max += 1; // 0-1 LLM calls
+        }
 
         // Apply hard cap
         max = max.min(self.max_extra_llm_calls);
@@ -1067,6 +1231,21 @@ impl RagConfig {
         if f.sentence_window {
             reqs.push(RagRequirement::SentenceBoundaries);
         }
+        if f.discourse_chunking {
+            reqs.push(RagRequirement::DiscourseBoundaries);
+        }
+        if f.web_search_augmentation {
+            reqs.push(RagRequirement::WebSearchProvider);
+        }
+        if f.cascade_reranking {
+            reqs.push(RagRequirement::MultipleRerankerModels);
+        }
+        if f.memory_augmented {
+            reqs.push(RagRequirement::AdvancedMemorySystem);
+        }
+        if f.multi_layer_graph {
+            reqs.push(RagRequirement::MultiLayerGraphSetup);
+        }
 
         // Deduplicate
         reqs.sort_by_key(|r| format!("{:?}", r));
@@ -1081,6 +1260,7 @@ impl RagConfig {
             "fts_search" => f.fts_search,
             "semantic_search" => f.semantic_search,
             "hybrid_search" => f.hybrid_search,
+            "discourse_chunking" => f.discourse_chunking,
             "synonym_expansion" => f.synonym_expansion,
             "query_expansion" => f.query_expansion,
             "multi_query" => f.multi_query,
@@ -1091,11 +1271,18 @@ impl RagConfig {
             "contextual_compression" => f.contextual_compression,
             "sentence_window" => f.sentence_window,
             "parent_document" => f.parent_document,
+            "deduplication" => f.deduplication,
+            "diversity_mmr" => f.diversity_mmr,
+            "cascade_reranking" => f.cascade_reranking,
             "self_reflection" => f.self_reflection,
             "corrective_rag" => f.corrective_rag,
             "adaptive_strategy" => f.adaptive_strategy,
+            "web_search_augmentation" => f.web_search_augmentation,
+            "memory_augmented" => f.memory_augmented,
             "agentic_mode" => f.agentic_mode,
             "graph_rag" => f.graph_rag,
+            "entity_extraction" => f.entity_extraction,
+            "multi_layer_graph" => f.multi_layer_graph,
             "raptor" => f.raptor,
             "multimodal" => f.multimodal,
             _ => false,
@@ -1318,6 +1505,10 @@ pub struct TierSelectionHints {
     pub preference: UserPreference,
     /// Query complexity (simple keyword, question, complex reasoning)
     pub query_complexity: QueryComplexity,
+    /// Whether a web search provider is available
+    pub has_web_search: bool,
+    /// Whether the advanced memory system is available
+    pub has_memory_system: bool,
 }
 
 /// User preference for speed vs quality tradeoff
@@ -1421,7 +1612,7 @@ mod tests {
         assert!(semantic.hybrid_search);
 
         let full = RagTier::Full.to_features();
-        assert_eq!(full.enabled_count(), 20); // All features
+        assert_eq!(full.enabled_count(), 28); // All features
     }
 
     #[test]
@@ -1573,8 +1764,8 @@ mod tests {
         let features = RagTier::Full.to_features();
         assert_eq!(
             features.enabled_count(),
-            20,
-            "Full tier must have all 20 features enabled"
+            28,
+            "Full tier must have all 28 features enabled"
         );
         assert!(features.fts_search);
         assert!(features.semantic_search);
@@ -1582,6 +1773,14 @@ mod tests {
         assert!(features.graph_rag);
         assert!(features.raptor);
         assert!(features.multimodal);
+        assert!(features.discourse_chunking);
+        assert!(features.deduplication);
+        assert!(features.diversity_mmr);
+        assert!(features.cascade_reranking);
+        assert!(features.web_search_augmentation);
+        assert!(features.memory_augmented);
+        assert!(features.entity_extraction);
+        assert!(features.multi_layer_graph);
     }
 
     #[test]
@@ -1602,8 +1801,8 @@ mod tests {
         let features = RagFeatures::all();
         assert_eq!(
             features.enabled_count(),
-            20,
-            "all() must produce exactly 20 enabled features"
+            28,
+            "all() must produce exactly 28 enabled features"
         );
     }
 
@@ -1869,5 +2068,189 @@ mod tests {
             RagTier::Thorough,
             "MaxQuality preference with embeddings should select Thorough tier"
         );
+    }
+
+    // ========================================================================
+    // New tests: v28 expanded RAG features (20 → 28)
+    // ========================================================================
+
+    #[test]
+    fn test_new_features_in_semantic_tier() {
+        let f = RagTier::Semantic.to_features();
+        assert!(f.deduplication, "Semantic tier should enable deduplication");
+        assert!(
+            f.discourse_chunking,
+            "Semantic tier should enable discourse_chunking"
+        );
+        // Should NOT have higher-tier features
+        assert!(!f.diversity_mmr);
+        assert!(!f.memory_augmented);
+        assert!(!f.web_search_augmentation);
+    }
+
+    #[test]
+    fn test_new_features_in_enhanced_tier() {
+        let f = RagTier::Enhanced.to_features();
+        // Inherited from Semantic
+        assert!(f.deduplication);
+        assert!(f.discourse_chunking);
+        // New at Enhanced
+        assert!(
+            f.diversity_mmr,
+            "Enhanced tier should enable diversity_mmr"
+        );
+        assert!(
+            f.memory_augmented,
+            "Enhanced tier should enable memory_augmented"
+        );
+        // Should NOT have higher-tier features
+        assert!(!f.web_search_augmentation);
+        assert!(!f.cascade_reranking);
+    }
+
+    #[test]
+    fn test_new_features_in_thorough_tier() {
+        let f = RagTier::Thorough.to_features();
+        // Inherited
+        assert!(f.deduplication);
+        assert!(f.discourse_chunking);
+        assert!(f.diversity_mmr);
+        assert!(f.memory_augmented);
+        // New at Thorough
+        assert!(
+            f.web_search_augmentation,
+            "Thorough tier should enable web_search_augmentation"
+        );
+        assert!(
+            f.cascade_reranking,
+            "Thorough tier should enable cascade_reranking"
+        );
+        // Should NOT have graph-tier features
+        assert!(!f.entity_extraction);
+        assert!(!f.multi_layer_graph);
+    }
+
+    #[test]
+    fn test_new_features_in_graph_tier() {
+        let f = RagTier::Graph.to_features();
+        // All lower-tier new features
+        assert!(f.deduplication);
+        assert!(f.discourse_chunking);
+        assert!(f.diversity_mmr);
+        assert!(f.memory_augmented);
+        assert!(f.web_search_augmentation);
+        assert!(f.cascade_reranking);
+        // New at Graph
+        assert!(
+            f.entity_extraction,
+            "Graph tier should enable entity_extraction"
+        );
+        assert!(
+            f.multi_layer_graph,
+            "Graph tier should enable multi_layer_graph"
+        );
+    }
+
+    #[test]
+    fn test_new_features_not_in_fast() {
+        let f = RagTier::Fast.to_features();
+        assert!(!f.discourse_chunking);
+        assert!(!f.deduplication);
+        assert!(!f.diversity_mmr);
+        assert!(!f.cascade_reranking);
+        assert!(!f.web_search_augmentation);
+        assert!(!f.memory_augmented);
+        assert!(!f.entity_extraction);
+        assert!(!f.multi_layer_graph);
+    }
+
+    #[test]
+    fn test_requirement_web_search() {
+        let mut features = RagFeatures::none();
+        features.web_search_augmentation = true;
+        let config = RagConfig::with_features(features);
+        let reqs = config.check_requirements();
+        assert!(
+            reqs.contains(&RagRequirement::WebSearchProvider),
+            "web_search_augmentation should require WebSearchProvider"
+        );
+    }
+
+    #[test]
+    fn test_requirement_cascade_reranking() {
+        let mut features = RagFeatures::none();
+        features.cascade_reranking = true;
+        let config = RagConfig::with_features(features);
+        let reqs = config.check_requirements();
+        assert!(
+            reqs.contains(&RagRequirement::MultipleRerankerModels),
+            "cascade_reranking should require MultipleRerankerModels"
+        );
+    }
+
+    #[test]
+    fn test_requirement_memory_augmented() {
+        let mut features = RagFeatures::none();
+        features.memory_augmented = true;
+        let config = RagConfig::with_features(features);
+        let reqs = config.check_requirements();
+        assert!(
+            reqs.contains(&RagRequirement::AdvancedMemorySystem),
+            "memory_augmented should require AdvancedMemorySystem"
+        );
+    }
+
+    #[test]
+    fn test_requirement_discourse() {
+        let mut features = RagFeatures::none();
+        features.discourse_chunking = true;
+        let config = RagConfig::with_features(features);
+        let reqs = config.check_requirements();
+        assert!(
+            reqs.contains(&RagRequirement::DiscourseBoundaries),
+            "discourse_chunking should require DiscourseBoundaries"
+        );
+    }
+
+    #[test]
+    fn test_requirement_multi_layer_graph() {
+        let mut features = RagFeatures::none();
+        features.multi_layer_graph = true;
+        let config = RagConfig::with_features(features);
+        let reqs = config.check_requirements();
+        assert!(
+            reqs.contains(&RagRequirement::MultiLayerGraphSetup),
+            "multi_layer_graph should require MultiLayerGraphSetup"
+        );
+    }
+
+    #[test]
+    fn test_estimate_calls_with_new_features() {
+        // Cascade reranking adds 2-3 calls, web search adds 1-2
+        let mut features = RagFeatures::none();
+        features.cascade_reranking = true;
+        features.web_search_augmentation = true;
+        let config = RagConfig::with_features(features);
+        let (min, max) = config.estimate_extra_calls();
+        assert!(min >= 3, "cascade(2)+web(1) should give min >= 3, got {}", min);
+        assert!(max.is_some());
+        assert!(max.unwrap() >= 5, "cascade(3)+web(2) should give max >= 5, got {}", max.unwrap());
+    }
+
+    #[test]
+    fn test_is_feature_enabled_new_fields() {
+        let config = RagConfig::with_tier(RagTier::Full);
+        assert!(config.is_feature_enabled("discourse_chunking"));
+        assert!(config.is_feature_enabled("deduplication"));
+        assert!(config.is_feature_enabled("diversity_mmr"));
+        assert!(config.is_feature_enabled("cascade_reranking"));
+        assert!(config.is_feature_enabled("web_search_augmentation"));
+        assert!(config.is_feature_enabled("memory_augmented"));
+        assert!(config.is_feature_enabled("entity_extraction"));
+        assert!(config.is_feature_enabled("multi_layer_graph"));
+
+        let fast_config = RagConfig::with_tier(RagTier::Fast);
+        assert!(!fast_config.is_feature_enabled("discourse_chunking"));
+        assert!(!fast_config.is_feature_enabled("deduplication"));
     }
 }

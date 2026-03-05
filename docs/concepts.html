@@ -1732,7 +1732,7 @@ time. I&#x27;d say it&#x27;s about 80% positive, maybe 20% mixed feelings...&quo
 <li><strong>System prompt</strong>: CoT instructions injected for Complex/Expert queries</li>
 <li><strong>Model profile</strong>: can suggest "conversational", "precise", or "detailed" profiles</li>
 </ul>
-<p><strong>Thinking tag parsing</strong>: Some models (DeepSeek-R1, QwQ) emit <code><think>...</think></code> blocks in their output, containing their internal reasoning. The <code>ThinkingTagParser</code> handles this in streaming mode, separating visible response from reasoning content — even when tags span multiple streaming chunks.</p>
+<p><strong>Thinking tag parsing</strong>: Some models (DeepSeek-R1, QwQ) emit <code>&lt;think&gt;...&lt;/think&gt;</code> blocks in their output, containing their internal reasoning. The <code>ThinkingTagParser</code> handles this in streaming mode, separating visible response from reasoning content — even when tags span multiple streaming chunks.</p>
 <pre><code class="lang-text">User query → QueryClassifier (heuristic) → ThinkingStrategy
     → adjust temp, tokens, prompt, RAG tier
     → LLM call with adapted parameters
@@ -1777,7 +1777,7 @@ Fallback 2 (LocalAI) → SUCCESS ✓
 <p><strong>The solution</strong>: A redaction layer that strips known sensitive patterns <em>before</em> they hit the log output.</p>
 <p><strong>Patterns detected</strong>:</p>
 <ul>
-<li>API keys: <code>sk-<em></code>, <code>key-</em></code> → <code><em><strong>REDACTED</strong></em></code></li>
+<li>API keys: <code>sk-*</code>, <code>key-*</code> → <code><em><strong>REDACTED</strong></em></code></li>
 <li>Bearer tokens: <code>Bearer eyJ...</code> → <code>Bearer <em><strong>REDACTED</strong></em></code></li>
 <li>Passwords in URLs: <code>http://user:pass@host</code> → <code>http://user:***@host</code></li>
 <li>PEM keys: <code>-----BEGIN PRIVATE KEY-----</code> blocks → <code><em><strong>PEM_KEY</strong></em></code></li>
@@ -2248,14 +2248,14 @@ Regex::new(r&quot;\d+&quot;).expect(&quot;valid regex: digits&quot;)</code></pre
 <p>EPUB, DOCX, and ODT are all ZIP archives containing XML files:</p>
 <ul>
 <li><strong>EPUB</strong>: ZIP → <code>META-INF/container.xml</code> → <code>.opf</code> manifest → XHTML chapter files</li>
-<li><strong>DOCX</strong>: ZIP → <code>word/document.xml</code> with <code><w:p></code> paragraphs and <code><w:r></code> runs</li>
-<li><strong>ODT</strong>: ZIP → <code>content.xml</code> with <code><text:p></code> paragraphs</li>
+<li><strong>DOCX</strong>: ZIP → <code>word/document.xml</code> with <code>&lt;w:p&gt;</code> paragraphs and <code>&lt;w:r&gt;</code> runs</li>
+<li><strong>ODT</strong>: ZIP → <code>content.xml</code> with <code>&lt;text:p&gt;</code> paragraphs</li>
 </ul>
 <p>The parser opens the ZIP, finds the right XML files, strips tags, and extracts clean text with sections, metadata (title, author, language), and structure.</p>
 <h4>HTML Extraction</h4>
 <p>HTML is the most complex format because of its diversity:</p>
 <ul>
-<li><strong>Metadata</strong>: <code><title></code>, <code><meta></code> tags, OpenGraph (<code>og:title</code>), Twitter Card, Schema.org (JSON-LD)</li>
+<li><strong>Metadata</strong>: <code>&lt;title&gt;</code>, <code>&lt;meta&gt;</code> tags, OpenGraph (<code>og:title</code>), Twitter Card, Schema.org (JSON-LD)</li>
 <li><strong>Content</strong>: Main text, stripped of navigation/ads</li>
 <li><strong>Tables</strong>: Parsed into structured rows/columns (via the table extractor)</li>
 <li><strong>Links</strong>: Resolved from relative to absolute URLs, classified as internal/external</li>
@@ -2265,7 +2265,7 @@ Regex::new(r&quot;\d+&quot;).expect(&quot;valid regex: digits&quot;)</code></pre
 <ul>
 <li><strong>Markdown</strong>: <code>| Header | Header |</code> with <code>|---|---|</code> separator</li>
 <li><strong>ASCII art</strong>: <code>+-------+-------+</code> borders</li>
-<li><strong>HTML</strong>: <code><table><tr><td></code> structure</li>
+<li><strong>HTML</strong>: <code>&lt;table&gt;&lt;tr&gt;&lt;td&gt;</code> structure</li>
 <li><strong>CSV/TSV</strong>: Delimiter-separated values</li>
 </ul>
 <p>The extractor auto-detects the format and produces a uniform structure: rows, columns, headers, with export to CSV/JSON/Markdown.</p>
@@ -2290,8 +2290,8 @@ Sitemap: https://example.com/sitemap.xml</code></pre>
 <h4>RSS and Atom Feeds</h4>
 <p>Feeds are structured XML that websites publish when new content appears:</p>
 <ul>
-<li><strong>RSS 2.0</strong>: <code><channel></code> → <code><item></code> with title, link, description, pubDate, guid</li>
-<li><strong>Atom</strong>: <code><feed></code> → <code><entry></code> with title, link, summary, content, published, id</li>
+<li><strong>RSS 2.0</strong>: <code>&lt;channel&gt;</code> → <code>&lt;item&gt;</code> with title, link, description, pubDate, guid</li>
+<li><strong>Atom</strong>: <code>&lt;feed&gt;</code> → <code>&lt;entry&gt;</code> with title, link, summary, content, published, id</li>
 </ul>
 <p>The feed monitor tracks which entries it has already seen (by ID), so it only reports genuinely new content. State is persistable to JSON for crash recovery.</p>
 <h4>Adaptive Rate Limiting</h4>
