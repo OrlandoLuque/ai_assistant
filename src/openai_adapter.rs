@@ -159,7 +159,7 @@ impl OpenAIRequest {
 }
 
 /// OpenAI response
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct OpenAIResponse {
     pub id: String,
     pub object: String,
@@ -169,21 +169,21 @@ pub struct OpenAIResponse {
     pub usage: Option<OpenAIUsage>,
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct OpenAIChoice {
     pub index: usize,
     pub message: OpenAIResponseMessage,
     pub finish_reason: Option<String>,
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct OpenAIResponseMessage {
     pub role: String,
     pub content: Option<String>,
     pub function_call: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct OpenAIUsage {
     pub prompt_tokens: usize,
     pub completion_tokens: usize,
@@ -191,12 +191,12 @@ pub struct OpenAIUsage {
 }
 
 /// OpenAI error response
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct OpenAIError {
     pub error: OpenAIErrorDetail,
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct OpenAIErrorDetail {
     pub message: String,
     #[serde(rename = "type")]
@@ -389,19 +389,28 @@ impl OpenAIClient {
     }
 }
 
-#[derive(Debug, serde::Deserialize)]
-struct StreamChunk {
-    choices: Vec<StreamChoice>,
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct StreamChunk {
+    pub id: Option<String>,
+    pub object: Option<String>,
+    pub created: Option<u64>,
+    pub model: Option<String>,
+    pub choices: Vec<StreamChoice>,
 }
 
-#[derive(Debug, serde::Deserialize)]
-struct StreamChoice {
-    delta: StreamDelta,
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct StreamChoice {
+    pub index: Option<usize>,
+    pub delta: StreamDelta,
+    pub finish_reason: Option<String>,
 }
 
-#[derive(Debug, serde::Deserialize)]
-struct StreamDelta {
-    content: Option<String>,
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct StreamDelta {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]

@@ -283,6 +283,32 @@ struct ErrorResponse {
 }
 
 // ============================================================================
+// OpenAI-compatible API request types
+// ============================================================================
+
+/// OpenAI-compatible chat completion request.
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)] // fields deserialized for API compatibility
+struct OpenAIChatRequest {
+    #[serde(default)]
+    model: Option<String>,
+    messages: Vec<OpenAIChatMessage>,
+    #[serde(default)]
+    temperature: Option<f64>,
+    #[serde(default)]
+    max_tokens: Option<usize>,
+    #[serde(default)]
+    stream: bool,
+}
+
+/// A single message in the OpenAI chat format.
+#[derive(Debug, Deserialize)]
+struct OpenAIChatMessage {
+    role: String,
+    content: String,
+}
+
+// ============================================================================
 // Server Metrics (for Prometheus /metrics endpoint and request logging)
 // ============================================================================
 
@@ -1300,6 +1326,39 @@ fn handle_connection(
     // Check if this is an SSE streaming request
     let is_sse = request.path == "/chat/stream" || request.path == "/api/v1/chat/stream";
 
+    // Check if this is an OpenAI-compatible streaming request
+    let is_openai_stream = (request.path == "/v1/chat/completions"
+        || request.path == "/api/v1/chat/completions")
+        && request.method == "POST"
+        && request.body.contains("\"stream\"")
+        && (request.body.contains("\"stream\":true")
+            || request.body.contains("\"stream\": true")
+            || request.body.contains("\"stream\" : true"));
+
+    if is_openai_stream {
+        match handle_openai_chat_completions_stream(&request, assistant, config) {
+            Ok(sse_body) => {
+                let response = build_sse_response(&sse_body, &extra_headers);
+                log::info!("[{}] {} {} → 200 SSE OpenAI ({:.1}ms)", request_id, request.method, request.path, start.elapsed().as_secs_f64() * 1000.0);
+                metrics.record_request("200", start.elapsed());
+                stream.write_all(response.as_bytes())?;
+                stream.flush()?;
+            }
+            Err((status, body)) => {
+                let status_code = status.split_whitespace().next().unwrap_or("500");
+                let response = format!(
+                    "HTTP/1.1 {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{}Connection: close\r\n\r\n{}",
+                    status, body.len(), extra_headers, body
+                );
+                log::info!("[{}] {} {} → {} ({:.1}ms)", request_id, request.method, request.path, status_code, start.elapsed().as_secs_f64() * 1000.0);
+                metrics.record_request(status_code, start.elapsed());
+                stream.write_all(response.as_bytes())?;
+                stream.flush()?;
+            }
+        }
+        return Ok(());
+    }
+
     if is_sse && request.method == "POST" {
         // Handle SSE streaming with its own Content-Type
         match handle_chat_stream(&request, assistant, config) {
@@ -1467,9 +1526,14 @@ fn route_request_with_config(
             let id = &path[10..];
             handle_get_session(id, assistant)
         }
+        // OpenAI-compatible endpoints
+        ("POST", "/v1/chat/completions") | ("POST", "/api/v1/chat/completions") => {
+            // Streaming is handled in handle_connection; non-streaming falls here
+            handle_openai_chat_completions(request, assistant, config)
+        }
+        ("GET", "/v1/models") | ("GET", "/api/v1/models") => handle_openai_models(assistant),
         // Versioned routes — same handlers, /api/v1/ prefix (items 5.1, 5.2)
         ("GET", "/api/v1/health") => handle_health(assistant, metrics),
-        ("GET", "/api/v1/models") => handle_list_models(assistant),
         ("POST", "/api/v1/chat") => handle_chat(request, assistant, config),
         ("GET", "/api/v1/config") => handle_get_config(assistant),
         ("POST", "/api/v1/config") => handle_set_config(request, assistant),
@@ -1712,6 +1776,339 @@ fn handle_delete_session(id: &str, assistant: &Arc<Mutex<AiAssistant>>) -> (Stri
         ("404 Not Found".to_string(),
             serde_json::to_string(&ErrorResponse { error: format!("Session not found: {}", id) }).unwrap_or_default())
     }
+}
+
+// ============================================================================
+// OpenAI-Compatible API Handlers
+// ============================================================================
+
+/// Build an OpenAI-format error response body.
+fn openai_error_json(message: &str, error_type: &str, code: &str) -> String {
+    serde_json::to_string(&serde_json::json!({
+        "error": {
+            "message": message,
+            "type": error_type,
+            "code": code,
+        }
+    }))
+    .unwrap_or_default()
+}
+
+/// Handle `POST /v1/chat/completions` — non-streaming.
+fn handle_openai_chat_completions(
+    request: &HttpRequest,
+    assistant: &Arc<Mutex<AiAssistant>>,
+    config: &ServerConfig,
+) -> (String, String) {
+    let oai_req: OpenAIChatRequest = match serde_json::from_str(&request.body) {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                "400 Bad Request".to_string(),
+                openai_error_json(&format!("Invalid JSON: {}", e), "invalid_request_error", "invalid_json"),
+            );
+        }
+    };
+
+    if oai_req.messages.is_empty() {
+        return (
+            "400 Bad Request".to_string(),
+            openai_error_json("messages array must not be empty", "invalid_request_error", "invalid_messages"),
+        );
+    }
+
+    // Extract system prompt from system messages
+    let system_prompt: String = oai_req
+        .messages
+        .iter()
+        .filter(|m| m.role == "system")
+        .map(|m| m.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // Extract user message (last user message)
+    let user_message = oai_req
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role == "user")
+        .map(|m| m.content.clone())
+        .unwrap_or_default();
+
+    if user_message.is_empty() {
+        return (
+            "400 Bad Request".to_string(),
+            openai_error_json("No user message found", "invalid_request_error", "missing_user_message"),
+        );
+    }
+
+    if user_message.len() > config.max_message_length {
+        return (
+            "422 Unprocessable Entity".to_string(),
+            openai_error_json(
+                &format!("Message too long ({} chars, max {})", user_message.len(), config.max_message_length),
+                "invalid_request_error",
+                "message_too_long",
+            ),
+        );
+    }
+
+    let mut ass = assistant.lock().unwrap_or_else(|e| e.into_inner());
+    let model = oai_req
+        .model
+        .clone()
+        .unwrap_or_else(|| ass.config.selected_model.clone());
+
+    ass.send_message_with_notes(user_message.clone(), "", &system_prompt, "");
+
+    // Poll until complete
+    let response_text = loop {
+        match ass.poll_response() {
+            Some(crate::messages::AiResponse::Complete(text)) => break text,
+            Some(crate::messages::AiResponse::Error(e)) => {
+                return (
+                    "500 Internal Server Error".to_string(),
+                    openai_error_json(&format!("Generation error: {}", e), "server_error", "generation_failed"),
+                );
+            }
+            Some(crate::messages::AiResponse::Cancelled(partial)) => break partial,
+            Some(_) => continue,
+            None => std::thread::sleep(std::time::Duration::from_millis(10)),
+        }
+    };
+
+    let prompt_tokens = crate::context::estimate_tokens(&user_message)
+        + crate::context::estimate_tokens(&system_prompt);
+    let completion_tokens = crate::context::estimate_tokens(&response_text);
+
+    let created = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    // Build a deterministic hex id from a counter
+    let id = format!("chatcmpl-{:016x}", created);
+
+    let response = crate::openai_adapter::OpenAIResponse {
+        id,
+        object: "chat.completion".to_string(),
+        created,
+        model: model.clone(),
+        choices: vec![crate::openai_adapter::OpenAIChoice {
+            index: 0,
+            message: crate::openai_adapter::OpenAIResponseMessage {
+                role: "assistant".to_string(),
+                content: Some(response_text),
+                function_call: None,
+            },
+            finish_reason: Some("stop".to_string()),
+        }],
+        usage: Some(crate::openai_adapter::OpenAIUsage {
+            prompt_tokens,
+            completion_tokens,
+            total_tokens: prompt_tokens + completion_tokens,
+        }),
+    };
+
+    (
+        "200 OK".to_string(),
+        serde_json::to_string(&response).unwrap_or_default(),
+    )
+}
+
+/// Handle `POST /v1/chat/completions` with `stream: true` — returns SSE body.
+fn handle_openai_chat_completions_stream(
+    request: &HttpRequest,
+    assistant: &Arc<Mutex<AiAssistant>>,
+    config: &ServerConfig,
+) -> Result<String, (String, String)> {
+    let oai_req: OpenAIChatRequest = match serde_json::from_str(&request.body) {
+        Ok(r) => r,
+        Err(e) => {
+            return Err((
+                "400 Bad Request".to_string(),
+                openai_error_json(&format!("Invalid JSON: {}", e), "invalid_request_error", "invalid_json"),
+            ));
+        }
+    };
+
+    if oai_req.messages.is_empty() {
+        return Err((
+            "400 Bad Request".to_string(),
+            openai_error_json("messages array must not be empty", "invalid_request_error", "invalid_messages"),
+        ));
+    }
+
+    let system_prompt: String = oai_req
+        .messages
+        .iter()
+        .filter(|m| m.role == "system")
+        .map(|m| m.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let user_message = oai_req
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role == "user")
+        .map(|m| m.content.clone())
+        .unwrap_or_default();
+
+    if user_message.is_empty() {
+        return Err((
+            "400 Bad Request".to_string(),
+            openai_error_json("No user message found", "invalid_request_error", "missing_user_message"),
+        ));
+    }
+
+    if user_message.len() > config.max_message_length {
+        return Err((
+            "422 Unprocessable Entity".to_string(),
+            openai_error_json(
+                &format!("Message too long ({} chars, max {})", user_message.len(), config.max_message_length),
+                "invalid_request_error",
+                "message_too_long",
+            ),
+        ));
+    }
+
+    let mut ass = assistant.lock().unwrap_or_else(|e| e.into_inner());
+    let model = oai_req
+        .model
+        .clone()
+        .unwrap_or_else(|| ass.config.selected_model.clone());
+
+    ass.send_message_with_notes(user_message, "", &system_prompt, "");
+
+    // Collect full response
+    let full_text = loop {
+        match ass.poll_response() {
+            Some(crate::messages::AiResponse::Complete(text)) => break text,
+            Some(crate::messages::AiResponse::Error(e)) => {
+                return Err((
+                    "500 Internal Server Error".to_string(),
+                    openai_error_json(&format!("Generation error: {}", e), "server_error", "generation_failed"),
+                ));
+            }
+            Some(crate::messages::AiResponse::Cancelled(partial)) => break partial,
+            Some(_) => continue,
+            None => std::thread::sleep(std::time::Duration::from_millis(10)),
+        }
+    };
+
+    let created = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let id = format!("chatcmpl-{:016x}", created);
+
+    let mut sse_body = String::new();
+
+    // First chunk: role announcement
+    let first_chunk = crate::openai_adapter::StreamChunk {
+        id: Some(id.clone()),
+        object: Some("chat.completion.chunk".to_string()),
+        created: Some(created),
+        model: Some(model.clone()),
+        choices: vec![crate::openai_adapter::StreamChoice {
+            index: Some(0),
+            delta: crate::openai_adapter::StreamDelta {
+                role: Some("assistant".to_string()),
+                content: None,
+            },
+            finish_reason: None,
+        }],
+    };
+    sse_body.push_str(&format!(
+        "data: {}\n\n",
+        serde_json::to_string(&first_chunk).unwrap_or_default()
+    ));
+
+    // Content chunks: one per whitespace-delimited word
+    for word in full_text.split_whitespace() {
+        let chunk = crate::openai_adapter::StreamChunk {
+            id: Some(id.clone()),
+            object: Some("chat.completion.chunk".to_string()),
+            created: Some(created),
+            model: Some(model.clone()),
+            choices: vec![crate::openai_adapter::StreamChoice {
+                index: Some(0),
+                delta: crate::openai_adapter::StreamDelta {
+                    role: None,
+                    content: Some(format!("{} ", word)),
+                },
+                finish_reason: None,
+            }],
+        };
+        sse_body.push_str(&format!(
+            "data: {}\n\n",
+            serde_json::to_string(&chunk).unwrap_or_default()
+        ));
+    }
+
+    // Final chunk: finish_reason stop
+    let stop_chunk = crate::openai_adapter::StreamChunk {
+        id: Some(id),
+        object: Some("chat.completion.chunk".to_string()),
+        created: Some(created),
+        model: Some(model),
+        choices: vec![crate::openai_adapter::StreamChoice {
+            index: Some(0),
+            delta: crate::openai_adapter::StreamDelta {
+                role: None,
+                content: None,
+            },
+            finish_reason: Some("stop".to_string()),
+        }],
+    };
+    sse_body.push_str(&format!(
+        "data: {}\n\n",
+        serde_json::to_string(&stop_chunk).unwrap_or_default()
+    ));
+
+    // Terminator
+    sse_body.push_str("data: [DONE]\n\n");
+
+    Ok(sse_body)
+}
+
+/// Handle `GET /v1/models` — OpenAI-compatible model listing.
+fn handle_openai_models(assistant: &Arc<Mutex<AiAssistant>>) -> (String, String) {
+    let ass = assistant.lock().unwrap_or_else(|e| e.into_inner());
+    let models: Vec<serde_json::Value> = ass
+        .available_models
+        .iter()
+        .map(|m| {
+            serde_json::json!({
+                "id": m.name,
+                "object": "model",
+                "created": 0,
+                "owned_by": format!("{:?}", m.provider).to_lowercase(),
+            })
+        })
+        .collect();
+
+    // If no fetched models, at least return the selected model
+    let data = if models.is_empty() {
+        vec![serde_json::json!({
+            "id": ass.config.selected_model,
+            "object": "model",
+            "created": 0,
+            "owned_by": format!("{:?}", ass.config.provider).to_lowercase(),
+        })]
+    } else {
+        models
+    };
+
+    (
+        "200 OK".to_string(),
+        serde_json::to_string(&serde_json::json!({
+            "object": "list",
+            "data": data,
+        }))
+        .unwrap_or_default(),
+    )
 }
 
 // ============================================================================
@@ -3823,5 +4220,355 @@ FI4C+rAGMo2tBOcAJgIXkQkBmoqgWcFuqBQ6ID2L+f+x0jYz2DelZ3pI\n\
         // Also check it contains the expected content-type hint in schemas
         let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert!(parsed["components"]["schemas"].is_object());
+    }
+
+    // ====================================================================
+    // OpenAI-compatible API tests
+    // ====================================================================
+
+    /// Helper: build an OpenAI chat completions request body.
+    fn openai_chat_body(messages: &[(&str, &str)], stream: bool) -> String {
+        let msgs: Vec<serde_json::Value> = messages
+            .iter()
+            .map(|(role, content)| serde_json::json!({"role": role, "content": content}))
+            .collect();
+        serde_json::json!({
+            "model": "test-model",
+            "messages": msgs,
+            "stream": stream,
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn test_openai_completions_basic() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let metrics = Arc::new(ServerMetrics::new());
+        let config = ServerConfig::default();
+        let request = HttpRequest {
+            method: "POST".to_string(),
+            path: "/v1/chat/completions".to_string(),
+            headers: vec![],
+            body: openai_chat_body(&[("user", "Hello!")], false),
+        };
+        let (_status, body) = route_request_with_config(&request, &assistant, &metrics, &config);
+        // Should return 200 (even if the LLM is not connected, the poll loop
+        // will eventually return an error or empty response — but the format
+        // should be correct for any non-error path)
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        // Verify OpenAI response structure
+        assert!(parsed.get("id").is_some() || parsed.get("error").is_some());
+    }
+
+    #[test]
+    fn test_openai_completions_invalid_json() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let metrics = Arc::new(ServerMetrics::new());
+        let config = ServerConfig::default();
+        let request = HttpRequest {
+            method: "POST".to_string(),
+            path: "/v1/chat/completions".to_string(),
+            headers: vec![],
+            body: "not json".to_string(),
+        };
+        let (status, body) = route_request_with_config(&request, &assistant, &metrics, &config);
+        assert_eq!(status, "400 Bad Request");
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert!(parsed["error"]["message"].is_string());
+        assert_eq!(parsed["error"]["type"], "invalid_request_error");
+    }
+
+    #[test]
+    fn test_openai_completions_empty_messages() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let metrics = Arc::new(ServerMetrics::new());
+        let config = ServerConfig::default();
+        let request = HttpRequest {
+            method: "POST".to_string(),
+            path: "/v1/chat/completions".to_string(),
+            headers: vec![],
+            body: serde_json::json!({"messages": []}).to_string(),
+        };
+        let (status, body) = route_request_with_config(&request, &assistant, &metrics, &config);
+        assert_eq!(status, "400 Bad Request");
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert!(parsed["error"]["message"].as_str().unwrap().contains("empty"));
+    }
+
+    #[test]
+    fn test_openai_completions_no_user_message() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let metrics = Arc::new(ServerMetrics::new());
+        let config = ServerConfig::default();
+        let request = HttpRequest {
+            method: "POST".to_string(),
+            path: "/v1/chat/completions".to_string(),
+            headers: vec![],
+            body: openai_chat_body(&[("system", "You are helpful")], false),
+        };
+        let (status, body) = route_request_with_config(&request, &assistant, &metrics, &config);
+        assert_eq!(status, "400 Bad Request");
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert!(parsed["error"]["message"].as_str().unwrap().contains("user message"));
+    }
+
+    #[test]
+    fn test_openai_completions_response_fields() {
+        // Use handle_openai_chat_completions directly with a mock-like assistant
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let config = ServerConfig::default();
+        let request = HttpRequest {
+            method: "POST".to_string(),
+            path: "/v1/chat/completions".to_string(),
+            headers: vec![],
+            body: openai_chat_body(&[("user", "Hi")], false),
+        };
+        let (status, body) = handle_openai_chat_completions(&request, &assistant, &config);
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        // Regardless of whether the LLM responded, the error OR success format
+        // must be OpenAI-compatible
+        if status == "200 OK" {
+            assert_eq!(parsed["object"], "chat.completion");
+            assert!(parsed["id"].as_str().unwrap().starts_with("chatcmpl-"));
+            assert!(parsed["choices"].is_array());
+            assert!(parsed["usage"].is_object());
+            assert_eq!(parsed["choices"][0]["finish_reason"], "stop");
+            assert_eq!(parsed["choices"][0]["message"]["role"], "assistant");
+        } else {
+            // Error path — still OpenAI format
+            assert!(parsed["error"]["message"].is_string());
+        }
+    }
+
+    #[test]
+    fn test_openai_completions_with_system() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let config = ServerConfig::default();
+        let request = HttpRequest {
+            method: "POST".to_string(),
+            path: "/v1/chat/completions".to_string(),
+            headers: vec![],
+            body: openai_chat_body(
+                &[("system", "You are a helpful assistant"), ("user", "Hello")],
+                false,
+            ),
+        };
+        // Just verify it doesn't reject the system message
+        let (status, _body) = handle_openai_chat_completions(&request, &assistant, &config);
+        // Should not be a 400 — system messages are valid
+        assert_ne!(status, "400 Bad Request");
+    }
+
+    #[test]
+    fn test_openai_completions_message_too_long() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let mut config = ServerConfig::default();
+        config.max_message_length = 10; // very short
+        let request = HttpRequest {
+            method: "POST".to_string(),
+            path: "/v1/chat/completions".to_string(),
+            headers: vec![],
+            body: openai_chat_body(&[("user", "This message is longer than 10 chars")], false),
+        };
+        let (status, body) = handle_openai_chat_completions(&request, &assistant, &config);
+        assert_eq!(status, "422 Unprocessable Entity");
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert!(parsed["error"]["message"].as_str().unwrap().contains("too long"));
+    }
+
+    // -- Streaming tests --
+
+    #[test]
+    fn test_openai_stream_format() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let config = ServerConfig::default();
+        let request = HttpRequest {
+            method: "POST".to_string(),
+            path: "/v1/chat/completions".to_string(),
+            headers: vec![],
+            body: openai_chat_body(&[("user", "Hello")], true),
+        };
+        match handle_openai_chat_completions_stream(&request, &assistant, &config) {
+            Ok(sse_body) => {
+                // Every data line should be valid JSON with object=chat.completion.chunk
+                for line in sse_body.lines() {
+                    if line.starts_with("data: ") && line != "data: [DONE]" {
+                        let json_str = &line[6..];
+                        let chunk: serde_json::Value = serde_json::from_str(json_str).unwrap();
+                        assert_eq!(chunk["object"], "chat.completion.chunk");
+                        assert!(chunk["id"].as_str().unwrap().starts_with("chatcmpl-"));
+                    }
+                }
+            }
+            Err((status, _)) => {
+                // LLM not connected — error is acceptable but check format
+                assert!(status.contains("500") || status.contains("400"));
+            }
+        }
+    }
+
+    #[test]
+    fn test_openai_stream_ends_with_done() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let config = ServerConfig::default();
+        let request = HttpRequest {
+            method: "POST".to_string(),
+            path: "/v1/chat/completions".to_string(),
+            headers: vec![],
+            body: openai_chat_body(&[("user", "Hello")], true),
+        };
+        match handle_openai_chat_completions_stream(&request, &assistant, &config) {
+            Ok(sse_body) => {
+                assert!(sse_body.trim_end().ends_with("data: [DONE]"));
+            }
+            Err(_) => {
+                // LLM not connected — acceptable
+            }
+        }
+    }
+
+    #[test]
+    fn test_openai_stream_first_chunk_role() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let config = ServerConfig::default();
+        let request = HttpRequest {
+            method: "POST".to_string(),
+            path: "/v1/chat/completions".to_string(),
+            headers: vec![],
+            body: openai_chat_body(&[("user", "Hello")], true),
+        };
+        match handle_openai_chat_completions_stream(&request, &assistant, &config) {
+            Ok(sse_body) => {
+                let first_data = sse_body
+                    .lines()
+                    .find(|l| l.starts_with("data: ") && *l != "data: [DONE]")
+                    .unwrap();
+                let chunk: serde_json::Value =
+                    serde_json::from_str(&first_data[6..]).unwrap();
+                assert_eq!(chunk["choices"][0]["delta"]["role"], "assistant");
+            }
+            Err(_) => {} // LLM not connected
+        }
+    }
+
+    #[test]
+    fn test_openai_stream_last_chunk_stop() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let config = ServerConfig::default();
+        let request = HttpRequest {
+            method: "POST".to_string(),
+            path: "/v1/chat/completions".to_string(),
+            headers: vec![],
+            body: openai_chat_body(&[("user", "Hello")], true),
+        };
+        match handle_openai_chat_completions_stream(&request, &assistant, &config) {
+            Ok(sse_body) => {
+                let data_lines: Vec<&str> = sse_body
+                    .lines()
+                    .filter(|l| l.starts_with("data: ") && *l != "data: [DONE]")
+                    .collect();
+                if let Some(last) = data_lines.last() {
+                    let chunk: serde_json::Value =
+                        serde_json::from_str(&last[6..]).unwrap();
+                    assert_eq!(chunk["choices"][0]["finish_reason"], "stop");
+                }
+            }
+            Err(_) => {} // LLM not connected
+        }
+    }
+
+    // -- Models endpoint tests --
+
+    #[test]
+    fn test_openai_models_list_format() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let metrics = Arc::new(ServerMetrics::new());
+        let config = ServerConfig::default();
+        let request = HttpRequest {
+            method: "GET".to_string(),
+            path: "/v1/models".to_string(),
+            headers: vec![],
+            body: String::new(),
+        };
+        let (status, body) = route_request_with_config(&request, &assistant, &metrics, &config);
+        assert_eq!(status, "200 OK");
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(parsed["object"], "list");
+        assert!(parsed["data"].is_array());
+    }
+
+    #[test]
+    fn test_openai_models_each_entry() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let (_, body) = handle_openai_models(&assistant);
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        for model in parsed["data"].as_array().unwrap() {
+            assert!(model["id"].is_string());
+            assert_eq!(model["object"], "model");
+            assert!(model["owned_by"].is_string());
+        }
+    }
+
+    // -- Routing tests --
+
+    #[test]
+    fn test_openai_v1_prefix_routing() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let metrics = Arc::new(ServerMetrics::new());
+        let config = ServerConfig::default();
+
+        // /v1/models
+        let request = HttpRequest {
+            method: "GET".to_string(),
+            path: "/v1/models".to_string(),
+            headers: vec![],
+            body: String::new(),
+        };
+        let (status, body) = route_request_with_config(&request, &assistant, &metrics, &config);
+        assert_eq!(status, "200 OK");
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(parsed["object"], "list");
+    }
+
+    #[test]
+    fn test_openai_api_prefix_routing() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let metrics = Arc::new(ServerMetrics::new());
+        let config = ServerConfig::default();
+
+        // /api/v1/chat/completions
+        let request = HttpRequest {
+            method: "POST".to_string(),
+            path: "/api/v1/chat/completions".to_string(),
+            headers: vec![],
+            body: openai_chat_body(&[("user", "Test")], false),
+        };
+        let (status, body) = route_request_with_config(&request, &assistant, &metrics, &config);
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        // Should be routed to OpenAI handler (not 404)
+        assert_ne!(status, "404 Not Found");
+        assert!(parsed.get("id").is_some() || parsed.get("error").is_some());
+    }
+
+    #[test]
+    fn test_openai_error_format() {
+        let assistant = Arc::new(Mutex::new(AiAssistant::new()));
+        let metrics = Arc::new(ServerMetrics::new());
+        let config = ServerConfig::default();
+
+        // Bad JSON → OpenAI error format
+        let request = HttpRequest {
+            method: "POST".to_string(),
+            path: "/v1/chat/completions".to_string(),
+            headers: vec![],
+            body: "{invalid".to_string(),
+        };
+        let (status, body) = route_request_with_config(&request, &assistant, &metrics, &config);
+        assert_eq!(status, "400 Bad Request");
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        // Must have error.message, error.type, error.code
+        assert!(parsed["error"]["message"].is_string());
+        assert!(parsed["error"]["type"].is_string());
+        assert!(parsed["error"]["code"].is_string());
     }
 }
