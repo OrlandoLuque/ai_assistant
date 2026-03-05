@@ -6,7 +6,7 @@ The project has two testing layers:
 
 | Layer | Tests | Run Command |
 |-------|-------|-------------|
-| Unit tests (`#[test]`) | 6,417 | `cargo test --lib --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite"` |
+| Unit tests (`#[test]`) | 6,565 | `cargo test --lib --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite"` |
 | Integration tests | 38 | `cargo test --test integration_tests --features full` |
 | Test harness (CLI) | ~436 | `cargo run --bin ai_test_harness -- --all` (sin P2P) |
 | Distributed networking tests | 115 | `cargo test --features "full,distributed-network"` |
@@ -15,7 +15,7 @@ The project has two testing layers:
 | Test harness P2P categories | 16 | `cargo run --bin ai_test_harness --features "full,p2p" -- --category=p2p_nat` |
 | Benchmarks | 42 | `cargo bench --bench core_benchmarks --features full` |
 
-**Total: 6,417 tests** (verified with `cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite" --lib`)
+**Total: 6,565 tests** (verified with `cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite" --lib`)
 
 ## Quick Start
 

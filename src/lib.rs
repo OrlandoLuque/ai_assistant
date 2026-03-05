@@ -345,8 +345,11 @@ pub use http_client::{
 
 pub use server::{
     AiServer, AuditEntry as ServerAuditEntry, AuditEventType as ServerAuditEventType,
-    AuditLog as ServerAuditLog, AuthConfig, AuthResult, CorsConfig, ServerConfig, ServerHandle,
-    ServerRateLimiter, StructuredError, TlsConfig,
+    AuditLog as ServerAuditLog, AuthConfig, AuthResult, CompactionEnrichmentConfig,
+    ContextEnrichmentConfig, CorsConfig, CostEnrichmentConfig,
+    EnrichmentConfig as ServerEnrichmentConfig, GuardrailEnrichmentConfig,
+    ModelSelectionEnrichmentConfig, RagEnrichmentConfig, ServerConfig, ServerHandle,
+    ServerRateLimiter, StructuredError, ThinkingEnrichmentConfig, TlsConfig,
 };
 #[cfg(feature = "server-tls")]
 pub use server::load_tls_config;
