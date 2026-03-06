@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Assistant - Tools &amp; Binaries Catalog</title>
+<style>
+:root {
+  --bg: #0f172a;
+  --surface: #1e293b;
+  --surface2: #334155;
+  --surface3: #1a2332;
+  --text: #f1f5f9;
+  --text-dim: #94a3b8;
+  --text-muted: #64748b;
+  --border: #475569;
+  --accent: #60a5fa;
+  --accent2: #a78bfa;
+  --accent3: #818cf8;
+  --card-bg: #1e293b;
+  --header-h: 60px;
+  --code-bg: #0d1117;
+  --tag-bg: #1e3a5f;
+  --tag-text: #7dd3fc;
+  --green: #4ade80;
+  --yellow: #fbbf24;
+  --red: #f87171;
+}
+
+[data-theme="light"] {
+  --bg: #f8fafc;
+  --surface: #ffffff;
+  --surface2: #f1f5f9;
+  --surface3: #e2e8f0;
+  --text: #1e293b;
+  --text-dim: #475569;
+  --text-muted: #94a3b8;
+  --border: #cbd5e1;
+  --card-bg: #ffffff;
+  --code-bg: #f1f5f9;
+  --tag-bg: #dbeafe;
+  --tag-text: #1d4ed8;
+  --green: #16a34a;
+  --yellow: #d97706;
+  --red: #dc2626;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+  min-height: 100vh;
+}
+
+/* -- Header -- */
+.page-header {
+  position: fixed; top: 0; left: 0; right: 0;
+  height: var(--header-h);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center;
+  padding: 0 24px; z-index: 100; gap: 16px;
+}
+
+.page-header h1 {
+  font-size: 1.25rem; white-space: nowrap;
+  background: linear-gradient(135deg, #60a5fa, #a78bfa);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+}
+
+.header-subtitle { color: var(--text-dim); font-size: 0.8rem; white-space: nowrap; }
+.header-spacer { flex: 1; }
+
+.theme-toggle {
+  background: var(--surface2); border: 1px solid var(--border); color: var(--text);
+  padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 0.8rem;
+  transition: background 0.2s;
+}
+.theme-toggle:hover { background: var(--border); }
+
+/* -- Main content -- */
+.main { max-width: 1100px; margin: 0 auto; padding: calc(var(--header-h) + 24px) 24px 60px; }
+
+/* -- Section headings -- */
+.section-title {
+  font-size: 1.5rem; font-weight: 700; margin: 40px 0 16px;
+  padding-bottom: 8px; border-bottom: 2px solid var(--accent);
+  color: var(--accent);
+}
+.section-title:first-child { margin-top: 0; }
+
+.section-desc { color: var(--text-dim); margin-bottom: 20px; font-size: 0.95rem; }
+
+/* -- Cards -- */
+.card-grid { display: grid; grid-template-columns: 1fr; gap: 16px; margin-bottom: 32px; }
+
+.card {
+  background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px;
+  padding: 20px; transition: border-color 0.2s, box-shadow 0.2s;
+}
+.card:hover { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+
+.card-header { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+
+.card-name {
+  font-size: 1.1rem; font-weight: 700; font-family: 'Cascadia Code', 'Fira Code', monospace;
+  color: var(--accent);
+}
+
+.tag {
+  display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.7rem;
+  font-weight: 600; background: var(--tag-bg); color: var(--tag-text);
+}
+.tag-green { background: #064e3b; color: var(--green); }
+.tag-yellow { background: #451a03; color: var(--yellow); }
+.tag-red { background: #450a0a; color: var(--red); }
+[data-theme="light"] .tag-green { background: #d1fae5; color: #065f46; }
+[data-theme="light"] .tag-yellow { background: #fef3c7; color: #92400e; }
+[data-theme="light"] .tag-red { background: #fee2e2; color: #991b1b; }
+
+.card-desc { color: var(--text-dim); font-size: 0.9rem; margin-bottom: 10px; }
+
+.card-flags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+
+.flag-label { color: var(--text-muted); font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; margin-right: 4px; }
+
+code, .mono {
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+  background: var(--code-bg); padding: 1px 6px; border-radius: 4px; font-size: 0.85rem;
+}
+
+/* -- Tables -- */
+.table-wrap { overflow-x: auto; margin-bottom: 32px; border-radius: 10px; border: 1px solid var(--border); }
+
+table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+th { background: var(--surface2); text-align: left; padding: 10px 14px; font-weight: 600; color: var(--accent); white-space: nowrap; }
+td { padding: 10px 14px; border-top: 1px solid var(--border); vertical-align: top; }
+tr:hover td { background: var(--surface3); }
+
+td code { font-size: 0.8rem; }
+
+/* -- CLI examples -- */
+.cli-block {
+  background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px;
+  padding: 16px 20px; margin-bottom: 12px; overflow-x: auto;
+}
+.cli-block .label {
+  color: var(--accent2); font-size: 0.75rem; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.05em; margin-bottom: 6px;
+}
+.cli-block pre {
+  font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 0.85rem;
+  color: var(--text); line-height: 1.7; white-space: pre-wrap; word-break: break-all;
+}
+.cli-block pre .comment { color: var(--text-muted); }
+.cli-block pre .cmd { color: var(--green); }
+
+/* -- Responsive -- */
+@media (max-width: 768px) {
+  .page-header { padding: 0 12px; gap: 8px; }
+  .page-header h1 { font-size: 1rem; }
+  .header-subtitle { display: none; }
+  .main { padding: calc(var(--header-h) + 16px) 12px 40px; }
+  .section-title { font-size: 1.25rem; }
+  th, td { padding: 8px 10px; font-size: 0.8rem; }
+  .card { padding: 14px; }
+}
+
+@media (min-width: 769px) {
+  .card-grid-2 { grid-template-columns: 1fr 1fr; }
+}
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<header class="page-header">
+  <h1>AI Assistant</h1>
+  <span class="header-subtitle">Tools &amp; Binaries Catalog &mdash; v30</span>
+  <div class="header-spacer"></div>
+  <button class="theme-toggle" onclick="toggleTheme()">Toggle Theme</button>
+</header>
+
+<!-- Main -->
+<div class="main">
+
+<h2 class="section-title">Binaries (7)</h2>
+<p class="section-desc">
+  Pre-built executables shipped in the crate. Each binary is gated behind specific feature flags
+  and compiled with <code>cargo build --bin &lt;name&gt; --features &lt;flags&gt;</code>.
+</p>
+
+<div class="card-grid">
+
+  <!-- ai_assistant_server -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-name">ai_assistant_server</span>
+      <span class="tag tag-green">production</span>
+      <span class="tag">full</span>
+    </div>
+    <div class="card-desc">
+      Standalone HTTP API server using <code>std::net::TcpListener</code>.
+      Serves the OpenAI-compatible REST API with Bearer auth, CORS, request IDs,
+      rate limiting, graceful shutdown, and optional TLS via <code>server-tls</code>.
+    </div>
+    <div class="card-flags">
+      <span class="flag-label">Flags:</span>
+      <code>--host</code> <code>--port</code> <code>--config</code>
+      <code>--api-key</code> <code>--tls-cert</code> <code>--tls-key</code> <code>--dry-run</code>
+    </div>
+  </div>
+
+  <!-- ai_assistant_cli -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-name">ai_assistant_cli</span>
+      <span class="tag tag-green">standalone</span>
+      <span class="tag">no features required</span>
+    </div>
+    <div class="card-desc">
+      Interactive REPL for the AI assistant. Supports slash commands (<code>/help</code>,
+      <code>/model</code>, <code>/config</code>, <code>/clear</code>, <code>/export</code>,
+      <code>/exit</code>), conversation history, model switching, and template management.
+    </div>
+    <div class="card-flags">
+      <span class="flag-label">Commands:</span>
+      <code>/help</code> <code>/model</code> <code>/config</code> <code>/clear</code>
+      <code>/export</code> <code>/exit</code>
+    </div>
+  </div>
+
+  <!-- ai_test_harness -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-name">ai_test_harness</span>
+      <span class="tag tag-yellow">testing</span>
+      <span class="tag">no features required</span>
+    </div>
+    <div class="card-desc">
+      Comprehensive test runner with categorized test suites, colored output, JSON reporting,
+      and interactive menu. Validates all library functionality across categories
+      (security, RAG, streaming, providers, etc.).
+    </div>
+    <div class="card-flags">
+      <span class="flag-label">Flags:</span>
+      <code>--all</code> <code>--category=&lt;name&gt;</code> <code>--list</code>
+      <code>--no-color</code> <code>--json</code>
+    </div>
+  </div>
+
+  <!-- kpkg_tool -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-name">kpkg_tool</span>
+      <span class="tag">rag</span>
+    </div>
+    <div class="card-desc">
+      CLI for creating, inspecting, listing, and extracting encrypted knowledge packages
+      (<code>.kpkg</code>). Uses AES-256-GCM encryption with pluggable key providers
+      (<code>AppKeyProvider</code>, <code>CustomKeyProvider</code>).
+    </div>
+    <div class="card-flags">
+      <span class="flag-label">Subcommands:</span>
+      <code>create --input &lt;dir&gt; --output &lt;file&gt;</code>
+      <code>list &lt;file&gt;</code> <code>inspect &lt;file&gt;</code>
+      <code>extract --input &lt;file&gt; --output &lt;dir&gt;</code>
+    </div>
+  </div>
+
+  <!-- ai_assistant_standalone -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-name">ai_assistant_standalone</span>
+      <span class="tag tag-green">production</span>
+      <span class="tag">full, server-axum</span>
+    </div>
+    <div class="card-desc">
+      All-in-one binary combining the axum HTTP server, interactive REPL, and Butler
+      auto-configuration. Simplest deployment: a single executable for everything.
+    </div>
+    <div class="card-flags">
+      <span class="flag-label">Flags:</span>
+      <code>--host</code> <code>--port</code> <code>--config</code>
+      <code>--api-key</code> <code>--tls-cert</code> <code>--tls-key</code>
+      <code>--repl</code> <code>--auto-config</code> <code>--dry-run</code>
+    </div>
+  </div>
+
+  <!-- ai_cluster_node -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-name">ai_cluster_node</span>
+      <span class="tag tag-red">enterprise</span>
+      <span class="tag">full, server-cluster</span>
+    </div>
+    <div class="card-desc">
+      Distributed cluster node with QUIC mesh networking, CRDT state sync, and
+      session affinity. Joins clusters via bootstrap peers and join tokens.
+    </div>
+    <div class="card-flags">
+      <span class="flag-label">Flags:</span>
+      <code>--node-id</code> <code>--port</code> <code>--quic-port</code>
+      <code>--bootstrap-peers</code> <code>--join-token</code>
+      <code>--data-dir</code> <code>--dry-run</code>
+    </div>
+  </div>
+
+  <!-- ai_proxy -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-name">ai_proxy</span>
+      <span class="tag tag-green">production</span>
+      <span class="tag">server-axum</span>
+    </div>
+    <div class="card-desc">
+      Lightweight API gateway with round-robin load balancing, session affinity
+      (sticky sessions via <code>X-Session-Id</code>), and health checks.
+      No <code>AiAssistant</code> instance &mdash; pure routing with minimal overhead.
+    </div>
+    <div class="card-flags">
+      <span class="flag-label">Flags:</span>
+      <code>--port</code> <code>--backends</code>
+      <code>--health-interval</code> <code>--api-key</code> <code>--dry-run</code>
+    </div>
+  </div>
+
+</div>
+
+<h2 class="section-title">Key CLI Examples</h2>
+<p class="section-desc">Common commands for building and running the tools.</p>
+
+<div class="cli-block">
+  <div class="label">Start the HTTP server</div>
+  <pre><span class="comment"># Build and run the std-thread server on port 8090</span>
+<span class="cmd">cargo run --bin ai_assistant_server --features full -- --port 8090 --api-key MY_KEY</span>
+
+<span class="comment"># With TLS (requires server-tls feature)</span>
+<span class="cmd">cargo run --bin ai_assistant_server --features full,server-tls -- \
+  --port 8443 --tls-cert cert.pem --tls-key key.pem</span></pre>
+</div>
+
+<div class="cli-block">
+  <div class="label">All-in-one standalone (axum)</div>
+  <pre><span class="comment"># Server + REPL in one process</span>
+<span class="cmd">cargo run --bin ai_assistant_standalone --features full,server-axum -- --port 8090 --repl</span>
+
+<span class="comment"># Auto-detect environment via Butler</span>
+<span class="cmd">cargo run --bin ai_assistant_standalone --features full,server-axum,butler -- --auto-config</span></pre>
+</div>
+
+<div class="cli-block">
+  <div class="label">Cluster deployment</div>
+  <pre><span class="comment"># Seed node</span>
+<span class="cmd">cargo run --bin ai_cluster_node --features full,server-cluster -- \
+  --node-id seed1 --port 8091 --quic-port 9001</span>
+
+<span class="comment"># Join existing cluster</span>
+<span class="cmd">cargo run --bin ai_cluster_node --features full,server-cluster -- \
+  --node-id worker1 --port 8092 --quic-port 9002 \
+  --bootstrap-peers 10.0.0.1:9001 --join-token &lt;TOKEN&gt;</span></pre>
+</div>
+
+<div class="cli-block">
+  <div class="label">API gateway (proxy)</div>
+  <pre><span class="comment"># Route to 3 backend nodes with 10s health checks</span>
+<span class="cmd">cargo run --bin ai_proxy --features server-axum -- \
+  --port 8080 --backends 10.0.0.1:8090,10.0.0.2:8090,10.0.0.3:8090 --health-interval 10</span></pre>
+</div>
+
+<div class="cli-block">
+  <div class="label">Knowledge packages</div>
+  <pre><span class="comment"># Create an encrypted .kpkg from a folder</span>
+<span class="cmd">cargo run --bin kpkg_tool --features rag -- create --input ./docs --output knowledge.kpkg --name "My KB"</span>
+
+<span class="comment"># Inspect package metadata</span>
+<span class="cmd">cargo run --bin kpkg_tool --features rag -- inspect knowledge.kpkg</span>
+
+<span class="comment"># Extract to a folder</span>
+<span class="cmd">cargo run --bin kpkg_tool --features rag -- extract --input knowledge.kpkg --output ./extracted</span></pre>
+</div>
+
+<div class="cli-block">
+  <div class="label">Test harness</div>
+  <pre><span class="comment"># Run all test categories</span>
+<span class="cmd">cargo run --bin ai_test_harness -- --all</span>
+
+<span class="comment"># Run only security tests with JSON output</span>
+<span class="cmd">cargo run --bin ai_test_harness -- --category=security --json</span>
+
+<span class="comment"># List available categories</span>
+<span class="cmd">cargo run --bin ai_test_harness -- --list</span></pre>
+</div>
+
+<div class="cli-block">
+  <div class="label">Interactive REPL</div>
+  <pre><span class="cmd">cargo run --bin ai_assistant_cli --features full</span>
+<span class="comment"># Type /help inside the REPL for commands</span></pre>
+</div>
+
+<h2 class="section-title">Benchmark Suite (44 benchmarks)</h2>
+<p class="section-desc">
+  Criterion.rs benchmarks in <code>benches/core_benchmarks.rs</code>.
+  Covers core operations, RAG, embeddings, security, distributed, and more.
+</p>
+
+<div class="cli-block">
+  <div class="label">Run benchmarks</div>
+  <pre><span class="comment"># All benchmarks (requires full + optional features for gated groups)</span>
+<span class="cmd">cargo bench --features full,constrained-decoding,distributed</span>
+
+<span class="comment"># Filter to a specific benchmark</span>
+<span class="cmd">cargo bench --features full -- intent_classification</span></pre>
+</div>
+
+<div class="table-wrap">
+<table>
+<thead>
+  <tr><th>#</th><th>Benchmark</th><th>Category</th><th>What it measures</th></tr>
+</thead>
+<tbody>
+  <tr><td>1</td><td><code>intent_classification</code></td><td>NLP</td><td>Classify 8 sentences by intent</td></tr>
+  <tr><td>2</td><td><code>conversation_compaction</code></td><td>Core</td><td>Compact 100 messages by importance</td></tr>
+  <tr><td>3</td><td><code>prompt_shortener</code></td><td>Core</td><td>Shorten long prompts to token budget</td></tr>
+  <tr><td>4</td><td><code>sentiment_analysis</code></td><td>NLP</td><td>Analyze sentiment of 8 sentences</td></tr>
+  <tr><td>5</td><td><code>sha256_signing</code></td><td>Security</td><td>HMAC-SHA256 request signing</td></tr>
+  <tr><td>6</td><td><code>template_rendering</code></td><td>Core</td><td>Render conversation templates</td></tr>
+  <tr><td>7</td><td><code>cosine_similarity</code></td><td>Math</td><td>Vector cosine similarity (128-dim)</td></tr>
+  <tr><td>8</td><td><code>guardrail_check</code></td><td>Security</td><td>Pattern-based guardrail evaluation</td></tr>
+  <tr><td>9</td><td><code>html_extract_text</code></td><td>Parsing</td><td>Extract text from HTML content</td></tr>
+  <tr><td>10</td><td><code>rate_limiter</code></td><td>Server</td><td>Token bucket rate limiter throughput</td></tr>
+  <tr><td>11</td><td><code>ws_frame_encode</code></td><td>Streaming</td><td>WebSocket frame encoding (RFC 6455)</td></tr>
+  <tr><td>12</td><td><code>gzip_compress</code></td><td>IO</td><td>Gzip compress/decompress cycle</td></tr>
+  <tr><td>13</td><td><code>text_transform</code></td><td>NLP</td><td>Text transformation pipeline</td></tr>
+  <tr><td>14</td><td><code>json_serialize</code></td><td>IO</td><td>Serialize/deserialize chat messages</td></tr>
+  <tr><td>15</td><td><code>intent_classify_single</code></td><td>NLP</td><td>Single sentence classification latency</td></tr>
+  <tr><td>16</td><td><code>context_window_trim</code></td><td>Core</td><td>Context window trimming to token limit</td></tr>
+  <tr><td>17</td><td><code>smart_chunker</code></td><td>RAG</td><td>Chunk 10KB text into semantic chunks</td></tr>
+  <tr><td>18</td><td><code>rag_fts_search</code></td><td>RAG</td><td>SQLite FTS5 full-text search</td></tr>
+  <tr><td>19</td><td><code>rag_build_context</code></td><td>RAG</td><td>Build retrieval context from chunks</td></tr>
+  <tr><td>20</td><td><code>cosine_similarity_multi_dim</code></td><td>Math</td><td>Cosine similarity at 384/768/1536 dim</td></tr>
+  <tr><td>21</td><td><code>hnsw_vector_search</code></td><td>Embeddings</td><td>HNSW approximate nearest neighbor</td></tr>
+  <tr><td>22</td><td><code>knowledge_graph_traversal</code></td><td>RAG</td><td>Graph traversal on knowledge graph</td></tr>
+  <tr><td>23</td><td><code>tool_call_parsing</code></td><td>Tools</td><td>Parse tool call JSON from LLM output</td></tr>
+  <tr><td>24</td><td><code>pii_detection</code></td><td>Security</td><td>Detect PII (emails, phones, SSNs)</td></tr>
+  <tr><td>25</td><td><code>embedding_train_and_embed</code></td><td>Embeddings</td><td>Train local embedder + embed text</td></tr>
+  <tr><td>26</td><td><code>json_schema_validation</code></td><td>Structured</td><td>Validate JSON against schema</td></tr>
+  <tr><td>27</td><td><code>embedding_batch</code></td><td>Embeddings</td><td>Batch embed 100 documents</td></tr>
+  <tr><td>28</td><td><code>rag_index_document</code></td><td>RAG</td><td>Index document into RAG DB</td></tr>
+  <tr><td>29</td><td><code>reranker_score</code></td><td>RAG</td><td>Neural cross-encoder reranking</td></tr>
+  <tr><td>30</td><td><code>semantic_cache_lookup</code></td><td>Caching</td><td>Semantic similarity cache hit/miss</td></tr>
+  <tr><td>31</td><td><code>persistence_roundtrip</code></td><td>IO</td><td>Full export/import roundtrip</td></tr>
+  <tr><td>32</td><td><code>context_composer_build</code></td><td>Core</td><td>Compose multi-section context window</td></tr>
+  <tr><td>33</td><td><code>guardrail_pipeline_full</code></td><td>Security</td><td>Full pipeline (attack+toxicity+PII+rate limit)</td></tr>
+  <tr><td>34</td><td><code>attack_detection</code></td><td>Security</td><td>Prompt injection attack detection</td></tr>
+  <tr><td>35</td><td><code>vector_db_search_euclidean</code></td><td>Embeddings</td><td>In-memory vector DB euclidean search</td></tr>
+  <tr><td>36</td><td><code>bpe_token_count</code></td><td>Core</td><td>BPE tokenizer token counting</td></tr>
+  <tr><td>37</td><td><code>hnsw_build_1k</code></td><td>Embeddings</td><td>Build HNSW index with 1K vectors</td></tr>
+  <tr><td>38</td><td><code>constrained_decoding_grammar</code></td><td>Decoding</td><td>GBNF grammar-guided generation</td></tr>
+  <tr><td>39</td><td><code>multi_agent_decompose</code></td><td>Agents</td><td>Task decomposition strategies</td></tr>
+  <tr><td>40</td><td><code>mapreduce_word_count</code></td><td>Distributed</td><td>MapReduce parallel word count</td></tr>
+  <tr><td>41</td><td><code>dht_find_closest</code></td><td>Distributed</td><td>DHT k-closest node lookup</td></tr>
+  <tr><td>42</td><td><code>crdt_counter_merge</code></td><td>Distributed</td><td>G-Counter CRDT merge</td></tr>
+</tbody>
+</table>
+</div>
+
+<p class="section-desc" style="margin-top:-16px; font-size:0.85rem;">
+  Benchmarks 38-39 require <code>constrained-decoding</code> and <code>multi-agent</code> features respectively.
+  Benchmarks 40-42 require the <code>distributed</code> feature.
+</p>
+
+<h2 class="section-title">Feature Flags (35)</h2>
+<p class="section-desc">
+  All functionality is gated behind Cargo feature flags.
+  <code>full</code> activates the most common set; heavy or specialized features are opt-in.
+</p>
+
+<div class="table-wrap">
+<table>
+<thead>
+  <tr><th>Feature</th><th>In <code>full</code>?</th><th>Dependencies</th><th>Description</th></tr>
+</thead>
+<tbody>
+  <tr><td><code>core</code></td><td>Yes</td><td>&mdash;</td><td>Base assistant, providers, config, error handling</td></tr>
+  <tr><td><code>multi-agent</code></td><td>Yes</td><td>&mdash;</td><td>Multi-agent orchestration, shared memory, task decomposition</td></tr>
+  <tr><td><code>security</code></td><td>Yes</td><td>&mdash;</td><td>Guardrails, PII detection, content moderation, RBAC</td></tr>
+  <tr><td><code>analytics</code></td><td>Yes</td><td>&mdash;</td><td>Metrics, telemetry, engagement &amp; conversation analytics</td></tr>
+  <tr><td><code>vision</code></td><td>Yes</td><td>&mdash;</td><td>Multimodal / vision support for image inputs</td></tr>
+  <tr><td><code>embeddings</code></td><td>Yes</td><td>&mdash;</td><td>Local embeddings, HNSW index, in-memory vector DB</td></tr>
+  <tr><td><code>advanced-streaming</code></td><td>Yes</td><td>&mdash;</td><td>SSE, WebSocket (RFC 6455), compression, resumable streams</td></tr>
+  <tr><td><code>adapters</code></td><td>Yes</td><td>&mdash;</td><td>OpenAI, Anthropic, HuggingFace provider adapters</td></tr>
+  <tr><td><code>tools</code></td><td>Yes</td><td>&mdash;</td><td>MCP protocol, agentic loops, function calling</td></tr>
+  <tr><td><code>documents</code></td><td>Yes</td><td>zip, pdf-extract</td><td>EPUB, DOCX, HTML, PDF, feed, table parsing</td></tr>
+  <tr><td><code>eval</code></td><td>Yes</td><td>&mdash;</td><td>Evaluation, benchmarking, A/B testing, metrics</td></tr>
+  <tr><td><code>rag</code></td><td>Yes</td><td>rusqlite, aes-gcm</td><td>RAG 5 tiers, SQLite FTS5, encrypted KPKG</td></tr>
+  <tr><td><code>distributed</code></td><td>Yes</td><td>rayon</td><td>CRDTs, DHT Kademlia, MapReduce</td></tr>
+  <tr><td><code>binary-storage</code></td><td>Yes</td><td>bincode</td><td>Bincode + gzip for fast internal serialization</td></tr>
+  <tr><td><code>async-runtime</code></td><td>Yes</td><td>tokio, reqwest</td><td>Tokio runtime + async HTTP client</td></tr>
+  <tr><td><code>advanced-memory</code></td><td>Yes</td><td>&mdash;</td><td>Episodic, procedural, entity memory, consolidation</td></tr>
+  <tr class=""><td colspan="4" style="background:var(--surface2);color:var(--accent2);font-weight:600;font-size:0.8rem;text-transform:uppercase;letter-spacing:0.05em;">Opt-in features (not in full)</td></tr>
+  <tr><td><code>p2p</code></td><td>No</td><td>distributed</td><td>P2P networking, NAT traversal, knowledge broadcast</td></tr>
+  <tr><td><code>distributed-network</code></td><td>No</td><td>quinn, rustls, rcgen, sha2</td><td>QUIC transport, Merkle sync, node security, TLS 1.3</td></tr>
+  <tr><td><code>server-tls</code></td><td>No</td><td>rustls, rustls-pemfile</td><td>HTTPS for the std-thread HTTP server</td></tr>
+  <tr><td><code>server-axum</code></td><td>No</td><td>axum, tower, tower-http, dashmap</td><td>Axum-based async HTTP server (HTTP/2, WS, SSE)</td></tr>
+  <tr><td><code>server-axum-tls</code></td><td>No</td><td>server-axum, axum-server, rustls</td><td>HTTPS for the axum server</td></tr>
+  <tr><td><code>server-cluster</code></td><td>No</td><td>server-axum, distributed-network</td><td>Cluster mode: CRDT sync, session affinity, health</td></tr>
+  <tr><td><code>server-openapi</code></td><td>No</td><td>server-axum, utoipa</td><td>OpenAPI 3.0 + Swagger UI at /swagger-ui</td></tr>
+  <tr><td><code>redis-backend</code></td><td>No</td><td>redis</td><td>Redis for rate limiting, sessions, caching</td></tr>
+  <tr><td><code>autonomous</code></td><td>No</td><td>&mdash;</td><td>Autonomous agent: 5 autonomy levels, policy, sandbox</td></tr>
+  <tr><td><code>scheduler</code></td><td>No</td><td>autonomous</td><td>Cron scheduling + event-driven triggers</td></tr>
+  <tr><td><code>butler</code></td><td>No</td><td>autonomous</td><td>Environment auto-detection and config recommendations</td></tr>
+  <tr><td><code>browser</code></td><td>No</td><td>autonomous</td><td>Chrome DevTools Protocol browser automation</td></tr>
+  <tr><td><code>distributed-agents</code></td><td>No</td><td>autonomous, distributed-network</td><td>Run agents across distributed cluster nodes</td></tr>
+  <tr><td><code>containers</code></td><td>No</td><td>bollard, tokio</td><td>Docker-based sandboxed code execution</td></tr>
+  <tr><td><code>audio</code></td><td>No</td><td>&mdash;</td><td>Speech STT/TTS via cloud and local HTTP providers</td></tr>
+  <tr><td><code>whisper-local</code></td><td>No</td><td>whisper-rs, audio</td><td>Offline STT via whisper.cpp (heavy native dep)</td></tr>
+  <tr><td><code>workflows</code></td><td>No</td><td>tokio</td><td>Event-driven workflow engine, checkpointing, time-travel</td></tr>
+  <tr><td><code>prompt-signatures</code></td><td>No</td><td>&mdash;</td><td>DSPy-style prompt optimization, bootstrap few-shot</td></tr>
+  <tr><td><code>a2a</code></td><td>No</td><td>tokio</td><td>Google A2A protocol: agent cards, JSON-RPC 2.0</td></tr>
+  <tr><td><code>voice-agent</code></td><td>No</td><td>tokio</td><td>Real-time voice agents, bidirectional audio, VAD</td></tr>
+  <tr><td><code>media-generation</code></td><td>No</td><td>&mdash;</td><td>Image (DALL-E, SD, Flux) and video (Runway, Sora) gen</td></tr>
+  <tr><td><code>distillation</code></td><td>No</td><td>&mdash;</td><td>Trajectory collection, scoring, dataset building</td></tr>
+  <tr><td><code>constrained-decoding</code></td><td>No</td><td>&mdash;</td><td>Grammar-guided generation (GBNF, JSON Schema)</td></tr>
+  <tr><td><code>hitl</code></td><td>No</td><td>&mdash;</td><td>Human-in-the-Loop: approval gates, confidence escalation</td></tr>
+  <tr><td><code>webrtc</code></td><td>No</td><td>tokio</td><td>WebRTC voice transport: SDP, ICE, RTP</td></tr>
+  <tr><td><code>devtools</code></td><td>No</td><td>&mdash;</td><td>Agent debugging, profiling, execution replay</td></tr>
+  <tr><td><code>eval-suite</code></td><td>No</td><td>eval</td><td>Standard benchmarks (HumanEval, MMLU) with real LLMs</td></tr>
+  <tr><td><code>vector-lancedb</code></td><td>No</td><td>lancedb, arrow-*</td><td>LanceDB embedded vector DB (Tier 2)</td></tr>
+  <tr><td><code>vector-pgvector</code></td><td>No</td><td>&mdash;</td><td>PostgreSQL pgvector backend</td></tr>
+  <tr><td><code>aws-bedrock</code></td><td>No</td><td>hmac, sha2</td><td>AWS Bedrock SigV4 authentication</td></tr>
+  <tr><td><code>code-sandbox</code></td><td>No</td><td>autonomous</td><td>Isolated code execution for AI agents</td></tr>
+  <tr><td><code>cloud-connectors</code></td><td>No</td><td>&mdash;</td><td>S3 and Google Drive storage</td></tr>
+  <tr><td><code>integrity-check</code></td><td>No</td><td>&mdash;</td><td>Binary integrity verification at startup</td></tr>
+  <tr><td><code>wasm</code></td><td>No</td><td>web-sys, js-sys, wasm-bindgen</td><td>WASM target (wasm32 only)</td></tr>
+  <tr><td><code>egui-widgets</code></td><td>No</td><td>egui</td><td>egui chat UI widgets</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 class="section-title">Example Programs (14)</h2>
+<p class="section-desc">
+  Runnable examples in <code>examples/</code>. Each requires specific feature flags.
+</p>
+
+<div class="table-wrap">
+<table>
+<thead>
+  <tr><th>Example</th><th>Features</th><th>Description</th></tr>
+</thead>
+<tbody>
+  <tr><td><code>autonomous_agent</code></td><td>autonomous</td><td>Autonomous agent with 5 autonomy levels</td></tr>
+  <tr><td><code>encrypted_knowledge</code></td><td>rag</td><td>Create and use encrypted .kpkg packages</td></tr>
+  <tr><td><code>knowledge_graph</code></td><td>rag</td><td>Build and query a knowledge graph</td></tr>
+  <tr><td><code>mcp_server</code></td><td>tools</td><td>MCP protocol server with tool registration</td></tr>
+  <tr><td><code>multi_agent</code></td><td>multi-agent</td><td>Multi-agent orchestration demo</td></tr>
+  <tr><td><code>p2p_network</code></td><td>p2p</td><td>P2P node discovery and knowledge sharing</td></tr>
+  <tr><td><code>rag_pipeline</code></td><td>rag</td><td>Full RAG pipeline: ingest, index, query</td></tr>
+  <tr><td><code>scheduler_agent</code></td><td>scheduler</td><td>Cron-scheduled autonomous tasks</td></tr>
+  <tr><td><code>vector_search</code></td><td>embeddings</td><td>Embed and search documents by similarity</td></tr>
+  <tr><td><code>repl_demo</code></td><td>full</td><td>Interactive REPL with all features</td></tr>
+  <tr><td><code>ab_testing_demo</code></td><td>full</td><td>A/B test comparison between models</td></tr>
+  <tr><td><code>cost_tracking</code></td><td>full</td><td>Token usage and cost tracking</td></tr>
+  <tr><td><code>multimodal</code></td><td>full</td><td>Vision and multimodal input</td></tr>
+</tbody>
+</table>
+</div>
+
+<p style="color:var(--text-muted);font-size:0.8rem;text-align:center;margin-top:40px;">
+  ai_assistant v0.1.0 &mdash; Tools Catalog generated for v30 &mdash; 2026-03-06
+</p>
+
+</div><!-- .main -->
+
+<script>
+function toggleTheme() {
+  const html = document.documentElement;
+  const current = html.getAttribute('data-theme');
+  html.setAttribute('data-theme', current === 'light' ? 'dark' : 'light');
+  localStorage.setItem('theme', html.getAttribute('data-theme'));
+}
+(function() {
+  const saved = localStorage.getItem('theme');
+  if (saved) document.documentElement.setAttribute('data-theme', saved);
+})();
+</script>
+
+</body>
+</html>

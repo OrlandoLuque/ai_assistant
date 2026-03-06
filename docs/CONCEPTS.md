@@ -3739,3 +3739,115 @@ Each `ButlerRecommendation` includes: `category` (OptimizationCategory), `priori
 **Related concepts**: [37. Autonomous Agents (Butler subsection)](#37-autonomous-agents-self-directed-ai), [53. Guardrail Pipelines](#53-guardrail-pipelines-safety-at-every-stage), [150. Multi-Armed Bandit Routing](#150-multi-armed-bandit-routing), [6. RAG](#6-rag-giving-the-ai-your-knowledge), [46. Access Control](#46-access-control-who-can-do-what), [102. Human-in-the-Loop (HITL)](#102-human-in-the-loop-hitl)
 
 **Feature flag**: butler
+
+---
+
+## 165. Unified BPE Tokenizer
+
+**The fundamental idea**: Different LLM families use different tokenization schemes (GPT's tiktoken, Claude's SentencePiece-derived BPE, Gemini's SentencePiece, Mistral/DeepSeek variants). The `UnifiedBpeTokenizer` provides model-aware tokenization behind a single API — you can count tokens, split text, and estimate costs without making an API call.
+
+**How it works**:
+- **Model registry** — maps model IDs (gpt-4o, claude-3-opus, gemini-1.5-pro, etc.) to their tokenizer configuration (vocabulary, merge rules, special tokens)
+- **Byte Pair Encoding** — iteratively merges the most frequent byte pairs using the model's merge table, producing token IDs identical to the provider's own tokenizer
+- **Token counting** — `count_tokens(model, text) -> usize` gives exact counts for context window management, cost estimation, and chunking decisions
+- **Fallback heuristic** — for unknown models, estimates ~4 characters per token (widely accepted approximation)
+
+**Why it matters**: Context window management, cost budgeting, and intelligent chunking all depend on accurate token counts. Without a local tokenizer, you either over-estimate (waste context) or under-estimate (get truncated).
+
+**Related concepts**: [2. Tokens](#2-tokens-the-atoms-of-language), [3. Context Window](#3-the-context-window-memory-limits), [8. Chunking](#8-chunking-breaking-documents-into-pieces)
+
+**Feature flag**: full
+
+---
+
+## 166. Emoticon & Emoji Detection
+
+**The fundamental idea**: Emoticons (:) ;-P <3) and emoji carry sentiment signal that text analysis alone may miss. The crate detects both ASCII emoticons via pattern matching and Unicode emoji via category detection, extracting sentiment polarity (+1 positive, -1 negative, 0 neutral) for use in guardrails, analytics, and conversation tone analysis.
+
+**How it works**:
+- **ASCII emoticon patterns** — regex-based detection of standard emoticons (:), :(, ;-), :D, :P, <3, etc.) with a curated sentiment map
+- **Unicode emoji** — identifies emoji by Unicode General Category (So = Symbol, other) and specific code point ranges (U+1F600–U+1F64F, U+1F300–U+1F5FF, U+2600–U+26FF, etc.)
+- **Sentiment aggregation** — combines detected emoticons/emoji into an overall sentiment score for the message
+- **Guardrail integration** — the guardrail pipeline can use emoticon density and sentiment as signals
+
+**Related concepts**: [53. Guardrail Pipelines](#53-guardrail-pipelines-safety-at-every-stage), [67. Streaming Guardrails](#67-streaming-guardrails), [129. Output Guardrails](#129-output-guardrails)
+
+**Feature flag**: full
+
+---
+
+## 167. Benchmark Suite Ecosystem
+
+**The fundamental idea**: A single evaluation metric is never enough. The `eval-suite` feature provides a benchmark runner that supports multiple standardized benchmark formats — LiveCodeBench, AiderPolyglot, TerminalBench, APPS, CodeContests — plus custom benchmarks. It enables multi-model comparison, ablation studies, subtask analysis, and automated report generation.
+
+**How it works**:
+- **Benchmark runner** — loads benchmark definitions (JSON/YAML), runs them against one or more models, collects results with timing and token usage
+- **Multi-model comparison** — run the same suite across GPT-4o, Claude, Gemini, local models, and compare scores, latency, and cost side-by-side
+- **Ablation studies** — systematically enable/disable features (RAG, guardrails, chain-of-thought) to measure their individual impact
+- **Subtask analysis** — breaks down results by subtask category (coding, reasoning, factual, creative) to identify model strengths/weaknesses
+- **Report generation** — produces structured JSON and human-readable reports with pass rates, score distributions, and statistical significance
+
+**Related concepts**: [52. LLM-as-Judge](#52-llm-as-judge-automated-quality-evaluation), [66. Online Evaluation](#66-online-evaluation), [106. LLM-as-Judge (v2)](#106-llm-as-judge-v2)
+
+**Feature flag**: eval-suite
+
+---
+
+## 168. MCP Configuration & Evaluation Tools
+
+**The fundamental idea**: The Model Context Protocol (MCP) defines a standard way for AI tools to expose capabilities. The crate provides 12 built-in MCP tools split into two categories: 6 configuration tools for runtime management and 6 evaluation tools for quality assessment.
+
+**Configuration tools** (runtime management):
+- `config_get` / `config_set` — read and modify assistant configuration at runtime
+- `config_search_engine` — configure web search backends (Brave, DuckDuckGo, Serper, Tavily)
+- `model_select` — switch the active model at runtime
+- `provider_list` / `provider_status` — enumerate and check health of configured LLM providers
+
+**Evaluation tools** (quality assessment):
+- `eval_benchmark` — run a benchmark suite and return results
+- `eval_compare` — compare two model responses head-to-head
+- `eval_judge` — LLM-as-judge scoring for a single response
+- `eval_ablation` — run ablation study across feature combinations
+- `eval_subtask` — analyze performance by subtask category
+- `eval_report` — generate a comprehensive evaluation report
+
+**Related concepts**: [79. MCP v2 Streamable HTTP](#79-mcp-v2-streamable-http-transport), [95. MCP Elicitation](#95-mcp-elicitation), [167. Benchmark Suite Ecosystem](#167-benchmark-suite-ecosystem)
+
+**Feature flag**: full
+
+---
+
+## 169. OpenAI-Compatible API & Enrichment Pipeline
+
+**The fundamental idea**: Any application already using the OpenAI API can switch to ai_assistant as a drop-in backend by pointing to its `/v1/chat/completions` and `/v1/models` endpoints. Requests pass through a configurable enrichment pipeline before reaching the LLM.
+
+**The enrichment pipeline** (7 sub-configs, 52 configurable fields):
+- **System prompt injection** — prepend custom system instructions to every request
+- **RAG augmentation** — auto-retrieve relevant context from vector DBs and inject into the prompt
+- **Guardrail pre-check** — run input through PII detection, toxicity filters, prompt injection detection before forwarding
+- **Model routing** — select the optimal model based on query complexity, cost budget, or bandit-based routing
+- **Token budget enforcement** — trim context to fit within the target model's window, with configurable priority
+- **Output guardrails** — post-process the response for PII scrubbing, format validation, safety filtering
+- **Telemetry** — log request/response to OpenTelemetry with cost attribution and latency tracking
+
+**Deployment**: Available in the axum-based server (`server-axum` feature). Supports SSE streaming, WebSocket, and standard request/response modes.
+
+**Related concepts**: [53. Guardrail Pipelines](#53-guardrail-pipelines-safety-at-every-stage), [6. RAG](#6-rag-giving-the-ai-your-knowledge), [150. Multi-Armed Bandit Routing](#150-multi-armed-bandit-routing)
+
+**Feature flag**: server-axum
+
+---
+
+## 170. Routing DAG & Bandit State Merging
+
+**The fundamental idea**: Complex routing decisions often require multiple criteria evaluated in sequence — first check cost budget, then evaluate complexity, then apply bandit-based model selection. The `RoutingDag` composes individual routing strategies into a directed acyclic graph where each node is a routing decision and edges represent fallback or override paths.
+
+**How it works**:
+- **DAG nodes** — each node wraps a routing strategy (cost-based, complexity-based, bandit, regex, manual override) and produces a model selection or "defer to next node"
+- **Edge semantics** — `fallback` (try next if current has no opinion), `override` (always apply this node's result), `conditional` (follow edge only if predicate matches)
+- **Bandit state merging** — in distributed deployments, each node runs its own multi-armed bandit. The `BanditStateMerger` periodically synchronizes bandit statistics across the cluster using CRDT-based counters, so all nodes converge on the same routing probabilities without central coordination
+- **Per-subtask routing** — different subtask categories (coding, reasoning, creative, factual) can have independent routing DAGs, allowing specialized model assignment per task type
+
+**Related concepts**: [150. Multi-Armed Bandit Routing](#150-multi-armed-bandit-routing), [36. Distributed Computing](#36-distributed-computing-beyond-a-single-machine), [164. Butler Advisor](#164-butler-advisor-optimization-guidance)
+
+**Feature flag**: full
