@@ -1641,6 +1641,43 @@ This enables smart re-indexing: documents are only re-indexed when their content
 
 Migrations are automatic when opening an existing database with schema changes.
 
+## Microservice Architecture (v30)
+
+The crate supports three deployment tiers:
+
+| Tier | Binary | Features | Use Case |
+|------|--------|----------|----------|
+| Embedded | Library (cargo dep) | `full` | Integrate into your Rust app |
+| Standalone | `ai_assistant_standalone` | `full,server-axum` | Single-binary server + REPL |
+| Cluster | `ai_cluster_node` + `ai_proxy` | `server-cluster` | Horizontal scaling with CRDT sync |
+
+### Quick Start
+
+```bash
+# Standalone server
+cargo run --features "full,server-axum" --bin ai_assistant_standalone -- --port 8090
+
+# 3-node cluster with Docker
+docker compose up
+
+# Lightweight API proxy
+cargo run --features "server-axum" --bin ai_proxy -- --backends "localhost:8091,localhost:8092"
+```
+
+### Competitive Advantages
+
+| Metric | ai_assistant | Python (LangChain) |
+|--------|-------------|-------------------|
+| Binary size | ~5 MB | 300+ MB |
+| RAM (idle) | ~10 MB | 200+ MB |
+| Cold start | <100 ms | 5-10 s |
+| GC pauses | None | Unpredictable |
+| Runtime deps | None | Python + pip |
+| Modules | 220+ | ~50 |
+| Tests | 6,500+ | Varies |
+
+See [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for detailed comparisons.
+
 ## License
 
 Licensed under [PolyForm Noncommercial 1.0.0](LICENSE). Commercial use requires a separate license — contact orlando.luque@gmail.com for inquiries.

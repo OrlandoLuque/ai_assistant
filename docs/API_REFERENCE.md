@@ -703,3 +703,47 @@ curl http://localhost:8090/api/v1/openapi.json | jq .info
 ```
 
 Also available at `/openapi.json`.
+
+---
+
+## Axum Server Endpoints (server-axum feature)
+
+The axum-based server provides the same endpoints as the standard server, plus additional cluster and tooling endpoints.
+
+### Swagger UI
+
+```
+GET /swagger-ui
+```
+
+Interactive API documentation (requires `server-openapi` feature).
+
+### Cluster Debug (server-cluster feature)
+
+```
+GET /debug/cluster
+```
+
+Returns JSON with node ID, uptime, peers, ring state, CRDT sizes, sync lag.
+
+### Health Probes (server-cluster feature)
+
+```
+GET /health/ready
+```
+
+Readiness probe: returns 200 if the node is synced and accepting traffic, 503 otherwise.
+
+```
+GET /health/live
+```
+
+Liveness probe: returns 200 if the node process is alive.
+
+### Butler Feature Analysis (butler feature)
+
+```
+GET /butler/features
+```
+
+Returns a `FeatureFlagAnalysis` JSON with active flags, unnecessary flags, missing flags, and recommended compilation profile.

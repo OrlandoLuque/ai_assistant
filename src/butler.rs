@@ -2107,6 +2107,238 @@ fn dirs_home() -> Option<std::path::PathBuf> {
 }
 
 // =============================================================================
+// Feature Flag Analyzer (Phase 15)
+// =============================================================================
+
+/// Deployment scenario for compilation profile recommendation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DeploymentScenario {
+    /// Core only — smallest binary, chat only
+    MinimalChat,
+    /// Core + RAG + embeddings
+    ChatWithRag,
+    /// Full + server-axum — single binary server
+    StandaloneServer,
+    /// Full + server-axum + server-cluster — horizontal scaling
+    ClusterNode,
+    /// Full + autonomous + butler + browser + devtools
+    DeveloperWorkstation,
+    /// Everything enabled
+    EnterpriseAll,
+}
+
+/// Recommended compilation profile for a deployment scenario.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompilationProfile {
+    pub scenario: DeploymentScenario,
+    pub features: Vec<String>,
+    pub estimated_binary_size: String,
+    pub estimated_ram: String,
+    pub cargo_command: String,
+}
+
+/// Analysis of active feature flags vs. detected environment.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FeatureFlagAnalysis {
+    pub active_flags: Vec<String>,
+    pub unnecessary_flags: Vec<UnnecessaryFlag>,
+    pub missing_flags: Vec<MissingFlag>,
+    pub recommended_profile: CompilationProfile,
+}
+
+/// A feature flag that's enabled but may not be needed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnnecessaryFlag {
+    pub flag: String,
+    pub reason: String,
+}
+
+/// A feature flag that's not enabled but should be.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MissingFlag {
+    pub flag: String,
+    pub reason: String,
+    pub priority: RecommendationPriority,
+}
+
+impl Butler {
+    /// Analyze active feature flags against the detected environment.
+    ///
+    /// Identifies unnecessary flags (enabled but not needed) and missing flags
+    /// (not enabled but environment suggests they should be).
+    pub fn analyze_features(
+        &self,
+        report: &EnvironmentReport,
+        active_flags: &[String],
+    ) -> FeatureFlagAnalysis {
+        let mut unnecessary = Vec::new();
+        let mut missing = Vec::new();
+
+        let has_flag = |f: &str| active_flags.iter().any(|a| a == f);
+
+        // Check for unnecessary flags based on RuntimeInfo
+        if has_flag("containers") && !report.runtime.has_docker {
+            unnecessary.push(UnnecessaryFlag {
+                flag: "containers".to_string(),
+                reason: "No Docker detected on this system".to_string(),
+            });
+        }
+
+        if has_flag("audio") {
+            // Check if any audio capabilities were detected
+            let has_audio = report.capabilities.iter().any(|c| {
+                c.contains("whisper") || c.contains("piper") || c.contains("coqui") || c.contains("speech")
+            });
+            if !has_audio {
+                unnecessary.push(UnnecessaryFlag {
+                    flag: "audio".to_string(),
+                    reason: "No Whisper/Piper/Coqui speech tools detected".to_string(),
+                });
+            }
+        }
+
+        if has_flag("browser") && !report.runtime.has_browser {
+            unnecessary.push(UnnecessaryFlag {
+                flag: "browser".to_string(),
+                reason: "No Chrome/Chromium detected for CDP automation".to_string(),
+            });
+        }
+
+        // Check for missing flags
+        let ollama_detected = report
+            .llm_providers
+            .iter()
+            .any(|p| p.provider_type == AiProvider::Ollama);
+        if ollama_detected && !has_flag("async-runtime") {
+            missing.push(MissingFlag {
+                flag: "async-runtime".to_string(),
+                reason: "Ollama detected — async-runtime enables HTTP provider support".to_string(),
+                priority: RecommendationPriority::High,
+            });
+        }
+
+        if report.runtime.has_gpu && !has_flag("full") {
+            missing.push(MissingFlag {
+                flag: "full".to_string(),
+                reason: "GPU detected — full feature set can leverage GPU acceleration".to_string(),
+                priority: RecommendationPriority::Medium,
+            });
+        }
+
+        if report.runtime.has_docker && !has_flag("containers") {
+            missing.push(MissingFlag {
+                flag: "containers".to_string(),
+                reason: "Docker detected — enable containers for sandboxed execution".to_string(),
+                priority: RecommendationPriority::Low,
+            });
+        }
+
+        // Recommend a profile based on active flags
+        let recommended = self.recommend_compilation_from_flags(active_flags);
+
+        FeatureFlagAnalysis {
+            active_flags: active_flags.to_vec(),
+            unnecessary_flags: unnecessary,
+            missing_flags: missing,
+            recommended_profile: recommended,
+        }
+    }
+
+    /// Recommend the optimal compilation profile for a deployment scenario.
+    pub fn recommend_compilation(&self, scenario: DeploymentScenario) -> CompilationProfile {
+        match scenario {
+            DeploymentScenario::MinimalChat => CompilationProfile {
+                scenario,
+                features: vec!["core".to_string()],
+                estimated_binary_size: "~5 MB".to_string(),
+                estimated_ram: "~10 MB".to_string(),
+                cargo_command: "cargo build --release".to_string(),
+            },
+            DeploymentScenario::ChatWithRag => CompilationProfile {
+                scenario,
+                features: vec!["core".to_string(), "rag".to_string(), "embeddings".to_string()],
+                estimated_binary_size: "~8 MB".to_string(),
+                estimated_ram: "~30 MB".to_string(),
+                cargo_command: "cargo build --release --features rag".to_string(),
+            },
+            DeploymentScenario::StandaloneServer => CompilationProfile {
+                scenario,
+                features: vec!["full".to_string(), "server-axum".to_string()],
+                estimated_binary_size: "~15 MB".to_string(),
+                estimated_ram: "~50 MB".to_string(),
+                cargo_command: "cargo build --release --features \"full,server-axum\"".to_string(),
+            },
+            DeploymentScenario::ClusterNode => CompilationProfile {
+                scenario,
+                features: vec![
+                    "full".to_string(),
+                    "server-axum".to_string(),
+                    "server-cluster".to_string(),
+                ],
+                estimated_binary_size: "~20 MB".to_string(),
+                estimated_ram: "~80 MB".to_string(),
+                cargo_command: "cargo build --release --features \"full,server-cluster\"".to_string(),
+            },
+            DeploymentScenario::DeveloperWorkstation => CompilationProfile {
+                scenario,
+                features: vec![
+                    "full".to_string(),
+                    "autonomous".to_string(),
+                    "butler".to_string(),
+                    "browser".to_string(),
+                    "devtools".to_string(),
+                    "server-axum".to_string(),
+                ],
+                estimated_binary_size: "~25 MB".to_string(),
+                estimated_ram: "~100 MB".to_string(),
+                cargo_command: "cargo build --release --features \"full,autonomous,butler,browser,devtools,server-axum\"".to_string(),
+            },
+            DeploymentScenario::EnterpriseAll => CompilationProfile {
+                scenario,
+                features: vec![
+                    "full".to_string(),
+                    "autonomous".to_string(),
+                    "scheduler".to_string(),
+                    "butler".to_string(),
+                    "browser".to_string(),
+                    "distributed-agents".to_string(),
+                    "containers".to_string(),
+                    "audio".to_string(),
+                    "server-axum".to_string(),
+                    "server-cluster".to_string(),
+                    "server-openapi".to_string(),
+                    "redis-backend".to_string(),
+                ],
+                estimated_binary_size: "~35 MB".to_string(),
+                estimated_ram: "~150 MB".to_string(),
+                cargo_command: "cargo build --release --features \"full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,server-axum,server-cluster,server-openapi,redis-backend\"".to_string(),
+            },
+        }
+    }
+
+    /// Infer the best matching deployment scenario from active feature flags.
+    fn recommend_compilation_from_flags(&self, active_flags: &[String]) -> CompilationProfile {
+        let has = |f: &str| active_flags.iter().any(|a| a == f);
+
+        let scenario = if has("server-cluster") {
+            DeploymentScenario::ClusterNode
+        } else if has("autonomous") && has("browser") && has("devtools") {
+            DeploymentScenario::DeveloperWorkstation
+        } else if has("server-axum") {
+            DeploymentScenario::StandaloneServer
+        } else if has("rag") || has("embeddings") {
+            DeploymentScenario::ChatWithRag
+        } else if active_flags.len() > 10 {
+            DeploymentScenario::EnterpriseAll
+        } else {
+            DeploymentScenario::MinimalChat
+        };
+
+        self.recommend_compilation(scenario)
+    }
+}
+
+// =============================================================================
 // Tests
 // =============================================================================
 
@@ -2574,6 +2806,25 @@ mod tests {
         }
     }
 
+    fn make_report(has_gpu: bool, has_docker: bool, has_browser: bool) -> EnvironmentReport {
+        EnvironmentReport {
+            llm_providers: vec![],
+            project_type: None,
+            vcs: None,
+            runtime: RuntimeInfo {
+                os: "test".to_string(),
+                arch: "x86_64".to_string(),
+                cpus: 4,
+                has_gpu,
+                has_docker,
+                has_browser,
+            },
+            capabilities: Vec::new(),
+            suggested_agent_profile: "research-agent".to_string(),
+            suggested_mode: OperationMode::Assistant,
+        }
+    }
+
     #[test]
     fn test_optimization_category_display() {
         assert_eq!(OptimizationCategory::Efficiency.to_string(), "efficiency");
@@ -2821,5 +3072,174 @@ mod tests {
         let (stt, tts) = butler.suggest_speech_config();
         assert_eq!(stt, Some("whisper-local".to_string()));
         assert!(tts.is_none());
+    }
+
+    // =========================================================================
+    // Feature Flag Analyzer tests (Phase 15)
+    // =========================================================================
+
+    #[test]
+    fn test_deployment_scenario_serialization() {
+        let scenarios = vec![
+            DeploymentScenario::MinimalChat,
+            DeploymentScenario::ChatWithRag,
+            DeploymentScenario::StandaloneServer,
+            DeploymentScenario::ClusterNode,
+            DeploymentScenario::DeveloperWorkstation,
+            DeploymentScenario::EnterpriseAll,
+        ];
+        for s in scenarios {
+            let json = serde_json::to_string(&s).unwrap();
+            let parsed: DeploymentScenario = serde_json::from_str(&json).unwrap();
+            assert_eq!(parsed, s);
+        }
+    }
+
+    #[test]
+    fn test_recommend_minimal_chat() {
+        let butler = Butler::new();
+        let profile = butler.recommend_compilation(DeploymentScenario::MinimalChat);
+        assert_eq!(profile.scenario, DeploymentScenario::MinimalChat);
+        assert!(profile.features.contains(&"core".to_string()));
+        assert!(profile.cargo_command.contains("cargo build --release"));
+    }
+
+    #[test]
+    fn test_recommend_standalone_server() {
+        let butler = Butler::new();
+        let profile = butler.recommend_compilation(DeploymentScenario::StandaloneServer);
+        assert!(profile.features.contains(&"full".to_string()));
+        assert!(profile.features.contains(&"server-axum".to_string()));
+        assert!(profile.cargo_command.contains("server-axum"));
+    }
+
+    #[test]
+    fn test_recommend_cluster_node() {
+        let butler = Butler::new();
+        let profile = butler.recommend_compilation(DeploymentScenario::ClusterNode);
+        assert!(profile.features.contains(&"server-cluster".to_string()));
+    }
+
+    #[test]
+    fn test_recommend_enterprise_all() {
+        let butler = Butler::new();
+        let profile = butler.recommend_compilation(DeploymentScenario::EnterpriseAll);
+        assert!(profile.features.len() > 8);
+        assert!(profile.features.contains(&"redis-backend".to_string()));
+    }
+
+    #[test]
+    fn test_analyze_features_unnecessary_containers() {
+        let butler = Butler::new();
+        let report = make_report(false, false, false); // no docker
+        let active = vec!["full".to_string(), "containers".to_string()];
+        let analysis = butler.analyze_features(&report, &active);
+        assert!(analysis.unnecessary_flags.iter().any(|f| f.flag == "containers"));
+    }
+
+    #[test]
+    fn test_analyze_features_no_unnecessary_when_docker_present() {
+        let butler = Butler::new();
+        let report = make_report(false, true, false); // docker present
+        let active = vec!["full".to_string(), "containers".to_string()];
+        let analysis = butler.analyze_features(&report, &active);
+        assert!(analysis.unnecessary_flags.iter().all(|f| f.flag != "containers"));
+    }
+
+    #[test]
+    fn test_analyze_features_missing_containers_for_docker() {
+        let butler = Butler::new();
+        let report = make_report(false, true, false); // docker present
+        let active = vec!["full".to_string()]; // no containers
+        let analysis = butler.analyze_features(&report, &active);
+        assert!(analysis.missing_flags.iter().any(|f| f.flag == "containers"));
+    }
+
+    #[test]
+    fn test_analyze_features_unnecessary_audio() {
+        let butler = Butler::new();
+        let report = make_report(false, false, false);
+        let active = vec!["audio".to_string()];
+        let analysis = butler.analyze_features(&report, &active);
+        assert!(analysis.unnecessary_flags.iter().any(|f| f.flag == "audio"));
+    }
+
+    #[test]
+    fn test_analyze_features_unnecessary_browser() {
+        let butler = Butler::new();
+        let report = make_report(false, false, false);
+        let active = vec!["browser".to_string()];
+        let analysis = butler.analyze_features(&report, &active);
+        assert!(analysis.unnecessary_flags.iter().any(|f| f.flag == "browser"));
+    }
+
+    #[test]
+    fn test_infer_scenario_from_flags() {
+        let butler = Butler::new();
+
+        // Cluster flags → ClusterNode
+        let flags = vec!["full".to_string(), "server-cluster".to_string()];
+        let profile = butler.recommend_compilation_from_flags(&flags);
+        assert_eq!(profile.scenario, DeploymentScenario::ClusterNode);
+
+        // Server-axum only → StandaloneServer
+        let flags = vec!["full".to_string(), "server-axum".to_string()];
+        let profile = butler.recommend_compilation_from_flags(&flags);
+        assert_eq!(profile.scenario, DeploymentScenario::StandaloneServer);
+
+        // RAG → ChatWithRag
+        let flags = vec!["rag".to_string()];
+        let profile = butler.recommend_compilation_from_flags(&flags);
+        assert_eq!(profile.scenario, DeploymentScenario::ChatWithRag);
+
+        // Minimal → MinimalChat
+        let flags = vec!["core".to_string()];
+        let profile = butler.recommend_compilation_from_flags(&flags);
+        assert_eq!(profile.scenario, DeploymentScenario::MinimalChat);
+    }
+
+    #[test]
+    fn test_compilation_profile_serialization() {
+        let butler = Butler::new();
+        let profile = butler.recommend_compilation(DeploymentScenario::StandaloneServer);
+        let json = serde_json::to_string(&profile).unwrap();
+        let parsed: CompilationProfile = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.scenario, DeploymentScenario::StandaloneServer);
+    }
+
+    #[test]
+    fn test_feature_flag_analysis_serialization() {
+        let analysis = FeatureFlagAnalysis {
+            active_flags: vec!["full".to_string()],
+            unnecessary_flags: vec![UnnecessaryFlag {
+                flag: "test".to_string(),
+                reason: "test reason".to_string(),
+            }],
+            missing_flags: vec![MissingFlag {
+                flag: "missing".to_string(),
+                reason: "should add".to_string(),
+                priority: RecommendationPriority::High,
+            }],
+            recommended_profile: CompilationProfile {
+                scenario: DeploymentScenario::MinimalChat,
+                features: vec!["core".to_string()],
+                estimated_binary_size: "5 MB".to_string(),
+                estimated_ram: "10 MB".to_string(),
+                cargo_command: "cargo build".to_string(),
+            },
+        };
+        let json = serde_json::to_string(&analysis).unwrap();
+        assert!(json.contains("\"active_flags\""));
+        assert!(json.contains("\"unnecessary_flags\""));
+        assert!(json.contains("\"missing_flags\""));
+    }
+
+    #[test]
+    fn test_analyze_features_empty_flags() {
+        let butler = Butler::new();
+        let report = make_report(false, false, false);
+        let analysis = butler.analyze_features(&report, &[]);
+        assert!(analysis.unnecessary_flags.is_empty());
+        assert!(analysis.active_flags.is_empty());
     }
 }

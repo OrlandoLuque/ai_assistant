@@ -523,8 +523,7 @@ body {
 <a href="#concept-2" class="nav-item" data-num="2">2. Tokens: The Atoms of Language</a>
 <a href="#concept-3" class="nav-item" data-num="3">3. The Context Window: Memory Limits</a>
 <a href="#concept-4" class="nav-item" data-num="4">4. Embeddings: Words as Numbers</a>
-<a href="#concept-5" class="nav-item" data-num="5">5. Semantic Similarity: &quot;How Close Are These Ide...</a>
-<a href="#concept-165" class="nav-item" data-num="165">165. Unified BPE Tokenizer</a></div>
+<a href="#concept-5" class="nav-item" data-num="5">5. Semantic Similarity: &quot;How Close Are These Ide...</a></div>
 </div>
 <div class="nav-category">
 <div class="nav-category-title" onclick="this.parentElement.classList.toggle('collapsed')">RAG &amp; Search<span class="chevron"></span></div>
@@ -578,9 +577,7 @@ body {
 <a href="#concept-122" class="nav-item" data-num="122">122. Multi-Backend Sandbox</a>
 <a href="#concept-123" class="nav-item" data-num="123">123. Agent Deployment Profiles</a>
 <a href="#concept-124" class="nav-item" data-num="124">124. Agent DevTools</a>
-<a href="#concept-164" class="nav-item" data-num="164">164. Butler Advisor (Optimization Guidance)</a>
-<a href="#concept-168" class="nav-item" data-num="168">168. MCP Configuration &amp; Evaluation Tools</a>
-<a href="#concept-170" class="nav-item" data-num="170">170. Routing DAG &amp; Bandit State Merging</a></div>
+<a href="#concept-164" class="nav-item" data-num="164">164. Butler Advisor (Optimization Guidance)</a></div>
 </div>
 <div class="nav-category">
 <div class="nav-category-title" onclick="this.parentElement.classList.toggle('collapsed')">Quality &amp; Safety<span class="chevron"></span></div>
@@ -596,8 +593,7 @@ body {
 <a href="#concept-103" class="nav-item" data-num="103">103. Confidence-Based Escalation</a>
 <a href="#concept-114" class="nav-item" data-num="114">114. Red Teaming</a>
 <a href="#concept-115" class="nav-item" data-num="115">115. Natural Language Guards</a>
-<a href="#concept-129" class="nav-item" data-num="129">129. Output Guardrails</a>
-<a href="#concept-166" class="nav-item" data-num="166">166. Emoticon &amp; Emoji Detection</a></div>
+<a href="#concept-129" class="nav-item" data-num="129">129. Output Guardrails</a></div>
 </div>
 <div class="nav-category">
 <div class="nav-category-title" onclick="this.parentElement.classList.toggle('collapsed')">Memory &amp; Knowledge<span class="chevron"></span></div>
@@ -658,8 +654,7 @@ body {
 <a href="#concept-36" class="nav-item" data-num="36">36. Distributed Computing: Beyond a Single Machine</a>
 <a href="#concept-40" class="nav-item" data-num="40">40. P2P Networking: Peer-to-Peer Without Servers</a>
 <a href="#concept-42" class="nav-item" data-num="42">42. Document Parsing: Reading Any Format</a>
-<a href="#concept-43" class="nav-item" data-num="43">43. Web Crawling and Feeds: Gathering Information</a>
-<a href="#concept-169" class="nav-item" data-num="169">169. OpenAI-Compatible API &amp; Enrichment Pipeline</a></div>
+<a href="#concept-43" class="nav-item" data-num="43">43. Web Crawling and Feeds: Gathering Information</a></div>
 </div>
 <div class="nav-category">
 <div class="nav-category-title" onclick="this.parentElement.classList.toggle('collapsed')">Media<span class="chevron"></span></div>
@@ -706,8 +701,7 @@ body {
 <a href="#concept-105" class="nav-item" data-num="105">105. Reasoning Trace</a>
 <a href="#concept-106" class="nav-item" data-num="106">106. LLM-as-Judge (v2)</a>
 <a href="#concept-142" class="nav-item" data-num="142">142. Module Splitting</a>
-<a href="#concept-149" class="nav-item" data-num="149">149. Dead Code Hygiene</a>
-<a href="#concept-167" class="nav-item" data-num="167">167. Benchmark Suite Ecosystem</a></div>
+<a href="#concept-149" class="nav-item" data-num="149">149. Dead Code Hygiene</a></div>
 </div>
 <div class="nav-category">
 <div class="nav-category-title" onclick="this.parentElement.classList.toggle('collapsed')">Misc<span class="chevron"></span></div>
@@ -4204,129 +4198,6 @@ DFA:  D0{S0} ──[Domain(&quot;code&quot;)]──→ D1{S1,S2} (accept: &quot;
 <p><strong>Priority levels</strong>: Each recommendation carries a <code>RecommendationPriority</code> (Critical, High, Medium, Low). The <code>AdvisorReport</code> provides filtering methods: <code>pending()</code> for not-yet-enabled items, <code>by_category()</code> for dimension-specific guidance, and <code>by_min_priority()</code> for urgency-based triage.</p>
 </div>
 <div class="related-concepts"><strong>Related:</strong> <a href="#concept-37" class="related-link">37. Autonomous Agents</a>, <a href="#concept-53" class="related-link">53. Environment Detection (Butler)</a>, <a href="#concept-150" class="related-link">150. Multi-Armed Bandit Routing</a>, <a href="#concept-6" class="related-link">6. RAG</a></div>
-<a href="#top" class="back-to-top">Back to top</a>
-</article>
-
-<article class="concept-card" id="concept-165" data-num="165" data-title="Unified BPE Tokenizer" data-category="Core AI">
-<div class="card-header">
-<h3><span class="concept-num">165</span>Unified BPE Tokenizer</h3>
-<div class="card-badges"><span class="badge badge-cat">Core AI</span><span class="badge flag-feature">full</span></div>
-</div>
-<div class="card-body"><p><strong>The fundamental idea</strong>: Different LLM families use different tokenization schemes (GPT&rsquo;s tiktoken, Claude&rsquo;s SentencePiece-derived BPE, Gemini&rsquo;s SentencePiece, Mistral/DeepSeek variants). The <code>UnifiedBpeTokenizer</code> provides model-aware tokenization behind a single API &mdash; you can count tokens, split text, and estimate costs without making an API call.</p>
-<p><strong>How it works</strong>:</p>
-<ul>
-<li><strong>Model registry</strong> &mdash; maps model IDs (gpt-4o, claude-3-opus, gemini-1.5-pro, etc.) to their tokenizer configuration (vocabulary, merge rules, special tokens)</li>
-<li><strong>Byte Pair Encoding</strong> &mdash; iteratively merges the most frequent byte pairs using the model&rsquo;s merge table, producing token IDs identical to the provider&rsquo;s own tokenizer</li>
-<li><strong>Token counting</strong> &mdash; <code>count_tokens(model, text) -&gt; usize</code> gives exact counts for context window management, cost estimation, and chunking decisions</li>
-<li><strong>Fallback heuristic</strong> &mdash; for unknown models, estimates ~4 characters per token (widely accepted approximation)</li>
-</ul>
-<p><strong>Why it matters</strong>: Context window management, cost budgeting, and intelligent chunking all depend on accurate token counts. Without a local tokenizer, you either over-estimate (waste context) or under-estimate (get truncated).</p>
-</div>
-<div class="related-concepts"><strong>Related:</strong> <a href="#concept-2" class="related-link">2. Tokens</a>, <a href="#concept-3" class="related-link">3. Context Window</a>, <a href="#concept-8" class="related-link">8. Chunking</a></div>
-<a href="#top" class="back-to-top">Back to top</a>
-</article>
-
-<article class="concept-card" id="concept-166" data-num="166" data-title="Emoticon &amp; Emoji Detection" data-category="Quality &amp; Safety">
-<div class="card-header">
-<h3><span class="concept-num">166</span>Emoticon &amp; Emoji Detection</h3>
-<div class="card-badges"><span class="badge badge-cat">Quality &amp; Safety</span><span class="badge flag-feature">full</span></div>
-</div>
-<div class="card-body"><p><strong>The fundamental idea</strong>: Emoticons (:) ;-P &lt;3) and emoji (&#x1f600; &#x1f525; &#x2764;&#xfe0f;) carry sentiment signal that text analysis alone may miss. The crate detects both ASCII emoticons via pattern matching and Unicode emoji via category detection, extracting sentiment polarity (+1 positive, -1 negative, 0 neutral) for use in guardrails, analytics, and conversation tone analysis.</p>
-<p><strong>How it works</strong>:</p>
-<ul>
-<li><strong>ASCII emoticon patterns</strong> &mdash; regex-based detection of standard emoticons (:), :(, ;-), :D, :P, &lt;3, etc.) with a curated sentiment map</li>
-<li><strong>Unicode emoji</strong> &mdash; identifies emoji by Unicode General Category (So = Symbol, other) and specific code point ranges (U+1F600&ndash;U+1F64F, U+1F300&ndash;U+1F5FF, U+2600&ndash;U+26FF, etc.)</li>
-<li><strong>Sentiment aggregation</strong> &mdash; combines detected emoticons/emoji into an overall sentiment score for the message</li>
-<li><strong>Guardrail integration</strong> &mdash; the guardrail pipeline can use emoticon density and sentiment as signals (e.g., high negative emoticon density may indicate toxic intent)</li>
-</ul>
-</div>
-<div class="related-concepts"><strong>Related:</strong> <a href="#concept-53" class="related-link">53. Guardrail Pipelines</a>, <a href="#concept-67" class="related-link">67. Streaming Guardrails</a>, <a href="#concept-129" class="related-link">129. Output Guardrails</a></div>
-<a href="#top" class="back-to-top">Back to top</a>
-</article>
-
-<article class="concept-card" id="concept-167" data-num="167" data-title="Benchmark Suite Ecosystem" data-category="Code Quality">
-<div class="card-header">
-<h3><span class="concept-num">167</span>Benchmark Suite Ecosystem</h3>
-<div class="card-badges"><span class="badge badge-cat">Code Quality</span><span class="badge flag-feature">eval-suite</span></div>
-</div>
-<div class="card-body"><p><strong>The fundamental idea</strong>: A single evaluation metric is never enough. The <code>eval-suite</code> feature provides a benchmark runner that supports multiple standardized benchmark formats &mdash; LiveCodeBench, AiderPolyglot, TerminalBench, APPS, CodeContests &mdash; plus custom benchmarks. It enables multi-model comparison, ablation studies, subtask analysis, and automated report generation.</p>
-<p><strong>How it works</strong>:</p>
-<ul>
-<li><strong>Benchmark runner</strong> &mdash; loads benchmark definitions (JSON/YAML), runs them against one or more models, collects results with timing and token usage</li>
-<li><strong>Multi-model comparison</strong> &mdash; run the same suite across GPT-4o, Claude, Gemini, local models, and compare scores, latency, and cost side-by-side</li>
-<li><strong>Ablation studies</strong> &mdash; systematically enable/disable features (RAG, guardrails, chain-of-thought) to measure their individual impact</li>
-<li><strong>Subtask analysis</strong> &mdash; breaks down results by subtask category (coding, reasoning, factual, creative) to identify model strengths/weaknesses</li>
-<li><strong>Report generation</strong> &mdash; produces structured JSON and human-readable reports with pass rates, score distributions, and statistical significance</li>
-</ul>
-</div>
-<div class="related-concepts"><strong>Related:</strong> <a href="#concept-52" class="related-link">52. LLM-as-Judge</a>, <a href="#concept-66" class="related-link">66. Online Evaluation</a>, <a href="#concept-106" class="related-link">106. LLM-as-Judge (v2)</a></div>
-<a href="#top" class="back-to-top">Back to top</a>
-</article>
-
-<article class="concept-card" id="concept-168" data-num="168" data-title="MCP Configuration &amp; Evaluation Tools" data-category="Agents &amp; Tools">
-<div class="card-header">
-<h3><span class="concept-num">168</span>MCP Configuration &amp; Evaluation Tools</h3>
-<div class="card-badges"><span class="badge badge-cat">Agents &amp; Tools</span><span class="badge flag-feature">full</span></div>
-</div>
-<div class="card-body"><p><strong>The fundamental idea</strong>: The Model Context Protocol (MCP) defines a standard way for AI tools to expose capabilities. The crate provides 12 built-in MCP tools split into two categories: 6 configuration tools for runtime management and 6 evaluation tools for quality assessment.</p>
-<p><strong>Configuration tools</strong> (runtime management):</p>
-<ul>
-<li><code>config_get</code> / <code>config_set</code> &mdash; read and modify assistant configuration at runtime</li>
-<li><code>config_search_engine</code> &mdash; configure web search backends (Brave, DuckDuckGo, Serper, Tavily)</li>
-<li><code>model_select</code> &mdash; switch the active model at runtime</li>
-<li><code>provider_list</code> / <code>provider_status</code> &mdash; enumerate and check health of configured LLM providers</li>
-</ul>
-<p><strong>Evaluation tools</strong> (quality assessment):</p>
-<ul>
-<li><code>eval_benchmark</code> &mdash; run a benchmark suite and return results</li>
-<li><code>eval_compare</code> &mdash; compare two model responses head-to-head</li>
-<li><code>eval_judge</code> &mdash; LLM-as-judge scoring for a single response</li>
-<li><code>eval_ablation</code> &mdash; run ablation study across feature combinations</li>
-<li><code>eval_subtask</code> &mdash; analyze performance by subtask category</li>
-<li><code>eval_report</code> &mdash; generate a comprehensive evaluation report</li>
-</ul>
-</div>
-<div class="related-concepts"><strong>Related:</strong> <a href="#concept-79" class="related-link">79. MCP v2 Streamable HTTP</a>, <a href="#concept-95" class="related-link">95. MCP Elicitation</a>, <a href="#concept-167" class="related-link">167. Benchmark Suite Ecosystem</a></div>
-<a href="#top" class="back-to-top">Back to top</a>
-</article>
-
-<article class="concept-card" id="concept-169" data-num="169" data-title="OpenAI-Compatible API &amp; Enrichment Pipeline" data-category="Infrastructure">
-<div class="card-header">
-<h3><span class="concept-num">169</span>OpenAI-Compatible API &amp; Enrichment Pipeline</h3>
-<div class="card-badges"><span class="badge badge-cat">Infrastructure</span><span class="badge flag-feature">server-axum</span></div>
-</div>
-<div class="card-body"><p><strong>The fundamental idea</strong>: Any application already using the OpenAI API can switch to ai_assistant as a drop-in backend by pointing to its <code>/v1/chat/completions</code> and <code>/v1/models</code> endpoints. Requests pass through a configurable enrichment pipeline before reaching the LLM.</p>
-<p><strong>The enrichment pipeline</strong> (7 sub-configs, 52 configurable fields):</p>
-<ul>
-<li><strong>System prompt injection</strong> &mdash; prepend custom system instructions to every request</li>
-<li><strong>RAG augmentation</strong> &mdash; auto-retrieve relevant context from vector DBs and inject into the prompt</li>
-<li><strong>Guardrail pre-check</strong> &mdash; run input through PII detection, toxicity filters, prompt injection detection before forwarding</li>
-<li><strong>Model routing</strong> &mdash; select the optimal model based on query complexity, cost budget, or bandit-based routing</li>
-<li><strong>Token budget enforcement</strong> &mdash; trim context to fit within the target model&rsquo;s window, with configurable priority</li>
-<li><strong>Output guardrails</strong> &mdash; post-process the response for PII scrubbing, format validation, safety filtering</li>
-<li><strong>Telemetry</strong> &mdash; log request/response to OpenTelemetry with cost attribution and latency tracking</li>
-</ul>
-<p><strong>Deployment</strong>: Available in the axum-based server (<code>server-axum</code> feature). Supports SSE streaming, WebSocket, and standard request/response modes.</p>
-</div>
-<div class="related-concepts"><strong>Related:</strong> <a href="#concept-53" class="related-link">53. Guardrail Pipelines</a>, <a href="#concept-6" class="related-link">6. RAG</a>, <a href="#concept-150" class="related-link">150. Multi-Armed Bandit Routing</a></div>
-<a href="#top" class="back-to-top">Back to top</a>
-</article>
-
-<article class="concept-card" id="concept-170" data-num="170" data-title="Routing DAG &amp; Bandit State Merging" data-category="Agents &amp; Tools">
-<div class="card-header">
-<h3><span class="concept-num">170</span>Routing DAG &amp; Bandit State Merging</h3>
-<div class="card-badges"><span class="badge badge-cat">Agents &amp; Tools</span><span class="badge flag-feature">full</span></div>
-</div>
-<div class="card-body"><p><strong>The fundamental idea</strong>: Complex routing decisions often require multiple criteria evaluated in sequence &mdash; first check cost budget, then evaluate complexity, then apply bandit-based model selection. The <code>RoutingDag</code> composes individual routing strategies into a directed acyclic graph where each node is a routing decision and edges represent fallback or override paths.</p>
-<p><strong>How it works</strong>:</p>
-<ul>
-<li><strong>DAG nodes</strong> &mdash; each node wraps a routing strategy (cost-based, complexity-based, bandit, regex, manual override) and produces a model selection or &ldquo;defer to next node&rdquo;</li>
-<li><strong>Edge semantics</strong> &mdash; <code>fallback</code> (try next if current has no opinion), <code>override</code> (always apply this node&rsquo;s result), <code>conditional</code> (follow edge only if predicate matches)</li>
-<li><strong>Bandit state merging</strong> &mdash; in distributed deployments, each node runs its own multi-armed bandit. The <code>BanditStateMerger</code> periodically synchronizes bandit statistics across the cluster using CRDT-based counters, so all nodes converge on the same routing probabilities without central coordination</li>
-<li><strong>Per-subtask routing</strong> &mdash; different subtask categories (coding, reasoning, creative, factual) can have independent routing DAGs, allowing specialized model assignment per task type</li>
-</ul>
-</div>
-<div class="related-concepts"><strong>Related:</strong> <a href="#concept-150" class="related-link">150. Multi-Armed Bandit Routing</a>, <a href="#concept-36" class="related-link">36. Distributed Computing</a>, <a href="#concept-164" class="related-link">164. Butler Advisor</a></div>
 <a href="#top" class="back-to-top">Back to top</a>
 </article>
 

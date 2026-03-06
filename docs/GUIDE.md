@@ -8378,3 +8378,89 @@ let config = ServerConfig {
 | `thinking` | Pre-generation | Adjusts reasoning depth and chain-of-thought |
 
 **Feature flags**: `full`
+
+---
+
+## Section 56: Microservice Deployment with axum (v30)
+
+### Standalone Server
+
+The simplest deployment: a single binary that combines the HTTP API, optional REPL, and Butler auto-configuration.
+
+```bash
+# Build
+cargo build --release --features "full,server-axum" --bin ai_assistant_standalone
+
+# Run
+./target/release/ai_assistant_standalone --port 8090
+
+# With REPL
+./target/release/ai_assistant_standalone --port 8090 --repl
+
+# Auto-detect environment
+./target/release/ai_assistant_standalone --auto-config
+```
+
+### Cluster Mode
+
+For horizontal scaling, deploy multiple nodes connected via QUIC mesh with CRDT-based state synchronization.
+
+```bash
+# Build cluster node
+cargo build --release --features "full,server-cluster" --bin ai_cluster_node
+
+# Start seed node
+./target/release/ai_cluster_node --node-id node1 --port 8091 --quic-port 9091
+
+# Join cluster
+./target/release/ai_cluster_node --node-id node2 --port 8092 --quic-port 9092 \
+  --bootstrap-peers "127.0.0.1:9091" --join-token "cluster-secret"
+```
+
+### Docker Compose Cluster
+
+```bash
+# 3-node cluster
+docker compose up
+
+# With Redis backend
+docker compose --profile redis up
+
+# With pgvector
+docker compose --profile pgvector up
+
+# All services
+docker compose --profile redis --profile pgvector up
+```
+
+### API Proxy / Gateway
+
+For routing traffic to multiple backend nodes:
+
+```bash
+cargo build --release --features "server-axum" --bin ai_proxy
+
+./target/release/ai_proxy --port 8080 \
+  --backends "127.0.0.1:8091,127.0.0.1:8092,127.0.0.1:8093"
+```
+
+### Redis Backend Configuration
+
+Alternative to CRDT-based synchronization when Redis is already deployed:
+
+```bash
+cargo build --release --features "full,server-axum,redis-backend"
+```
+
+### Swagger UI
+
+Enable interactive API documentation:
+
+```bash
+cargo build --release --features "full,server-axum,server-openapi"
+# Visit http://localhost:8090/swagger-ui
+```
+
+### pgvector Setup
+
+See `docs/PGVECTOR_SETUP.md` for detailed installation instructions (Docker, Linux, macOS, Windows).

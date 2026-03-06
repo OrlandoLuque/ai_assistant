@@ -208,6 +208,25 @@ eval-suite = ["eval"]
 # Not in 'full' by default — heavy native C++ dep. Opt-in: --features whisper-local
 whisper-local = ["dep:whisper-rs", "audio"]
 
+# === Microservice Features (v30) ===
+
+# axum-based HTTP server: production-ready async, HTTP/2, native WS/SSE, tower middleware
+# Not in 'full' — opt-in. Replaces std::net::TcpListener server with axum framework.
+server-axum = ["dep:axum", "dep:axum-extra", "dep:tower", "dep:tower-http", "dep:dashmap", "dep:tokio", "dep:async-stream", "dep:futures-core", "dep:reqwest"]
+
+# axum TLS (HTTPS via rustls, separate from server-tls which is for the std server)
+server-axum-tls = ["server-axum", "dep:axum-server", "dep:rustls", "dep:rustls-pemfile"]
+
+# Server cluster mode: distributed state via CRDTs, CRDT sync, session affinity, health checks
+# Wires existing distributed infrastructure (NetworkNode, CRDTs, DHT) into the axum server.
+server-cluster = ["server-axum", "distributed-network"]
+
+# OpenAPI/Swagger UI via utoipa: auto-generated API docs served at /swagger-ui
+server-openapi = ["server-axum", "dep:utoipa", "dep:utoipa-swagger-ui"]
+
+# Redis backend: alternative to CRDT sync for rate limiting, sessions, caching
+redis-backend = ["dep:redis"]
+
 [dependencies]
 anyhow = "1"
 log = "0.4"
@@ -235,7 +254,7 @@ aes-gcm = { version = "0.10", optional = true }
 # Optional bincode for binary internal storage (faster than JSON)
 bincode = { version = "1", optional = true }
 # Optional async runtime for async HTTP operations
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"], optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "signal"], optional = true }
 # Optional reqwest for async HTTP client (also supports blocking)
 reqwest = { version = "0.12", features = ["json", "blocking", "stream"], optional = true }
 # Optional rayon for parallel MapReduce execution
@@ -269,6 +288,30 @@ bollard = { version = "0.18", optional = true, default-features = false, feature
 # Optional whisper.cpp bindings for local STT (heavy native dep, links to C++)
 whisper-rs = { version = "0.15", optional = true }
 
+# === Microservice dependencies (v30) ===
+# axum web framework (production-ready async HTTP server)
+axum = { version = "0.8", optional = true, features = ["ws", "json", "macros"] }
+# axum extra utilities (typed headers, cookie support)
+axum-extra = { version = "0.12", optional = true, features = ["typed-header"] }
+# Tower service abstraction (middleware composition)
+tower = { version = "0.5", optional = true, features = ["full"] }
+# Tower HTTP middleware (CORS, compression, request ID, rate limiting, body limits)
+tower-http = { version = "0.6", optional = true, features = ["cors", "compression-gzip", "limit", "request-id", "trace", "timeout"] }
+# DashMap concurrent HashMap (lock-free per-shard access for sessions, rate limits)
+dashmap = { version = "6", optional = true }
+# axum TLS server (HTTPS via rustls)
+axum-server = { version = "0.8", optional = true, features = ["tls-rustls"] }
+# OpenAPI documentation generation from code annotations
+utoipa = { version = "5", optional = true, features = ["axum_extras"] }
+# Swagger UI for interactive API documentation
+utoipa-swagger-ui = { version = "9", optional = true, features = ["axum"] }
+# Redis client (async with tokio, connection pooling)
+redis = { version = "1", optional = true, features = ["tokio-comp", "connection-manager"] }
+# Async stream combinators for SSE responses
+async-stream = { version = "0.3", optional = true }
+# Futures core traits (Stream trait for SSE)
+futures-core = { version = "0.3", optional = true }
+
 [[bin]]
 name = "ai_assistant_server"
 path = "src/bin/ai_assistant_server.rs"
@@ -286,6 +329,21 @@ required-features = ["rag"]
 [[bin]]
 name = "ai_assistant_cli"
 path = "src/bin/ai_assistant_cli.rs"
+
+[[bin]]
+name = "ai_assistant_standalone"
+path = "src/bin/ai_assistant_standalone.rs"
+required-features = ["full", "server-axum"]
+
+[[bin]]
+name = "ai_cluster_node"
+path = "src/bin/ai_cluster_node.rs"
+required-features = ["full", "server-cluster"]
+
+[[bin]]
+name = "ai_proxy"
+path = "src/bin/ai_proxy.rs"
+required-features = ["server-axum"]
 
 [[example]]
 name = "autonomous_agent"

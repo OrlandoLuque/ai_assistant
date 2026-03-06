@@ -63,6 +63,11 @@
 //! | `integrity-check` | Binary integrity verification at startup |
 //! | `wasm` | WebAssembly support (web-sys/js-sys) |
 //! | `egui-widgets` | Pre-built egui widgets for chat UI |
+//! | `server-axum` | Production axum server (HTTP/2, WS, SSE, tower) |
+//! | `server-axum-tls` | HTTPS for the axum server (rustls) |
+//! | `server-cluster` | Distributed cluster (CRDTs, QUIC mesh, health) |
+//! | `server-openapi` | Swagger UI / OpenAPI at `/swagger-ui` |
+//! | `redis-backend` | Redis for rate limiting, sessions, caching |
 //!
 //! # Example
 //!
@@ -189,6 +194,12 @@ pub mod request_queue;
 pub mod retry;
 pub mod search;
 pub mod server;
+#[cfg(feature = "server-axum")]
+pub mod server_axum;
+#[cfg(feature = "server-cluster")]
+pub mod cluster;
+#[cfg(feature = "redis-backend")]
+pub mod redis_backend;
 pub mod streaming;
 pub mod structured;
 pub mod templates;

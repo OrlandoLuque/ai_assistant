@@ -1,0 +1,115 @@
+# docker-compose.yml — 3-node AI Assistant cluster with optional services
+#
+# Usage:
+#   docker compose up                          # 3-node cluster
+#   docker compose --profile redis up          # cluster + Redis
+#   docker compose --profile pgvector up       # cluster + pgvector
+#   docker compose --profile redis --profile pgvector up  # all services
+#
+# Build with custom features:
+#   FEATURES="full,server-axum,server-cluster" docker compose build
+
+x-node-common: &node-common
+  build:
+    context: .
+    args:
+      FEATURES: "${FEATURES:-full,server-axum}"
+      BINARY: ai_assistant_server
+  restart: unless-stopped
+  environment:
+    RUST_LOG: "${RUST_LOG:-info}"
+  networks:
+    - ai-cluster
+  healthcheck:
+    test: ["CMD", "curl", "-sf", "http://localhost:8090/health"]
+    interval: 15s
+    timeout: 5s
+    start_period: 10s
+    retries: 3
+
+services:
+  # ========================================================================
+  # AI Assistant Cluster Nodes
+  # ========================================================================
+
+  node1:
+    <<: *node-common
+    container_name: ai-node-1
+    hostname: node1
+    ports:
+      - "8091:8090"
+    command: ["--host", "0.0.0.0", "--port", "8090"]
+
+  node2:
+    <<: *node-common
+    container_name: ai-node-2
+    hostname: node2
+    ports:
+      - "8092:8090"
+    command: ["--host", "0.0.0.0", "--port", "8090"]
+    depends_on:
+      node1:
+        condition: service_healthy
+
+  node3:
+    <<: *node-common
+    container_name: ai-node-3
+    hostname: node3
+    ports:
+      - "8093:8090"
+    command: ["--host", "0.0.0.0", "--port", "8090"]
+    depends_on:
+      node1:
+        condition: service_healthy
+
+  # ========================================================================
+  # Optional: Redis (for redis-backend feature)
+  # ========================================================================
+
+  redis:
+    image: redis:7-alpine
+    container_name: ai-redis
+    profiles: ["redis"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - ai-cluster
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # ========================================================================
+  # Optional: pgvector (for vector DB backend)
+  # ========================================================================
+
+  pgvector:
+    image: pgvector/pgvector:pg16
+    container_name: ai-pgvector
+    profiles: ["pgvector"]
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ai_assistant
+      POSTGRES_PASSWORD: ai_assistant_dev
+      POSTGRES_DB: ai_vectors
+    volumes:
+      - pgvector-data:/var/lib/postgresql/data
+    networks:
+      - ai-cluster
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ai_assistant -d ai_vectors"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+networks:
+  ai-cluster:
+    driver: bridge
+
+volumes:
+  redis-data:
+  pgvector-data:
