@@ -26,6 +26,13 @@ use ai_assistant::AiResponse;
 use ai_assistant::server::{AuthConfig, ServerConfig, TlsConfig};
 use ai_assistant::server_axum::AxumServer;
 
+// Docker handle type — conditional on feature
+#[cfg(feature = "containers")]
+type DockerHandle = Option<std::sync::Arc<std::sync::RwLock<ai_assistant::ContainerExecutor>>>;
+
+#[cfg(not(feature = "containers"))]
+type DockerHandle = ();
+
 // ============================================================================
 // CLI argument types
 // ============================================================================
@@ -41,6 +48,7 @@ struct CliArgs {
     repl: bool,
     auto_config: bool,
     dry_run: bool,
+    containers: bool,
     help: bool,
 }
 
@@ -132,6 +140,35 @@ fn main() -> ExitCode {
     eprintln!("AI Assistant Standalone v{}", env!("CARGO_PKG_VERSION"));
     eprintln!("Server: http://{}", addr);
 
+    // Docker executor (if --containers flag is set)
+    #[cfg(feature = "containers")]
+    let docker_handle: DockerHandle = if cli.containers {
+        match ai_assistant::ContainerExecutor::is_docker_available() {
+            true => {
+                let config = ai_assistant::ContainerConfig::default();
+                match ai_assistant::ContainerExecutor::new(config) {
+                    Ok(exec) => {
+                        eprintln!("[docker] Docker daemon available. /docker commands enabled.");
+                        Some(std::sync::Arc::new(std::sync::RwLock::new(exec)))
+                    }
+                    Err(e) => {
+                        eprintln!("[docker] WARNING: Failed to init executor: {}", e);
+                        None
+                    }
+                }
+            }
+            false => {
+                eprintln!("[docker] WARNING: Docker not available. /docker commands will fail.");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    #[cfg(not(feature = "containers"))]
+    let docker_handle: DockerHandle = ();
+
     if cli.repl {
         eprintln!("REPL: enabled (type messages on stdin, Ctrl+C to quit)");
 
@@ -144,7 +181,7 @@ fn main() -> ExitCode {
         });
 
         // Simple REPL: read from stdin, send to assistant
-        run_repl(state, &rt);
+        run_repl(state, &rt, &docker_handle);
     } else {
         rt.block_on(async {
             if let Err(e) = server.run().await {
@@ -159,7 +196,11 @@ fn main() -> ExitCode {
 }
 
 /// Simple interactive REPL: read lines from stdin, send to assistant, print responses.
-fn run_repl(state: ai_assistant::server_axum::AppState, rt: &tokio::runtime::Runtime) {
+fn run_repl(
+    state: ai_assistant::server_axum::AppState,
+    rt: &tokio::runtime::Runtime,
+    _docker: &DockerHandle,
+) {
     use std::io::{self, BufRead, Write};
 
     let stdin = io::stdin();
@@ -179,6 +220,26 @@ fn run_repl(state: ai_assistant::server_axum::AppState, rt: &tokio::runtime::Run
         }
         if trimmed == "quit" || trimmed == "exit" {
             break;
+        }
+
+        // Docker commands
+        if trimmed.starts_with("/docker") {
+            #[cfg(feature = "containers")]
+            {
+                if let Some(ref exec) = _docker {
+                    let output = handle_docker_command(&trimmed, exec);
+                    println!("{}", output);
+                } else {
+                    eprintln!("Docker not available. Start with --containers and ensure Docker is running.");
+                }
+            }
+            #[cfg(not(feature = "containers"))]
+            {
+                eprintln!("Docker requires --features containers");
+            }
+            print!("> ");
+            let _ = stdout.flush();
+            continue;
         }
 
         // Send message via the assistant
@@ -217,6 +278,235 @@ fn run_repl(state: ai_assistant::server_axum::AppState, rt: &tokio::runtime::Run
 
         print!("> ");
         let _ = stdout.flush();
+    }
+}
+
+// =============================================================================
+// Docker REPL command handler
+// =============================================================================
+
+#[cfg(feature = "containers")]
+fn handle_docker_command(
+    input: &str,
+    executor: &std::sync::Arc<std::sync::RwLock<ai_assistant::ContainerExecutor>>,
+) -> String {
+    let parts: Vec<&str> = input.split_whitespace().collect();
+    let subcmd = parts.get(1).copied().unwrap_or("help");
+
+    match subcmd {
+        "list" | "ls" => {
+            let guard = match executor.read() {
+                Ok(g) => g,
+                Err(e) => return format!("Error: lock poisoned: {}", e),
+            };
+            let containers = guard.list();
+            if containers.is_empty() {
+                return "No managed containers.".to_string();
+            }
+            let mut out = format!("{:<16} {:<20} {:<25} {:<10}\n", "ID", "NAME", "IMAGE", "STATUS");
+            out.push_str(&"-".repeat(71));
+            out.push('\n');
+            for r in containers {
+                let short_id = if r.container_id.len() > 12 {
+                    &r.container_id[..12]
+                } else {
+                    &r.container_id
+                };
+                out.push_str(&format!(
+                    "{:<16} {:<20} {:<25} {:<10}\n",
+                    short_id, r.name, r.image, r.status,
+                ));
+            }
+            out
+        }
+
+        "create" => {
+            let image = match parts.get(2) {
+                Some(img) => *img,
+                None => return "Usage: /docker create <image> [--name NAME] [--cmd CMD...]".to_string(),
+            };
+            let mut name = "mcp_container".to_string();
+            let mut cmd: Option<Vec<String>> = None;
+            let mut i = 3;
+            while i < parts.len() {
+                match parts[i] {
+                    "--name" => {
+                        if let Some(n) = parts.get(i + 1) {
+                            name = n.to_string();
+                            i += 2;
+                        } else {
+                            return "--name requires a value".to_string();
+                        }
+                    }
+                    "--cmd" => {
+                        cmd = Some(parts[i + 1..].iter().map(|s| s.to_string()).collect());
+                        break;
+                    }
+                    _ => { i += 1; }
+                }
+            }
+            let opts = ai_assistant::CreateOptions {
+                cmd,
+                ..Default::default()
+            };
+            let mut guard = match executor.write() {
+                Ok(g) => g,
+                Err(e) => return format!("Error: lock poisoned: {}", e),
+            };
+            match guard.create(image, &name, opts) {
+                Ok(id) => format!("Created container {} (image: {}, name: {})", &id[..12.min(id.len())], image, name),
+                Err(e) => format!("Error: {}", e),
+            }
+        }
+
+        "start" => {
+            let id = match parts.get(2) {
+                Some(id) => *id,
+                None => return "Usage: /docker start <container_id>".to_string(),
+            };
+            let mut guard = match executor.write() {
+                Ok(g) => g,
+                Err(e) => return format!("Error: lock poisoned: {}", e),
+            };
+            match guard.start(id) {
+                Ok(()) => format!("Started container {}", id),
+                Err(e) => format!("Error: {}", e),
+            }
+        }
+
+        "stop" => {
+            let id = match parts.get(2) {
+                Some(id) => *id,
+                None => return "Usage: /docker stop <container_id> [--timeout N]".to_string(),
+            };
+            let mut timeout: u32 = 10;
+            if parts.get(3).copied() == Some("--timeout") {
+                if let Some(t) = parts.get(4).and_then(|s| s.parse().ok()) {
+                    timeout = t;
+                }
+            }
+            let mut guard = match executor.write() {
+                Ok(g) => g,
+                Err(e) => return format!("Error: lock poisoned: {}", e),
+            };
+            match guard.stop(id, timeout) {
+                Ok(()) => format!("Stopped container {}", id),
+                Err(e) => format!("Error: {}", e),
+            }
+        }
+
+        "rm" | "remove" => {
+            let id = match parts.get(2) {
+                Some(id) => *id,
+                None => return "Usage: /docker rm <container_id> [--force]".to_string(),
+            };
+            let force = parts.iter().any(|p| *p == "--force");
+            let mut guard = match executor.write() {
+                Ok(g) => g,
+                Err(e) => return format!("Error: lock poisoned: {}", e),
+            };
+            match guard.remove(id, force) {
+                Ok(()) => format!("Removed container {}", id),
+                Err(e) => format!("Error: {}", e),
+            }
+        }
+
+        "exec" => {
+            if parts.len() < 4 {
+                return "Usage: /docker exec <container_id> <command...>".to_string();
+            }
+            let id = parts[2];
+            let cmd: Vec<&str> = parts[3..].to_vec();
+            let guard = match executor.read() {
+                Ok(g) => g,
+                Err(e) => return format!("Error: lock poisoned: {}", e),
+            };
+            match guard.exec(id, &cmd, std::time::Duration::from_secs(60)) {
+                Ok(result) => {
+                    let mut out = String::new();
+                    if !result.stdout.is_empty() {
+                        out.push_str(&result.stdout);
+                    }
+                    if !result.stderr.is_empty() {
+                        if !out.is_empty() { out.push('\n'); }
+                        out.push_str("[stderr] ");
+                        out.push_str(&result.stderr);
+                    }
+                    if result.timed_out {
+                        out.push_str("\n[timed out]");
+                    }
+                    out.push_str(&format!("\n[exit code: {}]", result.exit_code));
+                    out
+                }
+                Err(e) => format!("Error: {}", e),
+            }
+        }
+
+        "logs" => {
+            let id = match parts.get(2) {
+                Some(id) => *id,
+                None => return "Usage: /docker logs <container_id> [--tail N]".to_string(),
+            };
+            let mut tail: usize = 100;
+            if parts.get(3).copied() == Some("--tail") {
+                if let Some(t) = parts.get(4).and_then(|s| s.parse().ok()) {
+                    tail = t;
+                }
+            }
+            let guard = match executor.read() {
+                Ok(g) => g,
+                Err(e) => return format!("Error: lock poisoned: {}", e),
+            };
+            match guard.logs(id, tail) {
+                Ok(logs) => {
+                    if logs.is_empty() {
+                        "(no logs)".to_string()
+                    } else {
+                        logs
+                    }
+                }
+                Err(e) => format!("Error: {}", e),
+            }
+        }
+
+        "status" => {
+            let id = match parts.get(2) {
+                Some(id) => *id,
+                None => return "Usage: /docker status <container_id>".to_string(),
+            };
+            let guard = match executor.read() {
+                Ok(g) => g,
+                Err(e) => return format!("Error: lock poisoned: {}", e),
+            };
+            match guard.status(id) {
+                Some(status) => format!("Container {}: {}", id, status),
+                None => format!("Container {} not found", id),
+            }
+        }
+
+        "cleanup" => {
+            let mut guard = match executor.write() {
+                Ok(g) => g,
+                Err(e) => return format!("Error: lock poisoned: {}", e),
+            };
+            let count = guard.cleanup_all();
+            format!("Cleaned up {} container(s)", count)
+        }
+
+        "help" | _ => {
+            "Docker commands:\n\
+             \x20 /docker list              List all containers\n\
+             \x20 /docker create <image>    Create container (--name NAME, --cmd CMD...)\n\
+             \x20 /docker start <id>        Start a container\n\
+             \x20 /docker stop <id>         Stop a container (--timeout N)\n\
+             \x20 /docker rm <id>           Remove a container (--force)\n\
+             \x20 /docker exec <id> <cmd>   Execute command in container\n\
+             \x20 /docker logs <id>         Show container logs (--tail N)\n\
+             \x20 /docker status <id>       Show container status\n\
+             \x20 /docker cleanup           Remove all managed containers\n\
+             \x20 /docker help              Show this help"
+                .to_string()
+        }
     }
 }
 
@@ -279,6 +569,7 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
         repl: false,
         auto_config: false,
         dry_run: false,
+        containers: false,
         help: false,
     };
 
@@ -298,6 +589,7 @@ fn parse_args(args: &[String]) -> Result<CliArgs, String> {
             "--repl" => cli.repl = true,
             "--auto-config" => cli.auto_config = true,
             "--dry-run" => cli.dry_run = true,
+            "--containers" => cli.containers = true,
             "-h" | "--help" => cli.help = true,
             other => return Err(format!("Unknown argument: '{}'", other)),
         }
@@ -324,6 +616,7 @@ fn print_usage() {
     eprintln!("  --tls-key <PATH>   PEM private key file (requires --tls-cert)");
     eprintln!("  --repl             Enable interactive REPL on stdin");
     eprintln!("  --auto-config      Run Butler environment scan and auto-configure");
+    eprintln!("  --containers       Enable Docker container commands (/docker)");
     eprintln!("  --dry-run          Print resolved config and exit");
     eprintln!("  -h, --help         Print this help message");
 }
@@ -365,13 +658,22 @@ mod tests {
 
     #[test]
     fn test_parse_args_all() {
-        let a = args(&["--host", "0.0.0.0", "--port", "3000", "--repl", "--auto-config", "--dry-run"]);
+        let a = args(&["--host", "0.0.0.0", "--port", "3000", "--repl", "--auto-config", "--dry-run", "--containers"]);
         let cli = parse_args(&a).unwrap();
         assert_eq!(cli.host.as_deref(), Some("0.0.0.0"));
         assert_eq!(cli.port, Some(3000));
         assert!(cli.repl);
         assert!(cli.auto_config);
         assert!(cli.dry_run);
+        assert!(cli.containers);
+    }
+
+    #[test]
+    fn test_parse_args_containers() {
+        let a = args(&["--containers", "--repl"]);
+        let cli = parse_args(&a).unwrap();
+        assert!(cli.containers);
+        assert!(cli.repl);
     }
 
     #[test]
@@ -392,7 +694,7 @@ mod tests {
         let cli = CliArgs {
             host: None, port: None, config_path: None, api_key: None,
             tls_cert: None, tls_key: None, repl: false, auto_config: false,
-            dry_run: false, help: false,
+            dry_run: false, containers: false, help: false,
         };
         let config = build_config(&cli).unwrap();
         assert_eq!(config.host, "127.0.0.1");
@@ -405,7 +707,7 @@ mod tests {
             host: Some("0.0.0.0".to_string()), port: Some(3000),
             config_path: None, api_key: Some("key".to_string()),
             tls_cert: None, tls_key: None, repl: false, auto_config: false,
-            dry_run: false, help: false,
+            dry_run: false, containers: false, help: false,
         };
         let config = build_config(&cli).unwrap();
         assert_eq!(config.host, "0.0.0.0");
@@ -418,7 +720,7 @@ mod tests {
         let cli = CliArgs {
             host: None, port: None, config_path: None, api_key: None,
             tls_cert: Some("c.pem".to_string()), tls_key: None,
-            repl: false, auto_config: false, dry_run: false, help: false,
+            repl: false, auto_config: false, dry_run: false, containers: false, help: false,
         };
         assert!(build_config(&cli).is_err());
     }

@@ -75,6 +75,10 @@ pub struct ConfigFile {
     /// Logging settings
     #[serde(default)]
     pub logging: LoggingConfig,
+
+    /// Container/Docker management settings
+    #[serde(default)]
+    pub containers: ContainersConfig,
 }
 
 /// Provider configuration section
@@ -425,6 +429,45 @@ impl Default for LoggingConfig {
             level: default_log_level(),
             file: None,
             metrics: false,
+        }
+    }
+}
+
+/// Container/Docker management configuration.
+///
+/// Controls whether Docker container management is available at runtime,
+/// both in the CLI REPL (`enabled`) and via the MCP endpoint (`mcp_enabled`).
+/// Both default to `false` — Docker features must be explicitly opted into.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContainersConfig {
+    /// Whether container management commands are enabled (default: false).
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Default timeout for Docker operations in seconds (default: 60).
+    #[serde(default = "default_container_timeout")]
+    pub default_timeout_secs: u64,
+
+    /// Allowed Docker images (empty = all images allowed).
+    #[serde(default)]
+    pub allowed_images: Vec<String>,
+
+    /// Whether to expose Docker tools via the MCP endpoint (default: false).
+    #[serde(default)]
+    pub mcp_enabled: bool,
+}
+
+fn default_container_timeout() -> u64 {
+    60
+}
+
+impl Default for ContainersConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            default_timeout_secs: default_container_timeout(),
+            allowed_images: Vec::new(),
+            mcp_enabled: false,
         }
     }
 }
@@ -2194,5 +2237,49 @@ knowledge_enabled = true
         assert_eq!(data["provider"], "LM Studio");
         assert_eq!(data["model"], "mistral-7b");
         assert!(!data["is_cloud"].as_bool().unwrap());
+    }
+
+    #[test]
+    fn test_containers_config_default() {
+        let config = ContainersConfig::default();
+        assert!(!config.enabled);
+        assert!(!config.mcp_enabled);
+        assert_eq!(config.default_timeout_secs, 60);
+        assert!(config.allowed_images.is_empty());
+    }
+
+    #[test]
+    fn test_containers_config_json_parse() {
+        let json = r#"{
+            "containers": {
+                "enabled": true,
+                "default_timeout_secs": 120,
+                "allowed_images": ["busybox:latest", "alpine:latest"],
+                "mcp_enabled": true
+            }
+        }"#;
+        let config = ConfigFile::parse(json, ConfigFormat::Json).unwrap();
+        assert!(config.containers.enabled);
+        assert!(config.containers.mcp_enabled);
+        assert_eq!(config.containers.default_timeout_secs, 120);
+        assert_eq!(config.containers.allowed_images.len(), 2);
+        assert_eq!(config.containers.allowed_images[0], "busybox:latest");
+    }
+
+    #[test]
+    fn test_config_round_trip_with_containers() {
+        let mut config = ConfigFile::default();
+        config.containers.enabled = true;
+        config.containers.mcp_enabled = true;
+        config.containers.default_timeout_secs = 90;
+        config.containers.allowed_images = vec!["python:3.12-slim".to_string()];
+
+        let json = config.serialize(ConfigFormat::Json).unwrap();
+        let parsed = ConfigFile::parse(&json, ConfigFormat::Json).unwrap();
+
+        assert!(parsed.containers.enabled);
+        assert!(parsed.containers.mcp_enabled);
+        assert_eq!(parsed.containers.default_timeout_secs, 90);
+        assert_eq!(parsed.containers.allowed_images, vec!["python:3.12-slim"]);
     }
 }

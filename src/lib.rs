@@ -1921,6 +1921,13 @@ pub use container_executor::{
     ContainerStatus, CreateOptions, ExecResult, NetworkMode,
 };
 
+// MCP Docker tools (containers + tools)
+#[cfg(all(feature = "containers", feature = "tools"))]
+pub mod mcp_docker_tools;
+
+#[cfg(all(feature = "containers", feature = "tools"))]
+pub use mcp_docker_tools::register_mcp_docker_tools;
+
 // =============================================================================
 // CONTAINER SANDBOX (Docker-based isolated code execution)
 // =============================================================================
