@@ -84,6 +84,9 @@ pub struct AppState {
     /// Optional cluster manager (behind `server-cluster` feature).
     #[cfg(feature = "server-cluster")]
     pub cluster: Option<Arc<crate::cluster::ClusterManager>>,
+    /// Optional MCP server for Docker container tools (behind `containers` + `tools`).
+    #[cfg(all(feature = "containers", feature = "tools"))]
+    pub mcp_server: Option<Arc<std::sync::RwLock<crate::mcp_protocol::McpServer>>>,
 }
 
 /// Per-session metadata stored in the DashMap.
@@ -730,6 +733,12 @@ pub fn build_router(state: AppState, config: &ServerConfig) -> Router {
         .merge(v1_routes)
         .merge(admin_routes)
         .nest("/api/v1", api_routes);
+
+    // MCP endpoint for Docker container tools (behind containers + tools)
+    #[cfg(all(feature = "containers", feature = "tools"))]
+    {
+        app = app.route("/mcp", post(mcp_handler));
+    }
 
     // Swagger UI (behind server-openapi feature)
     #[cfg(feature = "server-openapi")]
@@ -1923,6 +1932,42 @@ async fn admin_unpublish_model(
 }
 
 // ============================================================================
+// MCP Docker Handler (containers + tools)
+// ============================================================================
+
+#[cfg(all(feature = "containers", feature = "tools"))]
+async fn mcp_handler(
+    State(state): State<AppState>,
+    body: String,
+) -> impl IntoResponse {
+    match &state.mcp_server {
+        Some(server) => {
+            let guard = match server.read() {
+                Ok(g) => g,
+                Err(_) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        [(header::CONTENT_TYPE, "application/json")],
+                        r#"{"error":"MCP server lock poisoned"}"#.to_string(),
+                    );
+                }
+            };
+            let response = guard.handle_message(&body);
+            (
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "application/json")],
+                response,
+            )
+        }
+        None => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            [(header::CONTENT_TYPE, "application/json")],
+            r#"{"error":"MCP Docker tools not enabled (Docker unavailable)"}"#.to_string(),
+        ),
+    }
+}
+
+// ============================================================================
 // AxumServer — Entrypoint + Graceful Shutdown (Phase 5)
 // ============================================================================
 
@@ -2045,7 +2090,38 @@ fn build_app_state(config: ServerConfig, assistant: AiAssistant) -> AppState {
         model_registry: Arc::new(crate::virtual_model::ModelRegistry::new()),
         #[cfg(feature = "server-cluster")]
         cluster: None,
+        #[cfg(all(feature = "containers", feature = "tools"))]
+        mcp_server: build_mcp_docker_server(),
     }
+}
+
+/// Build an MCP server with Docker tools if Docker is available.
+#[cfg(all(feature = "containers", feature = "tools"))]
+fn build_mcp_docker_server() -> Option<Arc<std::sync::RwLock<crate::mcp_protocol::McpServer>>> {
+    use crate::container_executor::{ContainerConfig, ContainerExecutor};
+
+    if !ContainerExecutor::is_docker_available() {
+        log::info!("MCP Docker tools: Docker not available, skipping");
+        return None;
+    }
+
+    let executor = match ContainerExecutor::new(ContainerConfig::default()) {
+        Ok(e) => e,
+        Err(e) => {
+            log::warn!("MCP Docker tools: executor init failed: {}", e);
+            return None;
+        }
+    };
+
+    let mut mcp = crate::mcp_protocol::McpServer::new(
+        "ai_assistant_docker",
+        env!("CARGO_PKG_VERSION"),
+    );
+    let exec_arc = std::sync::Arc::new(std::sync::RwLock::new(executor));
+    crate::mcp_docker_tools::register_mcp_docker_tools(&mut mcp, exec_arc);
+
+    log::info!("MCP Docker tools: 8 tools registered on /mcp endpoint");
+    Some(Arc::new(std::sync::RwLock::new(mcp)))
 }
 
 /// Initialize enrichment subsystems (guardrails, budget manager).
