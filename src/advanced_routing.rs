@@ -2626,7 +2626,9 @@ pub struct BanditSnapshot {
     pub total_pulls: u64,
     pub metadata: HashMap<String, String>,
     /// Arms marked as private (local-only, not shared in distributed merging).
-    #[serde(default, skip_serializing_if = "HashSet::is_empty")]
+    /// Note: `skip_serializing_if` removed — bincode is positional and skipping
+    /// fields causes deserialization to fail with misaligned byte streams.
+    #[serde(default)]
     pub private_arms: HashSet<ArmId>,
 }
 

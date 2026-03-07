@@ -250,8 +250,8 @@ pub use events::{
 pub use config_file::{
     default_config_path, load_config, register_config_tools, save_config,
     CacheConfig as FileCacheConfig, ConfigFile, ConfigFormat, ConfigValidationError, ConfigWatcher,
-    GenerationConfig, HybridConfig, LoggingConfig, ProviderConfig, RagFileConfig, ReloadResult,
-    ReloadScope, SecurityConfig, UrlConfig,
+    ContainersConfig, GenerationConfig, HybridConfig, LoggingConfig, ProviderConfig, RagFileConfig,
+    ReloadResult, ReloadScope, SecurityConfig, UrlConfig,
 };
 
 pub use memory_management::{
