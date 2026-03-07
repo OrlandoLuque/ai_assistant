@@ -383,6 +383,13 @@ impl VectorDb for InMemoryVectorDb {
         };
 
         self.vectors.insert(id.to_string(), stored);
+
+        #[cfg(feature = "analytics")]
+        crate::scalability_monitor::check_scalability(
+            crate::scalability_monitor::Subsystem::VectorDbInMemory,
+            self.vectors.len(),
+        );
+
         Ok(())
     }
 

@@ -945,6 +945,18 @@ impl KnowledgeGraphStore {
         )?;
 
         let id = conn.last_insert_rowid();
+
+        #[cfg(feature = "analytics")]
+        {
+            let entity_count: usize = conn
+                .query_row("SELECT COUNT(*) FROM entities", [], |row| row.get(0))
+                .unwrap_or(0);
+            crate::scalability_monitor::check_scalability(
+                crate::scalability_monitor::Subsystem::KnowledgeGraph,
+                entity_count,
+            );
+        }
+
         drop(conn); // Release lock before calling add_aliases
 
         // Add aliases to lookup table

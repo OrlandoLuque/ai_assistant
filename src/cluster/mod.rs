@@ -117,6 +117,9 @@ pub struct ClusterState {
     pub active_nodes: Arc<RwLock<ORSet<String>>>,
     /// Per-endpoint request counters for load balancing.
     pub request_counts: Arc<RwLock<GCounter>>,
+    /// Published model catalog: "{node_id}:{model_name}" → serialized ModelAdvertisement.
+    /// Synchronized across nodes via CRDT merge.
+    pub model_catalog: Arc<RwLock<LWWMap<String, String>>>,
 }
 
 impl ClusterState {
@@ -127,6 +130,7 @@ impl ClusterState {
             config_register: Arc::new(RwLock::new(LWWMap::new())),
             active_nodes: Arc::new(RwLock::new(ORSet::new())),
             request_counts: Arc::new(RwLock::new(GCounter::new())),
+            model_catalog: Arc::new(RwLock::new(LWWMap::new())),
         }
     }
 }
@@ -419,6 +423,20 @@ impl ClusterManager {
                     }
                     drop(request_counts);
 
+                    // Sync model catalog: serialize all entries for peer access
+                    let model_catalog = state.model_catalog.read().await;
+                    for cat_key in model_catalog.keys() {
+                        if let Some(value) = model_catalog.get(cat_key) {
+                            let key = format!("crdt:model_catalog:{}:{}", node_id, cat_key);
+                            node.local_store(
+                                &key,
+                                value.as_bytes().to_vec(),
+                                Some(Duration::from_secs(120)),
+                            );
+                        }
+                    }
+                    drop(model_catalog);
+
                     metrics.record_crdt_sync();
                 }
             });
@@ -451,6 +469,18 @@ impl ClusterManager {
                         let _ = persistence.write_snapshot("request_counts", &data);
                     }
                     drop(request_counts);
+
+                    // Snapshot model catalog
+                    let model_catalog = state.model_catalog.read().await;
+                    let catalog_entries: Vec<(&String, &String)> = model_catalog
+                        .keys()
+                        .iter()
+                        .filter_map(|k| model_catalog.get(k).map(|v| (*k, v)))
+                        .collect();
+                    if let Ok(data) = serde_json::to_vec(&catalog_entries) {
+                        let _ = persistence.write_snapshot("model_catalog", &data);
+                    }
+                    drop(model_catalog);
                 }
             });
         }
@@ -493,6 +523,21 @@ impl ClusterManager {
         let hb = self.heartbeat_mgr.read().await;
         let active_nodes = self.state.active_nodes.read().await;
 
+        let published_model_count = {
+            let catalog = self.state.model_catalog.read().await;
+            let mut count = 0;
+            for key in catalog.keys() {
+                if let Some(value) = catalog.get(key) {
+                    if let Ok(ad) = serde_json::from_str::<ModelAdvertisement>(value) {
+                        if ad.published {
+                            count += 1;
+                        }
+                    }
+                }
+            }
+            count
+        };
+
         ClusterDebugInfo {
             node_id: self.node_id.clone(),
             uptime_secs: self.started_at.elapsed().as_secs(),
@@ -505,8 +550,140 @@ impl ClusterManager {
             dead_nodes: hb.get_dead_nodes().iter().map(|n| n.to_hex()).collect(),
             is_draining: self.health.is_draining(),
             is_ready: self.health.is_ready(),
+            published_model_count,
             metrics: self.metrics.snapshot(),
         }
+    }
+}
+
+// ============================================================================
+// Model Catalog — advertisements for inter-node model discovery
+// ============================================================================
+
+/// A model advertisement broadcast via CRDT to cluster peers.
+///
+/// Each published model (physical or virtual) is serialized to JSON and stored
+/// in `ClusterState::model_catalog` keyed by `"{node_id}:{model_name}"`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ModelAdvertisement {
+    /// The node that owns this model.
+    pub node_id: String,
+    /// Model name as used by API clients.
+    pub model_name: String,
+    /// "physical" or "virtual".
+    pub model_type: String,
+    /// Provider name (for physical models).
+    pub provider: Option<String>,
+    /// Human-readable description.
+    pub description: Option<String>,
+    /// Whether this model is currently published (false = tombstone).
+    pub published: bool,
+}
+
+impl ModelAdvertisement {
+    /// Create a catalog key for this advertisement.
+    pub fn catalog_key(&self) -> String {
+        format!("{}:{}", self.node_id, self.model_name)
+    }
+}
+
+impl ClusterManager {
+    /// Advertise a model in the cluster catalog.
+    ///
+    /// Inserts (or updates) a `ModelAdvertisement` into the CRDT-backed catalog,
+    /// which will be replicated to peers during the next sync cycle.
+    pub async fn advertise_model(&self, ad: ModelAdvertisement) {
+        let key = ad.catalog_key();
+        let value = serde_json::to_string(&ad).unwrap_or_default();
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let mut catalog = self.state.model_catalog.write().await;
+        catalog.set(key, value, ts, &self.node_id);
+    }
+
+    /// Withdraw (unpublish) a model from the cluster catalog.
+    ///
+    /// Sets `published = false` in the advertisement so peers stop routing to it.
+    pub async fn withdraw_model(&self, model_name: &str) {
+        let key = format!("{}:{}", self.node_id, model_name);
+        let ad = ModelAdvertisement {
+            node_id: self.node_id.clone(),
+            model_name: model_name.to_string(),
+            model_type: "physical".to_string(),
+            provider: None,
+            description: None,
+            published: false,
+        };
+        let value = serde_json::to_string(&ad).unwrap_or_default();
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let mut catalog = self.state.model_catalog.write().await;
+        catalog.set(key, value, ts, &self.node_id);
+    }
+
+    /// List all published models from all peers (including self).
+    pub async fn list_published_models(&self) -> Vec<ModelAdvertisement> {
+        let catalog = self.state.model_catalog.read().await;
+        let mut result = Vec::new();
+        for key in catalog.keys() {
+            if let Some(value) = catalog.get(key) {
+                if let Ok(ad) = serde_json::from_str::<ModelAdvertisement>(value) {
+                    if ad.published {
+                        result.push(ad);
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    /// List published models from a specific peer node.
+    pub async fn list_peer_models(&self, peer_node_id: &str) -> Vec<ModelAdvertisement> {
+        let catalog = self.state.model_catalog.read().await;
+        let mut result = Vec::new();
+        let prefix = format!("{}:", peer_node_id);
+        for key in catalog.keys() {
+            if key.starts_with(&prefix) {
+                if let Some(value) = catalog.get(key) {
+                    if let Ok(ad) = serde_json::from_str::<ModelAdvertisement>(value) {
+                        if ad.published {
+                            result.push(ad);
+                        }
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    /// Find which node hosts a given model name.
+    ///
+    /// Returns all advertisements for the model (could be on multiple nodes).
+    pub async fn find_model(&self, model_name: &str) -> Vec<ModelAdvertisement> {
+        let catalog = self.state.model_catalog.read().await;
+        let mut result = Vec::new();
+        let suffix = format!(":{}", model_name);
+        for key in catalog.keys() {
+            if key.ends_with(&suffix) {
+                if let Some(value) = catalog.get(key) {
+                    if let Ok(ad) = serde_json::from_str::<ModelAdvertisement>(value) {
+                        if ad.published {
+                            result.push(ad);
+                        }
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    /// Get the model catalog for CRDT sync serialization.
+    pub fn model_catalog(&self) -> &Arc<RwLock<LWWMap<String, String>>> {
+        &self.state.model_catalog
     }
 }
 
@@ -524,6 +701,7 @@ pub struct ClusterDebugInfo {
     pub dead_nodes: Vec<String>,
     pub is_draining: bool,
     pub is_ready: bool,
+    pub published_model_count: usize,
     pub metrics: metrics::MetricsSnapshot,
 }
 
@@ -644,10 +822,332 @@ mod tests {
             dead_nodes: vec![],
             is_draining: false,
             is_ready: true,
+            published_model_count: 0,
             metrics: metrics::MetricsSnapshot::default(),
         };
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains("\"node_id\":\"test\""));
         assert!(json.contains("\"is_ready\":true"));
+    }
+
+    // ========================================================================
+    // Model Catalog tests
+    // ========================================================================
+
+    #[test]
+    fn test_model_advertisement_serialization() {
+        let ad = ModelAdvertisement {
+            node_id: "node1".to_string(),
+            model_name: "llama3:8b".to_string(),
+            model_type: "physical".to_string(),
+            provider: Some("ollama".to_string()),
+            description: Some("Llama 3 8B model".to_string()),
+            published: true,
+        };
+        let json = serde_json::to_string(&ad).unwrap();
+        let parsed: ModelAdvertisement = serde_json::from_str(&json).unwrap();
+        assert_eq!(ad, parsed);
+        assert!(json.contains("\"model_name\":\"llama3:8b\""));
+    }
+
+    #[test]
+    fn test_model_advertisement_catalog_key() {
+        let ad = ModelAdvertisement {
+            node_id: "node1".to_string(),
+            model_name: "gpt-4o".to_string(),
+            model_type: "physical".to_string(),
+            provider: Some("openai".to_string()),
+            description: None,
+            published: true,
+        };
+        assert_eq!(ad.catalog_key(), "node1:gpt-4o");
+    }
+
+    #[test]
+    fn test_model_catalog_crdt_operations() {
+        let state = ClusterState::new();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ad = ModelAdvertisement {
+                node_id: "node1".to_string(),
+                model_name: "llama3:8b".to_string(),
+                model_type: "physical".to_string(),
+                provider: Some("ollama".to_string()),
+                description: None,
+                published: true,
+            };
+            let key = ad.catalog_key();
+            let value = serde_json::to_string(&ad).unwrap();
+
+            // Insert into catalog
+            state.model_catalog.write().await.set(key.clone(), value, 1000, "node1");
+
+            // Read back
+            let catalog = state.model_catalog.read().await;
+            let stored = catalog.get(&key).unwrap();
+            let parsed: ModelAdvertisement = serde_json::from_str(stored).unwrap();
+            assert_eq!(parsed.model_name, "llama3:8b");
+            assert!(parsed.published);
+        });
+    }
+
+    #[test]
+    fn test_model_catalog_crdt_merge() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let state1 = ClusterState::new();
+            let state2 = ClusterState::new();
+
+            // Node1 publishes a model
+            let ad1 = ModelAdvertisement {
+                node_id: "node1".to_string(),
+                model_name: "llama3:8b".to_string(),
+                model_type: "physical".to_string(),
+                provider: Some("ollama".to_string()),
+                description: None,
+                published: true,
+            };
+            state1.model_catalog.write().await.set(
+                ad1.catalog_key(),
+                serde_json::to_string(&ad1).unwrap(),
+                1000,
+                "node1",
+            );
+
+            // Node2 publishes a different model
+            let ad2 = ModelAdvertisement {
+                node_id: "node2".to_string(),
+                model_name: "gpt-4o".to_string(),
+                model_type: "physical".to_string(),
+                provider: Some("openai".to_string()),
+                description: None,
+                published: true,
+            };
+            state2.model_catalog.write().await.set(
+                ad2.catalog_key(),
+                serde_json::to_string(&ad2).unwrap(),
+                1000,
+                "node2",
+            );
+
+            // Merge state2 into state1
+            let catalog2 = state2.model_catalog.read().await;
+            state1.model_catalog.write().await.merge(&catalog2);
+            drop(catalog2);
+
+            // State1 should now have both
+            let catalog = state1.model_catalog.read().await;
+            assert!(catalog.get(&"node1:llama3:8b".to_string()).is_some());
+            assert!(catalog.get(&"node2:gpt-4o".to_string()).is_some());
+        });
+    }
+
+    #[test]
+    fn test_model_catalog_unpublish_via_crdt() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let state = ClusterState::new();
+
+            // Publish a model
+            let ad = ModelAdvertisement {
+                node_id: "node1".to_string(),
+                model_name: "llama3:8b".to_string(),
+                model_type: "physical".to_string(),
+                provider: Some("ollama".to_string()),
+                description: None,
+                published: true,
+            };
+            state.model_catalog.write().await.set(
+                ad.catalog_key(),
+                serde_json::to_string(&ad).unwrap(),
+                1000,
+                "node1",
+            );
+
+            // Unpublish it (higher timestamp)
+            let ad_unpub = ModelAdvertisement {
+                published: false,
+                ..ad.clone()
+            };
+            state.model_catalog.write().await.set(
+                ad_unpub.catalog_key(),
+                serde_json::to_string(&ad_unpub).unwrap(),
+                2000,
+                "node1",
+            );
+
+            // Should reflect unpublished
+            let catalog = state.model_catalog.read().await;
+            let stored = catalog.get(&"node1:llama3:8b".to_string()).unwrap();
+            let parsed: ModelAdvertisement = serde_json::from_str(stored).unwrap();
+            assert!(!parsed.published);
+        });
+    }
+
+    #[test]
+    fn test_model_catalog_lww_conflict_resolution() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let state1 = ClusterState::new();
+            let state2 = ClusterState::new();
+            let key = "node1:llama3:8b".to_string();
+
+            // Node1 publishes at t=1000
+            let ad_pub = ModelAdvertisement {
+                node_id: "node1".to_string(),
+                model_name: "llama3:8b".to_string(),
+                model_type: "physical".to_string(),
+                provider: Some("ollama".to_string()),
+                description: None,
+                published: true,
+            };
+            state1.model_catalog.write().await.set(
+                key.clone(),
+                serde_json::to_string(&ad_pub).unwrap(),
+                1000,
+                "node1",
+            );
+
+            // Node2 has a stale unpublish at t=500
+            let ad_unpub = ModelAdvertisement {
+                published: false,
+                ..ad_pub.clone()
+            };
+            state2.model_catalog.write().await.set(
+                key.clone(),
+                serde_json::to_string(&ad_unpub).unwrap(),
+                500,
+                "node2",
+            );
+
+            // Merge state2 into state1 — LWW should keep the t=1000 (published) version
+            let catalog2 = state2.model_catalog.read().await;
+            state1.model_catalog.write().await.merge(&catalog2);
+            drop(catalog2);
+
+            let catalog = state1.model_catalog.read().await;
+            let stored = catalog.get(&key).unwrap();
+            let parsed: ModelAdvertisement = serde_json::from_str(stored).unwrap();
+            assert!(parsed.published, "LWW should keep the later (published) version");
+        });
+    }
+
+    #[test]
+    fn test_model_catalog_multiple_models_per_node() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let state = ClusterState::new();
+
+            let models = vec![
+                ("llama3:8b", "physical", Some("ollama"), true),
+                ("gpt-4o", "physical", Some("openai"), true),
+                ("rag-assistant", "virtual", None, true),
+                ("internal-only", "virtual", None, false), // unpublished
+            ];
+
+            for (name, mtype, provider, published) in &models {
+                let ad = ModelAdvertisement {
+                    node_id: "node1".to_string(),
+                    model_name: name.to_string(),
+                    model_type: mtype.to_string(),
+                    provider: provider.map(|s| s.to_string()),
+                    description: None,
+                    published: *published,
+                };
+                state.model_catalog.write().await.set(
+                    ad.catalog_key(),
+                    serde_json::to_string(&ad).unwrap(),
+                    1000,
+                    "node1",
+                );
+            }
+
+            // Count published
+            let catalog = state.model_catalog.read().await;
+            let mut published_count = 0;
+            for key in catalog.keys() {
+                if let Some(value) = catalog.get(key) {
+                    if let Ok(ad) = serde_json::from_str::<ModelAdvertisement>(value) {
+                        if ad.published {
+                            published_count += 1;
+                        }
+                    }
+                }
+            }
+            assert_eq!(published_count, 3);
+        });
+    }
+
+    #[test]
+    fn test_model_catalog_multi_node_merge() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let state1 = ClusterState::new();
+            let state2 = ClusterState::new();
+            let state3 = ClusterState::new();
+
+            // Each node publishes different models
+            for (node_id, model, state) in [
+                ("node1", "llama3:8b", &state1),
+                ("node2", "gpt-4o", &state2),
+                ("node3", "mixtral:8x7b", &state3),
+            ] {
+                let ad = ModelAdvertisement {
+                    node_id: node_id.to_string(),
+                    model_name: model.to_string(),
+                    model_type: "physical".to_string(),
+                    provider: Some("test".to_string()),
+                    description: None,
+                    published: true,
+                };
+                state.model_catalog.write().await.set(
+                    ad.catalog_key(),
+                    serde_json::to_string(&ad).unwrap(),
+                    1000,
+                    node_id,
+                );
+            }
+
+            // Merge all into state1
+            let cat2 = state2.model_catalog.read().await;
+            state1.model_catalog.write().await.merge(&cat2);
+            drop(cat2);
+            let cat3 = state3.model_catalog.read().await;
+            state1.model_catalog.write().await.merge(&cat3);
+            drop(cat3);
+
+            // State1 should have all 3
+            let catalog = state1.model_catalog.read().await;
+            assert!(catalog.get(&"node1:llama3:8b".to_string()).is_some());
+            assert!(catalog.get(&"node2:gpt-4o".to_string()).is_some());
+            assert!(catalog.get(&"node3:mixtral:8x7b".to_string()).is_some());
+        });
+    }
+
+    #[test]
+    fn test_model_catalog_virtual_model_advertisement() {
+        let ad = ModelAdvertisement {
+            node_id: "node1".to_string(),
+            model_name: "rag-assistant".to_string(),
+            model_type: "virtual".to_string(),
+            provider: None,
+            description: Some("RAG-enhanced assistant with guardrails".to_string()),
+            published: true,
+        };
+        let json = serde_json::to_string(&ad).unwrap();
+        let parsed: ModelAdvertisement = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.model_type, "virtual");
+        assert!(parsed.provider.is_none());
+        assert!(parsed.description.is_some());
+    }
+
+    #[test]
+    fn test_model_catalog_empty_state() {
+        let state = ClusterState::new();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let catalog = state.model_catalog.read().await;
+            assert!(catalog.keys().is_empty());
+        });
     }
 }

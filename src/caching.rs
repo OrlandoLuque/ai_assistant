@@ -220,6 +220,12 @@ impl ResponseCache {
         self.query_index
             .insert(self.normalize_query(query), fingerprint);
         self.stats.total_entries = self.entries.len();
+
+        #[cfg(feature = "analytics")]
+        crate::scalability_monitor::check_scalability(
+            crate::scalability_monitor::Subsystem::ResponseCache,
+            self.entries.len(),
+        );
     }
 
     /// Remove a specific entry

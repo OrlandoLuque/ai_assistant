@@ -131,6 +131,12 @@ impl ChatSessionStore {
         } else {
             self.sessions.push(session);
         }
+
+        #[cfg(feature = "analytics")]
+        crate::scalability_monitor::check_scalability(
+            crate::scalability_monitor::Subsystem::SessionStore,
+            self.sessions.len(),
+        );
     }
 
     /// Delete a session by ID
