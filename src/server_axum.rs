@@ -79,6 +79,8 @@ pub struct AppState {
     pub guardrail_pipeline: Option<Arc<Mutex<crate::guardrail_pipeline::GuardrailPipeline>>>,
     /// Cost budget manager (cloned from ServerConfig).
     pub budget_manager: Option<Arc<Mutex<crate::cost::BudgetManager>>>,
+    /// Model registry for virtual models and publish control.
+    pub model_registry: Arc<crate::virtual_model::ModelRegistry>,
     /// Optional cluster manager (behind `server-cluster` feature).
     #[cfg(feature = "server-cluster")]
     pub cluster: Option<Arc<crate::cluster::ClusterManager>>,
@@ -271,6 +273,7 @@ impl AxumRateLimiter {
 // ============================================================================
 
 /// Application error type that implements `IntoResponse`.
+#[derive(Debug)]
 pub enum AppError {
     /// Bad request (400).
     BadRequest(String),
@@ -617,6 +620,27 @@ pub struct ChatRequest {
     pub system_prompt: String,
     #[serde(default)]
     pub knowledge_context: String,
+    /// Optional model name — can refer to a physical or virtual model.
+    #[serde(default)]
+    pub model: Option<String>,
+}
+
+// ============================================================================
+// StreamEvent — Bridge between blocking LLM thread and async handlers (v31)
+// ============================================================================
+
+/// Events sent from the blocking LLM thread to async streaming handlers.
+///
+/// Used by SSE, OpenAI streaming, and WebSocket handlers to forward
+/// real tokens as they arrive from the provider, instead of waiting
+/// for the complete response.
+enum StreamEvent {
+    /// A streaming token from the LLM provider.
+    Token(String),
+    /// Generation is complete.
+    Done,
+    /// An error occurred during generation.
+    Error(String),
 }
 
 /// Chat response body.
@@ -691,11 +715,20 @@ pub fn build_router(state: AppState, config: &ServerConfig) -> Router {
         .route("/v1/chat/completions", post(openai_completions_handler))
         .route("/v1/models", get(openai_models_handler));
 
+    // Admin routes (virtual models + publish control)
+    let admin_routes = Router::new()
+        .route("/admin/virtual-models", get(admin_list_virtual_models).post(admin_create_virtual_model))
+        .route("/admin/virtual-models/{name}", get(admin_get_virtual_model).put(admin_update_virtual_model).delete(admin_delete_virtual_model))
+        .route("/admin/models", get(admin_list_models))
+        .route("/admin/models/{name}/publish", post(admin_publish_model))
+        .route("/admin/models/{name}/unpublish", post(admin_unpublish_model));
+
     // Compose the full router
     #[allow(unused_mut)]
     let mut app = Router::new()
         .merge(api_routes.clone())
         .merge(v1_routes)
+        .merge(admin_routes)
         .nest("/api/v1", api_routes);
 
     // Swagger UI (behind server-openapi feature)
@@ -886,7 +919,16 @@ async fn chat_handler(
         .map_err(|e| AppError::Internal(format!("Generation error: {}", e)))
 }
 
-/// POST /chat/stream — SSE streaming.
+/// POST /chat/stream — SSE streaming with real token-by-token output.
+///
+/// Forwards `AiResponse::Chunk` events from the LLM provider as individual
+/// SSE events, giving clients real-time token streaming instead of waiting
+/// for the complete response.
+///
+/// ## SSE event format
+/// - Token: `data: {"token":"Hello"}`
+/// - Error: `data: {"error":"message"}`
+/// - Done:  `data: [DONE]`
 async fn chat_stream_handler(
     State(state): State<AppState>,
     Json(chat_req): Json<ChatRequest>,
@@ -904,38 +946,62 @@ async fn chat_stream_handler(
         )));
     }
 
-    // Run blocking LLM call
+    // Create channel to bridge blocking LLM thread → async SSE stream
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<StreamEvent>(64);
+
+    // Spawn blocking LLM call — forwards Chunk events through channel
     let assistant = state.assistant.clone();
     let message = chat_req.message;
     let system_prompt = chat_req.system_prompt;
     let knowledge_context = chat_req.knowledge_context;
 
-    let full_text = tokio::task::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let mut ass = assistant.blocking_lock();
         ass.send_message_with_notes(message, &knowledge_context, &system_prompt, "");
         loop {
             match ass.poll_response() {
-                Some(crate::messages::AiResponse::Complete(text)) => return Ok(text),
-                Some(crate::messages::AiResponse::Error(e)) => return Err(e),
-                Some(crate::messages::AiResponse::Cancelled(partial)) => return Ok(partial),
+                Some(crate::messages::AiResponse::Chunk(token)) => {
+                    if tx.blocking_send(StreamEvent::Token(token)).is_err() {
+                        break; // receiver dropped (client disconnected)
+                    }
+                }
+                Some(crate::messages::AiResponse::Complete(_)) => {
+                    let _ = tx.blocking_send(StreamEvent::Done);
+                    break;
+                }
+                Some(crate::messages::AiResponse::Error(e)) => {
+                    let _ = tx.blocking_send(StreamEvent::Error(e));
+                    break;
+                }
+                Some(crate::messages::AiResponse::Cancelled(_)) => {
+                    let _ = tx.blocking_send(StreamEvent::Done);
+                    break;
+                }
                 Some(_) => continue,
                 None => std::thread::sleep(Duration::from_millis(10)),
             }
         }
-    })
-    .await
-    .map_err(|e| AppError::Internal(format!("Task join error: {}", e)))?
-    .map_err(|e| AppError::Internal(format!("Generation error: {}", e)))?;
+    });
 
-    // Build SSE stream from the full text (split by whitespace tokens)
-    let words: Vec<String> = full_text.split_whitespace().map(String::from).collect();
-
+    // Async SSE stream — yields events as real tokens arrive
     let stream = async_stream::stream! {
-        for word in words {
-            let token_json = serde_json::json!({"token": word});
-            yield Ok(SseEvent::default().data(token_json.to_string()));
+        while let Some(event) = rx.recv().await {
+            match event {
+                StreamEvent::Token(token) => {
+                    let token_json = serde_json::json!({"token": token});
+                    yield Ok(SseEvent::default().data(token_json.to_string()));
+                }
+                StreamEvent::Done => {
+                    yield Ok(SseEvent::default().data("[DONE]"));
+                    break;
+                }
+                StreamEvent::Error(e) => {
+                    let err_json = serde_json::json!({"error": e});
+                    yield Ok(SseEvent::default().data(err_json.to_string()));
+                    break;
+                }
+            }
         }
-        yield Ok(SseEvent::default().data("[DONE]"));
     };
 
     Ok(Sse::new(stream).keep_alive(SseKeepAlive::default()))
@@ -1137,28 +1203,185 @@ async fn openai_completions_handler(
         }
     }
 
-    // -- RAG enrichment + Generate response (blocking) --
-    let assistant = state.assistant.clone();
-    let enrichment = config.enrichment.clone();
+    // -- Virtual model resolution --
     let is_stream = oai_req.stream;
-    let requested_model = oai_req.model.clone();
+    let raw_model_name = oai_req.model.clone().unwrap_or_default();
+    let resolution = state.model_registry.resolve(&raw_model_name);
 
+    let (enrichment, requested_model, system_prompt) = match resolution {
+        crate::virtual_model::ModelResolution::Virtual(ref vmodel) => {
+            let mut sys = system_prompt;
+            if let Some(ref vsp) = vmodel.system_prompt {
+                if sys.is_empty() {
+                    sys = vsp.clone();
+                } else {
+                    sys = format!("{}\n{}", vsp, sys);
+                }
+            }
+            (vmodel.enrichment.clone(), Some(vmodel.base_model.clone()), sys)
+        }
+        crate::virtual_model::ModelResolution::Physical { ref name, .. } => {
+            (config.enrichment.clone(), Some(name.clone()), system_prompt)
+        }
+        crate::virtual_model::ModelResolution::PassThrough { ref name } => {
+            let model = if name.is_empty() { None } else { Some(name.clone()) };
+            (config.enrichment.clone(), model, system_prompt)
+        }
+    };
+
+    // -- RAG enrichment + Generate response --
+    let assistant = state.assistant.clone();
+
+    let created = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    if is_stream {
+        // ── Real streaming path: forward AiResponse::Chunk tokens in real-time ──
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<StreamEvent>(64);
+
+        let stream_user_msg = user_message.clone();
+        let stream_sys_prompt = system_prompt.clone();
+
+        // Spawn blocking enrichment + LLM call — sends chunks through channel
+        tokio::task::spawn_blocking(move || {
+            // RAG enrichment
+            let mut knowledge_context = String::new();
+            {
+                let mut ass = assistant.blocking_lock();
+                apply_enrichment_config(&mut ass, &enrichment);
+                if enrichment.enable_rag {
+                    let rconf = &enrichment.rag;
+                    apply_rag_config(&mut ass, rconf);
+                    let (knowledge, _conversation) = ass.build_rag_context(&stream_user_msg);
+                    knowledge_context = knowledge;
+                }
+            }
+
+            // Generate with streaming
+            let mut ass = assistant.blocking_lock();
+            ass.send_message_with_notes(
+                stream_user_msg,
+                &knowledge_context,
+                &stream_sys_prompt,
+                "",
+            );
+            loop {
+                match ass.poll_response() {
+                    Some(crate::messages::AiResponse::Chunk(token)) => {
+                        if tx.blocking_send(StreamEvent::Token(token)).is_err() {
+                            break;
+                        }
+                    }
+                    Some(crate::messages::AiResponse::Complete(_)) => {
+                        let _ = tx.blocking_send(StreamEvent::Done);
+                        break;
+                    }
+                    Some(crate::messages::AiResponse::Error(e)) => {
+                        let _ = tx.blocking_send(StreamEvent::Error(e));
+                        break;
+                    }
+                    Some(crate::messages::AiResponse::Cancelled(_)) => {
+                        let _ = tx.blocking_send(StreamEvent::Done);
+                        break;
+                    }
+                    Some(_) => continue,
+                    None => std::thread::sleep(Duration::from_millis(10)),
+                }
+            }
+        });
+
+        let model = requested_model.unwrap_or_default();
+        let id = format!("chatcmpl-{:016x}", created);
+
+        // Async SSE stream — real tokens from the LLM provider
+        let stream = async_stream::stream! {
+            // Role announcement chunk
+            let first_chunk = crate::openai_adapter::StreamChunk {
+                id: Some(id.clone()),
+                object: Some("chat.completion.chunk".to_string()),
+                created: Some(created),
+                model: Some(model.clone()),
+                choices: vec![crate::openai_adapter::StreamChoice {
+                    index: Some(0),
+                    delta: crate::openai_adapter::StreamDelta {
+                        role: Some("assistant".to_string()),
+                        content: None,
+                    },
+                    finish_reason: None,
+                }],
+            };
+            yield Ok::<_, std::convert::Infallible>(
+                SseEvent::default().data(serde_json::to_string(&first_chunk).unwrap_or_default())
+            );
+
+            // Real token chunks from LLM provider
+            while let Some(event) = rx.recv().await {
+                match event {
+                    StreamEvent::Token(token) => {
+                        let chunk = crate::openai_adapter::StreamChunk {
+                            id: Some(id.clone()),
+                            object: Some("chat.completion.chunk".to_string()),
+                            created: Some(created),
+                            model: Some(model.clone()),
+                            choices: vec![crate::openai_adapter::StreamChoice {
+                                index: Some(0),
+                                delta: crate::openai_adapter::StreamDelta {
+                                    role: None,
+                                    content: Some(token),
+                                },
+                                finish_reason: None,
+                            }],
+                        };
+                        yield Ok(SseEvent::default().data(
+                            serde_json::to_string(&chunk).unwrap_or_default()
+                        ));
+                    }
+                    StreamEvent::Done => {
+                        // finish_reason: "stop" chunk
+                        let stop_chunk = crate::openai_adapter::StreamChunk {
+                            id: Some(id.clone()),
+                            object: Some("chat.completion.chunk".to_string()),
+                            created: Some(created),
+                            model: Some(model.clone()),
+                            choices: vec![crate::openai_adapter::StreamChoice {
+                                index: Some(0),
+                                delta: crate::openai_adapter::StreamDelta {
+                                    role: None,
+                                    content: None,
+                                },
+                                finish_reason: Some("stop".to_string()),
+                            }],
+                        };
+                        yield Ok(SseEvent::default().data(
+                            serde_json::to_string(&stop_chunk).unwrap_or_default()
+                        ));
+                        yield Ok(SseEvent::default().data("[DONE]"));
+                        break;
+                    }
+                    StreamEvent::Error(e) => {
+                        let err_chunk = serde_json::json!({"error": {"message": e, "type": "server_error"}});
+                        yield Ok(SseEvent::default().data(err_chunk.to_string()));
+                        break;
+                    }
+                }
+            }
+        };
+
+        return Sse::new(stream).keep_alive(SseKeepAlive::default()).into_response();
+    }
+
+    // ── Non-streaming path (unchanged logic) ──
     let result = tokio::task::spawn_blocking(move || {
         // RAG enrichment
         let mut knowledge_context = String::new();
         {
             let mut ass = assistant.blocking_lock();
+            apply_enrichment_config(&mut ass, &enrichment);
             if enrichment.enable_rag {
                 let rconf = &enrichment.rag;
-                ass.rag_config.knowledge_rag_enabled = rconf.knowledge_rag;
-                ass.rag_config.conversation_rag_enabled = rconf.conversation_rag;
-                ass.rag_config.max_knowledge_tokens = rconf.max_knowledge_tokens;
-                ass.rag_config.max_conversation_tokens = rconf.max_conversation_tokens;
-                ass.rag_config.top_k_chunks = rconf.top_k_chunks;
-                ass.rag_config.min_relevance_score = rconf.min_relevance_score;
-                ass.rag_config.dynamic_context_enabled = rconf.dynamic_context;
-                ass.rag_config.auto_store_messages = rconf.auto_store_messages;
-
+                apply_rag_config(&mut ass, rconf);
                 let (knowledge, _conversation) = ass.build_rag_context(&user_message);
                 knowledge_context = knowledge;
             }
@@ -1168,30 +1391,6 @@ async fn openai_completions_handler(
         let mut ass = assistant.blocking_lock();
         let model = requested_model
             .unwrap_or_else(|| ass.config.selected_model.clone());
-
-        // Apply compaction config
-        if enrichment.compaction.enabled {
-            let cconf = &enrichment.compaction;
-            ass.set_compaction_config(crate::conversation_compaction::CompactionConfig {
-                max_messages: cconf.max_messages,
-                target_messages: cconf.target_messages,
-                preserve_recent: cconf.preserve_recent,
-                preserve_first: cconf.preserve_first,
-                min_importance: cconf.min_importance,
-            });
-        }
-
-        // Apply adaptive thinking config
-        if enrichment.thinking.enabled {
-            let tconf = &enrichment.thinking;
-            ass.adaptive_thinking.enabled = true;
-            ass.adaptive_thinking.min_depth = tconf.min_depth;
-            ass.adaptive_thinking.max_depth = tconf.max_depth;
-            ass.adaptive_thinking.inject_cot_instructions = tconf.inject_cot_instructions;
-            ass.adaptive_thinking.parse_thinking_tags = tconf.parse_thinking_tags;
-            ass.adaptive_thinking.strip_thinking_from_response = tconf.strip_thinking_from_response;
-            ass.adaptive_thinking.adjust_temperature = tconf.adjust_temperature;
-        }
 
         ass.send_message_with_notes(user_message.clone(), &knowledge_context, &system_prompt, "");
 
@@ -1229,7 +1428,7 @@ async fn openai_completions_handler(
         }
     };
 
-    // -- Output guardrails --
+    // -- Output guardrails (only for non-streaming) --
     let final_text = if config.enrichment.enable_guardrails {
         if let Some(ref pipeline) = state.guardrail_pipeline {
             let mut gp = pipeline.lock().unwrap_or_else(|e| e.into_inner());
@@ -1270,136 +1469,114 @@ async fn openai_completions_handler(
         + crate::context::estimate_tokens(&knowledge_ctx);
     let completion_tokens = crate::context::estimate_tokens(&final_text);
 
-    let created = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
     let id = format!("chatcmpl-{:016x}", created);
 
-    if is_stream {
-        // Return SSE stream (OpenAI format)
-        build_openai_sse_response(&id, created, &model, &final_text)
-    } else {
-        // Return non-streaming response
-        let response = crate::openai_adapter::OpenAIResponse {
-            id,
-            object: "chat.completion".to_string(),
-            created,
-            model,
-            choices: vec![crate::openai_adapter::OpenAIChoice {
-                index: 0,
-                message: crate::openai_adapter::OpenAIResponseMessage {
-                    role: "assistant".to_string(),
-                    content: Some(final_text),
-                    function_call: None,
-                },
-                finish_reason: Some("stop".to_string()),
-            }],
-            usage: Some(crate::openai_adapter::OpenAIUsage {
-                prompt_tokens,
-                completion_tokens,
-                total_tokens: prompt_tokens + completion_tokens,
-            }),
-        };
+    // Return non-streaming response
+    let response = crate::openai_adapter::OpenAIResponse {
+        id,
+        object: "chat.completion".to_string(),
+        created,
+        model,
+        choices: vec![crate::openai_adapter::OpenAIChoice {
+            index: 0,
+            message: crate::openai_adapter::OpenAIResponseMessage {
+                role: "assistant".to_string(),
+                content: Some(final_text),
+                function_call: None,
+            },
+            finish_reason: Some("stop".to_string()),
+        }],
+        usage: Some(crate::openai_adapter::OpenAIUsage {
+            prompt_tokens,
+            completion_tokens,
+            total_tokens: prompt_tokens + completion_tokens,
+        }),
+    };
 
-        Json(response).into_response()
+    Json(response).into_response()
+}
+
+/// Apply enrichment sub-configs (compaction, thinking) to the assistant.
+fn apply_enrichment_config(
+    ass: &mut AiAssistant,
+    enrichment: &crate::server::EnrichmentConfig,
+) {
+    if enrichment.compaction.enabled {
+        let cconf = &enrichment.compaction;
+        ass.set_compaction_config(crate::conversation_compaction::CompactionConfig {
+            max_messages: cconf.max_messages,
+            target_messages: cconf.target_messages,
+            preserve_recent: cconf.preserve_recent,
+            preserve_first: cconf.preserve_first,
+            min_importance: cconf.min_importance,
+        });
+    }
+    if enrichment.thinking.enabled {
+        let tconf = &enrichment.thinking;
+        ass.adaptive_thinking.enabled = true;
+        ass.adaptive_thinking.min_depth = tconf.min_depth;
+        ass.adaptive_thinking.max_depth = tconf.max_depth;
+        ass.adaptive_thinking.inject_cot_instructions = tconf.inject_cot_instructions;
+        ass.adaptive_thinking.parse_thinking_tags = tconf.parse_thinking_tags;
+        ass.adaptive_thinking.strip_thinking_from_response = tconf.strip_thinking_from_response;
+        ass.adaptive_thinking.adjust_temperature = tconf.adjust_temperature;
     }
 }
 
-/// Build an SSE response body in OpenAI streaming format.
-fn build_openai_sse_response(id: &str, created: u64, model: &str, text: &str) -> Response {
-    let id = id.to_string();
-    let model = model.to_string();
-    let words: Vec<String> = text.split_whitespace().map(String::from).collect();
-
-    let stream = async_stream::stream! {
-        // First chunk: role announcement
-        let first_chunk = crate::openai_adapter::StreamChunk {
-            id: Some(id.clone()),
-            object: Some("chat.completion.chunk".to_string()),
-            created: Some(created),
-            model: Some(model.clone()),
-            choices: vec![crate::openai_adapter::StreamChoice {
-                index: Some(0),
-                delta: crate::openai_adapter::StreamDelta {
-                    role: Some("assistant".to_string()),
-                    content: None,
-                },
-                finish_reason: None,
-            }],
-        };
-        yield Ok::<_, std::convert::Infallible>(
-            SseEvent::default().data(serde_json::to_string(&first_chunk).unwrap_or_default())
-        );
-
-        // Content chunks: one per whitespace-delimited word
-        for word in words {
-            let chunk = crate::openai_adapter::StreamChunk {
-                id: Some(id.clone()),
-                object: Some("chat.completion.chunk".to_string()),
-                created: Some(created),
-                model: Some(model.clone()),
-                choices: vec![crate::openai_adapter::StreamChoice {
-                    index: Some(0),
-                    delta: crate::openai_adapter::StreamDelta {
-                        role: None,
-                        content: Some(format!("{} ", word)),
-                    },
-                    finish_reason: None,
-                }],
-            };
-            yield Ok(SseEvent::default().data(serde_json::to_string(&chunk).unwrap_or_default()));
-        }
-
-        // Final chunk: finish_reason stop
-        let stop_chunk = crate::openai_adapter::StreamChunk {
-            id: Some(id.clone()),
-            object: Some("chat.completion.chunk".to_string()),
-            created: Some(created),
-            model: Some(model.clone()),
-            choices: vec![crate::openai_adapter::StreamChoice {
-                index: Some(0),
-                delta: crate::openai_adapter::StreamDelta {
-                    role: None,
-                    content: None,
-                },
-                finish_reason: Some("stop".to_string()),
-            }],
-        };
-        yield Ok(SseEvent::default().data(serde_json::to_string(&stop_chunk).unwrap_or_default()));
-
-        // Terminator
-        yield Ok(SseEvent::default().data("[DONE]"));
-    };
-
-    Sse::new(stream).keep_alive(SseKeepAlive::default()).into_response()
+/// Apply RAG enrichment config fields to the assistant.
+fn apply_rag_config(
+    ass: &mut AiAssistant,
+    rconf: &crate::server::RagEnrichmentConfig,
+) {
+    ass.rag_config.knowledge_rag_enabled = rconf.knowledge_rag;
+    ass.rag_config.conversation_rag_enabled = rconf.conversation_rag;
+    ass.rag_config.max_knowledge_tokens = rconf.max_knowledge_tokens;
+    ass.rag_config.max_conversation_tokens = rconf.max_conversation_tokens;
+    ass.rag_config.top_k_chunks = rconf.top_k_chunks;
+    ass.rag_config.min_relevance_score = rconf.min_relevance_score;
+    ass.rag_config.dynamic_context_enabled = rconf.dynamic_context;
+    ass.rag_config.auto_store_messages = rconf.auto_store_messages;
 }
 
 /// GET /v1/models — OpenAI-compatible model listing.
+///
+/// Returns published models from the ModelRegistry. If the registry has
+/// published models, only those are shown. Otherwise falls back to the
+/// raw available_models list (backward compatible).
 async fn openai_models_handler(State(state): State<AppState>) -> Json<serde_json::Value> {
     let ass = state.assistant.lock().await;
-    let models: Vec<serde_json::Value> = ass
-        .available_models
-        .iter()
-        .map(|m| {
-            serde_json::json!({
-                "id": m.name,
+    let client_models = state.model_registry.list_client_visible(&ass.available_models);
+
+    let data: Vec<serde_json::Value> = if client_models.is_empty() {
+        // Fallback: no models published → show raw available models (backward compat)
+        let models: Vec<serde_json::Value> = ass
+            .available_models
+            .iter()
+            .map(|m| {
+                serde_json::json!({
+                    "id": m.name,
+                    "object": "model",
+                    "created": 0,
+                    "owned_by": format!("{:?}", m.provider).to_lowercase(),
+                })
+            })
+            .collect();
+        if models.is_empty() {
+            vec![serde_json::json!({
+                "id": ass.config.selected_model,
                 "object": "model",
                 "created": 0,
-                "owned_by": format!("{:?}", m.provider).to_lowercase(),
-            })
-        })
-        .collect();
-
-    let data = if models.is_empty() {
-        vec![serde_json::json!({
-            "id": ass.config.selected_model,
-            "object": "model",
-            "created": 0,
-            "owned_by": format!("{:?}", ass.config.provider).to_lowercase(),
-        })]
+                "owned_by": format!("{:?}", ass.config.provider).to_lowercase(),
+            })]
+        } else {
+            models
+        }
     } else {
-        models
+        // Registry has published models → use them
+        client_models
+            .iter()
+            .map(|m| serde_json::to_value(m).unwrap_or_default())
+            .collect()
     };
 
     drop(ass);
@@ -1423,7 +1600,13 @@ async fn ws_handler(
     ws.on_upgrade(move |socket| handle_ws_session(socket, state))
 }
 
-/// Handle a WebSocket session after upgrade.
+/// Handle a WebSocket session after upgrade with real token streaming.
+///
+/// ## Message format
+/// - Client → Server: `{"message":"Hello","system_prompt":"...","knowledge_context":"..."}`
+/// - Server → Client (token): `{"type":"chunk","content":"token"}`
+/// - Server → Client (done):  `{"type":"complete","model":"llama3"}`
+/// - Server → Client (error): `{"type":"error","error":"message"}`
 async fn handle_ws_session(mut socket: WebSocket, state: AppState) {
     while let Some(msg) = socket.recv().await {
         let msg = match msg {
@@ -1437,19 +1620,22 @@ async fn handle_ws_session(mut socket: WebSocket, state: AppState) {
                 let chat_req: ChatRequest = match serde_json::from_str(&text) {
                     Ok(r) => r,
                     Err(e) => {
-                        let err_json = serde_json::json!({"error": format!("Invalid JSON: {}", e)});
+                        let err_json = serde_json::json!({"type": "error", "error": format!("Invalid JSON: {}", e)});
                         let _ = socket.send(WsMessage::Text(err_json.to_string().into())).await;
                         continue;
                     }
                 };
 
-                // Run blocking LLM call
+                // Create channel for streaming
+                let (tx, mut rx) = tokio::sync::mpsc::channel::<StreamEvent>(64);
+
                 let assistant = state.assistant.clone();
                 let message = chat_req.message;
                 let system_prompt = chat_req.system_prompt;
                 let knowledge_context = chat_req.knowledge_context;
 
-                let result = tokio::task::spawn_blocking(move || {
+                // Spawn blocking LLM call — sends chunks through channel
+                tokio::task::spawn_blocking(move || {
                     let mut ass = assistant.blocking_lock();
                     ass.send_message_with_notes(
                         message,
@@ -1457,32 +1643,59 @@ async fn handle_ws_session(mut socket: WebSocket, state: AppState) {
                         &system_prompt,
                         "",
                     );
-                    let model = ass.config.selected_model.clone();
                     loop {
                         match ass.poll_response() {
-                            Some(crate::messages::AiResponse::Complete(text)) => {
-                                return Ok(serde_json::json!({"content": text, "model": model}));
+                            Some(crate::messages::AiResponse::Chunk(token)) => {
+                                if tx.blocking_send(StreamEvent::Token(token)).is_err() {
+                                    break;
+                                }
+                            }
+                            Some(crate::messages::AiResponse::Complete(_)) => {
+                                let _ = tx.blocking_send(StreamEvent::Done);
+                                break;
                             }
                             Some(crate::messages::AiResponse::Error(e)) => {
-                                return Err(e);
+                                let _ = tx.blocking_send(StreamEvent::Error(e));
+                                break;
                             }
-                            Some(crate::messages::AiResponse::Cancelled(partial)) => {
-                                return Ok(serde_json::json!({"content": partial, "model": model}));
+                            Some(crate::messages::AiResponse::Cancelled(_)) => {
+                                let _ = tx.blocking_send(StreamEvent::Done);
+                                break;
                             }
                             Some(_) => continue,
                             None => std::thread::sleep(Duration::from_millis(10)),
                         }
                     }
-                })
-                .await;
+                });
 
-                let response_json = match result {
-                    Ok(Ok(json)) => json,
-                    Ok(Err(e)) => serde_json::json!({"error": e}),
-                    Err(e) => serde_json::json!({"error": format!("Task error: {}", e)}),
-                };
-
-                if socket.send(WsMessage::Text(response_json.to_string().into())).await.is_err() {
+                // Forward token events as individual WS messages
+                let mut had_error = false;
+                while let Some(event) = rx.recv().await {
+                    let ws_msg = match event {
+                        StreamEvent::Token(token) => {
+                            serde_json::json!({"type": "chunk", "content": token})
+                        }
+                        StreamEvent::Done => {
+                            let model = {
+                                let ass = state.assistant.lock().await;
+                                ass.config.selected_model.clone()
+                            };
+                            let msg = serde_json::json!({"type": "complete", "model": model});
+                            if socket.send(WsMessage::Text(msg.to_string().into())).await.is_err() {
+                                had_error = true;
+                            }
+                            break;
+                        }
+                        StreamEvent::Error(e) => {
+                            serde_json::json!({"type": "error", "error": e})
+                        }
+                    };
+                    if socket.send(WsMessage::Text(ws_msg.to_string().into())).await.is_err() {
+                        had_error = true;
+                        break;
+                    }
+                }
+                if had_error {
                     break;
                 }
             }
@@ -1495,6 +1708,218 @@ async fn handle_ws_session(mut socket: WebSocket, state: AppState) {
             _ => {}
         }
     }
+}
+
+// ============================================================================
+// Admin Endpoints — Virtual Models + Publish Control (v31 Phase 6)
+// ============================================================================
+
+/// Request body for creating a virtual model.
+#[derive(Debug, Deserialize)]
+struct CreateVirtualModelRequest {
+    name: String,
+    description: String,
+    base_model: String,
+    #[serde(default)]
+    base_provider: Option<crate::config::AiProvider>,
+    #[serde(default)]
+    enrichment: Option<crate::server::EnrichmentConfig>,
+    #[serde(default)]
+    profile: Option<crate::profiles::ModelProfile>,
+    #[serde(default)]
+    system_prompt: Option<String>,
+    #[serde(default)]
+    published: Option<bool>,
+    #[serde(default)]
+    tags: Option<Vec<String>>,
+}
+
+/// Request body for publishing a physical model.
+#[derive(Debug, Deserialize)]
+struct PublishModelRequest {
+    #[serde(default)]
+    provider: Option<crate::config::AiProvider>,
+    #[serde(default)]
+    display_name: Option<String>,
+}
+
+/// POST /admin/virtual-models — Create a virtual model.
+async fn admin_create_virtual_model(
+    State(state): State<AppState>,
+    Json(req): Json<CreateVirtualModelRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let created = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let config = state.server_config.read().await;
+    let default_enrichment = config.enrichment.clone();
+    drop(config);
+
+    let vmodel = crate::virtual_model::VirtualModel {
+        name: req.name,
+        description: req.description,
+        base_model: req.base_model,
+        base_provider: req.base_provider,
+        enrichment: req.enrichment.unwrap_or(default_enrichment),
+        profile: req.profile,
+        system_prompt: req.system_prompt,
+        published: req.published.unwrap_or(false),
+        created_at: created,
+        tags: req.tags.unwrap_or_default(),
+    };
+
+    let name = vmodel.name.clone();
+    state
+        .model_registry
+        .register_virtual(vmodel)
+        .map_err(|e| AppError::BadRequest(e))?;
+
+    Ok(Json(serde_json::json!({"created": name})))
+}
+
+/// GET /admin/virtual-models — List all virtual models (including unpublished).
+async fn admin_list_virtual_models(
+    State(state): State<AppState>,
+) -> Json<serde_json::Value> {
+    let models = state.model_registry.list_virtual();
+    Json(serde_json::json!({"virtual_models": models}))
+}
+
+/// GET /admin/virtual-models/{name} — Get a specific virtual model.
+async fn admin_get_virtual_model(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let model = state
+        .model_registry
+        .get_virtual(&name)
+        .ok_or_else(|| AppError::NotFound(format!("Virtual model '{}' not found", name)))?;
+    Ok(Json(serde_json::to_value(&model).unwrap_or_default()))
+}
+
+/// PUT /admin/virtual-models/{name} — Update a virtual model.
+async fn admin_update_virtual_model(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(req): Json<CreateVirtualModelRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    // Get the existing model to preserve defaults
+    let existing = state
+        .model_registry
+        .get_virtual(&name)
+        .ok_or_else(|| AppError::NotFound(format!("Virtual model '{}' not found", name)))?;
+
+    let updated = crate::virtual_model::VirtualModel {
+        name: name.clone(),
+        description: req.description,
+        base_model: req.base_model,
+        base_provider: req.base_provider.or(existing.base_provider),
+        enrichment: req.enrichment.unwrap_or(existing.enrichment),
+        profile: req.profile.or(existing.profile),
+        system_prompt: req.system_prompt.or(existing.system_prompt),
+        published: req.published.unwrap_or(existing.published),
+        created_at: existing.created_at,
+        tags: req.tags.unwrap_or(existing.tags),
+    };
+
+    if state.model_registry.update_virtual(updated) {
+        Ok(Json(serde_json::json!({"updated": name})))
+    } else {
+        Err(AppError::NotFound(format!("Virtual model '{}' not found", name)))
+    }
+}
+
+/// DELETE /admin/virtual-models/{name} — Delete a virtual model.
+async fn admin_delete_virtual_model(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    if state.model_registry.unregister_virtual(&name) {
+        Ok(Json(serde_json::json!({"deleted": name})))
+    } else {
+        Err(AppError::NotFound(format!("Virtual model '{}' not found", name)))
+    }
+}
+
+/// GET /admin/models — List all models with their publish status.
+async fn admin_list_models(
+    State(state): State<AppState>,
+) -> Json<serde_json::Value> {
+    let ass = state.assistant.lock().await;
+    let physical: Vec<serde_json::Value> = ass
+        .available_models
+        .iter()
+        .map(|m| {
+            let published = state.model_registry.is_published(&m.name);
+            let info = state.model_registry.get_published(&m.name);
+            serde_json::json!({
+                "name": m.name,
+                "provider": format!("{:?}", m.provider),
+                "published": published,
+                "display_name": info.and_then(|i| i.display_name),
+                "type": "physical",
+            })
+        })
+        .collect();
+    drop(ass);
+
+    let virtual_models: Vec<serde_json::Value> = state
+        .model_registry
+        .list_virtual()
+        .iter()
+        .map(|v| {
+            serde_json::json!({
+                "name": v.name,
+                "base_model": v.base_model,
+                "published": v.published,
+                "description": v.description,
+                "type": "virtual",
+            })
+        })
+        .collect();
+
+    Json(serde_json::json!({
+        "physical": physical,
+        "virtual": virtual_models,
+    }))
+}
+
+/// POST /admin/models/{name}/publish — Publish a physical model.
+async fn admin_publish_model(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    body: Option<Json<PublishModelRequest>>,
+) -> Json<serde_json::Value> {
+    let req = body.map(|b| b.0);
+    let provider = req
+        .as_ref()
+        .and_then(|r| r.provider.clone())
+        .unwrap_or(crate::config::AiProvider::Ollama);
+    let display_name = req.as_ref().and_then(|r| r.display_name.clone());
+
+    state.model_registry.set_published_with_display_name(
+        &name,
+        provider,
+        true,
+        display_name,
+    );
+
+    Json(serde_json::json!({"published": name}))
+}
+
+/// POST /admin/models/{name}/unpublish — Unpublish a physical model.
+async fn admin_unpublish_model(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Json<serde_json::Value> {
+    state.model_registry.set_published(
+        &name,
+        crate::config::AiProvider::Ollama,
+        false,
+    );
+    Json(serde_json::json!({"unpublished": name}))
 }
 
 // ============================================================================
@@ -1617,6 +2042,7 @@ fn build_app_state(config: ServerConfig, assistant: AiAssistant) -> AppState {
         sessions: Arc::new(DashMap::new()),
         metrics: Arc::new(AxumServerMetrics::new()),
         rate_limiter,
+        model_registry: Arc::new(crate::virtual_model::ModelRegistry::new()),
         #[cfg(feature = "server-cluster")]
         cluster: None,
     }
@@ -2329,6 +2755,7 @@ mod tests {
             message: "a".repeat(100),
             system_prompt: String::new(),
             knowledge_context: String::new(),
+            model: None,
         };
         let result = chat_handler(State(state), Json(req)).await;
         assert!(result.is_err());
@@ -2529,5 +2956,668 @@ mod tests {
         for h in handles {
             h.join().unwrap();
         }
+    }
+
+    // ── v31: StreamEvent Tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_stream_event_token() {
+        let event = StreamEvent::Token("Hello".to_string());
+        match event {
+            StreamEvent::Token(t) => assert_eq!(t, "Hello"),
+            _ => panic!("Expected Token"),
+        }
+    }
+
+    #[test]
+    fn test_stream_event_done() {
+        let event = StreamEvent::Done;
+        assert!(matches!(event, StreamEvent::Done));
+    }
+
+    #[test]
+    fn test_stream_event_error() {
+        let event = StreamEvent::Error("fail".to_string());
+        match event {
+            StreamEvent::Error(e) => assert_eq!(e, "fail"),
+            _ => panic!("Expected Error"),
+        }
+    }
+
+    // ── v31: Real Streaming Channel Tests ───────────────────────────────
+
+    #[tokio::test]
+    async fn test_stream_channel_sends_tokens() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<StreamEvent>(16);
+        tokio::task::spawn_blocking(move || {
+            tx.blocking_send(StreamEvent::Token("Hello".to_string())).unwrap();
+            tx.blocking_send(StreamEvent::Token(" world".to_string())).unwrap();
+            tx.blocking_send(StreamEvent::Done).unwrap();
+        });
+
+        let mut tokens = Vec::new();
+        while let Some(event) = rx.recv().await {
+            match event {
+                StreamEvent::Token(t) => tokens.push(t),
+                StreamEvent::Done => break,
+                StreamEvent::Error(_) => panic!("Unexpected error"),
+            }
+        }
+        assert_eq!(tokens, vec!["Hello", " world"]);
+    }
+
+    #[tokio::test]
+    async fn test_stream_channel_sends_error() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<StreamEvent>(16);
+        tokio::task::spawn_blocking(move || {
+            tx.blocking_send(StreamEvent::Token("partial".to_string())).unwrap();
+            tx.blocking_send(StreamEvent::Error("connection lost".to_string())).unwrap();
+        });
+
+        let mut got_error = false;
+        let mut got_token = false;
+        while let Some(event) = rx.recv().await {
+            match event {
+                StreamEvent::Token(_) => got_token = true,
+                StreamEvent::Error(e) => {
+                    assert_eq!(e, "connection lost");
+                    got_error = true;
+                    break;
+                }
+                StreamEvent::Done => break,
+            }
+        }
+        assert!(got_token);
+        assert!(got_error);
+    }
+
+    #[tokio::test]
+    async fn test_stream_channel_receiver_dropped() {
+        let (tx, rx) = tokio::sync::mpsc::channel::<StreamEvent>(16);
+        drop(rx); // Simulate client disconnect
+
+        let result = tokio::task::spawn_blocking(move || {
+            tx.blocking_send(StreamEvent::Token("test".to_string()))
+        }).await.unwrap();
+
+        assert!(result.is_err()); // Channel closed
+    }
+
+    #[tokio::test]
+    async fn test_stream_channel_multiple_tokens_ordering() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<StreamEvent>(16);
+        let expected: Vec<String> = (0..10).map(|i| format!("token_{}", i)).collect();
+        let expected_clone = expected.clone();
+
+        tokio::task::spawn_blocking(move || {
+            for token in expected_clone {
+                tx.blocking_send(StreamEvent::Token(token)).unwrap();
+            }
+            tx.blocking_send(StreamEvent::Done).unwrap();
+        });
+
+        let mut received = Vec::new();
+        while let Some(event) = rx.recv().await {
+            match event {
+                StreamEvent::Token(t) => received.push(t),
+                StreamEvent::Done => break,
+                _ => {}
+            }
+        }
+        assert_eq!(received, expected);
+    }
+
+    // ── v31: ChatRequest model field Tests ──────────────────────────────
+
+    #[test]
+    fn test_chat_request_with_model() {
+        let json = r#"{"message": "Hello", "model": "my-rag-assistant"}"#;
+        let req: ChatRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.message, "Hello");
+        assert_eq!(req.model, Some("my-rag-assistant".to_string()));
+    }
+
+    #[test]
+    fn test_chat_request_without_model() {
+        let json = r#"{"message": "Hello"}"#;
+        let req: ChatRequest = serde_json::from_str(json).unwrap();
+        assert!(req.model.is_none());
+    }
+
+    // ── v31: Enrichment helper Tests ────────────────────────────────────
+
+    #[test]
+    fn test_apply_enrichment_config_compaction() {
+        let mut ass = AiAssistant::new();
+        let enrichment = EnrichmentConfig {
+            compaction: crate::server::CompactionEnrichmentConfig {
+                enabled: true,
+                max_messages: 50,
+                target_messages: 30,
+                preserve_recent: 5,
+                preserve_first: 2,
+                min_importance: 0.5,
+            },
+            ..Default::default()
+        };
+        apply_enrichment_config(&mut ass, &enrichment);
+        // Verify compaction was applied (compaction config is internal)
+        // Just verify no panic
+    }
+
+    #[test]
+    fn test_apply_enrichment_config_thinking() {
+        let mut ass = AiAssistant::new();
+        let enrichment = EnrichmentConfig {
+            thinking: crate::server::ThinkingEnrichmentConfig {
+                enabled: true,
+                inject_cot_instructions: true,
+                parse_thinking_tags: true,
+                strip_thinking_from_response: true,
+                adjust_temperature: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        apply_enrichment_config(&mut ass, &enrichment);
+        assert!(ass.adaptive_thinking.enabled);
+        assert!(ass.adaptive_thinking.inject_cot_instructions);
+    }
+
+    #[test]
+    fn test_apply_rag_config() {
+        let mut ass = AiAssistant::new();
+        let rconf = crate::server::RagEnrichmentConfig {
+            knowledge_rag: true,
+            conversation_rag: false,
+            max_knowledge_tokens: 2000,
+            max_conversation_tokens: 1000,
+            top_k_chunks: 5,
+            min_relevance_score: 0.8,
+            dynamic_context: true,
+            auto_store_messages: false,
+        };
+        apply_rag_config(&mut ass, &rconf);
+        assert!(ass.rag_config.knowledge_rag_enabled);
+        assert!(!ass.rag_config.conversation_rag_enabled);
+        assert_eq!(ass.rag_config.max_knowledge_tokens, 2000);
+        assert_eq!(ass.rag_config.top_k_chunks, 5);
+    }
+
+    // ── v31: WebSocket streaming format Tests ───────────────────────────
+
+    #[test]
+    fn test_ws_chunk_message_format() {
+        let msg = serde_json::json!({"type": "chunk", "content": "Hello"});
+        assert_eq!(msg["type"], "chunk");
+        assert_eq!(msg["content"], "Hello");
+    }
+
+    #[test]
+    fn test_ws_complete_message_format() {
+        let msg = serde_json::json!({"type": "complete", "model": "llama3:8b"});
+        assert_eq!(msg["type"], "complete");
+        assert_eq!(msg["model"], "llama3:8b");
+    }
+
+    #[test]
+    fn test_ws_error_message_format() {
+        let msg = serde_json::json!({"type": "error", "error": "timeout"});
+        assert_eq!(msg["type"], "error");
+        assert_eq!(msg["error"], "timeout");
+    }
+
+    // ── v31: OpenAI streaming chunk format Tests ────────────────────────
+
+    #[test]
+    fn test_openai_stream_chunk_role_announcement() {
+        let chunk = crate::openai_adapter::StreamChunk {
+            id: Some("chatcmpl-test".to_string()),
+            object: Some("chat.completion.chunk".to_string()),
+            created: Some(1000),
+            model: Some("test-model".to_string()),
+            choices: vec![crate::openai_adapter::StreamChoice {
+                index: Some(0),
+                delta: crate::openai_adapter::StreamDelta {
+                    role: Some("assistant".to_string()),
+                    content: None,
+                },
+                finish_reason: None,
+            }],
+        };
+        let json = serde_json::to_value(&chunk).unwrap();
+        assert_eq!(json["choices"][0]["delta"]["role"], "assistant");
+        assert!(json["choices"][0]["delta"]["content"].is_null());
+    }
+
+    #[test]
+    fn test_openai_stream_chunk_content_token() {
+        let chunk = crate::openai_adapter::StreamChunk {
+            id: Some("chatcmpl-test".to_string()),
+            object: Some("chat.completion.chunk".to_string()),
+            created: Some(1000),
+            model: Some("test-model".to_string()),
+            choices: vec![crate::openai_adapter::StreamChoice {
+                index: Some(0),
+                delta: crate::openai_adapter::StreamDelta {
+                    role: None,
+                    content: Some("Hello".to_string()),
+                },
+                finish_reason: None,
+            }],
+        };
+        let json = serde_json::to_value(&chunk).unwrap();
+        assert_eq!(json["choices"][0]["delta"]["content"], "Hello");
+        assert!(json["choices"][0]["finish_reason"].is_null());
+    }
+
+    #[test]
+    fn test_openai_stream_chunk_stop() {
+        let chunk = crate::openai_adapter::StreamChunk {
+            id: Some("chatcmpl-test".to_string()),
+            object: Some("chat.completion.chunk".to_string()),
+            created: Some(1000),
+            model: Some("test-model".to_string()),
+            choices: vec![crate::openai_adapter::StreamChoice {
+                index: Some(0),
+                delta: crate::openai_adapter::StreamDelta {
+                    role: None,
+                    content: None,
+                },
+                finish_reason: Some("stop".to_string()),
+            }],
+        };
+        let json = serde_json::to_value(&chunk).unwrap();
+        assert_eq!(json["choices"][0]["finish_reason"], "stop");
+    }
+
+    // ── v31 Phase 5: Virtual Model Resolution Tests ─────────────────────
+
+    #[test]
+    fn test_app_state_has_model_registry() {
+        let config = ServerConfig::default();
+        let state = build_app_state(config, AiAssistant::new());
+        // Registry should be empty by default
+        assert!(state.model_registry.list_virtual().is_empty());
+    }
+
+    #[test]
+    fn test_model_registry_virtual_registration() {
+        let config = ServerConfig::default();
+        let state = build_app_state(config, AiAssistant::new());
+        let vmodel = crate::virtual_model::VirtualModel {
+            name: "my-rag".to_string(),
+            description: "RAG assistant".to_string(),
+            base_model: "llama3:8b".to_string(),
+            base_provider: None,
+            enrichment: EnrichmentConfig::default(),
+            profile: None,
+            system_prompt: Some("You are helpful.".to_string()),
+            published: true,
+            created_at: 0,
+            tags: vec![],
+        };
+        state.model_registry.register_virtual(vmodel).unwrap();
+        assert_eq!(state.model_registry.list_virtual().len(), 1);
+    }
+
+    #[test]
+    fn test_model_resolution_virtual_enrichment() {
+        let config = ServerConfig::default();
+        let state = build_app_state(config, AiAssistant::new());
+
+        let mut enrichment = EnrichmentConfig::default();
+        enrichment.enable_rag = true;
+        enrichment.rag.knowledge_rag = true;
+        enrichment.rag.top_k_chunks = 10;
+
+        let vmodel = crate::virtual_model::VirtualModel {
+            name: "rag-model".to_string(),
+            description: "RAG model".to_string(),
+            base_model: "gpt-4o".to_string(),
+            base_provider: None,
+            enrichment,
+            profile: None,
+            system_prompt: None,
+            published: true,
+            created_at: 0,
+            tags: vec![],
+        };
+        state.model_registry.register_virtual(vmodel).unwrap();
+
+        let resolution = state.model_registry.resolve("rag-model");
+        match resolution {
+            crate::virtual_model::ModelResolution::Virtual(v) => {
+                assert_eq!(v.base_model, "gpt-4o");
+                assert!(v.enrichment.enable_rag);
+                assert_eq!(v.enrichment.rag.top_k_chunks, 10);
+            }
+            _ => panic!("Expected Virtual"),
+        }
+    }
+
+    #[test]
+    fn test_model_resolution_system_prompt_prepend() {
+        let config = ServerConfig::default();
+        let state = build_app_state(config, AiAssistant::new());
+
+        let vmodel = crate::virtual_model::VirtualModel {
+            name: "custom".to_string(),
+            description: "Custom".to_string(),
+            base_model: "llama3:8b".to_string(),
+            base_provider: None,
+            enrichment: EnrichmentConfig::default(),
+            profile: None,
+            system_prompt: Some("Always respond in Spanish.".to_string()),
+            published: true,
+            created_at: 0,
+            tags: vec![],
+        };
+        state.model_registry.register_virtual(vmodel).unwrap();
+
+        let resolution = state.model_registry.resolve("custom");
+        if let crate::virtual_model::ModelResolution::Virtual(v) = resolution {
+            // Simulate what the handler does
+            let user_sys = "Be concise.";
+            let sys = format!("{}\n{}", v.system_prompt.unwrap(), user_sys);
+            assert!(sys.contains("Always respond in Spanish."));
+            assert!(sys.contains("Be concise."));
+        } else {
+            panic!("Expected Virtual");
+        }
+    }
+
+    #[test]
+    fn test_model_resolution_passthrough_empty() {
+        let config = ServerConfig::default();
+        let state = build_app_state(config, AiAssistant::new());
+        let resolution = state.model_registry.resolve("");
+        assert!(matches!(
+            resolution,
+            crate::virtual_model::ModelResolution::PassThrough { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_openai_models_handler_fallback() {
+        // No published models → should fall back to available_models
+        let config = ServerConfig::default();
+        let state = build_app_state(config, AiAssistant::new());
+        let Json(resp) = openai_models_handler(State(state)).await;
+        assert_eq!(resp["object"], "list");
+        assert!(resp["data"].is_array());
+    }
+
+    #[tokio::test]
+    async fn test_openai_models_handler_with_published() {
+        let config = ServerConfig::default();
+        let state = build_app_state(config, AiAssistant::new());
+
+        // Register a published virtual model
+        let vmodel = crate::virtual_model::VirtualModel {
+            name: "my-model".to_string(),
+            description: "Test".to_string(),
+            base_model: "llama3:8b".to_string(),
+            base_provider: None,
+            enrichment: EnrichmentConfig::default(),
+            profile: None,
+            system_prompt: None,
+            published: true,
+            created_at: 1000,
+            tags: vec!["test".to_string()],
+        };
+        state.model_registry.register_virtual(vmodel).unwrap();
+
+        let Json(resp) = openai_models_handler(State(state)).await;
+        let data = resp["data"].as_array().unwrap();
+        assert!(!data.is_empty());
+        // Should contain our virtual model
+        let has_virtual = data.iter().any(|m| m["id"] == "my-model");
+        assert!(has_virtual);
+    }
+
+    #[test]
+    fn test_model_publish_controls_visibility() {
+        let config = ServerConfig::default();
+        let state = build_app_state(config, AiAssistant::new());
+
+        // Publish one physical model
+        state.model_registry.set_published(
+            "llama3:8b",
+            crate::config::AiProvider::Ollama,
+            true,
+        );
+
+        let models = vec![
+            crate::models::ModelInfo {
+                name: "llama3:8b".to_string(),
+                provider: crate::config::AiProvider::Ollama,
+                size: None,
+                modified_at: None,
+                capabilities: None,
+            },
+            crate::models::ModelInfo {
+                name: "mistral:7b".to_string(),
+                provider: crate::config::AiProvider::Ollama,
+                size: None,
+                modified_at: None,
+                capabilities: None,
+            },
+        ];
+
+        let visible = state.model_registry.list_client_visible(&models);
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].id, "llama3:8b");
+    }
+
+    // ── v31 Phase 6: Admin Endpoint Tests ───────────────────────────────
+
+    #[tokio::test]
+    async fn test_admin_create_virtual_model() {
+        let config = ServerConfig::default();
+        let state = build_app_state(config, AiAssistant::new());
+        let req = CreateVirtualModelRequest {
+            name: "test-model".to_string(),
+            description: "A test model".to_string(),
+            base_model: "llama3:8b".to_string(),
+            base_provider: None,
+            enrichment: None,
+            profile: None,
+            system_prompt: Some("Be helpful.".to_string()),
+            published: Some(true),
+            tags: Some(vec!["test".to_string()]),
+        };
+        let result = admin_create_virtual_model(State(state.clone()), Json(req)).await;
+        assert!(result.is_ok());
+        let Json(resp) = result.unwrap();
+        assert_eq!(resp["created"], "test-model");
+
+        // Verify it exists
+        assert!(state.model_registry.get_virtual("test-model").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_admin_create_duplicate_virtual_model() {
+        let config = ServerConfig::default();
+        let state = build_app_state(config, AiAssistant::new());
+        let req = CreateVirtualModelRequest {
+            name: "dup".to_string(),
+            description: "First".to_string(),
+            base_model: "llama3:8b".to_string(),
+            base_provider: None,
+            enrichment: None,
+            profile: None,
+            system_prompt: None,
+            published: None,
+            tags: None,
+        };
+        admin_create_virtual_model(State(state.clone()), Json(req)).await.unwrap();
+
+        let req2 = CreateVirtualModelRequest {
+            name: "dup".to_string(),
+            description: "Second".to_string(),
+            base_model: "gpt-4o".to_string(),
+            base_provider: None,
+            enrichment: None,
+            profile: None,
+            system_prompt: None,
+            published: None,
+            tags: None,
+        };
+        let result = admin_create_virtual_model(State(state), Json(req2)).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_admin_list_virtual_models() {
+        let config = ServerConfig::default();
+        let state = build_app_state(config, AiAssistant::new());
+        state.model_registry.register_virtual(crate::virtual_model::VirtualModel {
+            name: "m1".to_string(),
+            description: "M1".to_string(),
+            base_model: "llama3:8b".to_string(),
+            base_provider: None,
+            enrichment: EnrichmentConfig::default(),
+            profile: None,
+            system_prompt: None,
+            published: true,
+            created_at: 0,
+            tags: vec![],
+        }).unwrap();
+
+        let Json(resp) = admin_list_virtual_models(State(state)).await;
+        let models = resp["virtual_models"].as_array().unwrap();
+        assert_eq!(models.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_admin_get_virtual_model() {
+        let config = ServerConfig::default();
+        let state = build_app_state(config, AiAssistant::new());
+        state.model_registry.register_virtual(crate::virtual_model::VirtualModel {
+            name: "my-model".to_string(),
+            description: "Test".to_string(),
+            base_model: "llama3:8b".to_string(),
+            base_provider: None,
+            enrichment: EnrichmentConfig::default(),
+            profile: None,
+            system_prompt: None,
+            published: true,
+            created_at: 0,
+            tags: vec![],
+        }).unwrap();
+
+        let result = admin_get_virtual_model(State(state), Path("my-model".to_string())).await;
+        assert!(result.is_ok());
+        let Json(resp) = result.unwrap();
+        assert_eq!(resp["name"], "my-model");
+    }
+
+    #[tokio::test]
+    async fn test_admin_get_virtual_model_not_found() {
+        let config = ServerConfig::default();
+        let state = build_app_state(config, AiAssistant::new());
+        let result = admin_get_virtual_model(State(state), Path("nope".to_string())).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_admin_delete_virtual_model() {
+        let config = ServerConfig::default();
+        let state = build_app_state(config, AiAssistant::new());
+        state.model_registry.register_virtual(crate::virtual_model::VirtualModel {
+            name: "del-me".to_string(),
+            description: "Delete me".to_string(),
+            base_model: "llama3:8b".to_string(),
+            base_provider: None,
+            enrichment: EnrichmentConfig::default(),
+            profile: None,
+            system_prompt: None,
+            published: false,
+            created_at: 0,
+            tags: vec![],
+        }).unwrap();
+
+        let result = admin_delete_virtual_model(State(state.clone()), Path("del-me".to_string())).await;
+        assert!(result.is_ok());
+        assert!(state.model_registry.get_virtual("del-me").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_admin_delete_virtual_model_not_found() {
+        let config = ServerConfig::default();
+        let state = build_app_state(config, AiAssistant::new());
+        let result = admin_delete_virtual_model(State(state), Path("nope".to_string())).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_admin_publish_model() {
+        let config = ServerConfig::default();
+        let state = build_app_state(config, AiAssistant::new());
+        let Json(resp) = admin_publish_model(
+            State(state.clone()),
+            Path("llama3:8b".to_string()),
+            None,
+        ).await;
+        assert_eq!(resp["published"], "llama3:8b");
+        assert!(state.model_registry.is_published("llama3:8b"));
+    }
+
+    #[tokio::test]
+    async fn test_admin_unpublish_model() {
+        let config = ServerConfig::default();
+        let state = build_app_state(config, AiAssistant::new());
+        state.model_registry.set_published("llama3:8b", crate::config::AiProvider::Ollama, true);
+        assert!(state.model_registry.is_published("llama3:8b"));
+
+        let Json(resp) = admin_unpublish_model(State(state.clone()), Path("llama3:8b".to_string())).await;
+        assert_eq!(resp["unpublished"], "llama3:8b");
+        assert!(!state.model_registry.is_published("llama3:8b"));
+    }
+
+    #[tokio::test]
+    async fn test_admin_list_models() {
+        let config = ServerConfig::default();
+        let state = build_app_state(config, AiAssistant::new());
+
+        // Add a virtual model
+        state.model_registry.register_virtual(crate::virtual_model::VirtualModel {
+            name: "v1".to_string(),
+            description: "V1".to_string(),
+            base_model: "llama3:8b".to_string(),
+            base_provider: None,
+            enrichment: EnrichmentConfig::default(),
+            profile: None,
+            system_prompt: None,
+            published: true,
+            created_at: 0,
+            tags: vec![],
+        }).unwrap();
+
+        let Json(resp) = admin_list_models(State(state)).await;
+        assert!(resp["physical"].is_array());
+        assert!(resp["virtual"].is_array());
+        let virtuals = resp["virtual"].as_array().unwrap();
+        assert_eq!(virtuals.len(), 1);
+        assert_eq!(virtuals[0]["name"], "v1");
+    }
+
+    #[tokio::test]
+    async fn test_admin_publish_with_display_name() {
+        let config = ServerConfig::default();
+        let state = build_app_state(config, AiAssistant::new());
+        let req = PublishModelRequest {
+            provider: Some(crate::config::AiProvider::Ollama),
+            display_name: Some("My Llama".to_string()),
+        };
+        admin_publish_model(
+            State(state.clone()),
+            Path("llama3:8b".to_string()),
+            Some(Json(req)),
+        ).await;
+
+        let info = state.model_registry.get_published("llama3:8b").unwrap();
+        assert_eq!(info.display_name, Some("My Llama".to_string()));
     }
 }

@@ -1133,6 +1133,12 @@ impl FactStore {
                 .push(idx);
 
             self.facts.push(fact);
+
+            #[cfg(feature = "analytics")]
+            crate::scalability_monitor::check_scalability(
+                crate::scalability_monitor::Subsystem::FactStore,
+                self.facts.len(),
+            );
         }
     }
 

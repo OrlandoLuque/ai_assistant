@@ -196,6 +196,8 @@ pub mod search;
 pub mod server;
 #[cfg(feature = "server-axum")]
 pub mod server_axum;
+#[cfg(feature = "server-axum")]
+pub mod virtual_model;
 #[cfg(feature = "server-cluster")]
 pub mod cluster;
 #[cfg(feature = "redis-backend")]
@@ -783,6 +785,8 @@ pub mod streaming_metrics;
 #[cfg(feature = "analytics")]
 pub mod telemetry;
 #[cfg(feature = "analytics")]
+pub mod scalability_monitor;
+#[cfg(feature = "analytics")]
 pub mod user_engagement;
 
 #[cfg(feature = "analytics")]
@@ -844,6 +848,12 @@ pub use quality::{
 #[cfg(feature = "analytics")]
 pub use conversation_flow::{
     ConversationTurn, FlowAnalysis, FlowAnalyzer, FlowState, TopicTransition,
+};
+
+#[cfg(feature = "analytics")]
+pub use scalability_monitor::{
+    ScalabilityAction, ScalabilitySnapshot, ScalabilityWarning, Subsystem,
+    WarningSeverity as ScalabilityWarningSeverity,
 };
 
 // =============================================================================

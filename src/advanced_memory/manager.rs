@@ -39,6 +39,12 @@ impl AdvancedMemoryManager {
     /// Add an episode to the episodic store.
     pub fn add_episode(&mut self, episode: Episode) {
         self.episodic.add(episode);
+
+        #[cfg(feature = "analytics")]
+        crate::scalability_monitor::check_scalability(
+            crate::scalability_monitor::Subsystem::EpisodicMemory,
+            self.episodic.len(),
+        );
     }
 
     /// Add a procedure to the procedural store.
@@ -48,7 +54,15 @@ impl AdvancedMemoryManager {
 
     /// Add an entity record.
     pub fn add_entity(&mut self, record: EntityRecord) -> Result<(), AiError> {
-        self.entities.add(record)
+        let result = self.entities.add(record);
+
+        #[cfg(feature = "analytics")]
+        crate::scalability_monitor::check_scalability(
+            crate::scalability_monitor::Subsystem::EntityStore,
+            self.entities.len(),
+        );
+
+        result
     }
 
     /// Run consolidation on all current episodes and add resulting procedures

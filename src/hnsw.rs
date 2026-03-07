@@ -218,6 +218,12 @@ impl HnswIndex {
             self.entry_point = Some(idx);
             self.current_max_level = level;
         }
+
+        #[cfg(feature = "analytics")]
+        crate::scalability_monitor::check_scalability(
+            crate::scalability_monitor::Subsystem::VectorDbHnsw,
+            self.nodes.len(),
+        );
     }
 
     /// Search for the k nearest neighbors to the query vector.

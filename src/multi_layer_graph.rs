@@ -529,6 +529,12 @@ impl SessionGraph {
             ttl_seconds: None,
         });
         self.updated_at = now;
+
+        #[cfg(feature = "analytics")]
+        crate::scalability_monitor::check_scalability(
+            crate::scalability_monitor::Subsystem::MultiLayerGraph,
+            self.entities.len(),
+        );
     }
 
     /// Add a relation to the session graph

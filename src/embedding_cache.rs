@@ -169,6 +169,12 @@ impl EmbeddingCache {
         self.stats.memory_bytes += entry.embedding.len() * std::mem::size_of::<f32>();
         self.entries.insert(key, entry);
         self.stats.entries = self.entries.len();
+
+        #[cfg(feature = "analytics")]
+        crate::scalability_monitor::check_scalability(
+            crate::scalability_monitor::Subsystem::EmbeddingCache,
+            self.entries.len(),
+        );
     }
 
     /// Evict one entry based on LRU

@@ -347,9 +347,18 @@ impl Dht {
 
         let mut storage = self.storage.write().unwrap_or_else(|e| e.into_inner());
         storage.insert(key_id, dht_value);
+        #[cfg(feature = "analytics")]
+        let storage_len = storage.len();
+        drop(storage);
 
         let mut stats = self.stats.write().unwrap_or_else(|e| e.into_inner());
         stats.puts += 1;
+
+        #[cfg(feature = "analytics")]
+        crate::scalability_monitor::check_scalability(
+            crate::scalability_monitor::Subsystem::DhtStorage,
+            storage_len,
+        );
 
         key_id
     }
@@ -662,6 +671,12 @@ impl<T: Clone + Eq + Hash> ORSet<T> {
 
         // Update tag counter
         self.tag_counter = self.tag_counter.max(other.tag_counter);
+
+        #[cfg(feature = "analytics")]
+        crate::scalability_monitor::check_scalability(
+            crate::scalability_monitor::Subsystem::CrdtOrSetTombstones,
+            self.tombstones.len(),
+        );
     }
 
     /// Count of elements
