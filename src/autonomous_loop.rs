@@ -11,6 +11,7 @@ use crate::task_board::{BoardCommand, TaskBoard};
 use crate::unified_tools::{ToolCall, ToolRegistry};
 use crate::user_interaction::{InteractionManager, NotifyLevel, UserQuery, UserResponse};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -151,6 +152,17 @@ pub struct AutonomousAgentConfig {
 ///
 /// Drives the loop: generate response -> parse tool calls -> validate in
 /// sandbox -> execute via registry -> feed results back -> repeat.
+/// Message type for inter-agent communication via mailbox.
+#[derive(Debug, Clone)]
+pub struct InterAgentMessage {
+    /// Sender agent identifier.
+    pub from: String,
+    /// Message content.
+    pub content: String,
+    /// Timestamp (millis since UNIX epoch).
+    pub timestamp: u64,
+}
+
 pub struct AutonomousAgent {
     config: AutonomousAgentConfig,
     policy: AgentPolicy,
@@ -167,6 +179,12 @@ pub struct AutonomousAgent {
     total_cost: f64,
     start_time: u64,
     tools_called_log: Vec<String>,
+    /// Cancellation token — if set to true, agent stops at next iteration.
+    cancellation_token: Option<Arc<AtomicBool>>,
+    /// Mailbox for receiving inter-agent messages (checked between iterations).
+    mailbox: Option<std::sync::mpsc::Receiver<InterAgentMessage>>,
+    /// Index of the planning hint message in conversation (for cleanup).
+    planning_hint_idx: Option<usize>,
 }
 
 impl AutonomousAgent {
@@ -236,6 +254,33 @@ impl AutonomousAgent {
             if self.iteration >= self.config.max_iterations {
                 self.state = AgentState::Failed("Max iterations reached".into());
                 return Err("Max iterations reached".into());
+            }
+
+            // Check cancellation token
+            if let Some(ref token) = self.cancellation_token {
+                if token.load(Ordering::Relaxed) {
+                    self.state = AgentState::Failed("Cancelled".into());
+                    let elapsed = now_millis() - self.start_time;
+                    return Ok(AgentResult {
+                        output: "Agent cancelled".to_string(),
+                        iterations: self.iteration,
+                        tools_called: self.collect_tools_called(),
+                        cost: self.total_cost,
+                        duration_ms: elapsed,
+                    });
+                }
+            }
+
+            // Process mailbox messages (inject as system messages)
+            if let Some(ref mailbox) = self.mailbox {
+                while let Ok(msg) = mailbox.try_recv() {
+                    self.conversation.push(LoopMessage {
+                        role: LoopRole::System,
+                        content: format!("[Message from {}]: {}", msg.from, msg.content),
+                        tool_calls: None,
+                        tool_results: None,
+                    });
+                }
             }
 
             match self.state {
@@ -466,6 +511,26 @@ impl AutonomousAgent {
         &self.conversation
     }
 
+    /// Get the cancellation token, if set.
+    pub fn cancellation_token(&self) -> Option<&Arc<AtomicBool>> {
+        self.cancellation_token.as_ref()
+    }
+
+    /// Get current iteration count.
+    pub fn iteration(&self) -> usize {
+        self.iteration
+    }
+
+    /// Get accumulated cost.
+    pub fn total_cost(&self) -> f64 {
+        self.total_cost
+    }
+
+    /// Get agent name.
+    pub fn name(&self) -> &str {
+        &self.config.name
+    }
+
     /// Collect all tool names that were called during the run.
     fn collect_tools_called(&self) -> Vec<String> {
         self.tools_called_log.clone()
@@ -647,6 +712,8 @@ pub struct AutonomousAgentBuilder {
     interaction: Option<Arc<InteractionManager>>,
     task_board: Option<Arc<RwLock<TaskBoard>>>,
     current_task_id: Option<String>,
+    cancellation_token: Option<Arc<AtomicBool>>,
+    mailbox: Option<std::sync::mpsc::Receiver<InterAgentMessage>>,
 }
 
 impl AutonomousAgentBuilder {
@@ -667,6 +734,8 @@ impl AutonomousAgentBuilder {
             interaction: None,
             task_board: None,
             current_task_id: None,
+            cancellation_token: None,
+            mailbox: None,
         }
     }
 
@@ -716,6 +785,18 @@ impl AutonomousAgentBuilder {
         self
     }
 
+    /// Set a cancellation token for cooperative cancellation.
+    pub fn cancellation_token(mut self, token: Arc<AtomicBool>) -> Self {
+        self.cancellation_token = Some(token);
+        self
+    }
+
+    /// Set a mailbox receiver for inter-agent messages.
+    pub fn mailbox(mut self, rx: std::sync::mpsc::Receiver<InterAgentMessage>) -> Self {
+        self.mailbox = Some(rx);
+        self
+    }
+
     pub fn build(self) -> AutonomousAgent {
         let sandbox = self
             .sandbox
@@ -742,6 +823,9 @@ impl AutonomousAgentBuilder {
             total_cost: 0.0,
             start_time: 0,
             tools_called_log: Vec::new(),
+            cancellation_token: self.cancellation_token,
+            mailbox: self.mailbox,
+            planning_hint_idx: None,
         }
     }
 }
