@@ -2,14 +2,14 @@
 //!
 //! Run with: cargo run --example autonomous_agent --features "autonomous,tools"
 //!
-//! Demonstrates building an AutonomousAgent with a response generator,
+//! Demonstrates building an AgentRuntime with a response generator,
 //! tool registry, policy, and sandbox, then running it on a task.
 
 use std::sync::Arc;
 
 use ai_assistant::agentic_loop::AgentMessage;
 use ai_assistant::{
-    AgentPolicyBuilder, AutonomousAgent, AutonomyLevel, OperationMode, ToolBuilder,
+    AgentPolicyBuilder, AgentRuntime, AutonomyLevel, OperationMode, ToolBuilder,
     UnifiedToolHandler, UnifiedToolOutput, UnifiedToolRegistry,
 };
 
@@ -53,7 +53,7 @@ fn main() {
         .build();
 
     // 4. Build and run the agent.
-    let mut agent = AutonomousAgent::builder("demo-agent", response_generator)
+    let mut agent = AgentRuntime::builder("demo-agent", response_generator)
         .max_iterations(5)
         .system_prompt("You are a helpful assistant with access to tools.")
         .policy(policy)

@@ -3250,12 +3250,12 @@ mod tests {
     #[cfg(feature = "autonomous")]
     mod session_tests {
         use super::super::*;
-        use crate::agentic_loop::AgentMessage;
+        use crate::agentic_loop::LoopMessage;
         use crate::autonomous_loop::AutonomousAgentBuilder;
         use std::sync::Arc;
 
-        fn dummy_generator() -> Arc<dyn Fn(&[AgentMessage]) -> String + Send + Sync> {
-            Arc::new(|_msgs: &[AgentMessage]| -> String { "Done.".to_string() })
+        fn dummy_generator() -> Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync> {
+            Arc::new(|_msgs: &[LoopMessage]| -> String { "Done.".to_string() })
         }
 
         #[test]

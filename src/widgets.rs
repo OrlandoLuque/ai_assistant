@@ -4037,7 +4037,7 @@ pub fn knowledge_selection_external(
 // RAG Tier Selection Widgets
 // ============================================================================
 
-use crate::rag_tiers::{RagConfig, RagFeatures, RagTier};
+use crate::rag_tiers::{RagTierConfig, RagFeatures, RagTier};
 
 /// Colors for RAG tier UI elements
 #[derive(Clone)]
@@ -4342,7 +4342,7 @@ pub fn rag_tier_slider(ui: &mut Ui, current_tier: &mut RagTier, label: &str) -> 
 /// Render a tier info panel showing current configuration details
 ///
 /// Displays the features enabled for the current tier and requirements.
-pub fn rag_tier_info_panel(ui: &mut Ui, tier: RagTier, config: Option<&RagConfig>) {
+pub fn rag_tier_info_panel(ui: &mut Ui, tier: RagTier, config: Option<&RagTierConfig>) {
     let features = config
         .map(|c| c.effective_features())
         .unwrap_or_else(|| tier.to_features());
@@ -4445,7 +4445,7 @@ pub fn rag_tier_badge(ui: &mut Ui, tier: RagTier, colors: &RagTierColors) {
 pub fn rag_tier_selector_full(
     ui: &mut Ui,
     current_tier: &mut RagTier,
-    mut config: Option<&mut RagConfig>,
+    mut config: Option<&mut RagTierConfig>,
     show_details: bool,
 ) -> RagTierResponse {
     let mut response = RagTierResponse::default();

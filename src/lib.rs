@@ -1096,8 +1096,8 @@ pub use mcp_client::{
 
 #[cfg(feature = "tools")]
 pub use agentic_loop::{
-    AgentBuilder, AgentConfig as LoopConfig, AgentLoopResult, AgentMessage as LoopMessage,
-    AgentRole as LoopRole, AgentState as LoopState, AgentStatus as LoopStatus, AgenticLoop,
+    AgentBuilder, LoopConfig, AgentLoopResult, LoopMessage,
+    LoopRole, LoopState, LoopStatus, AgenticLoop,
     IterationResult,
 };
 
@@ -1346,7 +1346,7 @@ pub use rag_advanced::{
 
 #[cfg(feature = "rag")]
 pub use rag_tiers::{
-    auto_select_tier, HybridWeights, QueryComplexity, RagConfig as RagTierConfig, RagFeatures,
+    auto_select_tier, HybridWeights, QueryComplexity, RagTierConfig, RagFeatures,
     RagRequirement, RagStats, RagTier, TierSelectionHints, UserPreference,
 };
 
@@ -1371,7 +1371,7 @@ pub use rag_debug::{
 
 #[cfg(feature = "rag")]
 pub use rag_pipeline::{
-    ChunkPosition as PipelineChunkPosition, EmbeddingCallback, GraphCallback, GraphRelation,
+    PipelineChunkPosition, EmbeddingCallback, GraphCallback, GraphRelation,
     LlmCallback, RagPipeline, RagPipelineConfig, RagPipelineError, RagPipelineResult,
     RagPipelineStats, RetrievalCallback, RetrievedChunk,
 };
@@ -1389,7 +1389,7 @@ pub use rag_methods::{
     CrossEncoderReranker,
     CrossEncoderScore,
     EmbeddingGenerate,
-    Entity as GraphEntity,
+    GraphEntity,
     EntityMention,
     GraphDatabase,
     GraphRagConfig,
@@ -1405,7 +1405,7 @@ pub use rag_methods::{
     MultiQueryConfig,
     MultiQueryDecomposer,
     // Query Enhancement
-    QueryExpander as AdvancedQueryExpander,
+    AdvancedQueryExpander,
     QueryExpanderConfig,
     RaptorConfig,
     RaptorNode,
@@ -1432,14 +1432,14 @@ pub use query_expansion::{
 #[cfg(feature = "rag")]
 pub use citations::{
     Citation, CitationConfig, CitationGenerator, CitationStyle, CitationVerifier, CitedText,
-    Source, SourceType, UnverifiedCitation, VerificationResult as CitationVerificationResult,
+    Source, SourceType, UnverifiedCitation, CitationVerificationResult,
 };
 
 #[cfg(feature = "rag")]
 pub use auto_indexing::{
-    AutoIndexConfig, AutoIndexer, ChunkMetadata as IndexChunkMetadata, ChunkPosition,
+    AutoIndexConfig, AutoIndexer, IndexChunkMetadata, ChunkPosition,
     IndexChunkingStrategy, IndexState, IndexStats, IndexableChunk, IndexedDocumentMeta,
-    IndexingResult as AutoIndexingResult,
+    AutoIndexingResult,
 };
 
 #[cfg(feature = "rag")]
@@ -2138,6 +2138,20 @@ pub mod agent_definition;
 pub use agent_definition::{
     AgentDefinition, AgentDefinitionLoader, AgentSpec, GuardrailSpec, MemorySpec, ToolRef,
     ValidationWarning, WarningSeverity,
+};
+
+#[cfg(feature = "autonomous")]
+pub mod agent_wiring;
+
+#[cfg(feature = "autonomous")]
+pub use agent_wiring::{
+    agent_from_definition, chat_to_loop_message, create_agent_from_definition,
+    filter_tool_registry, loop_message_to_pair, make_response_generator,
+    make_response_generator_factory, parse_agent_role, role_system_prompt,
+    score_agent_for_task, AgentCreationError, AgentPool, IterationHook,
+    PoolTask,
+    PoolAgentStatus, PoolTaskResult, ResponseGenerator, ResponseGeneratorFactory,
+    SupervisorConfig, TriggerReason,
 };
 
 // =============================================================================

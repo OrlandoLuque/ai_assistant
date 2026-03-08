@@ -95,12 +95,12 @@ pub struct IndexableChunk {
     /// Optional section title.
     pub section: Option<String>,
     /// Rich metadata about this chunk.
-    pub metadata: ChunkMetadata,
+    pub metadata: IndexChunkMetadata,
 }
 
 /// Metadata associated with a single chunk.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChunkMetadata {
+pub struct IndexChunkMetadata {
     /// Source identifier.
     pub source: String,
     /// When the chunk was imported/indexed.
@@ -119,7 +119,7 @@ pub struct ChunkMetadata {
 
 /// Result of an indexing operation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IndexingResult {
+pub struct AutoIndexingResult {
     /// Number of documents successfully indexed.
     pub documents_indexed: usize,
     /// Total chunks created across all documents.
@@ -134,7 +134,7 @@ pub struct IndexingResult {
     pub duration_ms: u64,
 }
 
-impl IndexingResult {
+impl AutoIndexingResult {
     fn empty() -> Self {
         Self {
             documents_indexed: 0,
@@ -146,7 +146,7 @@ impl IndexingResult {
         }
     }
 
-    fn merge(&mut self, other: &IndexingResult) {
+    fn merge(&mut self, other: &AutoIndexingResult) {
         self.documents_indexed += other.documents_indexed;
         self.chunks_created += other.chunks_created;
         self.documents_skipped += other.documents_skipped;
@@ -276,14 +276,14 @@ impl AutoIndexer {
         content: &str,
         source: &str,
         content_type: &str,
-    ) -> Result<IndexingResult> {
+    ) -> Result<AutoIndexingResult> {
         let start = Instant::now();
 
         if !self.config.force_reindex && !self.needs_reindex(source, content) {
-            return Ok(IndexingResult {
+            return Ok(AutoIndexingResult {
                 documents_skipped: 1,
                 duration_ms: start.elapsed().as_millis() as u64,
-                ..IndexingResult::empty()
+                ..AutoIndexingResult::empty()
             });
         }
 
@@ -330,17 +330,17 @@ impl AutoIndexer {
         self.save_document_meta(&meta)?;
         self.state.documents.insert(source.to_string(), meta);
 
-        Ok(IndexingResult {
+        Ok(AutoIndexingResult {
             documents_indexed: 1,
             chunks_created: chunk_count,
             duration_ms: start.elapsed().as_millis() as u64,
-            ..IndexingResult::empty()
+            ..AutoIndexingResult::empty()
         })
     }
 
     /// Index a `ParsedDocument` (available when the `documents` feature is enabled).
     #[cfg(feature = "documents")]
-    pub fn index_parsed_document(&mut self, doc: &ParsedDocument) -> Result<IndexingResult> {
+    pub fn index_parsed_document(&mut self, doc: &ParsedDocument) -> Result<AutoIndexingResult> {
         let source = doc.source_path.as_deref().unwrap_or("unknown").to_string();
         let content_type = match doc.format {
             super::document_parsing::DocumentFormat::Epub => "application/epub+zip",
@@ -368,13 +368,13 @@ impl AutoIndexer {
 
     /// Index a single file from the filesystem.
     #[cfg(feature = "documents")]
-    pub fn index_file(&mut self, path: &Path) -> Result<IndexingResult> {
+    pub fn index_file(&mut self, path: &Path) -> Result<AutoIndexingResult> {
         let path_str = path.to_string_lossy().to_string();
 
         // Check file size
         let file_meta = std::fs::metadata(path)?;
         if file_meta.len() as usize > self.config.max_document_size {
-            return Ok(IndexingResult {
+            return Ok(AutoIndexingResult {
                 documents_skipped: 1,
                 errors: vec![format!(
                     "File too large: {} ({} bytes, max {})",
@@ -382,7 +382,7 @@ impl AutoIndexer {
                     file_meta.len(),
                     self.config.max_document_size
                 )],
-                ..IndexingResult::empty()
+                ..AutoIndexingResult::empty()
             });
         }
 
@@ -393,10 +393,10 @@ impl AutoIndexer {
             .unwrap_or("")
             .to_lowercase();
         if !self.config.supported_extensions.contains(&ext) {
-            return Ok(IndexingResult {
+            return Ok(AutoIndexingResult {
                 documents_skipped: 1,
                 errors: vec![format!("Unsupported extension: .{}", ext)],
-                ..IndexingResult::empty()
+                ..AutoIndexingResult::empty()
             });
         }
 
@@ -409,9 +409,9 @@ impl AutoIndexer {
 
     /// Index all supported files in a directory, optionally recursively.
     #[cfg(feature = "documents")]
-    pub fn index_directory(&mut self, dir: &Path, recursive: bool) -> Result<IndexingResult> {
+    pub fn index_directory(&mut self, dir: &Path, recursive: bool) -> Result<AutoIndexingResult> {
         let start = Instant::now();
-        let mut result = IndexingResult::empty();
+        let mut result = AutoIndexingResult::empty();
 
         let entries = std::fs::read_dir(dir)?;
         for entry in entries {
@@ -462,9 +462,9 @@ impl AutoIndexer {
     }
 
     /// Re-index only documents whose content has changed since the last indexing.
-    pub fn incremental_reindex(&mut self) -> Result<IndexingResult> {
+    pub fn incremental_reindex(&mut self) -> Result<AutoIndexingResult> {
         let start = Instant::now();
-        let mut result = IndexingResult::empty();
+        let mut result = AutoIndexingResult::empty();
 
         // Collect sources that exist as files
         let sources: Vec<String> = self.state.documents.keys().cloned().collect();
@@ -615,7 +615,7 @@ impl AutoIndexer {
                     chunk_index: i,
                     source: source.to_string(),
                     section: None,
-                    metadata: ChunkMetadata {
+                    metadata: IndexChunkMetadata {
                         source: source.to_string(),
                         import_date: now,
                         content_type: content_type.to_string(),

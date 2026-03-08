@@ -3195,7 +3195,7 @@ impl AiAssistant {
         &self,
         profile_name: &str,
         response_generator: Arc<
-            dyn Fn(&[crate::agentic_loop::AgentMessage]) -> String + Send + Sync,
+            dyn Fn(&[crate::agentic_loop::LoopMessage]) -> String + Send + Sync,
         >,
     ) -> Result<AutonomousAgent> {
         let profile = self
@@ -3235,7 +3235,7 @@ impl AiAssistant {
         &self,
         profile_name: &str,
         response_generator: Arc<
-            dyn Fn(&[crate::agentic_loop::AgentMessage]) -> String + Send + Sync,
+            dyn Fn(&[crate::agentic_loop::LoopMessage]) -> String + Send + Sync,
         >,
     ) -> Result<AutonomousAgent> {
         let handler: Arc<dyn UserInteractionHandler> = Arc::new(AutoApproveInteraction::new());

@@ -20,13 +20,13 @@
 //! # Usage
 //!
 //! ```rust
-//! use ai_assistant::rag_tiers::{RagConfig, RagTier, RagFeatures};
+//! use ai_assistant::rag_tiers::{RagTierConfig, RagTier, RagFeatures};
 //!
 //! // Simple: use a predefined tier
-//! let config = RagConfig::with_tier(RagTier::Enhanced);
+//! let config = RagTierConfig::with_tier(RagTier::Enhanced);
 //!
 //! // Advanced: customize specific features
-//! let mut config = RagConfig::with_tier(RagTier::Enhanced);
+//! let mut config = RagTierConfig::with_tier(RagTier::Enhanced);
 //! config.features.contextual_compression = true;  // Add from higher tier
 //! config.features.reranking = false;  // Disable from current tier
 //! config.use_custom_features = true;  // Use custom instead of tier defaults
@@ -434,7 +434,7 @@ pub enum RagTier {
     Full,
 
     /// Custom: User-defined feature selection
-    /// Use RagConfig.features to specify exactly which features to enable
+    /// Use RagTierConfig.features to specify exactly which features to enable
     Custom,
 }
 
@@ -1014,7 +1014,7 @@ impl RagRequirement {
 
 /// Main RAG configuration combining tier selection with custom features
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct RagConfig {
+pub struct RagTierConfig {
     /// Selected tier (use Custom for manual feature selection)
     pub tier: RagTier,
 
@@ -1074,7 +1074,7 @@ pub struct RagConfig {
     pub hybrid_weights: HybridWeights,
 }
 
-impl Default for RagConfig {
+impl Default for RagTierConfig {
     fn default() -> Self {
         Self {
             tier: RagTier::Fast,
@@ -1099,7 +1099,7 @@ impl Default for RagConfig {
     }
 }
 
-impl RagConfig {
+impl RagTierConfig {
     /// Create with a specific tier
     pub fn with_tier(tier: RagTier) -> Self {
         Self {
@@ -1617,7 +1617,7 @@ mod tests {
 
     #[test]
     fn test_config_with_tier() {
-        let config = RagConfig::with_tier(RagTier::Enhanced);
+        let config = RagTierConfig::with_tier(RagTier::Enhanced);
         assert_eq!(config.tier, RagTier::Enhanced);
         assert!(!config.use_custom_features);
 
@@ -1632,7 +1632,7 @@ mod tests {
         features.fts_search = true;
         features.reranking = true;
 
-        let config = RagConfig::with_features(features);
+        let config = RagTierConfig::with_features(features);
         assert_eq!(config.tier, RagTier::Custom);
         assert!(config.use_custom_features);
 
@@ -1644,30 +1644,30 @@ mod tests {
 
     #[test]
     fn test_estimate_calls() {
-        let fast = RagConfig::with_tier(RagTier::Fast);
+        let fast = RagTierConfig::with_tier(RagTier::Fast);
         assert_eq!(fast.estimate_extra_calls(), (0, Some(0)));
 
-        let enhanced = RagConfig::with_tier(RagTier::Enhanced);
+        let enhanced = RagTierConfig::with_tier(RagTier::Enhanced);
         let (min, max) = enhanced.estimate_extra_calls();
         assert!(min >= 1);
         assert!(max.is_some() && max.unwrap() >= min);
 
-        let agentic = RagConfig::with_tier(RagTier::Agentic);
+        let agentic = RagTierConfig::with_tier(RagTier::Agentic);
         let (_, max) = agentic.estimate_extra_calls();
         assert!(max.is_none()); // Unbounded
     }
 
     #[test]
     fn test_requirements() {
-        let fast = RagConfig::with_tier(RagTier::Fast);
+        let fast = RagTierConfig::with_tier(RagTier::Fast);
         let reqs = fast.check_requirements();
         assert!(reqs.is_empty()); // No special requirements
 
-        let semantic = RagConfig::with_tier(RagTier::Semantic);
+        let semantic = RagTierConfig::with_tier(RagTier::Semantic);
         let reqs = semantic.check_requirements();
         assert!(reqs.contains(&RagRequirement::EmbeddingModel));
 
-        let graph = RagConfig::with_tier(RagTier::Graph);
+        let graph = RagTierConfig::with_tier(RagTier::Graph);
         let reqs = graph.check_requirements();
         assert!(reqs.contains(&RagRequirement::GraphDatabase));
     }
@@ -1828,7 +1828,7 @@ mod tests {
         custom_features.semantic_search = true;
         custom_features.contextual_compression = true;
 
-        let config = RagConfig::with_features(custom_features.clone());
+        let config = RagTierConfig::with_features(custom_features.clone());
         assert!(config.use_custom_features);
         assert_eq!(config.tier, RagTier::Custom);
 
@@ -1842,10 +1842,10 @@ mod tests {
 
     #[test]
     fn test_config_estimate_calls_varies_by_tier() {
-        let disabled = RagConfig::with_tier(RagTier::Disabled);
-        let fast = RagConfig::with_tier(RagTier::Fast);
-        let enhanced = RagConfig::with_tier(RagTier::Enhanced);
-        let thorough = RagConfig::with_tier(RagTier::Thorough);
+        let disabled = RagTierConfig::with_tier(RagTier::Disabled);
+        let fast = RagTierConfig::with_tier(RagTier::Fast);
+        let enhanced = RagTierConfig::with_tier(RagTier::Enhanced);
+        let thorough = RagTierConfig::with_tier(RagTier::Thorough);
 
         let (d_min, d_max) = disabled.estimate_extra_calls();
         let (f_min, f_max) = fast.estimate_extra_calls();
@@ -1871,7 +1871,7 @@ mod tests {
 
     #[test]
     fn test_config_check_requirements_basic() {
-        let fast_config = RagConfig::with_tier(RagTier::Fast);
+        let fast_config = RagTierConfig::with_tier(RagTier::Fast);
         let reqs = fast_config.check_requirements();
         // Fast tier only uses FTS, no special requirements other than SQLite
         assert!(
@@ -1886,7 +1886,7 @@ mod tests {
 
     #[test]
     fn test_config_check_requirements_graph() {
-        let graph_config = RagConfig::with_tier(RagTier::Graph);
+        let graph_config = RagTierConfig::with_tier(RagTier::Graph);
         let reqs = graph_config.check_requirements();
         assert!(
             reqs.contains(&RagRequirement::GraphDatabase),
@@ -2168,7 +2168,7 @@ mod tests {
     fn test_requirement_web_search() {
         let mut features = RagFeatures::none();
         features.web_search_augmentation = true;
-        let config = RagConfig::with_features(features);
+        let config = RagTierConfig::with_features(features);
         let reqs = config.check_requirements();
         assert!(
             reqs.contains(&RagRequirement::WebSearchProvider),
@@ -2180,7 +2180,7 @@ mod tests {
     fn test_requirement_cascade_reranking() {
         let mut features = RagFeatures::none();
         features.cascade_reranking = true;
-        let config = RagConfig::with_features(features);
+        let config = RagTierConfig::with_features(features);
         let reqs = config.check_requirements();
         assert!(
             reqs.contains(&RagRequirement::MultipleRerankerModels),
@@ -2192,7 +2192,7 @@ mod tests {
     fn test_requirement_memory_augmented() {
         let mut features = RagFeatures::none();
         features.memory_augmented = true;
-        let config = RagConfig::with_features(features);
+        let config = RagTierConfig::with_features(features);
         let reqs = config.check_requirements();
         assert!(
             reqs.contains(&RagRequirement::AdvancedMemorySystem),
@@ -2204,7 +2204,7 @@ mod tests {
     fn test_requirement_discourse() {
         let mut features = RagFeatures::none();
         features.discourse_chunking = true;
-        let config = RagConfig::with_features(features);
+        let config = RagTierConfig::with_features(features);
         let reqs = config.check_requirements();
         assert!(
             reqs.contains(&RagRequirement::DiscourseBoundaries),
@@ -2216,7 +2216,7 @@ mod tests {
     fn test_requirement_multi_layer_graph() {
         let mut features = RagFeatures::none();
         features.multi_layer_graph = true;
-        let config = RagConfig::with_features(features);
+        let config = RagTierConfig::with_features(features);
         let reqs = config.check_requirements();
         assert!(
             reqs.contains(&RagRequirement::MultiLayerGraphSetup),
@@ -2230,7 +2230,7 @@ mod tests {
         let mut features = RagFeatures::none();
         features.cascade_reranking = true;
         features.web_search_augmentation = true;
-        let config = RagConfig::with_features(features);
+        let config = RagTierConfig::with_features(features);
         let (min, max) = config.estimate_extra_calls();
         assert!(min >= 3, "cascade(2)+web(1) should give min >= 3, got {}", min);
         assert!(max.is_some());
@@ -2239,7 +2239,7 @@ mod tests {
 
     #[test]
     fn test_is_feature_enabled_new_fields() {
-        let config = RagConfig::with_tier(RagTier::Full);
+        let config = RagTierConfig::with_tier(RagTier::Full);
         assert!(config.is_feature_enabled("discourse_chunking"));
         assert!(config.is_feature_enabled("deduplication"));
         assert!(config.is_feature_enabled("diversity_mmr"));
@@ -2249,7 +2249,7 @@ mod tests {
         assert!(config.is_feature_enabled("entity_extraction"));
         assert!(config.is_feature_enabled("multi_layer_graph"));
 
-        let fast_config = RagConfig::with_tier(RagTier::Fast);
+        let fast_config = RagTierConfig::with_tier(RagTier::Fast);
         assert!(!fast_config.is_feature_enabled("discourse_chunking"));
         assert!(!fast_config.is_feature_enabled("deduplication"));
     }

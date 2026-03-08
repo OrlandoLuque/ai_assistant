@@ -7,7 +7,7 @@
 //! # Available Methods
 //!
 //! ## Query Enhancement
-//! - `QueryExpander`: LLM-based query expansion
+//! - `AdvancedQueryExpander`: LLM-based query expansion
 //! - `MultiQueryDecomposer`: Break complex queries into sub-queries
 //! - `HydeGenerator`: Hypothetical Document Embeddings
 //!
@@ -35,10 +35,10 @@
 //! # Usage
 //!
 //! ```rust
-//! use ai_assistant::rag_methods::{QueryExpander, LlmReranker, RrfFusion};
+//! use ai_assistant::rag_methods::{AdvancedQueryExpander, LlmReranker, RrfFusion};
 //!
 //! // Expand query
-//! let expander = QueryExpander::new();
+//! let expander = AdvancedQueryExpander::new();
 //! let variants = expander.expand("What is the Aurora MR?", &llm)?;
 //!
 //! // Rerank results
@@ -153,11 +153,11 @@ impl Default for QueryExpanderConfig {
 ///
 /// Generates alternative phrasings of a query to improve recall.
 #[derive(Debug)]
-pub struct QueryExpander {
+pub struct AdvancedQueryExpander {
     config: QueryExpanderConfig,
 }
 
-impl QueryExpander {
+impl AdvancedQueryExpander {
     pub fn new() -> Self {
         Self::with_config(QueryExpanderConfig::default())
     }
@@ -255,7 +255,7 @@ impl QueryExpander {
     }
 }
 
-impl Default for QueryExpander {
+impl Default for AdvancedQueryExpander {
     fn default() -> Self {
         Self::new()
     }
@@ -1271,7 +1271,7 @@ impl Default for AdaptiveStrategySelector {
 
 /// An entity extracted from text
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Entity {
+pub struct GraphEntity {
     pub name: String,
     pub entity_type: String,
     pub mentions: Vec<EntityMention>,
@@ -1310,13 +1310,13 @@ pub struct GraphRagConfig {
 /// Trait for graph database operations
 pub trait GraphDatabase {
     /// Add entity to graph
-    fn add_entity(&mut self, entity: &Entity) -> Result<(), String>;
+    fn add_entity(&mut self, entity: &GraphEntity) -> Result<(), String>;
 
     /// Add relationship to graph
     fn add_relationship(&mut self, relationship: &Relationship) -> Result<(), String>;
 
     /// Find entities matching text
-    fn find_entities(&self, text: &str) -> Result<Vec<Entity>, String>;
+    fn find_entities(&self, text: &str) -> Result<Vec<GraphEntity>, String>;
 
     /// Get relationships for an entity
     fn get_relationships(
@@ -1326,7 +1326,7 @@ pub trait GraphDatabase {
     ) -> Result<Vec<Relationship>, String>;
 
     /// Get related entities
-    fn get_related_entities(&self, entity: &str, max_depth: usize) -> Result<Vec<Entity>, String>;
+    fn get_related_entities(&self, entity: &str, max_depth: usize) -> Result<Vec<GraphEntity>, String>;
 }
 
 /// Graph RAG retriever (skeleton)
@@ -1345,7 +1345,7 @@ impl GraphRagRetriever {
         &self,
         text: &str,
         llm: &dyn LlmGenerate,
-    ) -> Result<MethodResult<Vec<Entity>>, String> {
+    ) -> Result<MethodResult<Vec<GraphEntity>>, String> {
         let start = Instant::now();
 
         let entity_types = if self.config.entity_types.is_empty() {
@@ -1366,12 +1366,12 @@ impl GraphRagRetriever {
 
         let response = llm.generate(&prompt, 300)?;
 
-        let entities: Vec<Entity> = response
+        let entities: Vec<GraphEntity> = response
             .lines()
             .filter_map(|line| {
                 let parts: Vec<&str> = line.splitn(2, ':').collect();
                 if parts.len() == 2 {
-                    Some(Entity {
+                    Some(GraphEntity {
                         name: parts[1].trim().to_string(),
                         entity_type: parts[0].trim().to_uppercase(),
                         mentions: vec![],
@@ -1944,7 +1944,7 @@ mod tests {
 
     #[test]
     fn test_query_expander_synonyms() {
-        let expander = QueryExpander::new();
+        let expander = AdvancedQueryExpander::new();
         let synonyms = expander.synonym_expand("What is the ship price?");
         assert!(!synonyms.is_empty());
         assert!(synonyms
@@ -2990,7 +2990,7 @@ mod tests {
         assert_eq!(result.details.len(), 2);
     }
 
-    // --- QueryExpander with LLM tests ---
+    // --- AdvancedQueryExpander with LLM tests ---
 
     #[test]
     fn test_query_expander_expand_with_llm() {
@@ -2999,7 +2999,7 @@ mod tests {
             use_synonyms: false,
             prompt_template: None,
         };
-        let expander = QueryExpander::with_config(config);
+        let expander = AdvancedQueryExpander::with_config(config);
         let llm = ConfigurableMockLlm::new(
             "What are the specifications of the Aurora MR?\nTell me about Aurora MR features\nAurora MR ship details",
         );
@@ -3017,7 +3017,7 @@ mod tests {
             use_synonyms: false,
             prompt_template: None,
         };
-        let expander = QueryExpander::with_config(config);
+        let expander = AdvancedQueryExpander::with_config(config);
         // Some lines are too short (<=3 chars) and should be filtered
         let llm = ConfigurableMockLlm::new("OK\n\nA valid query expansion here\nno\nAnother valid expansion line");
         let result = expander.expand("test", &llm);
@@ -3031,7 +3031,7 @@ mod tests {
 
     #[test]
     fn test_query_expander_synonym_expand_no_matches() {
-        let expander = QueryExpander::new();
+        let expander = AdvancedQueryExpander::new();
         let synonyms = expander.synonym_expand("quantum entanglement theory");
         assert!(synonyms.is_empty(), "No synonym matches should return empty");
     }
@@ -3106,7 +3106,7 @@ mod tests {
 
     #[test]
     fn test_entity_and_relationship_construction() {
-        let entity = Entity {
+        let entity = GraphEntity {
             name: "Aurora MR".to_string(),
             entity_type: "PRODUCT".to_string(),
             mentions: vec![EntityMention {

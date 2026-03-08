@@ -800,7 +800,7 @@ mod tests {
             GraphCallback, GraphRelation, LlmCallback, RagPipeline, RetrievalCallback,
             RetrievedChunk,
         };
-        use crate::rag_tiers::{RagConfig, RagTier};
+        use crate::rag_tiers::{RagTierConfig, RagTier};
 
         struct MockLlmCb;
         impl LlmCallback for MockLlmCb {
@@ -1038,7 +1038,7 @@ mod tests {
 
         #[test]
         fn test_rag_pipeline_augmented_eval() {
-            let config = RagConfig::with_tier(RagTier::Fast);
+            let config = RagTierConfig::with_tier(RagTier::Fast);
             let mut pipeline = RagPipeline::new(config);
             let llm = MockLlmCb;
             let retrieval = MockRetrievalCb::new(MockRetrievalCb::default_chunks());
@@ -1061,7 +1061,7 @@ mod tests {
             let llm = MockLlmCb;
 
             // Test with Disabled tier
-            let mut pipeline_disabled = RagPipeline::new(RagConfig::with_tier(RagTier::Disabled));
+            let mut pipeline_disabled = RagPipeline::new(RagTierConfig::with_tier(RagTier::Disabled));
             let result_disabled = pipeline_disabled.process(
                 "What is the capital of France?",
                 &llm,
@@ -1075,7 +1075,7 @@ mod tests {
                 .unwrap_or(0);
 
             // Test with Fast tier
-            let mut pipeline_fast = RagPipeline::new(RagConfig::with_tier(RagTier::Fast));
+            let mut pipeline_fast = RagPipeline::new(RagTierConfig::with_tier(RagTier::Fast));
             let result_fast = pipeline_fast
                 .process("What is the capital of France?", &llm, None, &retrieval, None)
                 .unwrap();
@@ -1168,7 +1168,7 @@ mod tests {
 
             // Create a generator that first runs RAG pipeline, then uses context
             let generator = move |prompt: &str| -> Result<String, String> {
-                let config = RagConfig::with_tier(RagTier::Fast);
+                let config = RagTierConfig::with_tier(RagTier::Fast);
                 let mut pipeline = RagPipeline::new(config);
                 let result = pipeline.process(prompt, &llm_cb, None, &retrieval, None);
 
@@ -1329,7 +1329,7 @@ mod tests {
 
         #[test]
         fn test_combo_rag_knowledge_graph_graph_retrieval() {
-            let config = RagConfig::with_tier(RagTier::Graph);
+            let config = RagTierConfig::with_tier(RagTier::Graph);
             let mut pipeline = RagPipeline::new(config);
             let llm = MockLlmCb;
             let retrieval = MockRetrievalCb::new(MockRetrievalCb::default_chunks());
@@ -1438,7 +1438,7 @@ mod tests {
 
             let retrieval = VdbRetrieval { chunks };
             let llm = MockLlmCb;
-            let mut pipeline = RagPipeline::new(RagConfig::with_tier(RagTier::Fast));
+            let mut pipeline = RagPipeline::new(RagTierConfig::with_tier(RagTier::Fast));
 
             let result = pipeline
                 .process("What is the capital of France?", &llm, None, &retrieval, None)
@@ -2262,10 +2262,10 @@ mod tests {
             Agent, AgentOrchestrator, AgentRole, AgentTask, OrchestrationStrategy, SharedContext,
         };
         use crate::rag_pipeline::{
-            ChunkPosition, GraphCallback, GraphRelation, LlmCallback, RagPipeline,
+            PipelineChunkPosition, GraphCallback, GraphRelation, LlmCallback, RagPipeline,
             RetrievalCallback, RetrievedChunk,
         };
-        use crate::rag_tiers::{RagConfig, RagTier};
+        use crate::rag_tiers::{RagTierConfig, RagTier};
         use crate::vector_db::{DistanceMetric, InMemoryVectorDb, VectorDb, VectorDbConfig};
         use super::super::super::runner::{BenchmarkSuiteRunner, RunConfig};
 
@@ -2517,7 +2517,7 @@ mod tests {
                         keyword_score: Some(0.8),
                         semantic_score: Some(0.7),
                         token_count: para.split_whitespace().count(),
-                        position: Some(ChunkPosition {
+                        position: Some(PipelineChunkPosition {
                             start_offset: 0,
                             end_offset: para.len(),
                             paragraph_index: Some(i),
@@ -2816,7 +2816,7 @@ mod tests {
             let mut tier_context_lengths: Vec<(RagTier, usize)> = Vec::new();
 
             for tier in &tiers {
-                let config = RagConfig::with_tier(tier.clone());
+                let config = RagTierConfig::with_tier(tier.clone());
                 let mut pipeline = RagPipeline::new(config);
                 let mut total_context_len = 0;
 
@@ -2852,7 +2852,7 @@ mod tests {
             // Test with ContextComposer to build full prompts
             let composer = ContextComposer::new(ContextComposer::default_config());
             for question in &cross_doc_questions {
-                let config = RagConfig::with_tier(RagTier::Semantic);
+                let config = RagTierConfig::with_tier(RagTier::Semantic);
                 let mut pipeline = RagPipeline::new(config);
                 let result = pipeline
                     .process(question, &llm_cb, None, &retrieval_cb, Some(&graph_cb))
@@ -3624,7 +3624,7 @@ mod tests {
                 let model_name = model_key.as_str().unwrap();
 
                 // RAG augmentation
-                let rag_config = RagConfig::with_tier(RagTier::Fast);
+                let rag_config = RagTierConfig::with_tier(RagTier::Fast);
                 let mut pipeline = RagPipeline::new(rag_config);
                 let llm_cb = HeavyLlmCb;
                 let retrieval_cb = HeavyRetrievalCb::new();

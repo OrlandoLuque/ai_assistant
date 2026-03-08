@@ -5,7 +5,7 @@
 
 use crate::agent_policy::{ActionDescriptor, ActionType, AgentPolicy};
 use crate::agent_sandbox::SandboxValidator;
-use crate::agentic_loop::{AgentMessage, AgentRole};
+use crate::agentic_loop::{LoopMessage, LoopRole};
 use crate::mode_manager::OperationMode;
 use crate::task_board::{BoardCommand, TaskBoard};
 use crate::unified_tools::{ToolCall, ToolRegistry};
@@ -156,8 +156,8 @@ pub struct AutonomousAgent {
     policy: AgentPolicy,
     sandbox: Arc<RwLock<SandboxValidator>>,
     tool_registry: ToolRegistry,
-    conversation: Vec<AgentMessage>,
-    response_generator: Arc<dyn Fn(&[AgentMessage]) -> String + Send + Sync>,
+    conversation: Vec<LoopMessage>,
+    response_generator: Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync>,
     mode: OperationMode,
     state: AgentState,
     interaction: Option<Arc<InteractionManager>>,
@@ -173,7 +173,7 @@ impl AutonomousAgent {
     /// Start building an agent with the given name and response generator.
     pub fn builder(
         name: impl Into<String>,
-        response_generator: Arc<dyn Fn(&[AgentMessage]) -> String + Send + Sync>,
+        response_generator: Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync>,
     ) -> AutonomousAgentBuilder {
         AutonomousAgentBuilder::new(name, response_generator)
     }
@@ -206,8 +206,8 @@ impl AutonomousAgent {
 
         // Inject system prompt
         if !self.config.system_prompt.is_empty() {
-            self.conversation.push(AgentMessage {
-                role: AgentRole::System,
+            self.conversation.push(LoopMessage {
+                role: LoopRole::System,
                 content: self.config.system_prompt.clone(),
                 tool_calls: None,
                 tool_results: None,
@@ -215,8 +215,8 @@ impl AutonomousAgent {
         }
 
         // Inject user task
-        self.conversation.push(AgentMessage {
-            role: AgentRole::User,
+        self.conversation.push(LoopMessage {
+            role: LoopRole::User,
             content: task.to_string(),
             tool_calls: None,
             tool_results: None,
@@ -266,8 +266,8 @@ impl AutonomousAgent {
                         let resp = im.ask(&self.config.name, UserQuery::free_text(question));
                         match resp {
                             UserResponse::Text(text) => {
-                                self.conversation.push(AgentMessage {
-                                    role: AgentRole::User,
+                                self.conversation.push(LoopMessage {
+                                    role: LoopRole::User,
                                     content: text,
                                     tool_calls: None,
                                     tool_results: None,
@@ -319,8 +319,8 @@ impl AutonomousAgent {
         let response = (self.response_generator)(&self.conversation);
 
         // 2. Add assistant message
-        self.conversation.push(AgentMessage {
-            role: AgentRole::Assistant,
+        self.conversation.push(LoopMessage {
+            role: LoopRole::Assistant,
             content: response.clone(),
             tool_calls: None,
             tool_results: None,
@@ -357,8 +357,8 @@ impl AutonomousAgent {
                 };
                 if let Err(e) = sandbox.validate(&action) {
                     // Push error as tool result
-                    self.conversation.push(AgentMessage {
-                        role: AgentRole::Tool,
+                    self.conversation.push(LoopMessage {
+                        role: LoopRole::Tool,
                         content: format!("Sandbox denied {}: {}", tc.name, e),
                         tool_calls: None,
                         tool_results: None,
@@ -387,16 +387,16 @@ impl AutonomousAgent {
                     }
 
                     // Push tool result into conversation
-                    self.conversation.push(AgentMessage {
-                        role: AgentRole::Tool,
+                    self.conversation.push(LoopMessage {
+                        role: LoopRole::Tool,
                         content: format!("[Tool: {}] {}", tc.name, output.content),
                         tool_calls: None,
                         tool_results: None,
                     });
                 }
                 Err(e) => {
-                    self.conversation.push(AgentMessage {
-                        role: AgentRole::Tool,
+                    self.conversation.push(LoopMessage {
+                        role: LoopRole::Tool,
                         content: format!("[Tool: {} Error] {}", tc.name, e),
                         tool_calls: None,
                         tool_results: None,
@@ -462,7 +462,7 @@ impl AutonomousAgent {
     }
 
     /// Get the conversation history.
-    pub fn conversation(&self) -> &[AgentMessage] {
+    pub fn conversation(&self) -> &[LoopMessage] {
         &self.conversation
     }
 
@@ -642,7 +642,7 @@ pub struct AutonomousAgentBuilder {
     policy: AgentPolicy,
     sandbox: Option<Arc<RwLock<SandboxValidator>>>,
     tool_registry: ToolRegistry,
-    response_generator: Arc<dyn Fn(&[AgentMessage]) -> String + Send + Sync>,
+    response_generator: Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync>,
     mode: OperationMode,
     interaction: Option<Arc<InteractionManager>>,
     task_board: Option<Arc<RwLock<TaskBoard>>>,
@@ -652,7 +652,7 @@ pub struct AutonomousAgentBuilder {
 impl AutonomousAgentBuilder {
     pub fn new(
         name: impl Into<String>,
-        response_generator: Arc<dyn Fn(&[AgentMessage]) -> String + Send + Sync>,
+        response_generator: Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync>,
     ) -> Self {
         Self {
             name: name.into(),
@@ -774,7 +774,7 @@ mod tests {
     use std::sync::Arc;
 
     /// Helper: build a simple agent with the given generator.
-    fn make_agent(gen: Arc<dyn Fn(&[AgentMessage]) -> String + Send + Sync>) -> AutonomousAgent {
+    fn make_agent(gen: Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync>) -> AutonomousAgent {
         let policy = AgentPolicy::autonomous();
         let sandbox = Arc::new(RwLock::new(SandboxValidator::with_approval(
             policy.clone(),
@@ -793,7 +793,7 @@ mod tests {
     // -----------------------------------------------------------------------
     #[test]
     fn test_builder_basic() {
-        let gen: Arc<dyn Fn(&[AgentMessage]) -> String + Send + Sync> =
+        let gen: Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync> =
             Arc::new(|_| "hello".to_string());
 
         let agent = AutonomousAgent::builder("my-agent", gen)
@@ -814,7 +814,7 @@ mod tests {
     // -----------------------------------------------------------------------
     #[test]
     fn test_agent_state_lifecycle() {
-        let gen: Arc<dyn Fn(&[AgentMessage]) -> String + Send + Sync> =
+        let gen: Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync> =
             Arc::new(|_| "final answer".to_string());
         let mut agent = make_agent(gen);
 
@@ -834,7 +834,7 @@ mod tests {
     // -----------------------------------------------------------------------
     #[test]
     fn test_run_simple_task() {
-        let gen: Arc<dyn Fn(&[AgentMessage]) -> String + Send + Sync> =
+        let gen: Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync> =
             Arc::new(|_| "The answer is 42.".to_string());
         let mut agent = make_agent(gen);
 
@@ -853,7 +853,7 @@ mod tests {
         let call_count = Arc::new(AtomicUsize::new(0));
         let cc = Arc::clone(&call_count);
 
-        let gen: Arc<dyn Fn(&[AgentMessage]) -> String + Send + Sync> = Arc::new(move |_msgs| {
+        let gen: Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync> = Arc::new(move |_msgs| {
             let n = cc.fetch_add(1, Ordering::SeqCst);
             if n == 0 {
                 // First call: return a tool call
@@ -941,7 +941,7 @@ Let me process the results."#;
     // -----------------------------------------------------------------------
     #[test]
     fn test_sandbox_denies_action() {
-        let gen: Arc<dyn Fn(&[AgentMessage]) -> String + Send + Sync> =
+        let gen: Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync> =
             Arc::new(|_| r#"[{"name": "forbidden_tool", "arguments": {}}]"#.to_string());
 
         // Policy that denies "forbidden_tool"
@@ -967,7 +967,7 @@ Let me process the results."#;
     #[test]
     fn test_max_iterations_limit() {
         // Generator that always returns tool calls, never a final answer
-        let gen: Arc<dyn Fn(&[AgentMessage]) -> String + Send + Sync> =
+        let gen: Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync> =
             Arc::new(|_| r#"[{"name": "noop", "arguments": {}}]"#.to_string());
 
         let mut registry = ToolRegistry::new();
@@ -1001,7 +1001,7 @@ Let me process the results."#;
         let call_count = Arc::new(AtomicUsize::new(0));
         let cc = Arc::clone(&call_count);
 
-        let gen: Arc<dyn Fn(&[AgentMessage]) -> String + Send + Sync> = Arc::new(move |_| {
+        let gen: Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync> = Arc::new(move |_| {
             let n = cc.fetch_add(1, Ordering::SeqCst);
             if n == 0 {
                 r#"[{"name": "ask_user", "arguments": {"question": "What color?"}}]"#.to_string()
@@ -1039,7 +1039,7 @@ Let me process the results."#;
         let call_count = Arc::new(AtomicUsize::new(0));
         let cc = Arc::clone(&call_count);
 
-        let gen: Arc<dyn Fn(&[AgentMessage]) -> String + Send + Sync> = Arc::new(move |_| {
+        let gen: Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync> = Arc::new(move |_| {
             let n = cc.fetch_add(1, Ordering::SeqCst);
             if n == 0 {
                 r#"[{"name": "noop", "arguments": {}}]"#.to_string()
@@ -1100,7 +1100,7 @@ Let me process the results."#;
     // -----------------------------------------------------------------------
     #[test]
     fn test_pause_resume() {
-        let gen: Arc<dyn Fn(&[AgentMessage]) -> String + Send + Sync> =
+        let gen: Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync> =
             Arc::new(|_| "answer".to_string());
         let mut agent = make_agent(gen);
 
@@ -1122,7 +1122,7 @@ Let me process the results."#;
     // -----------------------------------------------------------------------
     #[test]
     fn test_abort() {
-        let gen: Arc<dyn Fn(&[AgentMessage]) -> String + Send + Sync> =
+        let gen: Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync> =
             Arc::new(|_| "answer".to_string());
         let mut agent = make_agent(gen);
 
@@ -1142,7 +1142,7 @@ Let me process the results."#;
         let call_count = Arc::new(AtomicUsize::new(0));
         let cc = Arc::clone(&call_count);
 
-        let gen: Arc<dyn Fn(&[AgentMessage]) -> String + Send + Sync> = Arc::new(move |_| {
+        let gen: Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync> = Arc::new(move |_| {
             let n = cc.fetch_add(1, Ordering::SeqCst);
             if n < 3 {
                 r#"[{"name": "noop", "arguments": {}}]"#.to_string()
@@ -1186,7 +1186,7 @@ Let me process the results."#;
         let call_count = Arc::new(AtomicUsize::new(0));
         let cc = Arc::clone(&call_count);
 
-        let gen: Arc<dyn Fn(&[AgentMessage]) -> String + Send + Sync> = Arc::new(move |_| {
+        let gen: Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync> = Arc::new(move |_| {
             let n = cc.fetch_add(1, Ordering::SeqCst);
             if n == 0 {
                 r#"[{"name": "echo", "arguments": {"text": "hello"}}]"#.to_string()
@@ -1232,10 +1232,10 @@ Let me process the results."#;
         // Conversation should contain system + user + assistant + tool + assistant
         let conv = agent.conversation();
         assert!(conv.len() >= 4);
-        assert_eq!(conv[0].role, AgentRole::System);
-        assert_eq!(conv[1].role, AgentRole::User);
-        assert_eq!(conv[2].role, AgentRole::Assistant);
-        assert_eq!(conv[3].role, AgentRole::Tool);
+        assert_eq!(conv[0].role, LoopRole::System);
+        assert_eq!(conv[1].role, LoopRole::User);
+        assert_eq!(conv[2].role, LoopRole::Assistant);
+        assert_eq!(conv[3].role, LoopRole::Tool);
     }
 
     // -----------------------------------------------------------------------
@@ -1341,7 +1341,7 @@ Let me process the results."#;
         let call_count = Arc::new(AtomicUsize::new(0));
         let cc = Arc::clone(&call_count);
 
-        let gen: Arc<dyn Fn(&[AgentMessage]) -> String + Send + Sync> = Arc::new(move |_| {
+        let gen: Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync> = Arc::new(move |_| {
             let n = cc.fetch_add(1, Ordering::SeqCst);
             match n {
                 0 => r#"[{"name": "tool_a", "arguments": {}}]"#.to_string(),

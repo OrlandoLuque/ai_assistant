@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 /// Agent configuration
 #[derive(Debug, Clone)]
-pub struct AgentConfig {
+pub struct LoopConfig {
     /// Maximum number of iterations before stopping
     pub max_iterations: usize,
     /// Whether to automatically use web search for questions needing current info
@@ -24,7 +24,7 @@ pub struct AgentConfig {
     pub max_context_tokens: usize,
 }
 
-impl Default for AgentConfig {
+impl Default for LoopConfig {
     fn default() -> Self {
         Self {
             max_iterations: 10,
@@ -50,9 +50,9 @@ impl Default for AgentConfig {
 
 /// Agent state during execution
 #[derive(Debug, Clone)]
-pub struct AgentState {
+pub struct LoopState {
     pub iteration: usize,
-    pub status: AgentStatus,
+    pub status: LoopStatus,
     pub thought: Option<String>,
     pub tool_calls: Vec<ToolCall>,
     pub tool_results: Vec<ToolResult>,
@@ -61,7 +61,7 @@ pub struct AgentState {
 
 /// Agent execution status
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AgentStatus {
+pub enum LoopStatus {
     Thinking,
     CallingTool,
     WaitingForToolResult,
@@ -72,8 +72,8 @@ pub enum AgentStatus {
 
 /// Message in the agent conversation
 #[derive(Debug, Clone)]
-pub struct AgentMessage {
-    pub role: AgentRole,
+pub struct LoopMessage {
+    pub role: LoopRole,
     pub content: String,
     pub tool_calls: Option<Vec<ToolCall>>,
     pub tool_results: Option<Vec<ToolResult>>,
@@ -81,7 +81,7 @@ pub struct AgentMessage {
 
 /// Role in agent conversation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AgentRole {
+pub enum LoopRole {
     System,
     User,
     Assistant,
@@ -90,16 +90,16 @@ pub enum AgentRole {
 
 /// Agentic loop that can reason, use tools, and search
 pub struct AgenticLoop {
-    config: AgentConfig,
+    config: LoopConfig,
     tools: ToolRegistry,
     search_manager: Option<WebSearchManager>,
-    conversation: Vec<AgentMessage>,
-    state: AgentState,
-    response_generator: Option<Arc<dyn Fn(&[AgentMessage]) -> String + Send + Sync>>,
+    conversation: Vec<LoopMessage>,
+    state: LoopState,
+    response_generator: Option<Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync>>,
 }
 
 impl AgenticLoop {
-    pub fn new(config: AgentConfig) -> Self {
+    pub fn new(config: LoopConfig) -> Self {
         let mut tools = ToolRegistry::new();
 
         // Register built-in tools
@@ -112,9 +112,9 @@ impl AgenticLoop {
             tools,
             search_manager: None,
             conversation: Vec::new(),
-            state: AgentState {
+            state: LoopState {
                 iteration: 0,
-                status: AgentStatus::Thinking,
+                status: LoopStatus::Thinking,
                 thought: None,
                 tool_calls: Vec::new(),
                 tool_results: Vec::new(),
@@ -152,9 +152,9 @@ impl AgenticLoop {
     /// Process a user message and run the agent loop
     pub fn process(&mut self, user_message: &str) -> AgentLoopResult {
         // Reset state for new query
-        self.state = AgentState {
+        self.state = LoopState {
             iteration: 0,
-            status: AgentStatus::Thinking,
+            status: LoopStatus::Thinking,
             thought: None,
             tool_calls: Vec::new(),
             tool_results: Vec::new(),
@@ -163,8 +163,8 @@ impl AgenticLoop {
 
         // Add system prompt if configured
         if !self.config.system_prompt.is_empty() && self.conversation.is_empty() {
-            self.conversation.push(AgentMessage {
-                role: AgentRole::System,
+            self.conversation.push(LoopMessage {
+                role: LoopRole::System,
                 content: self.config.system_prompt.clone(),
                 tool_calls: None,
                 tool_results: None,
@@ -172,8 +172,8 @@ impl AgenticLoop {
         }
 
         // Add user message
-        self.conversation.push(AgentMessage {
-            role: AgentRole::User,
+        self.conversation.push(LoopMessage {
+            role: LoopRole::User,
             content: user_message.to_string(),
             tool_calls: None,
             tool_results: None,
@@ -193,16 +193,16 @@ impl AgenticLoop {
 
             if matches!(
                 self.state.status,
-                AgentStatus::Finished | AgentStatus::Error
+                LoopStatus::Finished | LoopStatus::Error
             ) {
                 break;
             }
         }
 
         if self.state.iteration >= self.config.max_iterations
-            && self.state.status != AgentStatus::Finished
+            && self.state.status != LoopStatus::Finished
         {
-            self.state.status = AgentStatus::MaxIterationsReached;
+            self.state.status = LoopStatus::MaxIterationsReached;
         }
 
         AgentLoopResult {
@@ -239,7 +239,7 @@ impl AgenticLoop {
                 .conversation
                 .iter()
                 .rev()
-                .find(|m| m.role == AgentRole::User)
+                .find(|m| m.role == LoopRole::User)
             {
                 let query = self.extract_search_query(&user_msg.content);
 
@@ -265,8 +265,8 @@ impl AgenticLoop {
                 // Add tool result to conversation
                 if self.config.include_tool_history {
                     let output_content = tool_result.output.clone();
-                    self.conversation.push(AgentMessage {
-                        role: AgentRole::Tool,
+                    self.conversation.push(LoopMessage {
+                        role: LoopRole::Tool,
                         content: output_content,
                         tool_calls: None,
                         tool_results: Some(vec![tool_result.clone()]),
@@ -287,7 +287,7 @@ impl AgenticLoop {
         ));
 
         // Generate response: use callback if configured, otherwise build from context
-        self.state.status = AgentStatus::Finished;
+        self.state.status = LoopStatus::Finished;
         self.state.final_answer = Some(self.generate_response_with_context());
 
         result
@@ -363,7 +363,7 @@ impl AgenticLoop {
     }
 
     /// Build context for the model
-    fn build_context(&self) -> Vec<&AgentMessage> {
+    fn build_context(&self) -> Vec<&LoopMessage> {
         self.conversation.iter().collect()
     }
 
@@ -374,7 +374,7 @@ impl AgenticLoop {
     /// from tool results and context.
     pub fn set_response_generator<F>(&mut self, f: F)
     where
-        F: Fn(&[AgentMessage]) -> String + Send + Sync + 'static,
+        F: Fn(&[LoopMessage]) -> String + Send + Sync + 'static,
     {
         self.response_generator = Some(Arc::new(f));
     }
@@ -404,16 +404,16 @@ impl AgenticLoop {
     }
 
     /// Get current conversation
-    pub fn get_conversation(&self) -> &[AgentMessage] {
+    pub fn get_conversation(&self) -> &[LoopMessage] {
         &self.conversation
     }
 
     /// Clear conversation history
     pub fn clear_history(&mut self) {
         self.conversation.clear();
-        self.state = AgentState {
+        self.state = LoopState {
             iteration: 0,
-            status: AgentStatus::Thinking,
+            status: LoopStatus::Thinking,
             thought: None,
             tool_calls: Vec::new(),
             tool_results: Vec::new(),
@@ -434,7 +434,7 @@ impl AgenticLoop {
 
 impl Default for AgenticLoop {
     fn default() -> Self {
-        Self::new(AgentConfig::default())
+        Self::new(LoopConfig::default())
     }
 }
 
@@ -453,23 +453,23 @@ pub struct AgentLoopResult {
     pub final_answer: Option<String>,
     pub iterations: Vec<IterationResult>,
     pub total_iterations: usize,
-    pub status: AgentStatus,
+    pub status: LoopStatus,
     pub tool_calls_made: Vec<ToolCall>,
     pub tool_results: Vec<ToolResult>,
 }
 
 /// Builder for creating configured agents
 pub struct AgentBuilder {
-    config: AgentConfig,
+    config: LoopConfig,
     tools: Vec<Tool>,
     search_config: Option<SearchConfig>,
-    response_generator: Option<Arc<dyn Fn(&[AgentMessage]) -> String + Send + Sync>>,
+    response_generator: Option<Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync>>,
 }
 
 impl AgentBuilder {
     pub fn new() -> Self {
         Self {
-            config: AgentConfig::default(),
+            config: LoopConfig::default(),
             tools: Vec::new(),
             search_config: None,
             response_generator: None,
@@ -508,7 +508,7 @@ impl AgentBuilder {
 
     pub fn with_response_generator<F>(mut self, f: F) -> Self
     where
-        F: Fn(&[AgentMessage]) -> String + Send + Sync + 'static,
+        F: Fn(&[LoopMessage]) -> String + Send + Sync + 'static,
     {
         self.response_generator = Some(Arc::new(f));
         self
@@ -542,13 +542,13 @@ mod tests {
 
     #[test]
     fn test_agent_creation() {
-        let agent = AgenticLoop::new(AgentConfig::default());
+        let agent = AgenticLoop::new(LoopConfig::default());
         assert!(agent.get_tools().len() >= 3); // calculator, datetime, text_length
     }
 
     #[test]
     fn test_needs_web_search() {
-        let agent = AgenticLoop::new(AgentConfig::default());
+        let agent = AgenticLoop::new(LoopConfig::default());
         assert!(agent.needs_web_search("What is the current price of Bitcoin?"));
         assert!(agent.needs_web_search("Latest news about AI"));
         assert!(!agent.needs_web_search("What is 2 + 2?"));
@@ -568,7 +568,7 @@ mod tests {
 
     #[test]
     fn test_agent_process() {
-        let mut agent = AgenticLoop::new(AgentConfig {
+        let mut agent = AgenticLoop::new(LoopConfig {
             auto_search: false,
             ..Default::default()
         });
@@ -576,13 +576,13 @@ mod tests {
         let result = agent.process("What is 2 + 2?");
         assert!(matches!(
             result.status,
-            AgentStatus::Finished | AgentStatus::MaxIterationsReached
+            LoopStatus::Finished | LoopStatus::MaxIterationsReached
         ));
     }
 
     #[test]
     fn test_extract_search_query() {
-        let agent = AgenticLoop::new(AgentConfig::default());
+        let agent = AgenticLoop::new(LoopConfig::default());
         let query = agent.extract_search_query("What is the current weather in Madrid?");
         assert!(!query.contains("what is"));
     }
@@ -591,7 +591,7 @@ mod tests {
 
     #[test]
     fn test_agent_config_default() {
-        let config = AgentConfig::default();
+        let config = LoopConfig::default();
         assert_eq!(config.max_iterations, 10);
         assert!(config.auto_search);
         assert!(config.search_triggers.contains(&"current".to_string()));
@@ -608,7 +608,7 @@ mod tests {
 
     #[test]
     fn test_clear_history() {
-        let mut agent = AgenticLoop::new(AgentConfig {
+        let mut agent = AgenticLoop::new(LoopConfig {
             auto_search: false,
             ..Default::default()
         });
@@ -622,7 +622,7 @@ mod tests {
 
     #[test]
     fn test_with_system_prompt() {
-        let agent = AgenticLoop::new(AgentConfig::default())
+        let agent = AgenticLoop::new(LoopConfig::default())
             .with_system_prompt("You are a test assistant.");
 
         assert_eq!(agent.config.system_prompt, "You are a test assistant.");
@@ -630,7 +630,7 @@ mod tests {
 
     #[test]
     fn test_register_custom_tool() {
-        let mut agent = AgenticLoop::new(AgentConfig::default());
+        let mut agent = AgenticLoop::new(LoopConfig::default());
         let initial_count = agent.get_tools().len();
 
         let custom_tool = Tool::new("custom_tool", "A custom tool for testing").with_parameter(
@@ -645,7 +645,7 @@ mod tests {
 
     #[test]
     fn test_get_tools_schema() {
-        let agent = AgenticLoop::new(AgentConfig::default());
+        let agent = AgenticLoop::new(LoopConfig::default());
         let schema = agent.get_tools_schema();
 
         assert!(!schema.is_empty());
@@ -662,7 +662,7 @@ mod tests {
 
     #[test]
     fn test_search_trigger_detection_all_keywords() {
-        let agent = AgenticLoop::new(AgentConfig::default());
+        let agent = AgenticLoop::new(LoopConfig::default());
 
         let triggers = vec![
             "current price of Bitcoin",
@@ -684,7 +684,7 @@ mod tests {
 
     #[test]
     fn test_no_search_trigger() {
-        let agent = AgenticLoop::new(AgentConfig::default());
+        let agent = AgenticLoop::new(LoopConfig::default());
 
         let no_triggers = vec![
             "What is 2 + 2?",
@@ -704,7 +704,7 @@ mod tests {
 
     #[test]
     fn test_custom_search_triggers() {
-        let agent = AgenticLoop::new(AgentConfig {
+        let agent = AgenticLoop::new(LoopConfig {
             search_triggers: vec!["custom_trigger".to_string()],
             ..Default::default()
         });
@@ -715,7 +715,7 @@ mod tests {
 
     #[test]
     fn test_auto_search_disabled() {
-        let mut agent = AgenticLoop::new(AgentConfig {
+        let mut agent = AgenticLoop::new(LoopConfig {
             auto_search: false,
             ..Default::default()
         });
@@ -725,13 +725,13 @@ mod tests {
         // Should still process but not trigger search behavior
         assert!(matches!(
             result.status,
-            AgentStatus::Finished | AgentStatus::MaxIterationsReached
+            LoopStatus::Finished | LoopStatus::MaxIterationsReached
         ));
     }
 
     #[test]
     fn test_extract_search_query_variants() {
-        let agent = AgenticLoop::new(AgentConfig::default());
+        let agent = AgenticLoop::new(LoopConfig::default());
 
         // Test various query formats
         let queries = vec![
@@ -752,7 +752,7 @@ mod tests {
 
     #[test]
     fn test_extract_search_query_length_limit() {
-        let agent = AgenticLoop::new(AgentConfig::default());
+        let agent = AgenticLoop::new(LoopConfig::default());
 
         let long_query = "A".repeat(200);
         let extracted = agent.extract_search_query(&long_query);
@@ -762,7 +762,7 @@ mod tests {
 
     #[test]
     fn test_max_iterations_reached() {
-        let mut agent = AgenticLoop::new(AgentConfig {
+        let mut agent = AgenticLoop::new(LoopConfig {
             max_iterations: 1,
             auto_search: false,
             ..Default::default()
@@ -777,7 +777,7 @@ mod tests {
 
     #[test]
     fn test_conversation_history() {
-        let mut agent = AgenticLoop::new(AgentConfig {
+        let mut agent = AgenticLoop::new(LoopConfig {
             auto_search: false,
             system_prompt: "Test system prompt".to_string(),
             ..Default::default()
@@ -789,23 +789,23 @@ mod tests {
 
         // Should have system prompt and user message
         assert!(conversation.len() >= 2);
-        assert!(conversation.iter().any(|m| m.role == AgentRole::System));
-        assert!(conversation.iter().any(|m| m.role == AgentRole::User));
+        assert!(conversation.iter().any(|m| m.role == LoopRole::System));
+        assert!(conversation.iter().any(|m| m.role == LoopRole::User));
     }
 
     #[test]
     fn test_agent_state_initial() {
-        let agent = AgenticLoop::new(AgentConfig::default());
+        let agent = AgenticLoop::new(LoopConfig::default());
 
         assert_eq!(agent.state.iteration, 0);
-        assert_eq!(agent.state.status, AgentStatus::Thinking);
+        assert_eq!(agent.state.status, LoopStatus::Thinking);
         assert!(agent.state.tool_calls.is_empty());
         assert!(agent.state.tool_results.is_empty());
     }
 
     #[test]
     fn test_iteration_result_structure() {
-        let mut agent = AgenticLoop::new(AgentConfig {
+        let mut agent = AgenticLoop::new(LoopConfig {
             auto_search: false,
             ..Default::default()
         });
@@ -821,7 +821,7 @@ mod tests {
 
     #[test]
     fn test_agent_loop_result_structure() {
-        let mut agent = AgenticLoop::new(AgentConfig {
+        let mut agent = AgenticLoop::new(LoopConfig {
             auto_search: false,
             ..Default::default()
         });
@@ -831,7 +831,7 @@ mod tests {
         // Result should have all expected fields
         assert!(result.total_iterations > 0);
         assert!(
-            result.final_answer.is_some() || result.status == AgentStatus::MaxIterationsReached
+            result.final_answer.is_some() || result.status == LoopStatus::MaxIterationsReached
         );
     }
 
@@ -873,12 +873,12 @@ mod tests {
     #[test]
     fn test_all_agent_statuses() {
         let statuses = vec![
-            AgentStatus::Thinking,
-            AgentStatus::CallingTool,
-            AgentStatus::WaitingForToolResult,
-            AgentStatus::Finished,
-            AgentStatus::Error,
-            AgentStatus::MaxIterationsReached,
+            LoopStatus::Thinking,
+            LoopStatus::CallingTool,
+            LoopStatus::WaitingForToolResult,
+            LoopStatus::Finished,
+            LoopStatus::Error,
+            LoopStatus::MaxIterationsReached,
         ];
 
         for status in statuses {
@@ -890,14 +890,14 @@ mod tests {
     #[test]
     fn test_all_agent_roles() {
         let roles = vec![
-            AgentRole::System,
-            AgentRole::User,
-            AgentRole::Assistant,
-            AgentRole::Tool,
+            LoopRole::System,
+            LoopRole::User,
+            LoopRole::Assistant,
+            LoopRole::Tool,
         ];
 
         for role in roles {
-            let msg = AgentMessage {
+            let msg = LoopMessage {
                 role,
                 content: "test".to_string(),
                 tool_calls: None,
@@ -909,7 +909,7 @@ mod tests {
 
     #[test]
     fn test_builtin_tools_present() {
-        let agent = AgenticLoop::new(AgentConfig::default());
+        let agent = AgenticLoop::new(LoopConfig::default());
         let tools = agent.get_tools();
 
         let tool_names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
@@ -921,7 +921,7 @@ mod tests {
 
     #[test]
     fn test_process_resets_state() {
-        let mut agent = AgenticLoop::new(AgentConfig {
+        let mut agent = AgenticLoop::new(LoopConfig {
             auto_search: false,
             ..Default::default()
         });
@@ -938,7 +938,7 @@ mod tests {
 
     #[test]
     fn test_build_context() {
-        let mut agent = AgenticLoop::new(AgentConfig {
+        let mut agent = AgenticLoop::new(LoopConfig {
             auto_search: false,
             system_prompt: "System".to_string(),
             ..Default::default()
@@ -954,13 +954,13 @@ mod tests {
 
     #[test]
     fn test_include_tool_history_setting() {
-        let agent_with_history = AgenticLoop::new(AgentConfig {
+        let agent_with_history = AgenticLoop::new(LoopConfig {
             include_tool_history: true,
             ..Default::default()
         });
         assert!(agent_with_history.config.include_tool_history);
 
-        let agent_without_history = AgenticLoop::new(AgentConfig {
+        let agent_without_history = AgenticLoop::new(LoopConfig {
             include_tool_history: false,
             ..Default::default()
         });
@@ -969,7 +969,7 @@ mod tests {
 
     #[test]
     fn test_multiple_sequential_processes() {
-        let mut agent = AgenticLoop::new(AgentConfig {
+        let mut agent = AgenticLoop::new(LoopConfig {
             auto_search: false,
             ..Default::default()
         });
@@ -982,15 +982,15 @@ mod tests {
         // Each should complete successfully
         assert!(matches!(
             result1.status,
-            AgentStatus::Finished | AgentStatus::MaxIterationsReached
+            LoopStatus::Finished | LoopStatus::MaxIterationsReached
         ));
         assert!(matches!(
             result2.status,
-            AgentStatus::Finished | AgentStatus::MaxIterationsReached
+            LoopStatus::Finished | LoopStatus::MaxIterationsReached
         ));
         assert!(matches!(
             result3.status,
-            AgentStatus::Finished | AgentStatus::MaxIterationsReached
+            LoopStatus::Finished | LoopStatus::MaxIterationsReached
         ));
 
         // Conversation should grow (at least user messages are added)
@@ -1004,7 +1004,7 @@ mod tests {
 
     #[test]
     fn test_response_generator_callback() {
-        let mut agent = AgenticLoop::new(AgentConfig {
+        let mut agent = AgenticLoop::new(LoopConfig {
             auto_search: false,
             ..Default::default()
         });
@@ -1012,13 +1012,13 @@ mod tests {
         agent.set_response_generator(|conversation| {
             let user_msgs: Vec<_> = conversation
                 .iter()
-                .filter(|m| m.role == AgentRole::User)
+                .filter(|m| m.role == LoopRole::User)
                 .collect();
             format!("Custom response for {} user messages", user_msgs.len())
         });
 
         let result = agent.process("Hello");
-        assert_eq!(result.status, AgentStatus::Finished);
+        assert_eq!(result.status, LoopStatus::Finished);
         assert!(result
             .final_answer
             .as_ref()
@@ -1038,7 +1038,7 @@ mod tests {
 
     #[test]
     fn test_default_response_without_callback() {
-        let mut agent = AgenticLoop::new(AgentConfig {
+        let mut agent = AgenticLoop::new(LoopConfig {
             auto_search: false,
             ..Default::default()
         });
