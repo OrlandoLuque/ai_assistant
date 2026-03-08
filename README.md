@@ -1,3 +1,7 @@
+<!-- Required Notice: Copyright (c) 2026 Orlando Jose Luque Moraira (Lander) -->
+
+> **This software is licensed under [PolyForm Noncommercial 1.0.0](LICENSE). For commercial use, please contact [orlando.luque@gmail.com](mailto:orlando.luque@gmail.com).**
+
 # ai_assistant
 
 A comprehensive Rust library for LLM integration — local and cloud. 13+ providers, 5-tier RAG, multi-agent orchestration, autonomous agents, distributed computing, and 40+ MCP tools. Single crate, zero-runtime, ~350K LOC.
@@ -7,13 +11,12 @@ A comprehensive Rust library for LLM integration — local and cloud. 13+ provid
 ![Tests](https://img.shields.io/badge/tests-6700%2B-brightgreen)
 ![LOC](https://img.shields.io/badge/LOC-350K-blue)
 
-> **Status: Active Development (Feature Creep Phase)**
+> **Status: Experimental**
 >
-> This project compiles, passes all tests, and is functionally complete across all modules.
-> However, it is still in a "feature creep" phase — features have been added iteratively over
-> months and the codebase needs a comprehensive review pass for consistency, API ergonomics,
-> dead code removal, and documentation polish. Expect rough edges in some areas.
-> **Not yet published on crates.io.**
+> This project compiles and passes 6,700+ tests, but it has not been validated in production
+> or real-world usage. Developed iteratively with AI assistance, some modules may be
+> incomplete, loosely wired, or tested only at a surface level. A comprehensive review is
+> pending. **Use at your own risk. Not yet published on crates.io.**
 
 ## Features
 
