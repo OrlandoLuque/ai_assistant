@@ -1,9 +1,19 @@
 # ai_assistant
 
-A reusable Rust library for local LLM integration. Supports multiple providers including Ollama, LM Studio, text-generation-webui, Kobold.cpp, LocalAI, and any OpenAI-compatible API.
+A comprehensive Rust library for LLM integration — local and cloud. 13+ providers, 5-tier RAG, multi-agent orchestration, autonomous agents, distributed computing, and 40+ MCP tools. Single crate, zero-runtime, ~350K LOC.
 
 ![Rust](https://img.shields.io/badge/Rust-Edition%202021-orange)
 ![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue)
+![Tests](https://img.shields.io/badge/tests-6700%2B-brightgreen)
+![LOC](https://img.shields.io/badge/LOC-350K-blue)
+
+> **Status: Active Development (Feature Creep Phase)**
+>
+> This project compiles, passes all tests, and is functionally complete across all modules.
+> However, it is still in a "feature creep" phase — features have been added iteratively over
+> months and the codebase needs a comprehensive review pass for consistency, API ergonomics,
+> dead code removal, and documentation polish. Expect rough edges in some areas.
+> **Not yet published on crates.io.**
 
 ## Features
 
@@ -83,9 +93,33 @@ A reusable Rust library for local LLM integration. Supports multiple providers i
 
 ### Code Quality
 - **Zero `.unwrap()` in production**: Proper error handling across all files
-- **6,565+ tests**: Comprehensive unit tests with 0 clippy warnings
-- **220+ source files**: Fully implemented — zero stubs or TODOs
+- **6,700+ tests**: Comprehensive unit tests with 0 clippy warnings
+- **312 source files**: Fully implemented — zero stubs or TODOs
 - **20+ feature flags**: Granular dependency control
+- **~350,000 lines of Rust**: Single crate, modular architecture
+
+## Building from Source
+
+```bash
+# Clone the repository
+git clone https://github.com/YOUR_USER/ai_assistant.git
+cd ai_assistant
+
+# Build with default features
+cargo build
+
+# Build with all lightweight features
+cargo build --features full
+
+# Build with autonomous agents
+cargo build --features "full,autonomous,scheduler,butler,browser"
+
+# Build with everything (including heavy deps)
+cargo build --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio"
+
+# Run tests
+cargo test --features "full,autonomous,scheduler,butler,browser,containers" --lib
+```
 
 ## Installation
 
@@ -95,24 +129,41 @@ Add to your `Cargo.toml`:
 [dependencies]
 ai_assistant = { path = "path/to/ai_assistant" }
 
-# With egui widgets:
-ai_assistant = { path = "path/to/ai_assistant", features = ["egui-widgets"] }
-
-# With RAG (knowledge base) support:
-ai_assistant = { path = "path/to/ai_assistant", features = ["rag"] }
-
-# With binary storage (bincode+gzip for internal data):
-ai_assistant = { path = "path/to/ai_assistant", features = ["binary-storage"] }
-
-# With async providers (reqwest + tokio):
-ai_assistant = { path = "path/to/ai_assistant", features = ["async-runtime"] }
-
-# With all features:
+# With all lightweight features:
 ai_assistant = { path = "path/to/ai_assistant", features = ["full"] }
 
 # With autonomous agents:
 ai_assistant = { path = "path/to/ai_assistant", features = ["full", "autonomous", "scheduler", "butler", "browser"] }
 ```
+
+### Feature Flags
+
+| Flag | Description | In `full`? |
+|------|-------------|:----------:|
+| `core` | Basic LLM integration, providers, config | Yes |
+| `rag` | 5-tier RAG, SQLite, vector DBs | Yes |
+| `tools` | Unified tool system, MCP protocol | Yes |
+| `security` | RBAC, guardrails, PII detection | Yes |
+| `analytics` | OpenTelemetry, metrics, eval | Yes |
+| `multi-agent` | 5-role orchestration | Yes |
+| `advanced-memory` | Entity memory, episodic, plans | Yes |
+| `workflows` | DAG-based event workflows | Yes |
+| `prompt-signatures` | DSPy-style prompt templates | Yes |
+| `a2a` | Agent-to-agent protocol | Yes |
+| `async-runtime` | reqwest + tokio async providers | Yes |
+| `egui-widgets` | Pre-built chat UI components | Yes |
+| `autonomous` | Autonomous agent loop | No |
+| `scheduler` | Cron scheduler (requires `autonomous`) | No |
+| `butler` | Environment auto-detection (requires `autonomous`) | No |
+| `browser` | CDP browser automation (requires `autonomous`) | No |
+| `containers` | Docker execution via bollard | No |
+| `audio` | Speech STT/TTS | No |
+| `distributed` | CRDTs, DHT, MapReduce | Yes |
+| `distributed-network` | QUIC/TLS 1.3 networking | No |
+| `p2p` | P2P with STUN/UPnP/ICE | No |
+| `hitl` | Human-in-the-loop approval | No |
+| `webrtc` | WebRTC for voice | No |
+| `devtools` | Agent debugging tools | No |
 
 ## Quick Start
 
@@ -1026,12 +1077,10 @@ let facts = extractor.extract("I prefer Rust over Python. My goal is to learn sy
 
 let mut store = FactStore::new();
 for fact in facts {
-    store.add(fact);
+    store.add_fact(fact);  // Deduplicates and reinforces existing facts automatically
 }
 
-// Facts are reinforced when mentioned multiple times
-store.reinforce("preference:rust");
-println!("Rust preference strength: {}", store.get("preference:rust").unwrap().strength);
+println!("Stored {} facts", store.len());
 ```
 
 ### Quality Analysis
@@ -1142,7 +1191,7 @@ let config = DiscoveryConfig::default();
 let providers = discover_providers(&config);
 
 for provider in &providers {
-    println!("Found: {} at {}", provider.name(), provider.base_url());
+    println!("Found: {}", provider.name());
     if provider.is_available() {
         let models = provider.list_models()?;
         println!("  Models: {:?}", models.iter().map(|m| &m.name).collect::<Vec<_>>());
@@ -1158,17 +1207,18 @@ let registry = create_registry_with_discovery(&config);
 Automatic retry with exponential backoff:
 
 ```rust
-use ai_assistant::{RetryConfig, retry, CircuitBreaker, ResilientExecutor};
+use ai_assistant::{RetryConfig, CircuitBreaker, ResilientExecutor};
+use std::time::Duration;
 
-// Simple retry
-let result = retry(
-    || some_fallible_operation(),
-    RetryConfig::default(),
-)?;
-
-// With circuit breaker for cascading failure protection
+// Circuit breaker for cascading failure protection
 let breaker = CircuitBreaker::new(5, Duration::from_secs(30));
-let executor = ResilientExecutor::new(breaker);
+
+// Resilient executor: retry + circuit breaker combined
+let mut executor = ResilientExecutor::new(
+    RetryConfig::default(),
+    5,                           // failure threshold
+    Duration::from_secs(30),     // recovery timeout
+);
 
 let result = executor.execute(|| api_call())?;
 ```
@@ -1180,15 +1230,15 @@ Pre-defined generation settings for different use cases:
 ```rust
 use ai_assistant::{ProfileManager, ProfileApplicator};
 
-let manager = ProfileManager::with_defaults();
+let manager = ProfileManager::new();
 
 // Available profiles: balanced, creative, precise, coding, conversational, concise, detailed
 let profile = manager.get("coding").unwrap();
 println!("Temperature: {}", profile.temperature);
 
-// Apply profile to config
-let applicator = ProfileApplicator::new(&config);
-let config = applicator.apply(profile);
+// Generate provider-specific parameters from a profile
+let params = ProfileApplicator::to_openai_params(profile);
+println!("OpenAI params: {}", params);
 ```
 
 ### Prompt Templates
@@ -1230,19 +1280,17 @@ println!("Time to first token: {}ms", snapshot.time_to_first_token_ms);
 OpenAI-compatible function calling:
 
 ```rust
-use ai_assistant::{FunctionBuilder, FunctionRegistry, ToolChoice};
+use ai_assistant::{FunctionBuilder, ParameterProperty};
 
-let mut registry = FunctionRegistry::new();
+// Build a function definition for OpenAI-compatible function calling
+let function = FunctionBuilder::new("get_weather")
+    .description("Get current weather")
+    .param("location", ParameterProperty::string("City name"), true)
+    .param("unit", ParameterProperty::string("Temperature unit"), false)
+    .build();
 
-registry.register(
-    FunctionBuilder::new("get_weather")
-        .description("Get current weather")
-        .add_string_param("location", "City name", true)
-        .add_enum_param("unit", &["celsius", "fahrenheit"], false)
-        .build()
-);
-
-let request = registry.build_request(ToolChoice::Auto);
+// Serialize to OpenAI format
+let json = serde_json::to_value(&function).unwrap();
 ```
 
 ### Vision Support
@@ -1250,11 +1298,11 @@ let request = registry.build_request(ToolChoice::Auto);
 Multimodal support for vision models:
 
 ```rust
-use ai_assistant::{VisionMessage, ImageInput, ImageDetail};
+use ai_assistant::{VisionMessage, ImageInput};
+use std::path::Path;
 
-let message = VisionMessage::new("What's in this image?")
-    .add_image(ImageInput::from_file("photo.jpg")?)
-    .with_detail(ImageDetail::High);
+let image = ImageInput::from_file(Path::new("photo.jpg"))?;
+let message = VisionMessage::user("What's in this image?", vec![image]);
 
 let openai_format = message.to_openai_format();
 ```
@@ -1364,7 +1412,7 @@ use ai_assistant::{JsonSchema, SchemaProperty, SchemaValidator, SchemaBuilder};
 // Define schema
 let schema = JsonSchema::new("sentiment")
     .with_property("sentiment", SchemaProperty::string()
-        .with_enum(vec!["positive", "negative", "neutral"]))
+        .with_enum(vec!["positive".into(), "negative".into(), "neutral".into()]))
     .with_property("confidence", SchemaProperty::number()
         .with_minimum(0.0)
         .with_maximum(1.0))
@@ -1446,7 +1494,7 @@ println!("Hit rate: {:.1}%", cache.stats().unwrap().hit_rate() * 100.0);
 Compare text and responses:
 
 ```rust
-use ai_assistant::{diff, diff_compare_responses};
+use ai_assistant::{diff, compare_responses};
 
 // Line-by-line diff
 let result = diff("old text\nline 2", "new text\nline 2\nline 3");
@@ -1455,7 +1503,7 @@ println!("Additions: {}, Deletions: {}", result.additions, result.deletions);
 println!("{}", result.to_unified("old.txt", "new.txt"));
 
 // Response comparison
-let comparison = diff_compare_responses(
+let comparison = compare_responses(
     "The quick brown fox",
     "The fast brown fox jumps"
 );
@@ -1510,8 +1558,8 @@ bus.on(|event: &AiEvent| {
 
 // Emit events
 bus.emit(AiEvent::MessageSent {
-    role: "user".to_string(),
-    content: "Hello".to_string(),
+    content_length: 5,
+    has_knowledge: false,
 });
 
 // Check collected events
@@ -1549,9 +1597,7 @@ println!("Pending: {}, Processed: {}", stats.pending, stats.total_processed);
 Define and execute tools with validation (feature `tools`):
 
 ```rust
-use ai_assistant::unified_tools::{ToolBuilder, ParamSchema, ToolRegistry};
-
-let mut registry = ToolRegistry::new();
+use ai_assistant::unified_tools::{ToolBuilder, ParamSchema, parse_tool_calls};
 
 // Define a tool with the builder
 let tool = ToolBuilder::new("get_weather", "Get current weather for a city")
@@ -1559,13 +1605,8 @@ let tool = ToolBuilder::new("get_weather", "Get current weather for a city")
     .optional_string("unit", "Temperature unit")
     .build();
 
-registry.register(tool);
-
-// Register built-in tools (calculator, datetime, etc.)
-registry.register_builtins();
-
-// Parse tool calls from multiple formats
-let calls = registry.parse_tool_calls(r#"[TOOL:calculate(expression="2+2*3")]"#);
+// Parse tool calls from multiple formats (bracket, XML, OpenAI JSON)
+let calls = parse_tool_calls(r#"[TOOL:calculate(expression="2+2*3")]"#);
 ```
 
 ### Async Providers
@@ -1574,14 +1615,14 @@ Async model fetching and generation (feature `async-runtime`):
 
 ```rust
 use ai_assistant::async_providers::{ReqwestClient, fetch_models_async, block_on_async};
-use ai_assistant::{AiConfig, AiProvider};
+use ai_assistant::AiConfig;
 
 let client = ReqwestClient::new();
 let config = AiConfig::default();
 
 // Blocking bridge for sync code
 let models = block_on_async(
-    fetch_models_async(&config, AiProvider::Ollama, &client)
+    fetch_models_async(&client, &config)
 ).unwrap();
 
 println!("Found {} models", models.len());
@@ -1673,11 +1714,23 @@ cargo run --features "server-axum" --bin ai_proxy -- --backends "localhost:8091,
 | Cold start | <100 ms | 5-10 s |
 | GC pauses | None | Unpredictable |
 | Runtime deps | None | Python + pip |
-| Modules | 220+ | ~50 |
-| Tests | 6,500+ | Varies |
+| Modules | 312 | ~50 |
+| Tests | 6,700+ | Varies |
 
 See [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for detailed comparisons.
 
+## Contributing
+
+This project is not currently accepting external contributions. A CLA (Contributor License Agreement) will be implemented before opening contributions.
+
+## Author
+
+**Orlando José Luque Moraira** — orlando.luque@gmail.com
+
 ## License
 
-Licensed under [PolyForm Noncommercial 1.0.0](LICENSE). Commercial use requires a separate license — contact orlando.luque@gmail.com for inquiries.
+Licensed under [PolyForm Noncommercial 1.0.0](LICENSE).
+
+This license permits personal, academic, and research use. **Commercial use requires a separate license** — contact orlando.luque@gmail.com for inquiries.
+
+See [LICENSE](LICENSE) for the full text.
