@@ -1,3 +1,6 @@
+// Required Notice: Copyright (c) 2026 Orlando Jose Luque Moraira (Lander)
+// Licensed under PolyForm Noncommercial 1.0.0 — see LICENSE file.
+
 //! AI Assistant library for local and cloud LLM integration.
 //!
 //! This crate provides a unified interface to connect to various LLM providers:

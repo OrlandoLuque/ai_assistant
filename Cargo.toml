@@ -1,8 +1,11 @@
+# Required Notice: Copyright (c) 2026 Orlando Jose Luque Moraira (Lander)
+# Licensed under PolyForm Noncommercial 1.0.0 — see LICENSE file.
+
 [package]
 name = "ai_assistant"
 version = "0.1.0"
 edition = "2021"
-authors = ["Lander"]
+authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
 license-file = "LICENSE"
 repository = "https://github.com/lander/ai_assistant"
@@ -12,7 +15,6 @@ readme = "README.md"
 keywords = ["ai", "llm", "assistant", "rag", "agent"]
 categories = ["science", "text-processing", "web-programming"]
 exclude = [
-    "docs/*.html",
     "docs/*.md",
     ".claude/",
     "target/",
