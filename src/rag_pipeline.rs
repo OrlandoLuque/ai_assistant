@@ -43,10 +43,10 @@
 //!
 //! ```rust
 //! use ai_assistant::rag_pipeline::{RagPipeline, RagPipelineConfig};
-//! use ai_assistant::rag_tiers::{RagConfig, RagTier};
+//! use ai_assistant::rag_tiers::{RagTierConfig, RagTier};
 //!
 //! // Create pipeline with a tier
-//! let rag_config = RagConfig::with_tier(RagTier::Enhanced);
+//! let rag_config = RagTierConfig::with_tier(RagTier::Enhanced);
 //! let pipeline = RagPipeline::new(rag_config);
 //!
 //! // Process a query
@@ -66,7 +66,7 @@ use serde::{Deserialize, Serialize};
 use crate::rag_debug::{
     RagDebugConfig, RagDebugLogger, RagDebugStep, RagQuerySession, ScoreChange,
 };
-use crate::rag_tiers::{RagConfig, RagFeatures, RagRequirement, RagStats, RagTier};
+use crate::rag_tiers::{RagTierConfig, RagFeatures, RagRequirement, RagStats, RagTier};
 
 // ============================================================================
 // Pipeline Result Types
@@ -128,7 +128,7 @@ pub struct RetrievedChunk {
     pub token_count: usize,
 
     /// Position in original document
-    pub position: Option<ChunkPosition>,
+    pub position: Option<PipelineChunkPosition>,
 
     /// Metadata
     pub metadata: HashMap<String, String>,
@@ -136,7 +136,7 @@ pub struct RetrievedChunk {
 
 /// Position information for a chunk
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ChunkPosition {
+pub struct PipelineChunkPosition {
     pub start_offset: usize,
     pub end_offset: usize,
     pub paragraph_index: Option<usize>,
@@ -341,11 +341,11 @@ pub struct GraphRelation {
 // Pipeline Configuration
 // ============================================================================
 
-/// Additional pipeline configuration beyond RagConfig
+/// Additional pipeline configuration beyond RagTierConfig
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RagPipelineConfig {
     /// Base RAG configuration
-    pub rag_config: RagConfig,
+    pub rag_config: RagTierConfig,
 
     /// Timeout for entire pipeline (ms)
     pub timeout_ms: Option<u64>,
@@ -390,7 +390,7 @@ pub struct RagPipelineConfig {
 impl Default for RagPipelineConfig {
     fn default() -> Self {
         Self {
-            rag_config: RagConfig::default(),
+            rag_config: RagTierConfig::default(),
             timeout_ms: Some(30000), // 30 seconds
             llm_timeout_ms: 10000,   // 10 seconds per LLM call
             continue_on_error: true,
@@ -409,8 +409,8 @@ impl Default for RagPipelineConfig {
 }
 
 impl RagPipelineConfig {
-    /// Create from a RagConfig
-    pub fn from_rag_config(config: RagConfig) -> Self {
+    /// Create from a RagTierConfig
+    pub fn from_rag_config(config: RagTierConfig) -> Self {
         Self {
             rag_config: config,
             ..Default::default()
@@ -419,7 +419,7 @@ impl RagPipelineConfig {
 
     /// Create for a specific tier
     pub fn for_tier(tier: RagTier) -> Self {
-        Self::from_rag_config(RagConfig::with_tier(tier))
+        Self::from_rag_config(RagTierConfig::with_tier(tier))
     }
 }
 
@@ -436,7 +436,7 @@ pub struct RagPipeline {
 
 impl RagPipeline {
     /// Create a new pipeline with configuration
-    pub fn new(rag_config: RagConfig) -> Self {
+    pub fn new(rag_config: RagTierConfig) -> Self {
         Self::with_config(RagPipelineConfig::from_rag_config(rag_config))
     }
 
@@ -1786,7 +1786,7 @@ mod tests {
 
     #[test]
     fn test_pipeline_creation() {
-        let config = RagConfig::with_tier(RagTier::Fast);
+        let config = RagTierConfig::with_tier(RagTier::Fast);
         let pipeline = RagPipeline::new(config);
         assert_eq!(pipeline.config().rag_config.tier, RagTier::Fast);
     }
@@ -1800,7 +1800,7 @@ mod tests {
 
     #[test]
     fn test_process_basic() {
-        let config = RagConfig::with_tier(RagTier::Fast);
+        let config = RagTierConfig::with_tier(RagTier::Fast);
         let mut pipeline = RagPipeline::new(config);
 
         let llm = MockLlm;
@@ -1816,7 +1816,7 @@ mod tests {
 
     #[test]
     fn test_deduplicate_chunks() {
-        let pipeline = RagPipeline::new(RagConfig::default());
+        let pipeline = RagPipeline::new(RagTierConfig::default());
 
         let chunks = vec![
             RetrievedChunk {
@@ -1864,7 +1864,7 @@ mod tests {
 
     #[test]
     fn test_rrf_fusion() {
-        let pipeline = RagPipeline::new(RagConfig::default());
+        let pipeline = RagPipeline::new(RagTierConfig::default());
 
         let chunks = vec![
             RetrievedChunk {
@@ -1903,7 +1903,7 @@ mod tests {
 
     #[test]
     fn test_from_rag_config() {
-        let rag_config = RagConfig::with_tier(RagTier::Thorough);
+        let rag_config = RagTierConfig::with_tier(RagTier::Thorough);
         let pipeline_config = RagPipelineConfig::from_rag_config(rag_config);
         assert_eq!(pipeline_config.rag_config.tier, RagTier::Thorough);
         assert_eq!(pipeline_config.timeout_ms, Some(30000));
@@ -1976,14 +1976,14 @@ mod tests {
 
     #[test]
     fn test_check_requirements_fast_satisfied() {
-        let pipeline = RagPipeline::new(RagConfig::with_tier(RagTier::Fast));
+        let pipeline = RagPipeline::new(RagTierConfig::with_tier(RagTier::Fast));
         let missing = pipeline.check_requirements(false, false, false);
         assert!(missing.is_empty(), "Fast tier should have no missing requirements");
     }
 
     #[test]
     fn test_check_requirements_semantic_missing_embeddings() {
-        let pipeline = RagPipeline::new(RagConfig::with_tier(RagTier::Semantic));
+        let pipeline = RagPipeline::new(RagTierConfig::with_tier(RagTier::Semantic));
         let missing = pipeline.check_requirements(false, false, false);
         assert!(
             missing
@@ -1995,7 +1995,7 @@ mod tests {
 
     #[test]
     fn test_check_requirements_semantic_satisfied() {
-        let pipeline = RagPipeline::new(RagConfig::with_tier(RagTier::Semantic));
+        let pipeline = RagPipeline::new(RagTierConfig::with_tier(RagTier::Semantic));
         let missing = pipeline.check_requirements(true, false, false);
         assert!(
             !missing
@@ -2006,7 +2006,7 @@ mod tests {
 
     #[test]
     fn test_check_requirements_disabled_empty() {
-        let pipeline = RagPipeline::new(RagConfig::with_tier(RagTier::Disabled));
+        let pipeline = RagPipeline::new(RagTierConfig::with_tier(RagTier::Disabled));
         let missing = pipeline.check_requirements(false, false, false);
         assert!(missing.is_empty(), "Disabled tier should need nothing");
     }
@@ -2017,7 +2017,7 @@ mod tests {
 
     #[test]
     fn test_synonym_expansion() {
-        let pipeline = RagPipeline::new(RagConfig::default());
+        let pipeline = RagPipeline::new(RagTierConfig::default());
         let expanded = pipeline.expand_synonyms("How fast is this ship?");
         // "ship" should match synonym entries if any exist
         // The function may or may not find matches depending on the synonym map
@@ -2026,14 +2026,14 @@ mod tests {
 
     #[test]
     fn test_synonym_expansion_empty_query() {
-        let pipeline = RagPipeline::new(RagConfig::default());
+        let pipeline = RagPipeline::new(RagTierConfig::default());
         let expanded = pipeline.expand_synonyms("");
         assert!(expanded.is_empty());
     }
 
     #[test]
     fn test_process_disabled_tier() {
-        let config = RagConfig::with_tier(RagTier::Disabled);
+        let config = RagTierConfig::with_tier(RagTier::Disabled);
         let mut pipeline = RagPipeline::new(config);
         let llm = MockLlm;
         let retrieval = MockRetrieval;
@@ -2044,7 +2044,7 @@ mod tests {
 
     #[test]
     fn test_process_empty_query() {
-        let config = RagConfig::with_tier(RagTier::Fast);
+        let config = RagTierConfig::with_tier(RagTier::Fast);
         let mut pipeline = RagPipeline::new(config);
         let llm = MockLlm;
         let retrieval = MockRetrieval;
@@ -2055,7 +2055,7 @@ mod tests {
 
     #[test]
     fn test_process_enhanced_tier() {
-        let config = RagConfig::with_tier(RagTier::Enhanced);
+        let config = RagTierConfig::with_tier(RagTier::Enhanced);
         let mut pipeline = RagPipeline::new(config);
         let llm = MockLlm;
         let retrieval = MockRetrieval;
@@ -2073,7 +2073,7 @@ mod tests {
 
     #[test]
     fn test_assemble_context_empty_chunks() {
-        let pipeline = RagPipeline::new(RagConfig::default());
+        let pipeline = RagPipeline::new(RagTierConfig::default());
         let features = pipeline.config().rag_config.effective_features();
         let debug_logger = RagDebugLogger::new(RagDebugConfig::default());
         let session = debug_logger.start_query("test");
@@ -2087,7 +2087,7 @@ mod tests {
 
     #[test]
     fn test_assemble_context_all_chunks_fit() {
-        let mut rag_config = RagConfig::with_tier(RagTier::Fast);
+        let mut rag_config = RagTierConfig::with_tier(RagTier::Fast);
         rag_config.max_knowledge_tokens = 10000;
         let pipeline = RagPipeline::new(rag_config);
         let features = pipeline.config().rag_config.effective_features();
@@ -2128,7 +2128,7 @@ mod tests {
 
     #[test]
     fn test_assemble_context_truncation() {
-        let mut rag_config = RagConfig::with_tier(RagTier::Fast);
+        let mut rag_config = RagTierConfig::with_tier(RagTier::Fast);
         rag_config.max_knowledge_tokens = 20;
         let pipeline = RagPipeline::new(rag_config);
         let features = pipeline.config().rag_config.effective_features();
@@ -2170,7 +2170,7 @@ mod tests {
 
     #[test]
     fn test_weighted_fusion() {
-        let pipeline = RagPipeline::new(RagConfig::default());
+        let pipeline = RagPipeline::new(RagTierConfig::default());
 
         let chunks = vec![
             RetrievedChunk {
@@ -2206,7 +2206,7 @@ mod tests {
 
     #[test]
     fn test_deduplicate_keeps_highest_score() {
-        let pipeline = RagPipeline::new(RagConfig::default());
+        let pipeline = RagPipeline::new(RagTierConfig::default());
 
         let chunks = vec![
             RetrievedChunk {
@@ -2259,7 +2259,7 @@ mod tests {
 
     #[test]
     fn test_stats_initial_state() {
-        let pipeline = RagPipeline::new(RagConfig::default());
+        let pipeline = RagPipeline::new(RagTierConfig::default());
         let stats = pipeline.stats();
         assert_eq!(stats.queries_processed, 0);
         assert_eq!(stats.llm_calls, 0);
@@ -2269,7 +2269,7 @@ mod tests {
 
     #[test]
     fn test_stats_after_process() {
-        let config = RagConfig::with_tier(RagTier::Fast);
+        let config = RagTierConfig::with_tier(RagTier::Fast);
         let mut pipeline = RagPipeline::new(config);
         let llm = MockLlm;
         let retrieval = MockRetrieval;
@@ -2281,7 +2281,7 @@ mod tests {
 
     #[test]
     fn test_stats_accumulate_across_queries() {
-        let config = RagConfig::with_tier(RagTier::Fast);
+        let config = RagTierConfig::with_tier(RagTier::Fast);
         let mut pipeline = RagPipeline::new(config);
         let llm = MockLlm;
         let retrieval = MockRetrieval;
@@ -2298,7 +2298,7 @@ mod tests {
 
     #[test]
     fn test_debug_logger_default() {
-        let pipeline = RagPipeline::new(RagConfig::default());
+        let pipeline = RagPipeline::new(RagTierConfig::default());
         let logger = pipeline.debug_logger();
         let _session = logger.start_query("hello");
     }
@@ -2391,7 +2391,7 @@ mod tests {
 
     #[test]
     fn test_very_long_query() {
-        let config = RagConfig::with_tier(RagTier::Fast);
+        let config = RagTierConfig::with_tier(RagTier::Fast);
         let mut pipeline = RagPipeline::new(config);
         let llm = MockLlm;
         let retrieval = MockRetrieval;
@@ -2403,7 +2403,7 @@ mod tests {
 
     #[test]
     fn test_special_characters_query() {
-        let config = RagConfig::with_tier(RagTier::Fast);
+        let config = RagTierConfig::with_tier(RagTier::Fast);
         let mut pipeline = RagPipeline::new(config);
         let llm = MockLlm;
         let retrieval = MockRetrieval;
@@ -2420,7 +2420,7 @@ mod tests {
 
     #[test]
     fn test_pipeline_result_has_debug_session_id() {
-        let config = RagConfig::with_tier(RagTier::Fast);
+        let config = RagTierConfig::with_tier(RagTier::Fast);
         let mut pipeline = RagPipeline::new(config);
         let llm = MockLlm;
         let retrieval = MockRetrieval;

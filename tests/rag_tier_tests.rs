@@ -188,11 +188,11 @@ mod rag_tiers_tests {
         assert!(tiers.contains(&RagTier::Custom));
     }
 
-    // --- RagConfig Tests ---
+    // --- RagTierConfig Tests ---
 
     #[test]
     fn test_rag_config_default() {
-        let config = RagConfig::default();
+        let config = RagTierConfig::default();
         assert_eq!(config.tier, RagTier::Fast);
         assert!(!config.use_custom_features);
         assert_eq!(config.max_extra_llm_calls, 5);
@@ -202,7 +202,7 @@ mod rag_tiers_tests {
 
     #[test]
     fn test_rag_config_with_tier() {
-        let config = RagConfig::with_tier(RagTier::Enhanced);
+        let config = RagTierConfig::with_tier(RagTier::Enhanced);
         assert_eq!(config.tier, RagTier::Enhanced);
         assert!(!config.use_custom_features);
 
@@ -217,7 +217,7 @@ mod rag_tiers_tests {
         features.fts_search = true;
         features.reranking = true;
 
-        let config = RagConfig::with_features(features);
+        let config = RagTierConfig::with_features(features);
         assert_eq!(config.tier, RagTier::Custom);
         assert!(config.use_custom_features);
 
@@ -229,7 +229,7 @@ mod rag_tiers_tests {
 
     #[test]
     fn test_rag_config_effective_features_tier_mode() {
-        let config = RagConfig::with_tier(RagTier::Semantic);
+        let config = RagTierConfig::with_tier(RagTier::Semantic);
         // use_custom_features is false, so tier features are used
         let effective = config.effective_features();
         assert!(effective.semantic_search);
@@ -238,7 +238,7 @@ mod rag_tiers_tests {
 
     #[test]
     fn test_rag_config_effective_features_custom_mode() {
-        let mut config = RagConfig::with_tier(RagTier::Semantic);
+        let mut config = RagTierConfig::with_tier(RagTier::Semantic);
         config.features = RagFeatures::none();
         config.features.fts_search = true;
         config.use_custom_features = true;
@@ -251,29 +251,29 @@ mod rag_tiers_tests {
 
     #[test]
     fn test_rag_config_estimate_extra_calls() {
-        let fast = RagConfig::with_tier(RagTier::Fast);
+        let fast = RagTierConfig::with_tier(RagTier::Fast);
         assert_eq!(fast.estimate_extra_calls(), (0, Some(0)));
 
-        let enhanced = RagConfig::with_tier(RagTier::Enhanced);
+        let enhanced = RagTierConfig::with_tier(RagTier::Enhanced);
         let (min, max) = enhanced.estimate_extra_calls();
         assert!(min >= 1);
         assert!(max.is_some());
 
-        let agentic = RagConfig::with_tier(RagTier::Agentic);
+        let agentic = RagTierConfig::with_tier(RagTier::Agentic);
         let (_, max) = agentic.estimate_extra_calls();
         assert!(max.is_none()); // Unbounded
     }
 
     #[test]
     fn test_rag_config_check_requirements() {
-        let fast = RagConfig::with_tier(RagTier::Fast);
+        let fast = RagTierConfig::with_tier(RagTier::Fast);
         assert!(fast.check_requirements().is_empty());
 
-        let semantic = RagConfig::with_tier(RagTier::Semantic);
+        let semantic = RagTierConfig::with_tier(RagTier::Semantic);
         let reqs = semantic.check_requirements();
         assert!(reqs.contains(&RagRequirement::EmbeddingModel));
 
-        let graph = RagConfig::with_tier(RagTier::Graph);
+        let graph = RagTierConfig::with_tier(RagTier::Graph);
         let reqs = graph.check_requirements();
         assert!(reqs.contains(&RagRequirement::GraphDatabase));
         assert!(reqs.contains(&RagRequirement::EmbeddingModel));
@@ -281,7 +281,7 @@ mod rag_tiers_tests {
 
     #[test]
     fn test_rag_config_is_feature_enabled() {
-        let config = RagConfig::with_tier(RagTier::Enhanced);
+        let config = RagTierConfig::with_tier(RagTier::Enhanced);
         assert!(config.is_feature_enabled("fts_search"));
         assert!(config.is_feature_enabled("semantic_search"));
         assert!(config.is_feature_enabled("reranking"));
@@ -291,7 +291,7 @@ mod rag_tiers_tests {
 
     #[test]
     fn test_rag_config_builder_pattern() {
-        let config = RagConfig::with_tier(RagTier::Enhanced)
+        let config = RagTierConfig::with_tier(RagTier::Enhanced)
             .with_debug("./logs")
             .with_max_calls(10)
             .with_max_chunks(20)
@@ -306,7 +306,7 @@ mod rag_tiers_tests {
 
     #[test]
     fn test_rag_config_summary() {
-        let config = RagConfig::with_tier(RagTier::Enhanced);
+        let config = RagTierConfig::with_tier(RagTier::Enhanced);
         let summary = config.summary();
         assert!(summary.contains("Enhanced"));
         assert!(summary.contains("features enabled"));
@@ -1059,11 +1059,11 @@ mod rag_methods_tests {
         assert_eq!(result.details.get("model"), Some(&"test-model".to_string()));
     }
 
-    // --- QueryExpander Tests ---
+    // --- AdvancedQueryExpander Tests ---
 
     #[test]
     fn test_query_expander_synonym_expand() {
-        let expander = QueryExpander::new();
+        let expander = AdvancedQueryExpander::new();
 
         let expanded = expander.synonym_expand("What is the ship price?");
         assert!(!expanded.is_empty());
@@ -1075,7 +1075,7 @@ mod rag_methods_tests {
 
     #[test]
     fn test_query_expander_synonym_expand_no_match() {
-        let expander = QueryExpander::new();
+        let expander = AdvancedQueryExpander::new();
 
         let expanded = expander.synonym_expand("random words here");
         // May or may not have expansions depending on words
@@ -1089,7 +1089,7 @@ mod rag_methods_tests {
             use_synonyms: false,
             prompt_template: Some("Custom: {query}".into()),
         };
-        let expander = QueryExpander::with_config(config);
+        let expander = AdvancedQueryExpander::with_config(config);
 
         // With synonyms disabled, synonym_expand should still work but expand() won't use it
         let synonyms = expander.synonym_expand("test ship");
@@ -1098,7 +1098,7 @@ mod rag_methods_tests {
 
     #[test]
     fn test_query_expander_with_llm() {
-        let expander = QueryExpander::new();
+        let expander = AdvancedQueryExpander::new();
         let llm = MockLlm::new("Alternative 1\nAlternative 2\nAlternative 3");
 
         let result = expander.expand("test query", &llm).unwrap();
@@ -1497,7 +1497,7 @@ mod rag_methods_tests {
 
     #[test]
     fn test_graph_rag_entity() {
-        let entity = Entity {
+        let entity = GraphEntity {
             name: "Aurora MR".into(),
             entity_type: "SHIP".into(),
             mentions: vec![EntityMention {
@@ -1604,7 +1604,7 @@ mod rag_integration_tests {
         let logger = RagDebugLogger::with_level(RagDebugLevel::Detailed);
 
         // Create config
-        let config = RagConfig::with_tier(RagTier::Enhanced).with_max_chunks(10);
+        let config = RagTierConfig::with_tier(RagTier::Enhanced).with_max_chunks(10);
 
         // Verify config
         assert!(config.is_feature_enabled("fts_search"));
@@ -1688,7 +1688,7 @@ mod rag_integration_tests {
         features.agentic_mode = true; // Skip straight to agentic
         features.graph_rag = true; // Add graph
 
-        let config = RagConfig::with_features(features);
+        let config = RagTierConfig::with_features(features);
 
         // Check requirements
         let reqs = config.check_requirements();

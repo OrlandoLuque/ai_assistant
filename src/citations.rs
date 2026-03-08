@@ -474,7 +474,7 @@ pub struct CitationVerifier;
 
 impl CitationVerifier {
     /// Verify that citations are accurate
-    pub fn verify(cited_text: &CitedText, sources: &HashMap<String, Source>) -> VerificationResult {
+    pub fn verify(cited_text: &CitedText, sources: &HashMap<String, Source>) -> CitationVerificationResult {
         let mut verified = 0;
         let mut unverified = Vec::new();
 
@@ -508,7 +508,7 @@ impl CitationVerifier {
         }
 
         let total = cited_text.citations.len();
-        VerificationResult {
+        CitationVerificationResult {
             total_citations: total,
             verified_count: verified,
             unverified,
@@ -523,7 +523,7 @@ impl CitationVerifier {
 
 /// Result of citation verification
 #[derive(Debug, Clone)]
-pub struct VerificationResult {
+pub struct CitationVerificationResult {
     /// Total citations checked
     pub total_citations: usize,
     /// Number verified

@@ -619,6 +619,15 @@ struct RegisteredTool {
     handler: ToolHandler,
 }
 
+impl Clone for RegisteredTool {
+    fn clone(&self) -> Self {
+        Self {
+            definition: self.definition.clone(),
+            handler: Arc::clone(&self.handler),
+        }
+    }
+}
+
 impl fmt::Debug for RegisteredTool {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RegisteredTool")
@@ -658,6 +667,14 @@ pub struct ToolRegistry {
     tools: HashMap<String, RegisteredTool>,
 }
 
+impl Clone for ToolRegistry {
+    fn clone(&self) -> Self {
+        Self {
+            tools: self.tools.clone(),
+        }
+    }
+}
+
 impl ToolRegistry {
     /// Create an empty registry.
     pub fn new() -> Self {
@@ -694,6 +711,11 @@ impl ToolRegistry {
     /// Get a tool definition by name.
     pub fn get(&self, name: &str) -> Option<&ToolDef> {
         self.tools.get(name).map(|t| &t.definition)
+    }
+
+    /// Get a tool definition and handler by name.
+    pub fn get_with_handler(&self, name: &str) -> Option<(&ToolDef, &ToolHandler)> {
+        self.tools.get(name).map(|t| (&t.definition, &t.handler))
     }
 
     /// List all registered tool definitions.
