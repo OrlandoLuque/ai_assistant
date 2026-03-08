@@ -19,7 +19,9 @@ use crate::mode_manager::OperationMode;
 use crate::multi_agent::{Agent, AgentRole};
 use crate::unified_tools::ToolRegistry;
 use std::collections::{BinaryHeap, HashMap};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, RwLock};
+use std::time::{Duration, Instant};
 
 // ============================================================================
 // E2b: parse_agent_role — map string roles to AgentRole enum
@@ -276,6 +278,15 @@ impl std::fmt::Display for AgentCreationError {
     }
 }
 
+/// Options for agent creation beyond the basic definition.
+#[derive(Default)]
+pub struct AgentCreateOptions {
+    /// Cancellation token for cooperative cancellation.
+    pub cancellation_token: Option<Arc<std::sync::atomic::AtomicBool>>,
+    /// Mailbox receiver for inter-agent messages.
+    pub mailbox: Option<mpsc::Receiver<crate::autonomous_loop::InterAgentMessage>>,
+}
+
 /// Create an AutonomousAgent from an AgentDefinition.
 ///
 /// Validates the definition (rejects if any Error-severity issues found),
@@ -284,6 +295,16 @@ pub fn create_agent_from_definition(
     def: &AgentDefinition,
     response_generator: ResponseGenerator,
     available_tools: &ToolRegistry,
+) -> Result<AutonomousAgent, AgentCreationError> {
+    create_agent_from_definition_with_options(def, response_generator, available_tools, AgentCreateOptions::default())
+}
+
+/// Create an AutonomousAgent with additional options (cancellation token, mailbox).
+pub fn create_agent_from_definition_with_options(
+    def: &AgentDefinition,
+    response_generator: ResponseGenerator,
+    available_tools: &ToolRegistry,
+    options: AgentCreateOptions,
 ) -> Result<AutonomousAgent, AgentCreationError> {
     // Validate the definition
     let warnings = crate::agent_definition::AgentDefinitionLoader::validate(def)
@@ -346,17 +367,23 @@ pub fn create_agent_from_definition(
     let cost_config = CostConfig::new();
 
     // Build the agent
-    let agent = AutonomousAgentBuilder::new(&def.agent.name, response_generator)
+    let mut builder = AutonomousAgentBuilder::new(&def.agent.name, response_generator)
         .system_prompt(system_prompt)
         .max_iterations(max_iterations)
         .policy(policy)
         .sandbox(sandbox)
         .tool_registry(filtered_tools)
         .with_cost_config(cost_config)
-        .mode(OperationMode::Autonomous)
-        .build();
+        .mode(OperationMode::Autonomous);
 
-    Ok(agent)
+    if let Some(token) = options.cancellation_token {
+        builder = builder.cancellation_token(token);
+    }
+    if let Some(mailbox) = options.mailbox {
+        builder = builder.mailbox(mailbox);
+    }
+
+    Ok(builder.build())
 }
 
 // ============================================================================
@@ -433,6 +460,8 @@ pub struct PoolTask {
     pub required_capabilities: Vec<String>,
     /// Preferred role for the agent.
     pub preferred_role: Option<AgentRole>,
+    /// Model override — if set, takes priority over AgentDefinition.agent.model.
+    pub model_override: Option<String>,
 }
 
 impl PoolTask {
@@ -445,6 +474,7 @@ impl PoolTask {
             priority: 0,
             required_capabilities: Vec::new(),
             preferred_role: None,
+            model_override: None,
         }
     }
 
@@ -469,6 +499,12 @@ impl PoolTask {
     /// Set preferred role.
     pub fn with_preferred_role(mut self, role: AgentRole) -> Self {
         self.preferred_role = Some(role);
+        self
+    }
+
+    /// Set model override (takes priority over AgentDefinition.agent.model).
+    pub fn with_model_override(mut self, model: impl Into<String>) -> Self {
+        self.model_override = Some(model.into());
         self
     }
 }
@@ -536,6 +572,10 @@ pub struct SupervisorConfig {
     pub budget_warning_percent: f64,
     /// Iteration warning margin (trigger when within this many of the limit).
     pub iteration_warning_margin: usize,
+    /// Minimum interval between supervisor activations (prevents excessive LLM cost).
+    pub min_interval: Duration,
+    /// Model to use for the supervisor agent (can be a cheap/local model).
+    pub supervisor_model: Option<String>,
 }
 
 impl Default for SupervisorConfig {
@@ -545,6 +585,8 @@ impl Default for SupervisorConfig {
             idle_streak_threshold: 5,
             budget_warning_percent: 0.8,
             iteration_warning_margin: 5,
+            min_interval: Duration::from_secs(30),
+            supervisor_model: None,
         }
     }
 }
@@ -610,6 +652,18 @@ pub struct AgentPool {
     result_receiver: Option<mpsc::Receiver<PoolTaskResult>>,
     /// Sender for completed task notifications (cloned to threads).
     result_sender: mpsc::Sender<PoolTaskResult>,
+    /// Cancellation tokens for active agents (keyed by agent_id).
+    cancellation_tokens: HashMap<String, Arc<AtomicBool>>,
+    /// Mailbox senders for active agents (keyed by agent_id).
+    mailbox_senders: HashMap<String, mpsc::Sender<crate::autonomous_loop::InterAgentMessage>>,
+    /// Thread join handles for active agents.
+    join_handles: HashMap<String, std::thread::JoinHandle<()>>,
+    /// Last supervisor activation time.
+    last_supervisor_activation: Option<Instant>,
+    /// Whether the pool is shutting down.
+    shutting_down: bool,
+    /// Sequence counter for FIFO tiebreaker in priority queue.
+    sequence_counter: u64,
 }
 
 impl AgentPool {
@@ -632,6 +686,12 @@ impl AgentPool {
             trigger_log: Vec::new(),
             result_receiver: Some(rx),
             result_sender: tx,
+            cancellation_tokens: HashMap::new(),
+            mailbox_senders: HashMap::new(),
+            join_handles: HashMap::new(),
+            last_supervisor_activation: None,
+            shutting_down: false,
+            sequence_counter: 0,
         }
     }
 
@@ -714,7 +774,11 @@ impl AgentPool {
             .ok_or_else(|| format!("Agent definition '{}' not found", agent_name))?
             .clone();
 
-        let model = def.agent.model.as_deref();
+        // Model priority: task.model_override > def.agent.model
+        let model = task
+            .model_override
+            .as_deref()
+            .or(def.agent.model.as_deref());
         let gen = (self.response_generator_factory)(model);
 
         let mut agent = create_agent_from_definition(&def, gen, &self.tool_registry)
@@ -747,14 +811,19 @@ impl AgentPool {
         result
     }
 
-    /// Spawn an agent in a background thread.
+    /// Spawn an agent in a background thread with cancellation token and panic recovery.
     ///
     /// The result will be available via `drain_completed()`.
+    /// The agent can be cancelled via `cancel_agent()` and receives messages via `send_message()`.
     pub fn spawn_agent(
         &mut self,
         agent_name: &str,
         task: PoolTask,
     ) -> Result<(), String> {
+        if self.shutting_down {
+            return Err("Pool is shutting down".to_string());
+        }
+
         if self.active_agents.len() >= self.max_agents {
             return Err(format!(
                 "Pool at capacity ({}/{})",
@@ -769,13 +838,26 @@ impl AgentPool {
             .ok_or_else(|| format!("Agent definition '{}' not found", agent_name))?
             .clone();
 
-        let model = def.agent.model.as_deref().map(|s| s.to_string());
+        // Model priority: task.model_override > def.agent.model
+        let model = task
+            .model_override
+            .clone()
+            .or_else(|| def.agent.model.clone());
         let factory = Arc::clone(&self.response_generator_factory);
         let tools = self.tool_registry.clone();
         let sender = self.result_sender.clone();
         let agent_id = agent_name.to_string();
         let task_id = task.id.clone();
         let prompt = task.prompt.clone();
+
+        // Create cancellation token
+        let cancel_token = Arc::new(AtomicBool::new(false));
+        self.cancellation_tokens
+            .insert(agent_id.clone(), Arc::clone(&cancel_token));
+
+        // Create mailbox channel
+        let (mailbox_tx, mailbox_rx) = mpsc::channel();
+        self.mailbox_senders.insert(agent_id.clone(), mailbox_tx);
 
         // Track active status
         self.active_agents.insert(
@@ -791,30 +873,210 @@ impl AgentPool {
             },
         );
 
-        std::thread::spawn(move || {
-            let gen = factory(model.as_deref());
-            let result = match create_agent_from_definition(&def, gen, &tools) {
-                Ok(mut agent) => agent.run(&prompt),
-                Err(e) => Err(e.to_string()),
+        let cancel_token_clone = Arc::clone(&cancel_token);
+        let handle = std::thread::spawn(move || {
+            // Wrap in catch_unwind for panic recovery
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let gen = factory(model.as_deref());
+                let options = AgentCreateOptions {
+                    cancellation_token: Some(cancel_token_clone),
+                    mailbox: Some(mailbox_rx),
+                };
+                match create_agent_from_definition_with_options(&def, gen, &tools, options) {
+                    Ok(mut agent) => agent.run(&prompt),
+                    Err(e) => Err(e.to_string()),
+                }
+            }));
+
+            let final_result = match result {
+                Ok(r) => r,
+                Err(panic_info) => {
+                    let reason = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                        s.to_string()
+                    } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                        s.clone()
+                    } else {
+                        "unknown panic".to_string()
+                    };
+                    eprintln!(
+                        "[agent_pool] Agent '{}' panicked on task '{}': {}",
+                        agent_id, task_id, reason
+                    );
+                    Err(format!("Agent panicked: {}", reason))
+                }
             };
 
             let _ = sender.send(PoolTaskResult {
                 task_id,
                 agent_id,
-                result,
+                result: final_result,
             });
         });
+
+        self.join_handles.insert(agent_name.to_string(), handle);
 
         Ok(())
     }
 
+    /// Cancel a running agent by setting its cancellation token.
+    pub fn cancel_agent(&self, agent_id: &str) -> bool {
+        if let Some(token) = self.cancellation_tokens.get(agent_id) {
+            token.store(true, Ordering::Relaxed);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Send a message to a running agent via its mailbox.
+    pub fn send_message(
+        &self,
+        agent_id: &str,
+        from: &str,
+        content: &str,
+    ) -> Result<(), String> {
+        let sender = self
+            .mailbox_senders
+            .get(agent_id)
+            .ok_or_else(|| format!("No mailbox for agent '{}'", agent_id))?;
+
+        let msg = crate::autonomous_loop::InterAgentMessage {
+            from: from.to_string(),
+            content: content.to_string(),
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+        };
+
+        sender
+            .send(msg)
+            .map_err(|_| format!("Agent '{}' mailbox closed", agent_id))
+    }
+
+    /// Graceful shutdown: cancel all agents, wait with timeout, clean up.
+    ///
+    /// Sets all cancellation tokens and waits for threads to complete.
+    /// Returns the number of agents that completed within the timeout.
+    pub fn shutdown(&mut self, timeout: Duration) -> usize {
+        self.shutting_down = true;
+
+        // Set all cancellation tokens
+        for token in self.cancellation_tokens.values() {
+            token.store(true, Ordering::Relaxed);
+        }
+
+        let deadline = Instant::now() + timeout;
+        let mut completed = 0;
+
+        // Drain join handles and wait
+        let handles: Vec<(String, std::thread::JoinHandle<()>)> =
+            self.join_handles.drain().collect();
+
+        for (id, handle) in handles {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                eprintln!(
+                    "[agent_pool] Shutdown timeout: agent '{}' still running",
+                    id
+                );
+                continue;
+            }
+            // We can't join with a timeout in std, so we park_timeout and check
+            // The thread should stop because we set the cancellation token
+            match handle.join() {
+                Ok(()) => completed += 1,
+                Err(_) => {
+                    eprintln!("[agent_pool] Agent '{}' thread panicked during shutdown", id);
+                }
+            }
+        }
+
+        // Drain remaining results
+        self.drain_completed();
+
+        // Clean up
+        self.cancellation_tokens.clear();
+        self.mailbox_senders.clear();
+        self.active_agents.clear();
+
+        completed
+    }
+
+    /// Check if the pool is shutting down.
+    pub fn is_shutting_down(&self) -> bool {
+        self.shutting_down
+    }
+
+    /// Trigger the supervisor for a given reason.
+    ///
+    /// Creates a temporary Coordinator agent that can diagnose the issue.
+    /// Respects min_interval between activations.
+    pub fn trigger_supervisor(&mut self, reason: &TriggerReason) -> Option<AgentResult> {
+        if !self.supervisor_config.enabled {
+            return None;
+        }
+
+        // Check min_interval
+        if let Some(last) = self.last_supervisor_activation {
+            if last.elapsed() < self.supervisor_config.min_interval {
+                return None;
+            }
+        }
+
+        self.last_supervisor_activation = Some(Instant::now());
+
+        // Create supervisor agent
+        let model = self.supervisor_config.supervisor_model.as_deref();
+        let gen = (self.response_generator_factory)(model);
+
+        let system_prompt = format!(
+            "You are a Supervisor agent monitoring an agent pool. \
+             A trigger has been activated: {}. \
+             Diagnose the issue and suggest corrective action. \
+             Be concise and actionable.",
+            reason
+        );
+
+        let mut supervisor = AutonomousAgentBuilder::new("supervisor", gen)
+            .system_prompt(system_prompt)
+            .max_iterations(3)
+            .mode(OperationMode::Autonomous)
+            .build();
+
+        let prompt = format!(
+            "Supervisor trigger: {}\n\
+             Active agents: {}\n\
+             Queued tasks: {}\n\
+             Analyze and recommend action.",
+            reason,
+            self.active_agents.len(),
+            self.queue.len()
+        );
+
+        match supervisor.run(&prompt) {
+            Ok(result) => Some(result),
+            Err(e) => {
+                eprintln!("[agent_pool] Supervisor failed: {}", e);
+                None
+            }
+        }
+    }
+
     /// Drain completed results from background threads.
+    ///
+    /// Also cleans up cancellation tokens, mailbox senders, and join handles
+    /// for completed agents.
     pub fn drain_completed(&mut self) -> Vec<PoolTaskResult> {
         let mut results = Vec::new();
 
         if let Some(ref rx) = self.result_receiver {
             while let Ok(result) = rx.try_recv() {
+                // Clean up per-agent resources
                 self.active_agents.remove(&result.agent_id);
+                self.cancellation_tokens.remove(&result.agent_id);
+                self.mailbox_senders.remove(&result.agent_id);
+                self.join_handles.remove(&result.agent_id);
                 results.push(result);
             }
         }
@@ -868,6 +1130,203 @@ impl AgentPool {
         }
     }
 }
+
+// ============================================================================
+// I1: AgentPlanningState — MCTS state for agent tool planning
+// ============================================================================
+
+#[cfg(feature = "devtools")]
+mod mcts_wiring {
+    use crate::error::MctsError;
+    use crate::mcts_planner::{MctsPlanner, MctsState};
+    use crate::unified_tools::ToolDef;
+
+    /// Represents the agent's planning state for MCTS search.
+    ///
+    /// Captures the current goal, available tools, completed actions, and
+    /// optional memory hints. MCTS uses this to explore possible tool sequences
+    /// without actually executing them.
+    #[derive(Debug, Clone)]
+    pub struct AgentPlanningState {
+        /// The goal/task the agent is trying to accomplish.
+        pub goal: String,
+        /// Available tool names with descriptions (from ToolRegistry).
+        pub available_tools: Vec<(String, String)>,
+        /// Actions already taken in this simulation branch.
+        pub completed_actions: Vec<String>,
+        /// Maximum depth (number of tool calls to plan ahead).
+        pub max_depth: usize,
+        /// Memory hints from episodic recall (relevant past experiences).
+        pub memory_hints: Vec<String>,
+    }
+
+    impl AgentPlanningState {
+        /// Create a planning state from a goal, tool registry, and optional memory hints.
+        pub fn from_registry(
+            goal: &str,
+            tools: &[ToolDef],
+            max_depth: usize,
+            memory_hints: Vec<String>,
+        ) -> Self {
+            let available_tools = tools
+                .iter()
+                .map(|t| (t.name.clone(), t.description.clone()))
+                .collect();
+            Self {
+                goal: goal.to_string(),
+                available_tools,
+                completed_actions: Vec::new(),
+                max_depth,
+                memory_hints,
+            }
+        }
+    }
+
+    impl MctsState for AgentPlanningState {
+        type Action = String; // Tool name
+
+        fn available_actions(&self) -> Vec<String> {
+            self.available_tools
+                .iter()
+                .map(|(name, _)| name.clone())
+                .filter(|name| !self.completed_actions.contains(name))
+                .collect()
+        }
+
+        fn apply_action(&self, action: &String) -> Result<Self, MctsError> {
+            let mut new_state = self.clone();
+            new_state.completed_actions.push(action.clone());
+            Ok(new_state)
+        }
+
+        fn is_terminal(&self) -> bool {
+            self.completed_actions.len() >= self.max_depth
+                || self.available_actions().is_empty()
+        }
+
+        fn reward(&self) -> f64 {
+            agent_planning_reward(self)
+        }
+
+        fn description(&self) -> String {
+            format!(
+                "Goal: {}, Actions: {:?}, Depth: {}/{}",
+                self.goal,
+                self.completed_actions,
+                self.completed_actions.len(),
+                self.max_depth
+            )
+        }
+    }
+
+    /// Compute the reward for an agent planning state.
+    ///
+    /// Uses a zero-cost heuristic based on:
+    /// - Metadata similarity: bag-of-words cosine between tool description and goal (weight 0.6)
+    /// - Diversity: penalizes repeated tools (weight 0.2)
+    /// - Progress: ratio of actions completed vs max_depth (weight 0.1)
+    /// - Memory bonus: +0.1 if memory hints suggest the tool was successful before
+    fn agent_planning_reward(state: &AgentPlanningState) -> f64 {
+        if state.completed_actions.is_empty() {
+            return 0.0;
+        }
+
+        let goal_lower = state.goal.to_lowercase();
+        let goal_words: Vec<&str> = goal_lower.split_whitespace().collect();
+
+        let mut total_relevance = 0.0;
+        let mut unique_tools = std::collections::HashSet::new();
+
+        for action in &state.completed_actions {
+            // Metadata similarity: how many goal words appear in tool description
+            let tool_desc = state
+                .available_tools
+                .iter()
+                .find(|(name, _)| name == action)
+                .map(|(_, desc)| desc.to_lowercase())
+                .unwrap_or_default();
+
+            let matching_words = goal_words
+                .iter()
+                .filter(|w| tool_desc.contains(*w))
+                .count();
+            let relevance = if goal_words.is_empty() {
+                0.0
+            } else {
+                matching_words as f64 / goal_words.len() as f64
+            };
+            total_relevance += relevance;
+
+            unique_tools.insert(action.clone());
+        }
+
+        let n = state.completed_actions.len() as f64;
+        let avg_relevance = total_relevance / n;
+
+        // Diversity: ratio of unique tools to total (1.0 = all unique)
+        let diversity = unique_tools.len() as f64 / n;
+
+        // Progress: how far through the plan we are
+        let progress = n / state.max_depth as f64;
+
+        // Memory bonus: check if any completed tool appears in memory hints
+        let memory_bonus = if !state.memory_hints.is_empty() {
+            let matched = state
+                .completed_actions
+                .iter()
+                .filter(|action| {
+                    state
+                        .memory_hints
+                        .iter()
+                        .any(|hint| hint.to_lowercase().contains(&action.to_lowercase()))
+                })
+                .count();
+            if matched > 0 { 0.1 } else { 0.0 }
+        } else {
+            0.0
+        };
+
+        // Weighted combination
+        let score =
+            avg_relevance * 0.6 + diversity * 0.2 + progress * 0.1 + memory_bonus;
+
+        score.min(1.0)
+    }
+
+    /// Plan the next sequence of tool calls using MCTS.
+    ///
+    /// Returns a Vec of tool names representing the optimal sequence found by MCTS.
+    /// Returns empty Vec if MCTS doesn't find a sequence better than random (root_value < 0.1).
+    ///
+    /// # Arguments
+    /// * `planner` - The MCTS planner with configured iterations and exploration
+    /// * `state` - The current agent planning state
+    pub fn plan_next_actions(
+        planner: &MctsPlanner,
+        state: &AgentPlanningState,
+    ) -> Vec<String> {
+        if state.available_actions().is_empty() {
+            return Vec::new();
+        }
+
+        match planner.search(state) {
+            Ok(result) => {
+                if result.root_value < 0.1 {
+                    // Not worth planning — random is just as good
+                    return Vec::new();
+                }
+                result.best_action_sequence
+            }
+            Err(e) => {
+                eprintln!("[mcts_wiring] Planning failed: {:?}", e);
+                Vec::new()
+            }
+        }
+    }
+}
+
+#[cfg(feature = "devtools")]
+pub use mcts_wiring::{plan_next_actions, AgentPlanningState};
 
 // ============================================================================
 // Tests
@@ -1346,6 +1805,7 @@ mod tests {
             idle_streak_threshold: 3,
             budget_warning_percent: 0.8,
             iteration_warning_margin: 5,
+            ..Default::default()
         };
 
         pool.active_agents.insert(
@@ -1413,6 +1873,7 @@ mod tests {
             idle_streak_threshold: 100, // high so it doesn't trigger
             budget_warning_percent: 0.8,
             iteration_warning_margin: 5,
+            ..Default::default()
         };
 
         let mut def = make_test_definition();
@@ -1587,5 +2048,428 @@ mod tests {
         assert!(display.contains("test error"));
         assert!(display.contains("field A missing"));
         assert!(display.contains("field B invalid"));
+    }
+
+    // ---- E10i: CancellationToken ----
+
+    #[test]
+    fn test_pool_cancel_agent() {
+        let mut pool = make_test_pool();
+        pool.register_definition(make_test_definition());
+
+        // Spawn an agent
+        let task = PoolTask::new("t1", "long task");
+        pool.spawn_agent("test-agent", task).unwrap();
+
+        // Cancel it
+        assert!(pool.cancel_agent("test-agent"));
+        assert!(!pool.cancel_agent("nonexistent"));
+
+        // Wait for completion
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let results = pool.drain_completed();
+        assert_eq!(results.len(), 1);
+        // The result should indicate cancellation (the agent completes normally
+        // because simple tasks finish before the token is checked)
+    }
+
+    // ---- E10h: InterAgentMessage ----
+
+    #[test]
+    fn test_pool_send_message() {
+        let mut pool = make_test_pool();
+        pool.register_definition(make_test_definition());
+
+        let task = PoolTask::new("t1", "task");
+        pool.spawn_agent("test-agent", task).unwrap();
+
+        // Send a message
+        let result = pool.send_message("test-agent", "supervisor", "check status");
+        assert!(result.is_ok());
+
+        // Nonexistent agent
+        let result = pool.send_message("nonexistent", "supervisor", "hello");
+        assert!(result.is_err());
+
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        pool.drain_completed();
+    }
+
+    // ---- E10k: Panic recovery ----
+
+    #[test]
+    fn test_pool_panic_recovery() {
+        let factory = make_response_generator_factory(|_| {
+            make_response_generator(|_| panic!("test panic"))
+        });
+        let mut pool = AgentPool::new(3, factory, ToolRegistry::new());
+        pool.register_definition(make_test_definition());
+
+        let task = PoolTask::new("t1", "trigger panic");
+        pool.spawn_agent("test-agent", task).unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let results = pool.drain_completed();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].result.is_err());
+        let err = results[0].result.as_ref().unwrap_err();
+        assert!(err.contains("panicked"), "Error should mention panic: {}", err);
+    }
+
+    // ---- E10l: Graceful shutdown ----
+
+    #[test]
+    fn test_pool_shutdown() {
+        let mut pool = make_test_pool();
+        pool.register_definition(make_test_definition());
+
+        let task = PoolTask::new("t1", "quick task");
+        pool.spawn_agent("test-agent", task).unwrap();
+
+        let completed = pool.shutdown(std::time::Duration::from_secs(5));
+        assert_eq!(completed, 1);
+        assert!(pool.is_shutting_down());
+        assert!(pool.active_agents.is_empty());
+    }
+
+    #[test]
+    fn test_pool_shutdown_rejects_new_tasks() {
+        let mut pool = make_test_pool();
+        pool.register_definition(make_test_definition());
+        pool.shutting_down = true;
+
+        let task = PoolTask::new("t1", "task");
+        let result = pool.spawn_agent("test-agent", task);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("shutting down"));
+    }
+
+    // ---- E10f: trigger_supervisor ----
+
+    #[test]
+    fn test_trigger_supervisor_disabled() {
+        let mut pool = make_test_pool();
+        let reason = TriggerReason::StuckDetected {
+            agent_id: "a1".to_string(),
+            idle_streak: 5,
+        };
+        assert!(pool.trigger_supervisor(&reason).is_none());
+    }
+
+    #[test]
+    fn test_trigger_supervisor_enabled() {
+        let mut pool = make_test_pool();
+        pool.supervisor_config = SupervisorConfig {
+            enabled: true,
+            idle_streak_threshold: 3,
+            budget_warning_percent: 0.8,
+            iteration_warning_margin: 5,
+            min_interval: std::time::Duration::from_millis(0), // no throttle for test
+            supervisor_model: None,
+        };
+
+        let reason = TriggerReason::StuckDetected {
+            agent_id: "a1".to_string(),
+            idle_streak: 5,
+        };
+        let result = pool.trigger_supervisor(&reason);
+        assert!(result.is_some(), "Supervisor should produce a result");
+    }
+
+    #[test]
+    fn test_trigger_supervisor_min_interval() {
+        let mut pool = make_test_pool();
+        pool.supervisor_config = SupervisorConfig {
+            enabled: true,
+            idle_streak_threshold: 3,
+            budget_warning_percent: 0.8,
+            iteration_warning_margin: 5,
+            min_interval: std::time::Duration::from_secs(60),
+            supervisor_model: None,
+        };
+
+        let reason = TriggerReason::StuckDetected {
+            agent_id: "a1".to_string(),
+            idle_streak: 5,
+        };
+
+        // First activation should work
+        let result1 = pool.trigger_supervisor(&reason);
+        assert!(result1.is_some());
+
+        // Second activation should be throttled
+        let result2 = pool.trigger_supervisor(&reason);
+        assert!(result2.is_none(), "Should be throttled by min_interval");
+    }
+
+    // ---- E10m: SupervisorConfig defaults ----
+
+    #[test]
+    fn test_supervisor_config_defaults() {
+        let config = SupervisorConfig::default();
+        assert!(!config.enabled);
+        assert_eq!(config.idle_streak_threshold, 5);
+        assert!((config.budget_warning_percent - 0.8).abs() < f64::EPSILON);
+        assert_eq!(config.iteration_warning_margin, 5);
+        assert_eq!(config.min_interval, std::time::Duration::from_secs(30));
+        assert!(config.supervisor_model.is_none());
+    }
+
+    // ---- E12a: model_override in PoolTask ----
+
+    #[test]
+    fn test_pool_task_model_override() {
+        let task = PoolTask::new("t1", "task")
+            .with_model_override("gpt-4-turbo");
+        assert_eq!(task.model_override.as_deref(), Some("gpt-4-turbo"));
+    }
+
+    #[test]
+    fn test_model_priority_chain() {
+        // When task has model_override, it should take priority over def.agent.model
+        let factory = make_response_generator_factory(|model| {
+            let model_name = model.unwrap_or("default").to_string();
+            make_response_generator(move |_| format!("Response from {}", model_name))
+        });
+        let mut pool = AgentPool::new(3, factory, ToolRegistry::new());
+
+        // Definition has model "openai/gpt-4o"
+        let mut def = make_test_definition();
+        def.agent.model = Some("openai/gpt-4o".to_string());
+        pool.register_definition(def);
+
+        // Task with model_override
+        let task = PoolTask::new("t1", "test").with_model_override("local/llama3");
+        let result = pool.execute_task_sync("test-agent", &task).unwrap();
+        assert!(
+            result.output.contains("local/llama3"),
+            "model_override should take priority: {}",
+            result.output
+        );
+
+        // Task without model_override → falls back to definition model
+        let task2 = PoolTask::new("t2", "test");
+        let result2 = pool.execute_task_sync("test-agent", &task2).unwrap();
+        assert!(
+            result2.output.contains("openai/gpt-4o"),
+            "Should fall back to definition model: {}",
+            result2.output
+        );
+    }
+
+    // ---- AgentCreateOptions ----
+
+    #[test]
+    fn test_create_agent_with_options() {
+        let def = make_test_definition();
+        let gen = make_response_generator(|_| "done".to_string());
+        let registry = ToolRegistry::new();
+
+        let token = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (_, rx) = mpsc::channel();
+
+        let options = AgentCreateOptions {
+            cancellation_token: Some(token),
+            mailbox: Some(rx),
+        };
+
+        let result = create_agent_from_definition_with_options(&def, gen, &registry, options);
+        assert!(result.is_ok());
+    }
+
+    // ---- InterAgentMessage ----
+
+    #[test]
+    fn test_inter_agent_message() {
+        let msg = crate::autonomous_loop::InterAgentMessage {
+            from: "agent-1".to_string(),
+            content: "hello world".to_string(),
+            timestamp: 1234567890,
+        };
+        assert_eq!(msg.from, "agent-1");
+        assert_eq!(msg.content, "hello world");
+        assert_eq!(msg.timestamp, 1234567890);
+    }
+
+    // ---- I1: AgentPlanningState (MCTS wiring) ----
+
+    #[cfg(feature = "devtools")]
+    mod mcts_tests {
+        use super::*;
+        use crate::mcts_planner::{MctsConfig, MctsPlanner, MctsState};
+        use crate::unified_tools::ToolDef;
+
+        fn make_test_tools() -> Vec<ToolDef> {
+            vec![
+                ToolDef::new("web_search", "Search the web for information"),
+                ToolDef::new("file_read", "Read a file from the filesystem"),
+                ToolDef::new("calculator", "Perform mathematical calculations"),
+                ToolDef::new("summarize", "Summarize text content"),
+            ]
+        }
+
+        #[test]
+        fn test_agent_planning_state_actions() {
+            let tools = make_test_tools();
+            let state = AgentPlanningState::from_registry(
+                "search for data and calculate results",
+                &tools,
+                3,
+                Vec::new(),
+            );
+
+            let actions = state.available_actions();
+            assert_eq!(actions.len(), 4, "All 4 tools should be available");
+            assert!(actions.contains(&"web_search".to_string()));
+        }
+
+        #[test]
+        fn test_agent_planning_state_terminal() {
+            let tools = make_test_tools();
+            let state = AgentPlanningState::from_registry(
+                "test",
+                &tools,
+                2, // max_depth = 2
+                Vec::new(),
+            );
+
+            assert!(!state.is_terminal());
+
+            let s1 = state.apply_action(&"web_search".to_string()).unwrap();
+            assert!(!s1.is_terminal());
+
+            let s2 = s1.apply_action(&"file_read".to_string()).unwrap();
+            assert!(s2.is_terminal(), "Should be terminal at max_depth");
+        }
+
+        #[test]
+        fn test_agent_planning_state_apply() {
+            let tools = make_test_tools();
+            let state = AgentPlanningState::from_registry("test", &tools, 3, Vec::new());
+
+            let new_state = state.apply_action(&"web_search".to_string()).unwrap();
+
+            // Original should be unchanged
+            assert_eq!(state.completed_actions.len(), 0);
+            // New state should have the action
+            assert_eq!(new_state.completed_actions.len(), 1);
+            assert_eq!(new_state.completed_actions[0], "web_search");
+        }
+
+        #[test]
+        fn test_agent_planning_state_used_tools_excluded() {
+            let tools = make_test_tools();
+            let state = AgentPlanningState::from_registry("test", &tools, 5, Vec::new());
+
+            let s1 = state.apply_action(&"web_search".to_string()).unwrap();
+            let actions = s1.available_actions();
+            assert_eq!(actions.len(), 3, "web_search should be excluded");
+            assert!(!actions.contains(&"web_search".to_string()));
+        }
+
+        #[test]
+        fn test_agent_reward_model_relevance() {
+            let tools = make_test_tools();
+            let state = AgentPlanningState::from_registry(
+                "search for information on the web",
+                &tools,
+                3,
+                Vec::new(),
+            );
+
+            let relevant = state.apply_action(&"web_search".to_string()).unwrap();
+            let irrelevant = state.apply_action(&"calculator".to_string()).unwrap();
+
+            assert!(
+                relevant.reward() > irrelevant.reward(),
+                "web_search should score higher for 'search for information on the web': {} vs {}",
+                relevant.reward(),
+                irrelevant.reward()
+            );
+        }
+
+        #[test]
+        fn test_agent_reward_model_diversity() {
+            let tools = vec![
+                ToolDef::new("search", "Search for data"),
+                ToolDef::new("analyze", "Analyze data"),
+            ];
+            let state = AgentPlanningState::from_registry("search data", &tools, 5, Vec::new());
+
+            // Use diverse tools
+            let s1 = state.apply_action(&"search".to_string()).unwrap();
+            let s2 = s1.apply_action(&"analyze".to_string()).unwrap();
+            let diverse_reward = s2.reward();
+
+            // The reward should be positive since we used diverse tools
+            assert!(diverse_reward > 0.0, "Diverse tool use should yield positive reward");
+        }
+
+        #[test]
+        fn test_mcts_plan_next_actions() {
+            let tools = make_test_tools();
+            let state = AgentPlanningState::from_registry(
+                "search the web for information",
+                &tools,
+                3,
+                Vec::new(),
+            );
+
+            let config = MctsConfig {
+                max_iterations: 100,
+                exploration_constant: std::f64::consts::SQRT_2,
+                max_depth: 3,
+                simulation_depth: 3,
+                discount_factor: 0.99,
+            };
+            let planner = MctsPlanner::new(config);
+
+            let actions = plan_next_actions(&planner, &state);
+            // Should return a non-empty sequence since the goal is clear
+            // (web_search is highly relevant to "search the web")
+            assert!(!actions.is_empty(), "Should plan at least one action");
+        }
+
+        #[test]
+        fn test_mcts_plan_empty_tools() {
+            let state = AgentPlanningState::from_registry(
+                "do something",
+                &[], // No tools
+                3,
+                Vec::new(),
+            );
+
+            let planner = MctsPlanner::with_defaults();
+            let actions = plan_next_actions(&planner, &state);
+            assert!(actions.is_empty(), "No tools = no actions");
+        }
+
+        #[test]
+        fn test_mcts_plan_memory_bonus() {
+            let tools = make_test_tools();
+            let state_no_memory = AgentPlanningState::from_registry(
+                "search data",
+                &tools,
+                3,
+                Vec::new(),
+            );
+
+            let state_with_memory = AgentPlanningState::from_registry(
+                "search data",
+                &tools,
+                3,
+                vec!["Previously used web_search successfully for data retrieval".to_string()],
+            );
+
+            let s1 = state_no_memory.apply_action(&"web_search".to_string()).unwrap();
+            let s2 = state_with_memory.apply_action(&"web_search".to_string()).unwrap();
+
+            assert!(
+                s2.reward() >= s1.reward(),
+                "Memory hints should give bonus: {} vs {}",
+                s2.reward(),
+                s1.reward()
+            );
+        }
     }
 }

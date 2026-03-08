@@ -188,6 +188,19 @@ impl EntityStore {
         self.entities.values().collect()
     }
 
+    /// List all distinct entity types.
+    pub fn list_types(&self) -> Vec<String> {
+        let mut types: Vec<String> = self
+            .entities
+            .values()
+            .map(|e| e.entity_type.clone())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        types.sort();
+        types
+    }
+
     /// Serialize to JSON.
     pub fn to_json(&self) -> Result<String, AiError> {
         let entries: Vec<&EntityRecord> = self.entities.values().collect();

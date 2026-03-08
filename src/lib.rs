@@ -634,7 +634,7 @@ pub use user_interaction::{
 #[cfg(feature = "autonomous")]
 pub use autonomous_loop::{
     AgentResult as AutonomousAgentResult, AgentState as AutonomousAgentState, AutonomousAgent,
-    AutonomousAgentBuilder, AutonomousAgentConfig, IterationOutcome,
+    AutonomousAgentBuilder, AutonomousAgentConfig, InterAgentMessage, IterationOutcome,
 };
 
 #[cfg(feature = "autonomous")]
@@ -2040,6 +2040,15 @@ pub use advanced_memory::{
     AutoPersistenceConfig,
 };
 
+#[cfg(feature = "advanced-memory")]
+pub mod memory_service;
+
+#[cfg(feature = "advanced-memory")]
+pub use memory_service::{
+    start_memory_service, EpisodicCmd, EntityCmd, MemoryCommand, MemoryHandle,
+    MemoryServiceConfig, MemoryServiceHandle, PlanCmd, SystemCmd,
+};
+
 // =============================================================================
 // ONLINE EVALUATION (feedback hooks, sampling, alerting)
 // =============================================================================
@@ -2146,13 +2155,15 @@ pub mod agent_wiring;
 #[cfg(feature = "autonomous")]
 pub use agent_wiring::{
     agent_from_definition, chat_to_loop_message, create_agent_from_definition,
-    filter_tool_registry, loop_message_to_pair, make_response_generator,
-    make_response_generator_factory, parse_agent_role, role_system_prompt,
-    score_agent_for_task, AgentCreationError, AgentPool, IterationHook,
-    PoolTask,
-    PoolAgentStatus, PoolTaskResult, ResponseGenerator, ResponseGeneratorFactory,
-    SupervisorConfig, TriggerReason,
+    create_agent_from_definition_with_options, filter_tool_registry, loop_message_to_pair,
+    make_response_generator, make_response_generator_factory, parse_agent_role,
+    role_system_prompt, score_agent_for_task, AgentCreateOptions, AgentCreationError,
+    AgentPool, IterationHook, PoolAgentStatus, PoolTask, PoolTaskResult, ResponseGenerator,
+    ResponseGeneratorFactory, SupervisorConfig, TriggerReason,
 };
+
+#[cfg(all(feature = "autonomous", feature = "devtools"))]
+pub use agent_wiring::{plan_next_actions, AgentPlanningState};
 
 // =============================================================================
 // CONSTRAINED DECODING (grammar-guided generation, GBNF, JSON Schema)
