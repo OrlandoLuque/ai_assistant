@@ -256,8 +256,27 @@ impl ContainerExecutor {
     ) -> Result<ExecResult, ContainerError> {
         let start = std::time::Instant::now();
 
+        // Security: reject shell metacharacters to prevent injection via sh -c
+        const SHELL_META: &[char] = &[';', '|', '&', '$', '`', '(', ')', '>', '<', '{', '}', '\n', '\r'];
+        for ch in SHELL_META {
+            if command.contains(*ch) {
+                return Err(ContainerError::PolicyViolation(format!(
+                    "Command contains disallowed shell metacharacter '{}'",
+                    ch
+                )));
+            }
+        }
+
+        // Split into program + args (no shell interpretation)
+        let parts: Vec<&str> = command.split_whitespace().collect();
+        if parts.is_empty() {
+            return Err(ContainerError::OperationFailed("Empty command".into()));
+        }
+        let mut exec_args: Vec<&str> = vec!["exec", container_id];
+        exec_args.extend(&parts);
+
         let child = std::process::Command::new("docker")
-            .args(["exec", container_id, "sh", "-c", command])
+            .args(&exec_args)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()

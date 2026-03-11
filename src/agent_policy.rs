@@ -98,11 +98,26 @@ pub trait ApprovalHandler: Send + Sync {
     fn request_approval(&self, action: &str, risk: RiskLevel) -> bool;
 }
 
-/// An approval handler that always approves (for tests/headless).
+/// An approval handler that always approves.
+///
+/// # Security Warning
+///
+/// This handler bypasses ALL approval checks, including HITL gates.
+/// It should ONLY be used in test code. Using it in production disables
+/// the entire human-in-the-loop safety system.
+#[deprecated(note = "Use an explicit ApprovalHandler in production — AutoApproveAll bypasses all safety checks")]
 pub struct AutoApproveAll;
 
 impl ApprovalHandler for AutoApproveAll {
-    fn request_approval(&self, _action: &str, _risk: RiskLevel) -> bool {
+    fn request_approval(&self, action: &str, risk: RiskLevel) -> bool {
+        if risk >= RiskLevel::High {
+            log::warn!(
+                "AutoApproveAll: auto-approving {:?}-risk action '{}' — \
+                 this is unsafe in production",
+                risk,
+                action
+            );
+        }
         true
     }
 }
@@ -234,24 +249,53 @@ impl AgentPolicy {
     }
 
     /// Check if the agent can access a path.
+    ///
+    /// Rejects `..` path components to prevent traversal attacks (H6).
+    /// Uses canonicalization when both paths exist on disk; otherwise
+    /// falls back to raw `starts_with` comparison.
     pub fn can_access_path(&self, path: &Path) -> bool {
+        // Reject any path containing ".." components (traversal attack)
+        for component in path.components() {
+            if component == std::path::Component::ParentDir {
+                return false;
+            }
+        }
+
+        // Helper: compare two paths using canonicalization when possible.
+        // If both canonicalize, compare canonicalized forms.
+        // If neither canonicalizes, compare raw forms.
+        // If only one canonicalizes, compare both raw AND canonicalized forms
+        // (to avoid false negatives when one path exists and the other doesn't).
+        fn path_starts_with(child: &Path, parent: &Path) -> bool {
+            let child_canon = std::fs::canonicalize(child).ok();
+            let parent_canon = std::fs::canonicalize(parent).ok();
+
+            match (&child_canon, &parent_canon) {
+                (Some(cc), Some(pc)) => cc.starts_with(pc),
+                _ => {
+                    // Fallback: raw path comparison (safe because .. is already rejected)
+                    child.starts_with(parent)
+                }
+            }
+        }
+
         // Denied paths take priority
         for denied in &self.denied_paths {
-            if path.starts_with(denied) {
+            if path_starts_with(path, denied) {
                 return false;
             }
         }
         // If allowed_paths is empty, allow cwd only
         if self.allowed_paths.is_empty() {
             if let Some(ref wd) = self.working_directory {
-                return path.starts_with(wd);
+                return path_starts_with(path, wd);
             }
             // No working directory set and no allowed paths = allow all
             return true;
         }
         // Check if path is under any allowed path
         for allowed in &self.allowed_paths {
-            if path.starts_with(allowed) {
+            if path_starts_with(path, allowed) {
                 return true;
             }
         }

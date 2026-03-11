@@ -65,7 +65,7 @@ pub struct NetworkConfig {
 impl Default for NetworkConfig {
     fn default() -> Self {
         Self {
-            listen_addr: "0.0.0.0:0".parse().expect("valid address"),
+            listen_addr: "127.0.0.1:0".parse().expect("valid address"),
             bootstrap_peers: Vec::new(),
             identity_dir: PathBuf::from("./node_identity"),
             heartbeat_interval: Duration::from_secs(2),

@@ -97,6 +97,11 @@ impl ChatSession {
     pub fn touch(&mut self) {
         self.updated_at = chrono::Utc::now();
     }
+
+    /// Check if the session has expired based on the given maximum age.
+    pub fn is_expired(&self, max_age: chrono::Duration) -> bool {
+        chrono::Utc::now() - self.updated_at > max_age
+    }
 }
 
 /// Collection of saved sessions

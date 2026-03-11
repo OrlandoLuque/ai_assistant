@@ -7,6 +7,18 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
+/// Set restrictive file permissions on a database file (owner-only on Unix).
+/// No-op on Windows (different permission model).
+pub fn secure_db_file_permissions(db_path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::Permissions::from_mode(0o600);
+        let _ = std::fs::set_permissions(db_path, perms);
+    }
+    let _ = db_path; // suppress unused warning on non-unix
+}
+
 // ============================================================================
 // Database Backup
 // ============================================================================

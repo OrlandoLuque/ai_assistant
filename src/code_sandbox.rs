@@ -333,9 +333,21 @@ impl CodeSandbox {
         for (k, v) in &safe_env {
             cmd.env(k, v);
         }
-        // Add PATH so the interpreter can find its dependencies
-        if let Ok(path) = std::env::var("PATH") {
-            cmd.env("PATH", path);
+        // Security: use restricted PATH instead of inheriting full system PATH (M11)
+        // Include only minimal system directories needed for sandboxed execution.
+        let safe_path = if cfg!(target_os = "windows") {
+            // Include System32 + common Git/interpreter paths for Windows
+            r"C:\Windows\System32;C:\Windows;C:\Program Files\Git\usr\bin"
+        } else {
+            "/usr/bin:/usr/local/bin:/bin"
+        };
+        cmd.env("PATH", safe_path);
+        // On Windows, SYSTEMROOT is required for many operations
+        #[cfg(target_os = "windows")]
+        {
+            if let Ok(sr) = std::env::var("SYSTEMROOT") {
+                cmd.env("SYSTEMROOT", sr);
+            }
         }
 
         // Set working directory
@@ -359,8 +371,10 @@ impl CodeSandbox {
             },
         };
 
-        // Cleanup temp file
-        let _ = std::fs::remove_file(&code_path);
+        // Cleanup temp file — log failures instead of silently ignoring
+        if let Err(e) = std::fs::remove_file(&code_path) {
+            log::warn!("Failed to cleanup sandbox temp file {:?}: {}", code_path, e);
+        }
 
         result
     }

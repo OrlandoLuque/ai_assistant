@@ -240,6 +240,20 @@ impl PluginManager {
             return Err(format!("Plugin '{}' is already registered", info.name));
         }
 
+        // Security: log plugin capabilities for auditing (H11)
+        if info.capabilities.contains(&PluginCapability::Processor) {
+            log::info!(
+                "Plugin '{}' registered with Processor capability — can intercept/modify messages",
+                info.name
+            );
+        }
+        if info.capabilities.is_empty() {
+            log::warn!(
+                "Plugin '{}' registered with no declared capabilities",
+                info.name
+            );
+        }
+
         // Load plugin
         plugin.on_load(&self.context)?;
 

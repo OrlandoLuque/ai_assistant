@@ -96,8 +96,9 @@ pub struct ProviderConfig {
     #[serde(default)]
     pub custom_url: Option<String>,
 
-    /// API key (for providers that require it)
-    #[serde(default)]
+    /// API key (for providers that require it).
+    /// Marked skip_serializing to avoid leaking secrets via serialized output (H10).
+    #[serde(default, skip_serializing)]
     pub api_key: Option<String>,
 }
 

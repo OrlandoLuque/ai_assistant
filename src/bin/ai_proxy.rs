@@ -175,7 +175,7 @@ fn main() -> ExitCode {
 
         let app = build_proxy_router(state);
 
-        let addr = format!("0.0.0.0:{}", port);
+        let addr = format!("127.0.0.1:{}", port);
         let listener = match tokio::net::TcpListener::bind(&addr).await {
             Ok(l) => l,
             Err(e) => {
@@ -243,7 +243,17 @@ async fn proxy_forward_handler(
             .and_then(|v| v.to_str().ok())
             .map(|v| {
                 if let Some(token) = v.strip_prefix("Bearer ") {
-                    token == expected_key.as_str()
+                    // Constant-time comparison to prevent timing side-channel attacks
+                    let a = token.as_bytes();
+                    let b = expected_key.as_bytes();
+                    if a.len() != b.len() {
+                        return false;
+                    }
+                    let mut diff = 0u8;
+                    for (x, y) in a.iter().zip(b.iter()) {
+                        diff |= x ^ y;
+                    }
+                    diff == 0
                 } else {
                     false
                 }
