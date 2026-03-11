@@ -4,16 +4,16 @@
 
 # ai_assistant
 
-A comprehensive Rust library for LLM integration — local and cloud. 13+ providers, 5-tier RAG, multi-agent orchestration, autonomous agents, distributed computing, and 40+ MCP tools. Single crate, zero-runtime, ~350K LOC.
+A comprehensive Rust library for LLM integration — local and cloud. 13+ providers, 5-tier RAG, multi-agent orchestration, autonomous agents, distributed computing, and 40+ MCP tools. Single crate, zero-runtime, ~353K LOC.
 
 ![Rust](https://img.shields.io/badge/Rust-Edition%202021-orange)
 ![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue)
-![Tests](https://img.shields.io/badge/tests-6700%2B-brightgreen)
-![LOC](https://img.shields.io/badge/LOC-350K-blue)
+![Tests](https://img.shields.io/badge/tests-6696-brightgreen)
+![LOC](https://img.shields.io/badge/LOC-353K-blue)
 
 > **Status: Experimental**
 >
-> This project compiles and passes 6,700+ tests, but it has not been validated in production
+> This project compiles and passes 6,696 tests, but it has not been validated in production
 > or real-world usage. Developed iteratively with AI assistance, some modules may be
 > incomplete, loosely wired, or tested only at a surface level. A comprehensive review is
 > pending. **Use at your own risk. Not yet published on crates.io.**
@@ -96,10 +96,11 @@ A comprehensive Rust library for LLM integration — local and cloud. 13+ provid
 
 ### Code Quality
 - **Zero `.unwrap()` in production**: Proper error handling across all files
-- **6,700+ tests**: Comprehensive unit tests with 0 clippy warnings
-- **312 source files**: Fully implemented — zero stubs or TODOs
+- **6,696 tests**: Comprehensive unit tests with 0 clippy warnings
+- **313 source files**: Fully implemented — zero stubs or TODOs
 - **20+ feature flags**: Granular dependency control
-- **~350,000 lines of Rust**: Single crate, modular architecture
+- **~353,000 lines of Rust**: Single crate, modular architecture
+- **Security audited**: 32 vulnerabilities identified and fixed (2-pass audit)
 
 ## Building from Source
 
@@ -1717,8 +1718,8 @@ cargo run --features "server-axum" --bin ai_proxy -- --backends "localhost:8091,
 | Cold start | <100 ms | 5-10 s |
 | GC pauses | None | Unpredictable |
 | Runtime deps | None | Python + pip |
-| Modules | 312 | ~50 |
-| Tests | 6,700+ | Varies |
+| Modules | 313 | ~50 |
+| Tests | 6,696 | Varies |
 
 See [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for detailed comparisons.
 
