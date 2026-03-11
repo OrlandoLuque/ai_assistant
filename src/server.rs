@@ -165,6 +165,59 @@ impl Default for CorsConfig {
     }
 }
 
+impl CorsConfig {
+    /// Validate the CORS configuration for security issues.
+    /// Returns warnings as strings.
+    pub fn validate(&self) -> Vec<String> {
+        let mut warnings = Vec::new();
+        let has_wildcard = self.allowed_origins.iter().any(|o| o == "*");
+        if has_wildcard && self.allow_credentials {
+            warnings.push(
+                "CORS: wildcard origin ('*') with allow_credentials is insecure \
+                 and violates the CORS spec — credentials will NOT be sent"
+                    .to_string(),
+            );
+        }
+        if has_wildcard {
+            warnings.push(
+                "CORS: wildcard origin ('*') allows any website to make requests; \
+                 restrict allowed_origins for production"
+                    .to_string(),
+            );
+        }
+        warnings
+    }
+}
+
+/// Sanitize a header value by stripping CR/LF to prevent CRLF header injection.
+fn sanitize_header_value(value: &str) -> String {
+    value.replace('\r', "").replace('\n', "")
+}
+
+/// Extract client IP from request headers (respecting X-Forwarded-For if trusted)
+/// or fall back to a default.
+fn extract_client_ip(headers: &[(String, String)], trust_proxy: bool) -> String {
+    if trust_proxy {
+        // X-Forwarded-For: client, proxy1, proxy2 — first entry is the real client
+        if let Some((_, xff)) = headers.iter().find(|(k, _)| k == "x-forwarded-for") {
+            if let Some(first_ip) = xff.split(',').next() {
+                let ip = first_ip.trim();
+                if !ip.is_empty() {
+                    return ip.to_string();
+                }
+            }
+        }
+        // Also check X-Real-IP as fallback
+        if let Some((_, xri)) = headers.iter().find(|(k, _)| k == "x-real-ip") {
+            let ip = xri.trim();
+            if !ip.is_empty() {
+                return ip.to_string();
+            }
+        }
+    }
+    "unknown".to_string()
+}
+
 /// TLS configuration for HTTPS support.
 ///
 /// When provided in `ServerConfig`, the server will use HTTPS.
@@ -214,6 +267,10 @@ pub struct ServerConfig {
     /// Cost budget manager (built automatically when enrichment.cost.enabled is true).
     #[serde(skip)]
     pub budget_manager: Option<Arc<Mutex<crate::cost::BudgetManager>>>,
+    /// Trust X-Forwarded-For header for client IP extraction (default: false).
+    /// Only enable when behind a trusted reverse proxy.
+    #[serde(default)]
+    pub trust_proxy: bool,
 }
 
 // ── Enrichment sub-config structs ────────────────────────────────────
@@ -637,6 +694,7 @@ impl Default for ServerConfig {
             rate_limiter: None,
             guardrail_pipeline: None,
             budget_manager: None,
+            trust_proxy: false,
         }
     }
 }
@@ -927,10 +985,15 @@ impl StructuredError {
 pub struct ServerRateLimiter {
     /// Maximum number of requests allowed per 60-second window.
     pub requests_per_minute: u32,
-    /// Start of the current window.
+    /// Global window start.
     window_start: Mutex<Instant>,
-    /// Number of requests observed in the current window.
+    /// Global request count.
     request_count: AtomicU32,
+    /// Per-IP request counters: IP → (count, window_start).
+    /// Protected by Mutex; stale entries are evicted when the map exceeds `max_tracked_ips`.
+    per_ip: Mutex<std::collections::HashMap<String, (u32, Instant)>>,
+    /// Maximum number of IPs to track before evicting the oldest.
+    max_tracked_ips: usize,
 }
 
 impl std::fmt::Debug for ServerRateLimiter {
@@ -949,10 +1012,12 @@ impl ServerRateLimiter {
             requests_per_minute,
             window_start: Mutex::new(Instant::now()),
             request_count: AtomicU32::new(0),
+            per_ip: Mutex::new(std::collections::HashMap::new()),
+            max_tracked_ips: 10_000,
         }
     }
 
-    /// Reset the window if 60 seconds have elapsed since `window_start`.
+    /// Reset the global window if 60 seconds have elapsed since `window_start`.
     pub fn reset_if_window_expired(&self) {
         let mut start = self.window_start.lock().unwrap_or_else(|e| e.into_inner());
         if start.elapsed().as_secs() >= 60 {
@@ -961,7 +1026,7 @@ impl ServerRateLimiter {
         }
     }
 
-    /// Check whether the current request is allowed.
+    /// Check whether the current request is allowed (global limit).
     ///
     /// Returns `true` if the request should be processed, `false` if the
     /// rate limit has been exceeded.
@@ -969,6 +1034,36 @@ impl ServerRateLimiter {
         self.reset_if_window_expired();
         let count = self.request_count.fetch_add(1, Ordering::Relaxed);
         count < self.requests_per_minute
+    }
+
+    /// Check whether a request from a specific IP is allowed (per-IP limit).
+    ///
+    /// The per-IP limit is set to `requests_per_minute / 4` (minimum 10) to prevent
+    /// a single IP from exhausting the global budget.
+    pub fn check_rate_limit_for_ip(&self, ip: &str) -> bool {
+        // Also check global limit
+        if !self.check_rate_limit() {
+            return false;
+        }
+
+        let per_ip_limit = std::cmp::max(self.requests_per_minute / 4, 10);
+        let mut map = self.per_ip.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Evict stale entries if map is too large
+        if map.len() > self.max_tracked_ips {
+            map.retain(|_, (_, start)| start.elapsed().as_secs() < 60);
+        }
+
+        let entry = map.entry(ip.to_string()).or_insert_with(|| (0, Instant::now()));
+
+        // Reset per-IP window if expired
+        if entry.1.elapsed().as_secs() >= 60 {
+            entry.0 = 0;
+            entry.1 = Instant::now();
+        }
+
+        entry.0 += 1;
+        entry.0 <= per_ip_limit
     }
 
     /// Return the number of seconds remaining in the current window.
@@ -1023,7 +1118,10 @@ fn handle_chat_stream(
         (
             "400 Bad Request".to_string(),
             serde_json::to_string(&ErrorResponse {
-                error: format!("Invalid JSON: {}", e),
+                error: {
+                    log::debug!("JSON parse error: {}", e);
+                    "Invalid JSON in request body".to_string()
+                },
             })
             .unwrap_or_default(),
         )
@@ -1224,7 +1322,8 @@ fn handle_ws_chat(stream: &mut dyn ReadWrite, assistant: &Arc<Mutex<AiAssistant>
                 let req: WsChatReq = match serde_json::from_str(text) {
                     Ok(r) => r,
                     Err(e) => {
-                        let err = serde_json::json!({"type": "error", "message": format!("Invalid JSON: {}", e)});
+                        log::debug!("WebSocket JSON parse error: {}", e);
+                        let err = serde_json::json!({"type": "error", "message": "Invalid JSON in request body"});
                         let _ = write_ws_frame(stream, &WsFrame::text(&err.to_string()));
                         continue;
                     }
@@ -1443,6 +1542,10 @@ impl AiServer {
         let tls_cfg = self.tls_server_config.clone();
         let scheme = if cfg!(feature = "server-tls") && self.config.tls.is_some() { "https" } else { "http" };
         log::info!("AI Assistant server listening on {}://{}", scheme, addr);
+        // Security warning: auth disabled (M2)
+        if !self.config.auth.enabled {
+            log::warn!("SECURITY: Authentication is DISABLED. Enable auth before exposing to a network.");
+        }
 
         loop {
             if self.shutdown_flag.load(Ordering::Relaxed) {
@@ -1686,7 +1789,9 @@ pub fn build_cors_headers(
         config.max_age_secs.to_string(),
     ));
 
-    if config.allow_credentials {
+    // Security: do NOT send credentials with wildcard origin (CORS spec violation)
+    let has_wildcard = config.allowed_origins.iter().any(|o| o == "*");
+    if config.allow_credentials && !has_wildcard {
         headers.push((
             "Access-Control-Allow-Credentials".to_string(),
             "true".to_string(),
@@ -1753,15 +1858,19 @@ fn handle_connection(
     let cors_headers = build_cors_headers(&config.cors, request_origin);
 
     // Format CORS headers + X-Request-Id as HTTP header lines
+    // Security: sanitize all header values to prevent CRLF injection (M1)
     let mut extra_headers: String = cors_headers
         .iter()
-        .map(|(k, v)| format!("{}: {}\r\n", k, v))
+        .map(|(k, v)| format!("{}: {}\r\n", sanitize_header_value(k), sanitize_header_value(v)))
         .collect();
-    extra_headers.push_str(&format!("X-Request-Id: {}\r\n", request_id));
+    extra_headers.push_str(&format!("X-Request-Id: {}\r\n", sanitize_header_value(&request_id)));
 
-    // Rate limiting check — before auth so we don't waste cycles
+    // Extract client IP for per-IP rate limiting (H2, H3)
+    let client_ip = extract_client_ip(&request.headers, config.trust_proxy);
+
+    // Rate limiting check — before auth so we don't waste cycles (per-IP: H2)
     if let Some(ref rl) = config.rate_limiter {
-        if !rl.check_rate_limit() {
+        if !rl.check_rate_limit_for_ip(&client_ip) {
             let retry_after = rl.retry_after_secs();
             let body = serde_json::to_string(&ErrorResponse {
                 error: "Too Many Requests".to_string(),
@@ -1821,6 +1930,31 @@ fn handle_connection(
         && request.method == "GET"
         && is_websocket_upgrade(&request.headers);
     if is_ws {
+        // Security: validate Origin header before accepting WebSocket upgrade (H9)
+        let has_wildcard = config.cors.allowed_origins.iter().any(|o| o == "*");
+        if !has_wildcard && !config.cors.allowed_origins.is_empty() {
+            let ws_origin = request.headers.iter()
+                .find(|(k, _)| k == "origin")
+                .map(|(_, v)| v.as_str());
+            match ws_origin {
+                Some(o) if config.cors.allowed_origins.iter().any(|a| a == o) => { /* OK */ }
+                Some(o) => {
+                    let body = serde_json::to_string(&ErrorResponse {
+                        error: format!("Origin '{}' not allowed", sanitize_header_value(o)),
+                    }).unwrap_or_default();
+                    let response = format!(
+                        "HTTP/1.1 403 Forbidden\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{}Connection: close\r\n\r\n{}",
+                        body.len(), extra_headers, body
+                    );
+                    log::info!("[{}] WebSocket upgrade rejected: Origin '{}' not allowed", request_id, o);
+                    metrics.record_request("403", start.elapsed());
+                    stream.write_all(response.as_bytes())?;
+                    stream.flush()?;
+                    return Ok(());
+                }
+                None => { /* No Origin header — allow (same-origin request) */ }
+            }
+        }
         log::info!("[{}] WebSocket upgrade {} → 101 ({:.1}ms)", request_id, request.path, start.elapsed().as_secs_f64() * 1000.0);
         metrics.record_request("101", start.elapsed());
         ws_handshake(stream, &request.headers, &extra_headers)?;
@@ -2118,7 +2252,10 @@ fn handle_chat(request: &HttpRequest, assistant: &Arc<Mutex<AiAssistant>>, confi
             return (
                 "400 Bad Request".to_string(),
                 serde_json::to_string(&ErrorResponse {
-                    error: format!("Invalid JSON: {}", e),
+                    error: {
+                    log::debug!("JSON parse error: {}", e);
+                    "Invalid JSON in request body".to_string()
+                },
                 })
                 .unwrap_or_default(),
             );
@@ -2218,7 +2355,10 @@ fn handle_set_config(
             return (
                 "400 Bad Request".to_string(),
                 serde_json::to_string(&ErrorResponse {
-                    error: format!("Invalid JSON: {}", e),
+                    error: {
+                    log::debug!("JSON parse error: {}", e);
+                    "Invalid JSON in request body".to_string()
+                },
                 })
                 .unwrap_or_default(),
             );
@@ -2309,7 +2449,10 @@ fn handle_openai_chat_completions(
         Err(e) => {
             return (
                 "400 Bad Request".to_string(),
-                openai_error_json(&format!("Invalid JSON: {}", e), "invalid_request_error", "invalid_json"),
+                {
+                    log::debug!("JSON parse error: {}", e);
+                    openai_error_json("Invalid JSON in request body", "invalid_request_error", "invalid_json")
+                },
             );
         }
     };
@@ -2544,7 +2687,10 @@ fn handle_openai_chat_completions_stream(
         Err(e) => {
             return Err((
                 "400 Bad Request".to_string(),
-                openai_error_json(&format!("Invalid JSON: {}", e), "invalid_request_error", "invalid_json"),
+                {
+                    log::debug!("JSON parse error: {}", e);
+                    openai_error_json("Invalid JSON in request body", "invalid_request_error", "invalid_json")
+                },
             ));
         }
     };
@@ -3202,16 +3348,30 @@ mod tests {
 
     #[test]
     fn test_cors_credentials_header() {
-        let config = CorsConfig {
+        // H1: credentials must NOT be sent with wildcard origin
+        let wildcard_config = CorsConfig {
             allow_credentials: true,
-            ..Default::default()
+            ..Default::default() // allowed_origins: ["*"]
         };
-        let headers = build_cors_headers(&config, Some("http://example.com"));
+        let headers = build_cors_headers(&wildcard_config, Some("http://example.com"));
         let creds = headers
             .iter()
             .find(|(k, _)| k == "Access-Control-Allow-Credentials")
             .map(|(_, v)| v.as_str());
-        assert_eq!(creds, Some("true"));
+        assert_eq!(creds, None, "credentials must be blocked with wildcard origin");
+
+        // Credentials SHOULD be sent with specific origin
+        let specific_config = CorsConfig {
+            allow_credentials: true,
+            allowed_origins: vec!["http://example.com".to_string()],
+            ..Default::default()
+        };
+        let headers = build_cors_headers(&specific_config, Some("http://example.com"));
+        let creds = headers
+            .iter()
+            .find(|(k, _)| k == "Access-Control-Allow-Credentials")
+            .map(|(_, v)| v.as_str());
+        assert_eq!(creds, Some("true"), "credentials should work with specific origin");
     }
 
     #[test]

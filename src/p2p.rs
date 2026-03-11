@@ -1505,6 +1505,401 @@ pub struct P2PStats {
 }
 
 // =============================================================================
+// P2P TRANSPORT — Real TCP networking for P2PManager
+// =============================================================================
+
+/// Wire envelope for P2P messages over TCP.
+/// Wraps every message with sender identity so the receiver knows who sent it.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WireEnvelope {
+    /// The sender's peer ID.
+    pub sender_id: String,
+    /// The actual message.
+    pub message: PeerMessage,
+}
+
+/// Maximum wire message payload size (64 KB).
+const MAX_WIRE_PAYLOAD: usize = 65536;
+
+/// Real TCP transport layer for P2PManager.
+///
+/// Runs a TCP listener for incoming peer connections and a delivery loop
+/// for outgoing messages. Uses the existing 4-byte length-prefix + JSON
+/// wire format already defined in `P2PManager::start()`.
+///
+/// # Usage
+/// ```ignore
+/// let manager = Arc::new(Mutex::new(P2PManager::new(config)));
+/// let transport = P2PTransport::new(manager.clone(), "0.0.0.0:12345".parse().unwrap());
+/// transport.start(); // spawns background threads
+/// // ... do work ...
+/// transport.shutdown();
+/// ```
+pub struct P2PTransport {
+    manager: Arc<Mutex<P2PManager>>,
+    listen_addr: SocketAddr,
+    shutdown: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl P2PTransport {
+    /// Create a new transport wrapping the given manager.
+    pub fn new(manager: Arc<Mutex<P2PManager>>, listen_addr: SocketAddr) -> Self {
+        Self {
+            manager,
+            listen_addr,
+            shutdown: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
+
+    /// Start the transport: listener thread + delivery thread + heartbeat thread.
+    /// Returns immediately; threads run in the background.
+    pub fn start(&self) {
+        self.start_listener();
+        self.start_delivery_loop();
+        self.start_heartbeat_loop();
+    }
+
+    /// Signal all transport threads to stop.
+    pub fn shutdown(&self) {
+        self.shutdown.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Whether shutdown has been requested.
+    pub fn is_shutdown(&self) -> bool {
+        self.shutdown.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Start the TCP listener thread that accepts incoming peer connections.
+    fn start_listener(&self) {
+        let manager = self.manager.clone();
+        let addr = self.listen_addr;
+        let shutdown = self.shutdown.clone();
+
+        std::thread::spawn(move || {
+            let listener = match std::net::TcpListener::bind(addr) {
+                Ok(l) => l,
+                Err(e) => {
+                    eprintln!("[P2P] Failed to bind TCP listener on {}: {}", addr, e);
+                    return;
+                }
+            };
+            // Non-blocking accept so we can check shutdown flag
+            listener.set_nonblocking(true).ok();
+            eprintln!("[P2P] Listening on {}", addr);
+            eprintln!("[P2P] WARNING: TCP transport is unencrypted. Use QUIC (distributed-network feature) for TLS-protected P2P communication.");
+
+            while !shutdown.load(std::sync::atomic::Ordering::Relaxed) {
+                match listener.accept() {
+                    Ok((stream, peer_addr)) => {
+                        let mgr = manager.clone();
+                        let sd = shutdown.clone();
+                        std::thread::spawn(move || {
+                            Self::handle_connection(mgr, stream, peer_addr, sd);
+                        });
+                    }
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(50));
+                    }
+                    Err(_) => {
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                }
+            }
+            eprintln!("[P2P] Listener stopped.");
+        });
+    }
+
+    /// Handle a single incoming TCP connection (may carry multiple messages).
+    fn handle_connection(
+        manager: Arc<Mutex<P2PManager>>,
+        mut stream: std::net::TcpStream,
+        peer_addr: SocketAddr,
+        shutdown: Arc<std::sync::atomic::AtomicBool>,
+    ) {
+        use std::io::{Read, Write};
+        stream.set_read_timeout(Some(Duration::from_secs(30))).ok();
+        stream.set_write_timeout(Some(Duration::from_secs(10))).ok();
+
+        while !shutdown.load(std::sync::atomic::Ordering::Relaxed) {
+            // Read length prefix (4 bytes big-endian)
+            let mut len_buf = [0u8; 4];
+            match stream.read_exact(&mut len_buf) {
+                Ok(()) => {}
+                Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut
+                    || e.kind() == std::io::ErrorKind::WouldBlock => {
+                    continue;
+                }
+                Err(_) => break, // connection closed or error
+            }
+
+            let payload_len = u32::from_be_bytes(len_buf) as usize;
+            if payload_len > MAX_WIRE_PAYLOAD {
+                break; // oversized message, drop connection
+            }
+
+            // Read payload
+            let mut payload = vec![0u8; payload_len];
+            if stream.read_exact(&mut payload).is_err() {
+                break;
+            }
+
+            // Deserialize envelope
+            let envelope: WireEnvelope = match serde_json::from_slice(&payload) {
+                Ok(e) => e,
+                Err(_) => continue, // malformed, skip
+            };
+
+            // Process message
+            let response = {
+                let mut mgr = match manager.lock() {
+                    Ok(g) => g,
+                    Err(_) => break,
+                };
+
+                // Register peer if new, with its address
+                if !mgr.connections.contains_key(&envelope.sender_id) {
+                    mgr.connections.insert(
+                        envelope.sender_id.clone(),
+                        PeerConnection {
+                            peer_id: envelope.sender_id.clone(),
+                            address: peer_addr,
+                            connected_at: Instant::now(),
+                            last_message: Instant::now(),
+                            ice_agent: None,
+                            messages_sent: 0,
+                            messages_received: 0,
+                        },
+                    );
+                    mgr.register_peer(&envelope.sender_id);
+                } else if let Some(conn) = mgr.connections.get_mut(&envelope.sender_id) {
+                    conn.last_message = Instant::now();
+                    conn.messages_received += 1;
+                }
+
+                mgr.handle_message(&envelope.sender_id, envelope.message)
+            };
+
+            // Send response if any
+            if let Some(resp) = response {
+                let local_id = manager.lock().map(|m| m.local_peer_id.clone())
+                    .unwrap_or_default();
+                let resp_envelope = WireEnvelope {
+                    sender_id: local_id,
+                    message: resp,
+                };
+                if let Ok(data) = serde_json::to_vec(&resp_envelope) {
+                    let len = (data.len() as u32).to_be_bytes();
+                    if stream.write_all(&len).is_err() || stream.write_all(&data).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Start the delivery loop that sends buffered outgoing messages to peers.
+    fn start_delivery_loop(&self) {
+        let manager = self.manager.clone();
+        let shutdown = self.shutdown.clone();
+
+        std::thread::spawn(move || {
+            while !shutdown.load(std::sync::atomic::Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_millis(250));
+
+                // Drain outgoing messages and collect peer addresses
+                let (outgoing, local_id, peer_addrs) = {
+                    let mut mgr = match manager.lock() {
+                        Ok(g) => g,
+                        Err(_) => continue,
+                    };
+                    let msgs = mgr.drain_outgoing();
+                    if msgs.is_empty() {
+                        continue;
+                    }
+                    let id = mgr.local_peer_id.clone();
+                    let addrs: HashMap<String, SocketAddr> = mgr.connections
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.address))
+                        .collect();
+                    (msgs, id, addrs)
+                };
+
+                // Send each message (short-lived TCP connections)
+                for (peer_id, msg) in outgoing {
+                    let addr = match peer_addrs.get(&peer_id) {
+                        Some(a) => *a,
+                        None => continue, // unknown peer, skip
+                    };
+
+                    let envelope = WireEnvelope {
+                        sender_id: local_id.clone(),
+                        message: msg,
+                    };
+
+                    if let Err(e) = Self::send_envelope(&envelope, addr) {
+                        // Record failure in reputation
+                        if let Ok(mut mgr) = manager.lock() {
+                            mgr.reputation.get_or_create(&peer_id).record_failure();
+                        }
+                        eprintln!("[P2P] Failed to send to {} ({}): {}", peer_id, addr, e);
+                    } else {
+                        // Record success
+                        if let Ok(mut mgr) = manager.lock() {
+                            mgr.reputation.get_or_create(&peer_id).record_success();
+                            if let Some(conn) = mgr.connections.get_mut(&peer_id) {
+                                conn.messages_sent += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            eprintln!("[P2P] Delivery loop stopped.");
+        });
+    }
+
+    /// Start a heartbeat loop that pings connected peers periodically.
+    fn start_heartbeat_loop(&self) {
+        let manager = self.manager.clone();
+        let shutdown = self.shutdown.clone();
+
+        std::thread::spawn(move || {
+            while !shutdown.load(std::sync::atomic::Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_secs(30));
+                if shutdown.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+
+                // Collect peer addresses and our ID
+                let (peers, local_id) = {
+                    let mgr = match manager.lock() {
+                        Ok(g) => g,
+                        Err(_) => continue,
+                    };
+                    let addrs: Vec<(String, SocketAddr)> = mgr.connections
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.address))
+                        .collect();
+                    (addrs, mgr.local_peer_id.clone())
+                };
+
+                let now_secs = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+
+                let mut stale_peers = Vec::new();
+
+                for (peer_id, addr) in &peers {
+                    let envelope = WireEnvelope {
+                        sender_id: local_id.clone(),
+                        message: PeerMessage::Ping { timestamp: now_secs },
+                    };
+
+                    match Self::send_envelope_with_response(&envelope, *addr) {
+                        Ok(Some(resp)) => {
+                            // Feed response back
+                            if let Ok(mut mgr) = manager.lock() {
+                                mgr.handle_message(peer_id, resp.message);
+                                if let Some(conn) = mgr.connections.get_mut(peer_id) {
+                                    conn.last_message = Instant::now();
+                                }
+                            }
+                        }
+                        Ok(None) => {} // no response (e.g. async handling)
+                        Err(_) => {
+                            stale_peers.push(peer_id.clone());
+                        }
+                    }
+                }
+
+                // Remove stale peers that failed heartbeat
+                if !stale_peers.is_empty() {
+                    if let Ok(mut mgr) = manager.lock() {
+                        for peer_id in &stale_peers {
+                            mgr.connections.remove(peer_id);
+                            mgr.reputation.get_or_create(peer_id).record_failure();
+                        }
+                    }
+                }
+            }
+            eprintln!("[P2P] Heartbeat loop stopped.");
+        });
+    }
+
+    /// Send a wire envelope to a peer address (fire-and-forget, no response read).
+    fn send_envelope(envelope: &WireEnvelope, addr: SocketAddr) -> Result<(), String> {
+        use std::io::Write;
+
+        let data = serde_json::to_vec(envelope)
+            .map_err(|e| format!("serialize: {}", e))?;
+        if data.len() > MAX_WIRE_PAYLOAD {
+            return Err("payload too large".to_string());
+        }
+        let mut stream = std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(5))
+            .map_err(|e| format!("connect: {}", e))?;
+        stream.set_write_timeout(Some(Duration::from_secs(5))).ok();
+
+        let len = (data.len() as u32).to_be_bytes();
+        stream.write_all(&len).map_err(|e| format!("write len: {}", e))?;
+        stream.write_all(&data).map_err(|e| format!("write data: {}", e))?;
+        Ok(())
+    }
+
+    /// Send an envelope and read one response envelope back.
+    fn send_envelope_with_response(
+        envelope: &WireEnvelope,
+        addr: SocketAddr,
+    ) -> Result<Option<WireEnvelope>, String> {
+        use std::io::{Read, Write};
+
+        let data = serde_json::to_vec(envelope)
+            .map_err(|e| format!("serialize: {}", e))?;
+        if data.len() > MAX_WIRE_PAYLOAD {
+            return Err("payload too large".to_string());
+        }
+        let mut stream = std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(5))
+            .map_err(|e| format!("connect: {}", e))?;
+        stream.set_write_timeout(Some(Duration::from_secs(5))).ok();
+        stream.set_read_timeout(Some(Duration::from_secs(5))).ok();
+
+        // Write
+        let len = (data.len() as u32).to_be_bytes();
+        stream.write_all(&len).map_err(|e| format!("write: {}", e))?;
+        stream.write_all(&data).map_err(|e| format!("write: {}", e))?;
+
+        // Read response
+        let mut len_buf = [0u8; 4];
+        match stream.read_exact(&mut len_buf) {
+            Ok(()) => {}
+            Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut
+                || e.kind() == std::io::ErrorKind::WouldBlock
+                || e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                return Ok(None);
+            }
+            Err(e) => return Err(format!("read response: {}", e)),
+        }
+
+        let resp_len = u32::from_be_bytes(len_buf) as usize;
+        if resp_len > MAX_WIRE_PAYLOAD {
+            return Err("response too large".to_string());
+        }
+
+        let mut resp_buf = vec![0u8; resp_len];
+        stream.read_exact(&mut resp_buf)
+            .map_err(|e| format!("read response body: {}", e))?;
+
+        let resp: WireEnvelope = serde_json::from_slice(&resp_buf)
+            .map_err(|e| format!("deserialize response: {}", e))?;
+        Ok(Some(resp))
+    }
+
+    /// Get a reference to the underlying P2PManager (for external access).
+    pub fn manager(&self) -> &Arc<Mutex<P2PManager>> {
+        &self.manager
+    }
+}
+
+// =============================================================================
 // TESTS
 // =============================================================================
 
@@ -2473,5 +2868,137 @@ mod tests {
         let stats = manager.stats();
         assert!(stats.running);
         assert!(stats.enabled);
+    }
+
+    // =========================================================================
+    // P2P Transport tests
+    // =========================================================================
+
+    #[test]
+    fn test_wire_envelope_serialization() {
+        let envelope = WireEnvelope {
+            sender_id: "peer_abc".to_string(),
+            message: PeerMessage::Ping { timestamp: 12345 },
+        };
+
+        let json = serde_json::to_vec(&envelope).unwrap();
+        let decoded: WireEnvelope = serde_json::from_slice(&json).unwrap();
+
+        assert_eq!(decoded.sender_id, "peer_abc");
+        match decoded.message {
+            PeerMessage::Ping { timestamp } => assert_eq!(timestamp, 12345),
+            _ => panic!("Expected Ping"),
+        }
+    }
+
+    #[test]
+    fn test_wire_envelope_all_message_types() {
+        // Ensure all PeerMessage variants survive round-trip through WireEnvelope
+        let messages = vec![
+            PeerMessage::Ping { timestamp: 1 },
+            PeerMessage::Pong { timestamp: 2, peer_id: "p1".to_string() },
+            PeerMessage::GetPeers,
+            PeerMessage::Peers { peers: vec![] },
+            PeerMessage::ShareKnowledge {
+                data: KnowledgeShare {
+                    id: "k1".to_string(),
+                    entity: "e".to_string(),
+                    attribute: "a".to_string(),
+                    value: "v".to_string(),
+                    source: "s".to_string(),
+                    timestamp: 0,
+                    signature: None,
+                },
+            },
+            PeerMessage::AckKnowledge { id: "k1".to_string(), accepted: true },
+            PeerMessage::QueryKnowledge { query: "test".to_string() },
+            PeerMessage::QueryResponse { query: "test".to_string(), results: vec![] },
+            PeerMessage::ConsensusRequest {
+                entity: "e".to_string(),
+                attribute: "a".to_string(),
+                value: "v".to_string(),
+            },
+            PeerMessage::ConsensusVote { request_id: "r1".to_string(), agree: true },
+        ];
+
+        for msg in messages {
+            let envelope = WireEnvelope {
+                sender_id: "sender".to_string(),
+                message: msg,
+            };
+            let json = serde_json::to_vec(&envelope).unwrap();
+            let decoded: WireEnvelope = serde_json::from_slice(&json).unwrap();
+            assert_eq!(decoded.sender_id, "sender");
+        }
+    }
+
+    #[test]
+    fn test_p2p_transport_creation_and_shutdown() {
+        let manager = Arc::new(Mutex::new(P2PManager::new(P2PConfig {
+            enabled: true,
+            ..Default::default()
+        })));
+        let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let transport = P2PTransport::new(manager.clone(), addr);
+
+        assert!(!transport.is_shutdown());
+        transport.shutdown();
+        assert!(transport.is_shutdown());
+    }
+
+    #[test]
+    fn test_p2p_transport_loopback() {
+        // Start a transport, connect to it, send a Ping, get a Pong back
+        let manager = Arc::new(Mutex::new(P2PManager::new(P2PConfig {
+            enabled: true,
+            min_reputation: 0.0, // accept all peers
+            ..Default::default()
+        })));
+
+        // Bind on an ephemeral port
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener); // release so transport can bind
+
+        let transport = P2PTransport::new(manager.clone(), addr);
+        transport.start();
+
+        // Give listener time to bind
+        std::thread::sleep(Duration::from_millis(100));
+
+        // Send a Ping via raw TCP
+        let envelope = WireEnvelope {
+            sender_id: "test_client".to_string(),
+            message: PeerMessage::Ping { timestamp: 999 },
+        };
+        let result = P2PTransport::send_envelope_with_response(&envelope, addr);
+
+        transport.shutdown();
+
+        match result {
+            Ok(Some(resp)) => {
+                assert_eq!(resp.sender_id, manager.lock().unwrap().local_peer_id().to_string());
+                match resp.message {
+                    PeerMessage::Pong { timestamp, .. } => assert_eq!(timestamp, 999),
+                    other => panic!("Expected Pong, got {:?}", other),
+                }
+            }
+            Ok(None) => panic!("Expected a Pong response"),
+            Err(e) => panic!("Send failed: {}", e),
+        }
+    }
+
+    #[test]
+    fn test_p2p_transport_send_envelope_max_size() {
+        // Verify oversized payloads are rejected
+        let huge_msg = WireEnvelope {
+            sender_id: "x".repeat(MAX_WIRE_PAYLOAD + 1),
+            message: PeerMessage::Ping { timestamp: 0 },
+        };
+        // This should fail at serialize or at the size check
+        let addr: SocketAddr = "127.0.0.1:1".parse().unwrap(); // won't connect
+        let result = P2PTransport::send_envelope(&huge_msg, addr);
+        // Either "payload too large" or "connect" error is acceptable
+        assert!(result.is_err());
     }
 }

@@ -128,8 +128,27 @@ impl SharedFolder {
         Ok(())
     }
 
+    /// Validate that a relative path does not escape the shared folder.
+    fn validate_relative_path(&self, relative_path: &str) -> Result<()> {
+        if relative_path.contains("..") || relative_path.starts_with('/') || relative_path.starts_with('\\') {
+            anyhow::bail!("Path traversal detected in relative path: {}", relative_path);
+        }
+        let full_path = self.host_path.join(relative_path);
+        // For existing paths, canonicalize and verify containment
+        if let Ok(canonical) = std::fs::canonicalize(&full_path) {
+            let base_canonical = std::fs::canonicalize(&self.host_path)
+                .unwrap_or_else(|_| self.host_path.clone());
+            if !canonical.starts_with(&base_canonical) {
+                anyhow::bail!("Path escapes shared folder: {:?}", relative_path);
+            }
+        }
+        // For non-existing paths, the .. check above is sufficient
+        Ok(())
+    }
+
     /// Read a file from the shared folder.
     pub fn get_file(&self, relative_path: &str) -> Result<Vec<u8>> {
+        self.validate_relative_path(relative_path)?;
         let full_path = self.host_path.join(relative_path);
         std::fs::read(&full_path)
             .with_context(|| format!("Failed to read file {:?}", full_path))
@@ -138,6 +157,8 @@ impl SharedFolder {
     /// Write a file to the shared folder.
     /// Creates parent directories if needed.
     pub fn put_file(&self, relative_path: &str, data: &[u8]) -> Result<()> {
+        self.validate_relative_path(relative_path)?;
+
         // Check size limit
         if let Some(max) = self.max_size_bytes {
             let current = self.size_bytes().unwrap_or(0);
@@ -164,6 +185,7 @@ impl SharedFolder {
 
     /// Delete a file from the shared folder.
     pub fn delete_file(&self, relative_path: &str) -> Result<()> {
+        self.validate_relative_path(relative_path)?;
         let full_path = self.host_path.join(relative_path);
         if full_path.exists() {
             std::fs::remove_file(&full_path)
@@ -174,6 +196,9 @@ impl SharedFolder {
 
     /// Check if a file exists in the shared folder.
     pub fn file_exists(&self, relative_path: &str) -> bool {
+        if self.validate_relative_path(relative_path).is_err() {
+            return false;
+        }
         self.host_path.join(relative_path).exists()
     }
 

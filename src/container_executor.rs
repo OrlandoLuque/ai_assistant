@@ -147,8 +147,10 @@ pub struct ContainerConfig {
     pub default_timeout: Duration,
     /// Default memory limit in bytes (default: 512 MB).
     pub default_memory_limit: u64,
-    /// Default CPU quota in microseconds per 100ms period (default: 0 = unlimited).
+    /// Default CPU quota in microseconds per 100ms period (default: 100_000 = 1 core).
     pub default_cpu_quota: i64,
+    /// Allowed host path prefixes for bind mounts. Empty = deny all bind mounts.
+    pub allowed_bind_mount_prefixes: Vec<std::path::PathBuf>,
     /// Default network mode for new containers (default: None = isolated).
     pub default_network_mode: NetworkMode,
     /// Whether to automatically pull images if not found locally (default: true).
@@ -165,7 +167,8 @@ impl Default for ContainerConfig {
             docker_host: None,
             default_timeout: Duration::from_secs(60),
             default_memory_limit: 512 * 1024 * 1024, // 512 MB
-            default_cpu_quota: 0,
+            default_cpu_quota: 100_000, // 1 core (100ms per 100ms period)
+            allowed_bind_mount_prefixes: Vec::new(),
             default_network_mode: NetworkMode::None,
             auto_pull: true,
             cleanup_policy: ContainerCleanupPolicy::default(),
@@ -537,7 +540,33 @@ impl ContainerExecutor {
             );
         }
 
-        // === Build bind mounts ===
+        // === Validate bind mounts (H8) ===
+        // Reject dangerous host paths and enforce prefix whitelist
+        const DANGEROUS_MOUNTS: &[&str] = &["/", "/etc", "/var", "/home", "/root", "/proc", "/sys", "/dev"];
+        for (host_path, _) in &opts.bind_mounts {
+            let normalized = host_path.replace('\\', "/");
+            let trimmed = normalized.trim_end_matches('/');
+            if DANGEROUS_MOUNTS.iter().any(|d| trimmed == *d) {
+                return Err(ContainerError::PolicyViolation(format!(
+                    "Bind mount to dangerous host path '{}' is not allowed",
+                    host_path
+                )));
+            }
+            if !self.config.allowed_bind_mount_prefixes.is_empty() {
+                let hp = std::path::Path::new(host_path);
+                let hp_canon = std::fs::canonicalize(hp).unwrap_or_else(|_| hp.to_path_buf());
+                let allowed = self.config.allowed_bind_mount_prefixes.iter().any(|prefix| {
+                    let prefix_canon = std::fs::canonicalize(prefix).unwrap_or_else(|_| prefix.clone());
+                    hp_canon.starts_with(&prefix_canon)
+                });
+                if !allowed {
+                    return Err(ContainerError::PolicyViolation(format!(
+                        "Bind mount host path '{}' is not in allowed prefixes",
+                        host_path
+                    )));
+                }
+            }
+        }
         let binds: Vec<String> = opts
             .bind_mounts
             .iter()
@@ -549,11 +578,19 @@ impl ContainerExecutor {
             .memory_limit
             .unwrap_or(self.config.default_memory_limit);
         let cpu_quota = opts.cpu_quota.unwrap_or(self.config.default_cpu_quota);
-        let network_mode = opts
+        let resolved_network = opts
             .network_mode
             .as_ref()
-            .unwrap_or(&self.config.default_network_mode)
-            .to_docker_string();
+            .unwrap_or(&self.config.default_network_mode);
+        // Security: warn when Host networking is used — shares host network stack (M9)
+        if *resolved_network == NetworkMode::Host {
+            log::warn!(
+                "Container '{}' using Host networking — shares host network stack. \
+                 This bypasses network isolation.",
+                name
+            );
+        }
+        let network_mode = resolved_network.to_docker_string();
 
         // === Build HostConfig ===
         let host_config = HostConfig {
@@ -1250,7 +1287,7 @@ mod tests {
         assert_eq!(config.docker_host, None);
         assert_eq!(config.default_timeout, Duration::from_secs(60));
         assert_eq!(config.default_memory_limit, 512 * 1024 * 1024);
-        assert_eq!(config.default_cpu_quota, 0);
+        assert_eq!(config.default_cpu_quota, 100_000); // 1 CPU core (M8: safe default)
         assert_eq!(config.default_network_mode, NetworkMode::None);
         assert!(config.auto_pull);
         assert_eq!(config.container_name_prefix, "ai_assistant_");
@@ -1272,6 +1309,7 @@ mod tests {
                 cleanup_on_session_end: false,
             },
             container_name_prefix: "custom_".to_string(),
+            allowed_bind_mount_prefixes: Vec::new(),
         };
         assert_eq!(
             config.docker_host,

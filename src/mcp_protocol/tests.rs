@@ -381,10 +381,11 @@ use std::collections::HashMap;
         let (challenge2, method2) = McpOAuthTokenManager::generate_pkce_challenge("my-verifier");
         // Deterministic
         assert_eq!(challenge1, challenge2);
-        assert_eq!(method1, "plain");
-        assert_eq!(method2, "plain");
-        // 16 hex chars
-        assert_eq!(challenge1.len(), 16);
+        // H12: PKCE now uses SHA-256 instead of weak hash
+        assert_eq!(method1, "S256");
+        assert_eq!(method2, "S256");
+        // SHA-256 hex = 64 chars
+        assert_eq!(challenge1.len(), 64);
 
         // Different verifiers produce different challenges
         let (challenge3, _) = McpOAuthTokenManager::generate_pkce_challenge("other-verifier");

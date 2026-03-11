@@ -262,9 +262,25 @@ fn register_file_info(registry: &mut ToolRegistry, sandbox: Arc<RwLock<SandboxVa
 // Shell Tools
 // ============================================================================
 
+/// Characters that enable shell injection when passed to `sh -c` or `cmd /C`.
+const SHELL_METACHARACTERS: &[char] = &[';', '|', '&', '$', '`', '(', ')', '>', '<', '{', '}', '\n', '\r'];
+
+/// Reject commands containing shell metacharacters (prevents injection via `sh -c`).
+fn validate_no_shell_metacharacters(cmd: &str) -> Result<(), ToolError> {
+    for ch in SHELL_METACHARACTERS {
+        if cmd.contains(*ch) {
+            return Err(ToolError::ExecutionFailed(format!(
+                "Command contains disallowed shell metacharacter '{}'",
+                ch
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn register_run_command(registry: &mut ToolRegistry, sandbox: Arc<RwLock<SandboxValidator>>) {
-    let def = ToolBuilder::new("run_command", "Execute a shell command")
-        .param(ParamSchema::string("command", "The command to execute"))
+    let def = ToolBuilder::new("run_command", "Execute a command (no shell interpretation)")
+        .param(ParamSchema::string("command", "The command to execute (program + arguments)"))
         .category("shell")
         .build();
 
@@ -275,21 +291,23 @@ fn register_run_command(registry: &mut ToolRegistry, sandbox: Arc<RwLock<Sandbox
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::MissingParameter("command".into()))?;
 
+        // Security: reject shell metacharacters before any execution
+        validate_no_shell_metacharacters(cmd)?;
+
         sandbox
             .write()
             .map_err(|_| ToolError::ExecutionFailed("sandbox lock poisoned".into()))?
             .validate_command(cmd)
             .map_err(|e| ToolError::ExecutionFailed(e.message))?;
 
-        #[cfg(target_os = "windows")]
-        let output = std::process::Command::new("cmd")
-            .args(["/C", cmd])
-            .output()
-            .map_err(|e| ToolError::ExecutionFailed(format!("Command failed: {}", e)))?;
+        // Split into program + args without invoking a shell
+        let parts: Vec<&str> = cmd.split_whitespace().collect();
+        if parts.is_empty() {
+            return Err(ToolError::ExecutionFailed("Empty command".into()));
+        }
 
-        #[cfg(not(target_os = "windows"))]
-        let output = std::process::Command::new("sh")
-            .args(["-c", cmd])
+        let output = std::process::Command::new(parts[0])
+            .args(&parts[1..])
             .output()
             .map_err(|e| ToolError::ExecutionFailed(format!("Command failed: {}", e)))?;
 

@@ -425,6 +425,84 @@ impl RemoteMcpClient {
         Ok(())
     }
 
+    /// Check if a string looks like a URL pointing to a private/internal network.
+    /// Returns an error message if it is a private URL, `None` if it's safe.
+    fn check_ssrf(value: &str) -> Option<String> {
+        // Only check strings that look like URLs
+        if !(value.starts_with("http://") || value.starts_with("https://")) {
+            return None;
+        }
+        // Extract host portion
+        let after_scheme = if let Some(rest) = value.strip_prefix("http://") {
+            rest
+        } else if let Some(rest) = value.strip_prefix("https://") {
+            rest
+        } else {
+            return None;
+        };
+        let host = after_scheme
+            .split('/')
+            .next()
+            .unwrap_or("")
+            .split(':')
+            .next()
+            .unwrap_or("");
+
+        let host_lower = host.to_lowercase();
+
+        // Block localhost variants
+        if host_lower == "localhost"
+            || host_lower == "0.0.0.0"
+            || host_lower == "[::1]"
+            || host_lower == "::1"
+        {
+            return Some(format!("SSRF: blocked request to localhost ({})", host));
+        }
+
+        // Block private IPv4 ranges
+        let octets: Vec<u8> = host
+            .split('.')
+            .filter_map(|s| s.parse().ok())
+            .collect();
+        if octets.len() == 4 {
+            let (a, b) = (octets[0], octets[1]);
+            if a == 127                          // 127.0.0.0/8
+                || a == 10                       // 10.0.0.0/8
+                || (a == 172 && (16..=31).contains(&b)) // 172.16.0.0/12
+                || (a == 192 && b == 168)        // 192.168.0.0/16
+                || (a == 169 && b == 254)        // 169.254.0.0/16 link-local
+                || a == 0                        // 0.0.0.0/8
+            {
+                return Some(format!("SSRF: blocked request to private IP ({})", host));
+            }
+        }
+
+        // Block bare hostnames (no dots — likely internal DNS)
+        if !host.contains('.') && !host.is_empty() {
+            return Some(format!("SSRF: blocked request to bare hostname ({})", host));
+        }
+
+        None
+    }
+
+    /// Scan all string values in tool arguments for SSRF-risky URLs.
+    fn validate_tool_arguments(
+        arguments: &HashMap<String, serde_json::Value>,
+    ) -> Result<(), McpClientError> {
+        for (key, value) in arguments {
+            if let Some(s) = value.as_str() {
+                if let Some(msg) = Self::check_ssrf(s) {
+                    return Err(McpClientError::ServerError {
+                        url: String::new(),
+                        code: -1,
+                        message: format!("Argument '{}': {}", key, msg),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Call a tool on the remote server by name.
     pub fn call_tool(
         &self,
@@ -432,6 +510,9 @@ impl RemoteMcpClient {
         arguments: &HashMap<String, serde_json::Value>,
     ) -> Result<ToolCallResult, McpClientError> {
         self.ensure_connected()?;
+
+        // Security: check for SSRF in tool arguments
+        Self::validate_tool_arguments(arguments)?;
 
         if self.simulated {
             return self.call_tool_simulated(name, arguments);

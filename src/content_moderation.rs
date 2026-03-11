@@ -268,15 +268,25 @@ impl ContentModerator {
         weight: f64,
         reason: &str,
     ) {
-        if let Ok(re) = Regex::new(&format!("(?i){}", pattern)) {
-            self.patterns
-                .entry(category)
-                .or_insert_with(Vec::new)
-                .push(PatternEntry {
-                    pattern: re,
-                    weight,
-                    reason: reason.to_string(),
-                });
+        // Security: limit regex DFA size to prevent ReDoS (H7)
+        match regex::RegexBuilder::new(&format!("(?i){}", pattern))
+            .size_limit(1_000_000)
+            .dfa_size_limit(1_000_000)
+            .build()
+        {
+            Ok(re) => {
+                self.patterns
+                    .entry(category)
+                    .or_insert_with(Vec::new)
+                    .push(PatternEntry {
+                        pattern: re,
+                        weight,
+                        reason: reason.to_string(),
+                    });
+            }
+            Err(_) => {
+                // Reject patterns that are too complex or invalid
+            }
         }
     }
 

@@ -325,15 +325,23 @@ impl AccessControlManager {
                     }
                 }
                 AccessCondition::IpRange(cidr) => {
-                    if let Some(ref request_ip) = self.current_request_ip {
-                        if !ip_in_cidr(request_ip, cidr) {
-                            return Some(format!(
-                                "IP {} not in allowed range {}",
-                                request_ip, cidr
-                            ));
+                    match &self.current_request_ip {
+                        Some(request_ip) => {
+                            if !ip_in_cidr(request_ip, cidr) {
+                                return Some(format!(
+                                    "IP {} not in allowed range {}",
+                                    request_ip, cidr
+                                ));
+                            }
+                        }
+                        None => {
+                            // Fail-closed: deny when IP is not available
+                            return Some(
+                                "IP not available for IpRange verification — denied by default"
+                                    .to_string(),
+                            );
                         }
                     }
-                    // If no request IP is set, allow (permissive default)
                 }
                 AccessCondition::MaxUsage(max) => {
                     let key = (principal.to_string(), resource_key.to_string());
@@ -607,8 +615,8 @@ mod tests {
                 .with_condition(AccessCondition::IpRange("192.168.1.0/24".to_string())),
         );
 
-        // No IP set → permissive (allowed)
-        assert!(acl
+        // No IP set → fail-closed (denied)
+        assert!(!acl
             .check_permission("user1", ResourceType::Conversation, Permission::Read, None)
             .is_allowed());
 
@@ -624,9 +632,9 @@ mod tests {
             acl.check_permission("user1", ResourceType::Conversation, Permission::Read, None);
         assert!(!result.is_allowed());
 
-        // Clear IP → permissive again
+        // Clear IP → fail-closed (denied when no IP available, H4)
         acl.clear_request_ip();
-        assert!(acl
+        assert!(!acl
             .check_permission("user1", ResourceType::Conversation, Permission::Read, None)
             .is_allowed());
     }

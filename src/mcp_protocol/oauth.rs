@@ -176,20 +176,12 @@ impl McpOAuthTokenManager {
     }
 
     /// Generate a PKCE code challenge from a code verifier (S256 method).
-    /// Uses a simple hash: sum of bytes mod a large prime, then hex-encoded.
-    /// (In production, use SHA-256; this is a pure-Rust fallback.)
+    /// Uses SHA-256 per RFC 7636.
     pub fn generate_pkce_challenge(verifier: &str) -> (String, String) {
-        // Simple hash for PKCE challenge (deterministic)
-        let bytes = verifier.as_bytes();
-        let mut hash: u64 = 0;
-        for (i, &b) in bytes.iter().enumerate() {
-            hash = hash
-                .wrapping_mul(31)
-                .wrapping_add(b as u64)
-                .wrapping_add(i as u64);
-        }
-        let challenge = format!("{:016x}", hash);
-        (challenge, "plain".to_string()) // plain method for simple hash
+        use crate::request_signing::sha256;
+        let hash = sha256::sha256(verifier.as_bytes());
+        let challenge = sha256::hex_encode(&hash);
+        (challenge, "S256".to_string())
     }
 
     /// Get a reference to the config.

@@ -204,10 +204,11 @@ impl PiiDetector {
                 .expect("valid regex"),
         );
 
-        // SSN pattern
+        // SSN pattern — matches NNN-NN-NNNN format; invalid ranges are filtered in detect()
         self.patterns.insert(
             PiiType::Ssn,
-            Regex::new(r"\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b").expect("valid regex"),
+            Regex::new(r"\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b")
+                .expect("valid regex"),
         );
 
         // Credit card pattern (simplified)
@@ -272,6 +273,20 @@ impl PiiDetector {
             if let Some(pattern) = self.patterns.get(pii_type) {
                 for m in pattern.find_iter(text) {
                     let value = m.as_str().to_string();
+
+                    // M14: Filter invalid SSN ranges (000, 666, 9xx area; 00 group; 0000 serial)
+                    if *pii_type == PiiType::Ssn {
+                        let digits: String = value.chars().filter(|c| c.is_ascii_digit()).collect();
+                        if digits.len() == 9 {
+                            let area: u16 = digits[..3].parse().unwrap_or(0);
+                            let group: u16 = digits[3..5].parse().unwrap_or(0);
+                            let serial: u16 = digits[5..].parse().unwrap_or(0);
+                            if area == 0 || area == 666 || area >= 900 || group == 0 || serial == 0 {
+                                continue; // Invalid SSN range — skip
+                            }
+                        }
+                    }
+
                     let confidence = self.calculate_confidence(*pii_type, &value);
 
                     if confidence >= self.min_confidence() {
