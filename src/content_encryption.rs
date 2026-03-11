@@ -4,7 +4,8 @@
 //!
 //! When the `rag` feature is enabled, `Aes256Gcm` and `ChaCha20Poly1305` use
 //! real AES-256-GCM authenticated encryption via the `aes-gcm` crate.
-//! Without `rag`, they fall back to XOR with nonce mixing (NOT cryptographically secure).
+//! Without `rag`, requesting these algorithms returns an error — `Xor` is the
+//! only algorithm available (NOT cryptographically secure, demo only).
 
 use std::collections::HashMap;
 
@@ -167,28 +168,39 @@ impl ContentEncryptor {
             return Vec::new();
         }
 
-        // Generate random nonce by mixing multiple entropy sources
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        use std::time::{SystemTime, UNIX_EPOCH};
-
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-
-        let mut nonce = Vec::with_capacity(size);
-        for i in 0..size {
-            let mut hasher = DefaultHasher::new();
-            timestamp.hash(&mut hasher);
-            (i as u64).hash(&mut hasher);
-            std::thread::current().id().hash(&mut hasher);
-            // Mix in address of stack variable for ASLR entropy
-            let stack_var = 0u8;
-            (&stack_var as *const u8 as u64).hash(&mut hasher);
-            nonce.push(hasher.finish() as u8);
+        // Use OS-provided CSPRNG for nonce generation (critical for AES-GCM security)
+        #[cfg(feature = "aes-gcm")]
+        {
+            use aes_gcm::aead::rand_core::{OsRng, RngCore};
+            let mut nonce = vec![0u8; size];
+            OsRng.fill_bytes(&mut nonce);
+            nonce
         }
-        nonce
+
+        // Without aes-gcm, crypto uses XOR fallback (not secure regardless of nonce quality)
+        #[cfg(not(feature = "aes-gcm"))]
+        {
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            use std::time::{SystemTime, UNIX_EPOCH};
+
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos();
+
+            let mut nonce = Vec::with_capacity(size);
+            for i in 0..size {
+                let mut hasher = DefaultHasher::new();
+                timestamp.hash(&mut hasher);
+                (i as u64).hash(&mut hasher);
+                std::thread::current().id().hash(&mut hasher);
+                let stack_var = 0u8;
+                (&stack_var as *const u8 as u64).hash(&mut hasher);
+                nonce.push(hasher.finish() as u8);
+            }
+            nonce
+        }
     }
 
     fn encrypt_with_key(
@@ -224,23 +236,10 @@ impl ContentEncryptor {
             }
             #[cfg(not(feature = "aes-gcm"))]
             EncryptionAlgorithm::Aes256Gcm | EncryptionAlgorithm::ChaCha20Poly1305 => {
-                // Fallback: XOR with nonce mixing (NOT cryptographically secure)
-                if key.is_empty() {
-                    return Err(EncryptionError::EncryptionFailed);
-                }
-                Ok(plaintext
-                    .iter()
-                    .enumerate()
-                    .map(|(i, b)| {
-                        let k = key[i % key.len()];
-                        let n = if nonce.is_empty() {
-                            0
-                        } else {
-                            nonce[i % nonce.len()]
-                        };
-                        b ^ k ^ n
-                    })
-                    .collect())
+                // Refuse to silently degrade to XOR when real encryption was requested.
+                // Enable the `aes-gcm` feature (included in `rag`) for AES-256-GCM support.
+                let _ = (plaintext, key, nonce);
+                Err(EncryptionError::EncryptionFailed)
             }
         }
     }
@@ -271,8 +270,8 @@ impl ContentEncryptor {
             }
             #[cfg(not(feature = "aes-gcm"))]
             EncryptionAlgorithm::Aes256Gcm | EncryptionAlgorithm::ChaCha20Poly1305 => {
-                // Fallback: XOR with nonce mixing is symmetric
-                self.encrypt_with_key(ciphertext, key, nonce, algorithm)
+                let _ = (ciphertext, key, nonce);
+                Err(EncryptionError::DecryptionFailed)
             }
         }
     }

@@ -137,11 +137,11 @@ pub struct CustomPiiPattern {
 }
 
 /// A detected PII item
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct DetectedPii {
     /// Type of PII
     pub pii_type: PiiType,
-    /// Original value
+    /// Original value (stored for redaction/replacement operations)
     pub value: String,
     /// Redacted value
     pub redacted: String,
@@ -151,6 +151,19 @@ pub struct DetectedPii {
     pub end: usize,
     /// Confidence score (0-1)
     pub confidence: f64,
+}
+
+impl std::fmt::Debug for DetectedPii {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DetectedPii")
+            .field("pii_type", &self.pii_type)
+            .field("value", &"<REDACTED>")
+            .field("redacted", &self.redacted)
+            .field("start", &self.start)
+            .field("end", &self.end)
+            .field("confidence", &self.confidence)
+            .finish()
+    }
 }
 
 /// Result of PII detection

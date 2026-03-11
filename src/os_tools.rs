@@ -430,6 +430,32 @@ fn register_http_get(registry: &mut ToolRegistry, sandbox: Arc<RwLock<SandboxVal
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::MissingParameter("url".into()))?;
 
+        // Block requests to private/internal IP ranges (SSRF protection)
+        if let Some(host) = url.split("://").nth(1).and_then(|s| s.split('/').next()).and_then(|s| s.split(':').next()) {
+            if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+                let is_private = match ip {
+                    std::net::IpAddr::V4(v4) => v4.is_loopback() || v4.is_private() || v4.is_link_local()
+                        || v4.octets()[0] == 169 && v4.octets()[1] == 254  // link-local
+                        || v4.octets() == [0, 0, 0, 0]
+                        || v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64,  // CGNAT
+                    std::net::IpAddr::V6(v6) => v6.is_loopback()
+                        || (v6.segments()[0] & 0xFE00) == 0xFC00,  // ULA
+                };
+                if is_private {
+                    return Err(ToolError::ExecutionFailed(
+                        "SSRF blocked: requests to private/internal IP addresses are not allowed".into()
+                    ));
+                }
+            }
+            // Also block common internal hostnames
+            let lower = host.to_lowercase();
+            if lower == "localhost" || lower.ends_with(".local") || lower.ends_with(".internal") || lower == "metadata.google.internal" {
+                return Err(ToolError::ExecutionFailed(
+                    "SSRF blocked: requests to internal hostnames are not allowed".into()
+                ));
+            }
+        }
+
         sandbox
             .write()
             .map_err(|_| ToolError::ExecutionFailed("sandbox lock poisoned".into()))?

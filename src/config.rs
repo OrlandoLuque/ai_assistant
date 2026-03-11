@@ -135,7 +135,7 @@ impl AiProvider {
 }
 
 /// AI Assistant configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AiConfig {
     /// Current provider
     pub provider: AiProvider,
@@ -165,6 +165,24 @@ pub struct AiConfig {
     /// Skipped during serialization; defaults to `RetryConfig::default()` on deserialization.
     #[serde(skip)]
     pub retry_config: RetryConfig,
+}
+
+impl std::fmt::Debug for AiConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AiConfig")
+            .field("provider", &self.provider)
+            .field("selected_model", &self.selected_model)
+            .field("ollama_url", &self.ollama_url)
+            .field("lm_studio_url", &self.lm_studio_url)
+            .field("text_gen_webui_url", &self.text_gen_webui_url)
+            .field("kobold_url", &self.kobold_url)
+            .field("local_ai_url", &self.local_ai_url)
+            .field("custom_url", &self.custom_url)
+            .field("api_key", &if self.api_key.is_empty() { "<empty>" } else { "<REDACTED>" })
+            .field("max_history_messages", &self.max_history_messages)
+            .field("temperature", &self.temperature)
+            .finish()
+    }
 }
 
 impl Default for AiConfig {

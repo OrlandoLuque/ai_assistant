@@ -96,7 +96,7 @@ fn tls_accept(
 // ============================================================================
 
 /// Authentication configuration for the server.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AuthConfig {
     /// Whether authentication is enabled (default: false).
     pub enabled: bool,
@@ -106,6 +106,17 @@ pub struct AuthConfig {
     pub api_keys: Vec<String>,
     /// Paths that bypass authentication (default: ["/health"]).
     pub exempt_paths: Vec<String>,
+}
+
+impl std::fmt::Debug for AuthConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthConfig")
+            .field("enabled", &self.enabled)
+            .field("bearer_tokens", &format!("[{} tokens]", self.bearer_tokens.len()))
+            .field("api_keys", &format!("[{} keys]", self.api_keys.len()))
+            .field("exempt_paths", &self.exempt_paths)
+            .finish()
+    }
 }
 
 impl Default for AuthConfig {

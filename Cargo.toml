@@ -73,7 +73,7 @@ p2p = ["distributed"]
 # Real distributed networking: QUIC transport, consistent hashing, failure detection,
 # Merkle sync, node security (mutual TLS), replication, LAN discovery.
 # Not in 'full' by default due to heavy deps (quinn/rustls). Opt-in: --features distributed-network
-distributed-network = ["distributed", "dep:quinn", "dep:rustls", "dep:rcgen", "dep:sha2", "dep:tokio", "dep:bincode"]
+distributed-network = ["distributed", "dep:quinn", "dep:rustls", "dep:rcgen", "dep:sha2", "dep:tokio", "dep:bincode", "dep:getrandom"]
 
 # TLS support for the embedded HTTP server (HTTPS via rustls).
 # Not in 'full' — opt-in only. Requires PEM cert/key files.
@@ -210,6 +210,10 @@ eval-suite = ["eval"]
 # Not in 'full' by default — heavy native C++ dep. Opt-in: --features whisper-local
 whisper-local = ["dep:whisper-rs", "audio"]
 
+# Desktop GUI application: eframe window + egui widgets + file dialogs + Butler + RAG + graph viz
+# Not in 'full' — brings windowing deps. Run: cargo run --bin ai_gui --features gui
+gui = ["dep:eframe", "dep:rfd", "dep:petgraph", "egui-widgets", "rag", "butler"]
+
 # === Microservice Features (v30) ===
 
 # axum-based HTTP server: production-ready async, HTTP/2, native WS/SSE, tower middleware
@@ -289,6 +293,12 @@ getrandom = { version = "0.2", features = ["js"], optional = true }
 bollard = { version = "0.18", optional = true, default-features = false, features = ["ssl", "time"] }
 # Optional whisper.cpp bindings for local STT (heavy native dep, links to C++)
 whisper-rs = { version = "0.15", optional = true }
+# Optional eframe for GUI application (desktop window with egui)
+eframe = { version = "0.27", optional = true, default-features = false, features = ["default_fonts", "glow"] }
+# Optional native file dialog (open/save file pickers)
+rfd = { version = "0.15", optional = true }
+# Optional graph data structure and algorithms (for knowledge graph visualization)
+petgraph = { version = "0.6", optional = true }
 
 # === Microservice dependencies (v30) ===
 # axum web framework (production-ready async HTTP server)
@@ -346,6 +356,11 @@ required-features = ["full", "server-cluster"]
 name = "ai_proxy"
 path = "src/bin/ai_proxy.rs"
 required-features = ["server-axum"]
+
+[[bin]]
+name = "ai_gui"
+path = "src/bin/ai_gui.rs"
+required-features = ["gui"]
 
 [[example]]
 name = "autonomous_agent"

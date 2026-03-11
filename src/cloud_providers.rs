@@ -247,8 +247,8 @@ pub fn generate_gemini_cloud(
     };
 
     let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-        model, api_key
+        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
+        model
     );
 
     // Build Gemini contents array
@@ -287,6 +287,7 @@ pub fn generate_gemini_cloud(
 
     let response = ureq::post(&url)
         .set("content-type", "application/json")
+        .set("x-goog-api-key", &api_key)
         .timeout(std::time::Duration::from_secs(120))
         .send_json(&body)
         .context("Gemini API request failed")?;

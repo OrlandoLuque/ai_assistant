@@ -523,10 +523,7 @@ impl SpeechProvider for GoogleSpeechProvider {
         language: Option<&str>,
     ) -> Result<TranscriptionResult> {
         let api_key = self.api_key()?;
-        let url = format!(
-            "https://speech.googleapis.com/v1/speech:recognize?key={}",
-            api_key
-        );
+        let url = "https://speech.googleapis.com/v1/speech:recognize";
 
         // Google expects base64-encoded audio content
         let audio_b64 = base64_encode(audio);
@@ -556,8 +553,9 @@ impl SpeechProvider for GoogleSpeechProvider {
             }
         });
 
-        let response = ureq::post(&url)
+        let response = ureq::post(url)
             .set("Content-Type", "application/json")
+            .set("x-goog-api-key", &api_key)
             .timeout(self.config.timeout)
             .send_json(body)
             .context("Google STT request failed")?;
@@ -626,10 +624,7 @@ impl SpeechProvider for GoogleSpeechProvider {
         options: &SynthesisOptions,
     ) -> Result<SynthesisResult> {
         let api_key = self.api_key()?;
-        let url = format!(
-            "https://texttospeech.googleapis.com/v1/text:synthesize?key={}",
-            api_key
-        );
+        let url = "https://texttospeech.googleapis.com/v1/text:synthesize";
 
         let voice_name =
             options.voice.as_deref().unwrap_or("en-US-Standard-A");
@@ -665,8 +660,9 @@ impl SpeechProvider for GoogleSpeechProvider {
             }
         });
 
-        let response = ureq::post(&url)
+        let response = ureq::post(url)
             .set("Content-Type", "application/json")
+            .set("x-goog-api-key", &api_key)
             .timeout(self.config.timeout)
             .send_json(body)
             .context("Google TTS request failed")?;
