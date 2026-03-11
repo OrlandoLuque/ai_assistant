@@ -1,0 +1,18 @@
+{
+  "tdm": [
+    {
+      "policy": "https://polyformproject.org/licenses/noncommercial/1.0.0/",
+      "permission": [
+        {
+          "type": "tdm",
+          "status": "notallowed"
+        },
+        {
+          "type": "ml-training",
+          "status": "notallowed"
+        }
+      ],
+      "contact": "orlando.luque@gmail.com"
+    }
+  ]
+}
