@@ -1396,7 +1396,7 @@ impl Default for ProviderRegistry {
 // ===========================================================================
 
 /// Configuration for a provider within the resilient registry.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ProviderConfig {
     /// Human-readable provider name (e.g. "openai-primary")
     pub name: String,
@@ -1408,6 +1408,18 @@ pub struct ProviderConfig {
     pub api_key: Option<String>,
     /// Priority — lower values are tried first
     pub priority: u32,
+}
+
+impl std::fmt::Debug for ProviderConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProviderConfig")
+            .field("name", &self.name)
+            .field("provider_type", &self.provider_type)
+            .field("base_url", &self.base_url)
+            .field("api_key", &self.api_key.as_ref().map(|_| "<REDACTED>"))
+            .field("priority", &self.priority)
+            .finish()
+    }
 }
 
 impl ProviderConfig {

@@ -2045,7 +2045,7 @@ impl GraphQuery {
                         to_alias,
                         alias,
                         if let Some(rt) = rel_type {
-                            format!(" AND {}.relation_type = '{}'", alias, rt)
+                            format!(" AND {}.relation_type = '{}'", alias, rt.replace('\'', "''"))
                         } else {
                             String::new()
                         }
@@ -2080,16 +2080,18 @@ impl GraphQuery {
                 alias,
             } = pattern
             {
-                where_parts.push(format!("{}.entity_type = '{}'", alias, lbl));
+                where_parts.push(format!("{}.entity_type = '{}'", alias, lbl.replace('\'', "''")));
             }
         }
         for clause in &self.where_clauses {
             match clause {
                 WhereClause::Eq(field, value) => {
-                    where_parts.push(format!("{} = '{}'", field, value))
+                    where_parts.push(format!("{} = '{}'", field, value.replace('\'', "''")))
                 }
                 WhereClause::Contains(field, value) => {
-                    where_parts.push(format!("{} LIKE '%{}%'", field, value))
+                    // Escape both SQL quotes and LIKE wildcards in user input
+                    let escaped = value.replace('\'', "''").replace('%', "\\%").replace('_', "\\_");
+                    where_parts.push(format!("{} LIKE '%{}%' ESCAPE '\\'", field, escaped))
                 }
                 WhereClause::Gt(field, value) => where_parts.push(format!("{} > {}", field, value)),
                 WhereClause::Lt(field, value) => where_parts.push(format!("{} < {}", field, value)),
@@ -2102,7 +2104,7 @@ impl GraphQuery {
                 WhereClause::In(field, values) => {
                     let vals = values
                         .iter()
-                        .map(|v| format!("'{}'", v))
+                        .map(|v| format!("'{}'", v.replace('\'', "''")))
                         .collect::<Vec<_>>()
                         .join(", ");
                     where_parts.push(format!("{} IN ({})", field, vals));

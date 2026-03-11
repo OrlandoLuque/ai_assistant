@@ -24,44 +24,10 @@ type SecurityResult<T> = Result<T, String>;
 // Cryptographic Utilities
 // =============================================================================
 
-/// Generate cryptographically adequate random bytes using SHA-256 mixing.
-///
-/// Combines multiple entropy sources (nanosecond timestamp, thread ID,
-/// process ID, and a global counter) hashed through SHA-256 to produce
-/// unpredictable output without requiring external CSPRNG dependencies.
+/// Generate cryptographically secure random bytes using the OS CSPRNG.
 fn secure_random_bytes(len: usize) -> Vec<u8> {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-
-    let mut result = Vec::with_capacity(len);
-    let mut block = 0u64;
-
-    while result.len() < len {
-        let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let thread_id = format!("{:?}", std::thread::current().id());
-
-        let mut hasher = Sha256::new();
-        hasher.update(&nanos.to_le_bytes());
-        hasher.update(thread_id.as_bytes());
-        hasher.update(&counter.to_le_bytes());
-        hasher.update(&block.to_le_bytes());
-        hasher.update(&(std::process::id() as u64).to_le_bytes());
-        let hash = hasher.finalize();
-
-        for &byte in hash.iter() {
-            if result.len() < len {
-                result.push(byte);
-            } else {
-                break;
-            }
-        }
-        block += 1;
-    }
-
+    let mut result = vec![0u8; len];
+    getrandom::getrandom(&mut result).expect("OS CSPRNG unavailable");
     result
 }
 

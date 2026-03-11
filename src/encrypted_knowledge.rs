@@ -56,7 +56,12 @@ pub const NONCE_SIZE: usize = 12;
 /// Magic bytes for .kpkg format identification (optional, for future use)
 pub const KPKG_MAGIC: &[u8] = b"KPKG";
 
-/// Default app seed for key derivation (should be unique per application)
+/// Default app seed for key derivation.
+///
+/// **SECURITY WARNING**: This seed is embedded in the source code. Packages
+/// encrypted with `AppKeyProvider` are NOT confidential — any build of this
+/// binary can decrypt them. Use `CustomKeyProvider` with a user-supplied
+/// passphrase for real confidentiality.
 const APP_KEY_SEED: &[u8] = b"ai_assistant_kpkg_v1_default_seed_2024";
 
 /// Errors that can occur during package operations
@@ -412,10 +417,15 @@ pub trait KeyProvider: Default {
     fn get_key(&self) -> [u8; KEY_SIZE];
 }
 
-/// Key provider using hardcoded application key
+/// Key provider using a built-in application key.
 ///
-/// This is the default for "official" packages distributed with the app.
-/// The key is derived from a seed using SHA-256.
+/// Intended for "official" packages distributed alongside the application binary.
+/// The key is derived from a seed embedded in the source code.
+///
+/// **SECURITY WARNING**: This provides **obfuscation, not confidentiality**.
+/// Anyone with access to this binary or source can decrypt packages created
+/// with `AppKeyProvider`. For real encryption, use [`CustomKeyProvider`] with
+/// a user-supplied passphrase.
 #[derive(Debug, Clone, Default)]
 pub struct AppKeyProvider;
 

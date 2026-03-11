@@ -51,6 +51,12 @@ pub struct PgVectorDb {
 
 impl PgVectorDb {
     pub fn new(config: PgVectorConfig) -> Self {
+        // Validate table_name is a safe SQL identifier (alphanumeric + underscore)
+        assert!(
+            !config.table_name.is_empty()
+                && config.table_name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'),
+            "table_name must contain only ASCII alphanumeric characters and underscores"
+        );
         Self {
             config,
             count_cache: 0,

@@ -16,7 +16,7 @@ pub enum KeyStatus {
 }
 
 /// API key entry
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ApiKey {
     pub id: String,
     pub key: String,
@@ -28,6 +28,19 @@ pub struct ApiKey {
     pub use_count: u64,
     pub error_count: u64,
     pub rate_limit_until: Option<Instant>,
+}
+
+impl std::fmt::Debug for ApiKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ApiKey")
+            .field("id", &self.id)
+            .field("key", &"<REDACTED>")
+            .field("provider", &self.provider)
+            .field("status", &self.status)
+            .field("use_count", &self.use_count)
+            .field("error_count", &self.error_count)
+            .finish()
+    }
 }
 
 impl ApiKey {

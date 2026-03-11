@@ -69,10 +69,10 @@ impl GeminiProvider {
     /// Check if the Gemini API is reachable.
     pub fn check_health(&self) -> bool {
         let url = format!(
-            "{}/v1beta/models?key={}&pageSize=1",
-            self.base_url, self.api_key
+            "{}/v1beta/models?pageSize=1",
+            self.base_url
         );
-        match ureq::get(&url).timeout(Duration::from_secs(5)).call() {
+        match ureq::get(&url).set("x-goog-api-key", &self.api_key).timeout(Duration::from_secs(5)).call() {
             Ok(resp) => {
                 let is_ok = resp.status() == 200;
                 self.available.store(is_ok, Ordering::SeqCst);
@@ -307,10 +307,10 @@ impl ProviderPlugin for GeminiProvider {
 
     fn list_models(&self) -> Result<Vec<ModelInfo>> {
         let url = format!(
-            "{}/v1beta/models?key={}",
-            self.base_url, self.api_key
+            "{}/v1beta/models",
+            self.base_url
         );
-        match ureq::get(&url).timeout(self.timeout).call() {
+        match ureq::get(&url).set("x-goog-api-key", &self.api_key).timeout(self.timeout).call() {
             Ok(resp) => {
                 let body: Value = resp
                     .into_json()
@@ -334,12 +334,13 @@ impl ProviderPlugin for GeminiProvider {
     ) -> Result<String> {
         let model = Self::full_model_name(&config.selected_model);
         let url = format!(
-            "{}/v1beta/{}:generateContent?key={}",
-            self.base_url, model, self.api_key
+            "{}/v1beta/{}:generateContent",
+            self.base_url, model
         );
         let body = Self::build_request_body(config, messages, system_prompt, None);
 
         let resp = ureq::post(&url)
+            .set("x-goog-api-key", &self.api_key)
             .timeout(self.timeout)
             .send_json(&body)
             .context("Failed to send request to Gemini API")?;
@@ -406,12 +407,13 @@ impl ProviderPlugin for GeminiProvider {
     ) -> Result<(String, Vec<ToolCall>)> {
         let model = Self::full_model_name(&config.selected_model);
         let url = format!(
-            "{}/v1beta/{}:generateContent?key={}",
-            self.base_url, model, self.api_key
+            "{}/v1beta/{}:generateContent",
+            self.base_url, model
         );
         let body = Self::build_request_body(config, messages, system_prompt, Some(tools));
 
         let resp = ureq::post(&url)
+            .set("x-goog-api-key", &self.api_key)
             .timeout(self.timeout)
             .send_json(&body)
             .context("Failed to send tool request to Gemini API")?;
@@ -428,8 +430,8 @@ impl ProviderPlugin for GeminiProvider {
 
         for text in texts {
             let url = format!(
-                "{}/v1beta/models/text-embedding-004:embedContent?key={}",
-                self.base_url, self.api_key
+                "{}/v1beta/models/text-embedding-004:embedContent",
+                self.base_url
             );
             let payload = serde_json::json!({
                 "content": {
@@ -438,6 +440,7 @@ impl ProviderPlugin for GeminiProvider {
             });
 
             let resp = ureq::post(&url)
+                .set("x-goog-api-key", &self.api_key)
                 .timeout(self.timeout)
                 .send_json(&payload)
                 .context("Failed to send embedding request to Gemini API")?;
