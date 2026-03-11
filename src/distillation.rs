@@ -263,8 +263,23 @@ mod inner {
         }
 
         /// Rebuild the in-memory index by reading the entire file.
+        /// Rejects files larger than 100 MB to prevent OOM on corrupted/bloated stores.
         fn rebuild_index(&mut self) -> Result<(), AiError> {
             self.index.clear();
+            // Check file size before reading to prevent unbounded memory allocation
+            if let Ok(meta) = std::fs::metadata(&self.path) {
+                const MAX_STORE_SIZE: u64 = 100 * 1024 * 1024; // 100 MB
+                if meta.len() > MAX_STORE_SIZE {
+                    return Err(AiError::Distillation(DistillationError::StorageError {
+                        operation: "read".to_string(),
+                        reason: format!(
+                            "Trajectory store too large ({} bytes, max {})",
+                            meta.len(),
+                            MAX_STORE_SIZE
+                        ),
+                    }));
+                }
+            }
             let content = match std::fs::read_to_string(&self.path) {
                 Ok(c) => c,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),

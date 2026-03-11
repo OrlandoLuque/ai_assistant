@@ -430,8 +430,14 @@ fn register_http_get(registry: &mut ToolRegistry, sandbox: Arc<RwLock<SandboxVal
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::MissingParameter("url".into()))?;
 
-        // Block requests to private/internal IP ranges (SSRF protection)
-        if let Some(host) = url.split("://").nth(1).and_then(|s| s.split('/').next()).and_then(|s| s.split(':').next()) {
+        // Block requests to private/internal IP ranges (SSRF protection).
+        // NOTE: This is a best-effort pre-flight check.  It does NOT resolve
+        // DNS names to IPs, so a malicious DNS name that resolves to 127.0.0.1
+        // (DNS rebinding) can still bypass this guard.  Full protection
+        // requires a DNS-resolving proxy or a connect-callback in the HTTP
+        // client, which ureq does not currently expose.
+        if let Some(host_with_port) = url.split("://").nth(1).and_then(|s| s.split('/').next()) {
+            let host = host_with_port.split(':').next().unwrap_or(host_with_port);
             if let Ok(ip) = host.parse::<std::net::IpAddr>() {
                 let is_private = match ip {
                     std::net::IpAddr::V4(v4) => v4.is_loopback() || v4.is_private() || v4.is_link_local()
@@ -447,11 +453,19 @@ fn register_http_get(registry: &mut ToolRegistry, sandbox: Arc<RwLock<SandboxVal
                     ));
                 }
             }
-            // Also block common internal hostnames
+            // Block common internal hostnames (including localhost with any port)
             let lower = host.to_lowercase();
             if lower == "localhost" || lower.ends_with(".local") || lower.ends_with(".internal") || lower == "metadata.google.internal" {
                 return Err(ToolError::ExecutionFailed(
                     "SSRF blocked: requests to internal hostnames are not allowed".into()
+                ));
+            }
+            // Block AWS/cloud metadata endpoint by string match (covers
+            // http://169.254.169.254/... even when parsed as IP above,
+            // but kept as an explicit string guard for defence-in-depth)
+            if host_with_port.starts_with("169.254.169.254") {
+                return Err(ToolError::ExecutionFailed(
+                    "SSRF blocked: requests to cloud metadata endpoint are not allowed".into()
                 ));
             }
         }

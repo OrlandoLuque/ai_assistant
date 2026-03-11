@@ -384,8 +384,8 @@ use std::collections::HashMap;
         // H12: PKCE now uses SHA-256 instead of weak hash
         assert_eq!(method1, "S256");
         assert_eq!(method2, "S256");
-        // SHA-256 hex = 64 chars
-        assert_eq!(challenge1.len(), 64);
+        // SHA-256 (32 bytes) in base64url without padding = 43 chars (per RFC 7636)
+        assert_eq!(challenge1.len(), 43);
 
         // Different verifiers produce different challenges
         let (challenge3, _) = McpOAuthTokenManager::generate_pkce_challenge("other-verifier");

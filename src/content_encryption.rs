@@ -33,13 +33,25 @@ pub struct EncryptedContent {
 }
 
 /// Encryption key
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct EncryptionKey {
     pub id: String,
     pub key: Vec<u8>,
     pub algorithm: EncryptionAlgorithm,
     pub created_at: u64,
     pub expires_at: Option<u64>,
+}
+
+impl std::fmt::Debug for EncryptionKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EncryptionKey")
+            .field("id", &self.id)
+            .field("key", &format!("<{} bytes>", self.key.len()))
+            .field("algorithm", &self.algorithm)
+            .field("created_at", &self.created_at)
+            .field("expires_at", &self.expires_at)
+            .finish()
+    }
 }
 
 impl EncryptionKey {
@@ -74,6 +86,15 @@ impl EncryptionKey {
             now > exp
         } else {
             false
+        }
+    }
+}
+
+impl Drop for EncryptionKey {
+    fn drop(&mut self) {
+        // Zero key material on drop to limit exposure in memory
+        for byte in self.key.iter_mut() {
+            unsafe { std::ptr::write_volatile(byte, 0) };
         }
     }
 }
@@ -223,10 +244,12 @@ impl ContentEncryptor {
             }
             #[cfg(feature = "aes-gcm")]
             EncryptionAlgorithm::Aes256Gcm | EncryptionAlgorithm::ChaCha20Poly1305 => {
-                // Pad or truncate key to exactly 32 bytes for AES-256
+                // Require exactly 32 bytes for AES-256 (reject weak/short keys)
+                if key.len() != 32 {
+                    return Err(EncryptionError::EncryptionFailed);
+                }
                 let mut key_bytes = [0u8; 32];
-                let len = key.len().min(32);
-                key_bytes[..len].copy_from_slice(&key[..len]);
+                key_bytes.copy_from_slice(key);
 
                 let cipher = Aes256Gcm::new(aes_gcm::Key::<Aes256Gcm>::from_slice(&key_bytes));
                 let aes_nonce = aes_gcm::Nonce::from_slice(nonce);
@@ -258,11 +281,11 @@ impl ContentEncryptor {
             }
             #[cfg(feature = "aes-gcm")]
             EncryptionAlgorithm::Aes256Gcm | EncryptionAlgorithm::ChaCha20Poly1305 => {
-                let mut key_bytes = [0u8; 32];
-                let len = key.len().min(32);
-                key_bytes[..len].copy_from_slice(&key[..len]);
+                if key.len() != 32 {
+                    return Err(EncryptionError::DecryptionFailed);
+                }
 
-                let cipher = Aes256Gcm::new(aes_gcm::Key::<Aes256Gcm>::from_slice(&key_bytes));
+                let cipher = Aes256Gcm::new(aes_gcm::Key::<Aes256Gcm>::from_slice(key));
                 let aes_nonce = aes_gcm::Nonce::from_slice(nonce);
                 cipher
                     .decrypt(aes_nonce, ciphertext)
@@ -421,7 +444,7 @@ mod tests {
     fn test_aes256gcm_encrypt_decrypt() {
         let mut encryptor = ContentEncryptor::new();
         // AES-256 needs a 32-byte key
-        let key = b"this_is_a_32_byte_key_for_aes!!".to_vec();
+        let key = b"0123456789abcdef0123456789abcdef".to_vec(); // exactly 32 bytes
         encryptor.add_key(EncryptionKey::new(
             "aes_key",
             key,

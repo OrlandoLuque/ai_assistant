@@ -18,11 +18,21 @@ use anyhow::{Context, Result};
 // ============================================================================
 
 /// AWS credentials for Signature V4 signing.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AwsCredentials {
     pub access_key_id: String,
     pub secret_access_key: String,
     pub session_token: Option<String>,
+}
+
+impl std::fmt::Debug for AwsCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AwsCredentials")
+            .field("access_key_id", &self.access_key_id)
+            .field("secret_access_key", &"<REDACTED>")
+            .field("session_token", &self.session_token.as_ref().map(|_| "<REDACTED>"))
+            .finish()
+    }
 }
 
 impl AwsCredentials {

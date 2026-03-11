@@ -12,6 +12,30 @@ use crate::unified_tools::{ToolBuilder, ToolCall, ToolError, ToolOutput, ToolReg
 use std::sync::{Arc, RwLock};
 
 // ============================================================================
+// Helpers
+// ============================================================================
+
+/// Escape a string for safe embedding in a JavaScript single-quoted string literal.
+/// Prevents injection by escaping backslashes, single quotes, and other control chars.
+fn escape_js_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 8);
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '\'' => out.push_str("\\'"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '<' => out.push_str("\\x3c"), // prevent </script> injection
+            '>' => out.push_str("\\x3e"),
+            _ if c.is_control() => { /* skip other control chars */ }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+// ============================================================================
 // Types
 // ============================================================================
 
@@ -562,7 +586,7 @@ impl BrowserSession {
         let stream = self.ws_stream.as_mut().ok_or(BrowserError::NotConnected)?;
         let js = format!(
             "(() => {{ const el = document.querySelector('{}'); if (!el) throw new Error('not found'); el.click(); return 'clicked'; }})()",
-            selector.replace('\'', "\\'")
+            escape_js_string(selector)
         );
         let result = send_cdp_command(
             stream,
@@ -589,8 +613,8 @@ impl BrowserSession {
         let stream = self.ws_stream.as_mut().ok_or(BrowserError::NotConnected)?;
         let js = format!(
             "(() => {{ const el = document.querySelector('{}'); if (!el) throw new Error('not found'); el.focus(); el.value = '{}'; el.dispatchEvent(new Event('input', {{bubbles: true}})); return 'typed'; }})()",
-            selector.replace('\'', "\\'"),
-            text.replace('\'', "\\'")
+            escape_js_string(selector),
+            escape_js_string(text)
         );
         let result = send_cdp_command(
             stream,
@@ -615,7 +639,7 @@ impl BrowserSession {
         let stream = self.ws_stream.as_mut().ok_or(BrowserError::NotConnected)?;
         let js = format!(
             "(() => {{ const el = document.querySelector('{}'); if (!el) throw new Error('not found'); return el.textContent || ''; }})()",
-            selector.replace('\'', "\\'")
+            escape_js_string(selector)
         );
         let result = send_cdp_command(
             stream,
@@ -640,7 +664,33 @@ impl BrowserSession {
     }
 
     /// Execute JavaScript and return the result as a string.
+    ///
+    /// Rejects expressions containing dangerous patterns that could allow
+    /// network access, code injection, or prototype pollution from the
+    /// browser context.
     pub fn evaluate(&mut self, js: &str) -> Result<String, BrowserError> {
+        // Validate the JS expression against dangerous patterns
+        const DANGEROUS_PATTERNS: &[&str] = &[
+            "fetch(",
+            "XMLHttpRequest",
+            "eval(",
+            "Function(",
+            "import(",
+            "require(",
+            "process.",
+            "__proto__",
+            "constructor[",
+        ];
+        let js_lower = js.to_lowercase();
+        for pattern in DANGEROUS_PATTERNS {
+            if js_lower.contains(&pattern.to_lowercase()) {
+                return Err(BrowserError::CdpError(format!(
+                    "Blocked dangerous JS pattern '{}' in evaluate expression",
+                    pattern
+                )));
+            }
+        }
+
         let id = self.next_id();
         let stream = self.ws_stream.as_mut().ok_or(BrowserError::NotConnected)?;
         let result = send_cdp_command(

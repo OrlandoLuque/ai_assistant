@@ -39,7 +39,7 @@
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -1163,7 +1163,14 @@ fn handle_chat_stream(
     );
 
     // Collect the full response first, then we split into tokens for SSE
+    let gen_start = Instant::now();
     let full_text = loop {
+        if gen_start.elapsed() > std::time::Duration::from_secs(300) {
+            return Err((
+                "504 Gateway Timeout".to_string(),
+                serde_json::to_string(&ErrorResponse { error: "LLM generation timed out after 300s".to_string() }).unwrap_or_default(),
+            ));
+        }
         match ass.poll_response() {
             Some(crate::messages::AiResponse::Complete(text)) => break text,
             Some(crate::messages::AiResponse::Error(e)) => {
@@ -1351,7 +1358,11 @@ fn handle_ws_chat(stream: &mut dyn ReadWrite, assistant: &Arc<Mutex<AiAssistant>
                     let sys = req.system_prompt.as_deref().unwrap_or("");
                     guard.send_message_with_notes(req.message.clone(), "", sys, "");
                     // Poll until we get the full response
+                    let gen_start = Instant::now();
                     loop {
+                        if gen_start.elapsed() > std::time::Duration::from_secs(300) {
+                            break "[Error: LLM generation timed out after 300s]".to_string();
+                        }
                         match guard.poll_response() {
                             Some(crate::messages::AiResponse::Complete(text)) => break text,
                             Some(crate::messages::AiResponse::Error(e)) => break format!("[Error: {}]", e),
@@ -1558,6 +1569,8 @@ impl AiServer {
             log::warn!("SECURITY: Authentication is DISABLED. Enable auth before exposing to a network.");
         }
 
+        let active_connections = Arc::new(AtomicUsize::new(0));
+
         loop {
             if self.shutdown_flag.load(Ordering::Relaxed) {
                 log::info!("Server shutdown requested, draining...");
@@ -1565,11 +1578,19 @@ impl AiServer {
             }
             match listener.accept() {
                 Ok((stream, _peer)) => {
+                    // Reject if too many concurrent connections
+                    if active_connections.fetch_add(1, Ordering::Relaxed) >= 256 {
+                        active_connections.fetch_sub(1, Ordering::Relaxed);
+                        log::warn!("Max connections (256) exceeded, dropping connection");
+                        drop(stream);
+                        continue;
+                    }
                     // Connection accepted — set it back to blocking for I/O
                     let _ = stream.set_nonblocking(false);
                     let assistant = self.assistant.clone();
                     let cfg = server_config.clone();
                     let m = metrics.clone();
+                    let conn_count = active_connections.clone();
                     #[cfg(feature = "server-tls")]
                     let tls = tls_cfg.clone();
                     std::thread::spawn(move || {
@@ -1579,12 +1600,14 @@ impl AiServer {
                                 if let Err(e) = handle_tls_connection(stream, tls_config, &assistant, &cfg, &m) {
                                     log::debug!("TLS connection error: {}", e);
                                 }
+                                conn_count.fetch_sub(1, Ordering::Relaxed);
                                 return;
                             }
                         }
                         if let Err(e) = handle_tcp_connection(stream, &assistant, &cfg, &m) {
                             log::debug!("Connection error: {}", e);
                         }
+                        conn_count.fetch_sub(1, Ordering::Relaxed);
                     });
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -1623,6 +1646,7 @@ impl AiServer {
 
         let handle = std::thread::spawn(move || {
             log::info!("AI Assistant server listening on {}://{}", scheme, local_addr);
+            let active_connections = Arc::new(AtomicUsize::new(0));
             loop {
                 if shutdown_flag.load(Ordering::Relaxed) {
                     log::info!("Background server shutdown requested, draining...");
@@ -1630,10 +1654,18 @@ impl AiServer {
                 }
                 match listener.accept() {
                     Ok((stream, _peer)) => {
+                        // Reject if too many concurrent connections
+                        if active_connections.fetch_add(1, Ordering::Relaxed) >= 256 {
+                            active_connections.fetch_sub(1, Ordering::Relaxed);
+                            log::warn!("Max connections (256) exceeded, dropping connection");
+                            drop(stream);
+                            continue;
+                        }
                         let _ = stream.set_nonblocking(false);
                         let assistant = assistant.clone();
                         let cfg = server_config.clone();
                         let m = metrics.clone();
+                        let conn_count = active_connections.clone();
                         #[cfg(feature = "server-tls")]
                         let tls = tls_cfg.clone();
                         std::thread::spawn(move || {
@@ -1643,12 +1675,14 @@ impl AiServer {
                                     if let Err(e) = handle_tls_connection(stream, tls_config, &assistant, &cfg, &m) {
                                         log::debug!("TLS connection error: {}", e);
                                     }
+                                    conn_count.fetch_sub(1, Ordering::Relaxed);
                                     return;
                                 }
                             }
                             if let Err(e) = handle_tcp_connection(stream, &assistant, &cfg, &m) {
                                 log::debug!("Connection error: {}", e);
                             }
+                            conn_count.fetch_sub(1, Ordering::Relaxed);
                         });
                     }
                     Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -2117,7 +2151,15 @@ fn parse_request(stream: &mut dyn Read, config: &ServerConfig) -> std::io::Resul
             let key = key.trim().to_lowercase();
             let value = value.trim().to_string();
             if key == "content-length" {
-                content_length = value.parse().unwrap_or(0);
+                content_length = match value.parse() {
+                    Ok(n) => n,
+                    Err(_) => {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "Invalid Content-Length header value",
+                        ));
+                    }
+                };
             }
             headers.push((key, value));
         }
@@ -2300,7 +2342,14 @@ fn handle_chat(request: &HttpRequest, assistant: &Arc<Mutex<AiAssistant>>, confi
 
     // Poll until complete
     let model = ass.config.selected_model.clone();
+    let gen_start = Instant::now();
     loop {
+        if gen_start.elapsed() > std::time::Duration::from_secs(300) {
+            return (
+                "504 Gateway Timeout".to_string(),
+                serde_json::to_string(&ErrorResponse { error: "LLM generation timed out after 300s".to_string() }).unwrap_or_default(),
+            );
+        }
         match ass.poll_response() {
             Some(crate::messages::AiResponse::Complete(text)) => {
                 let resp = ChatResponse {
@@ -2382,7 +2431,17 @@ fn handle_set_config(
         ass.config.selected_model = model.to_string();
     }
     if let Some(temp) = updates.get("temperature").and_then(|t| t.as_f64()) {
-        ass.config.temperature = temp as f32;
+        let temp_f32 = temp as f32;
+        if temp_f32.is_nan() || temp_f32.is_infinite() || temp_f32 < 0.0 || temp_f32 > 5.0 {
+            return (
+                "400 Bad Request".to_string(),
+                serde_json::to_string(&ErrorResponse {
+                    error: "Invalid temperature: must be between 0.0 and 5.0".to_string(),
+                })
+                .unwrap_or_default(),
+            );
+        }
+        ass.config.temperature = temp_f32;
     }
 
     (
@@ -2596,7 +2655,14 @@ fn handle_openai_chat_completions(
 
     ass.send_message_with_notes(user_message.clone(), &knowledge_context, &system_prompt, "");
 
+    let gen_start = Instant::now();
     let response_text = loop {
+        if gen_start.elapsed() > std::time::Duration::from_secs(300) {
+            return (
+                "504 Gateway Timeout".to_string(),
+                openai_error_json("LLM generation timed out after 300s", "server_error", "timeout"),
+            );
+        }
         match ass.poll_response() {
             Some(crate::messages::AiResponse::Complete(text)) => break text,
             Some(crate::messages::AiResponse::Error(e)) => {
@@ -2832,7 +2898,14 @@ fn handle_openai_chat_completions_stream(
     ass.send_message_with_notes(user_message, &knowledge_context, &system_prompt, "");
 
     // Collect full response
+    let gen_start = Instant::now();
     let full_text = loop {
+        if gen_start.elapsed() > std::time::Duration::from_secs(300) {
+            return Err((
+                "504 Gateway Timeout".to_string(),
+                openai_error_json("LLM generation timed out after 300s", "server_error", "timeout"),
+            ));
+        }
         match ass.poll_response() {
             Some(crate::messages::AiResponse::Complete(text)) => break text,
             Some(crate::messages::AiResponse::Error(e)) => {

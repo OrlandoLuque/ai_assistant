@@ -2009,13 +2009,22 @@ impl GraphQuery {
         self
     }
 
+    /// Sanitize a SQL identifier (column name, alias, table name).
+    /// Only allows alphanumeric chars, underscores, and dots (for table.column).
+    fn sanitize_identifier(ident: &str) -> String {
+        ident.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '.').collect()
+    }
+
     /// Generate SQL query string from the builder state.
     pub fn to_sql(&self) -> String {
         // Build SELECT clause
         let select = if self.return_fields.is_empty() {
             "SELECT *".to_string()
         } else {
-            format!("SELECT {}", self.return_fields.join(", "))
+            let safe_fields: Vec<String> = self.return_fields.iter()
+                .map(|f| Self::sanitize_identifier(f))
+                .collect();
+            format!("SELECT {}", safe_fields.join(", "))
         };
 
         // Build FROM clause based on match patterns
@@ -2025,10 +2034,12 @@ impl GraphQuery {
         for pattern in &self.match_patterns {
             match pattern {
                 MatchPattern::Node { label, alias } => {
+                    let safe_alias = Self::sanitize_identifier(alias);
                     if let Some(lbl) = label {
-                        tables.push(format!("entities AS {} /* type={} */", alias, lbl));
+                        let safe_lbl = Self::sanitize_identifier(lbl);
+                        tables.push(format!("entities AS {} /* type={} */", safe_alias, safe_lbl));
                     } else {
-                        tables.push(format!("entities AS {}", alias));
+                        tables.push(format!("entities AS {}", safe_alias));
                     }
                 }
                 MatchPattern::Relationship {
@@ -2037,15 +2048,14 @@ impl GraphQuery {
                     from_alias,
                     to_alias,
                 } => {
+                    let sa = Self::sanitize_identifier(alias);
+                    let sfa = Self::sanitize_identifier(from_alias);
+                    let sta = Self::sanitize_identifier(to_alias);
                     joins.push(format!(
                         "JOIN relations AS {} ON {}.id = {}.from_entity_id AND {}.id = {}.to_entity_id{}",
-                        alias,
-                        from_alias,
-                        alias,
-                        to_alias,
-                        alias,
+                        sa, sfa, sa, sta, sa,
                         if let Some(rt) = rel_type {
-                            format!(" AND {}.relation_type = '{}'", alias, rt.replace('\'', "''"))
+                            format!(" AND {}.relation_type = '{}'", sa, rt.replace('\'', "''"))
                         } else {
                             String::new()
                         }
@@ -2056,11 +2066,12 @@ impl GraphQuery {
                     to_alias,
                     max_hops,
                 } => {
-                    // Path queries use a CTE approach (simplified: single-hop join for SQL generation)
+                    let sfa = Self::sanitize_identifier(from_alias);
+                    let sta = Self::sanitize_identifier(to_alias);
                     joins.push(format!(
                         "JOIN relations AS path_r ON {}.id = path_r.from_entity_id \
                          JOIN entities AS {} ON {}.id = path_r.to_entity_id /* max_hops={} */",
-                        from_alias, to_alias, to_alias, max_hops
+                        sfa, sta, sta, max_hops
                     ));
                 }
             }
@@ -2080,34 +2091,45 @@ impl GraphQuery {
                 alias,
             } = pattern
             {
-                where_parts.push(format!("{}.entity_type = '{}'", alias, lbl.replace('\'', "''")));
+                let safe_alias = Self::sanitize_identifier(alias);
+                where_parts.push(format!("{}.entity_type = '{}'", safe_alias, lbl.replace('\'', "''")));
             }
         }
         for clause in &self.where_clauses {
             match clause {
                 WhereClause::Eq(field, value) => {
-                    where_parts.push(format!("{} = '{}'", field, value.replace('\'', "''")))
+                    let sf = Self::sanitize_identifier(field);
+                    where_parts.push(format!("{} = '{}'", sf, value.replace('\'', "''")))
                 }
                 WhereClause::Contains(field, value) => {
-                    // Escape both SQL quotes and LIKE wildcards in user input
+                    let sf = Self::sanitize_identifier(field);
                     let escaped = value.replace('\'', "''").replace('%', "\\%").replace('_', "\\_");
-                    where_parts.push(format!("{} LIKE '%{}%' ESCAPE '\\'", field, escaped))
+                    where_parts.push(format!("{} LIKE '%{}%' ESCAPE '\\'", sf, escaped))
                 }
-                WhereClause::Gt(field, value) => where_parts.push(format!("{} > {}", field, value)),
-                WhereClause::Lt(field, value) => where_parts.push(format!("{} < {}", field, value)),
+                WhereClause::Gt(field, value) => {
+                    let sf = Self::sanitize_identifier(field);
+                    where_parts.push(format!("{} > {}", sf, value))
+                }
+                WhereClause::Lt(field, value) => {
+                    let sf = Self::sanitize_identifier(field);
+                    where_parts.push(format!("{} < {}", sf, value))
+                }
                 WhereClause::Gte(field, value) => {
-                    where_parts.push(format!("{} >= {}", field, value))
+                    let sf = Self::sanitize_identifier(field);
+                    where_parts.push(format!("{} >= {}", sf, value))
                 }
                 WhereClause::Lte(field, value) => {
-                    where_parts.push(format!("{} <= {}", field, value))
+                    let sf = Self::sanitize_identifier(field);
+                    where_parts.push(format!("{} <= {}", sf, value))
                 }
                 WhereClause::In(field, values) => {
+                    let sf = Self::sanitize_identifier(field);
                     let vals = values
                         .iter()
                         .map(|v| format!("'{}'", v.replace('\'', "''")))
                         .collect::<Vec<_>>()
                         .join(", ");
-                    where_parts.push(format!("{} IN ({})", field, vals));
+                    where_parts.push(format!("{} IN ({})", sf, vals));
                 }
             }
         }
@@ -2121,7 +2143,8 @@ impl GraphQuery {
         // Build ORDER BY
         let order = match &self.order_by {
             Some((field, asc)) => {
-                format!(" ORDER BY {} {}", field, if *asc { "ASC" } else { "DESC" })
+                let sf = Self::sanitize_identifier(field);
+                format!(" ORDER BY {} {}", sf, if *asc { "ASC" } else { "DESC" })
             }
             None => String::new(),
         };

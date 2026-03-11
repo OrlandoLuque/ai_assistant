@@ -200,6 +200,15 @@ impl CertificateManager {
             .map_err(|e| format!("Failed to write cert: {}", e))?;
         std::fs::write(dir.join("key.der"), &identity.key_der)
             .map_err(|e| format!("Failed to write key: {}", e))?;
+        // Restrict private key file to owner-only access on Unix
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(
+                dir.join("key.der"),
+                std::fs::Permissions::from_mode(0o600),
+            );
+        }
         std::fs::write(dir.join("ca.der"), &identity.ca_cert_der)
             .map_err(|e| format!("Failed to write CA cert: {}", e))?;
 

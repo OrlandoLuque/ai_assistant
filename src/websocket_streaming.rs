@@ -137,26 +137,21 @@ impl WsFrame {
 }
 
 fn rand_mask() -> [u8; 4] {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    // Use RandomState which is seeded from OS entropy (unlike DefaultHasher
+    // which uses fixed seeds). Each RandomState::new() call produces a hasher
+    // with unique random keys, making the output unpredictable.
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
 
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-
-    let mut result = [0u8; 4];
-    for (i, byte) in result.iter_mut().enumerate() {
-        let mut hasher = DefaultHasher::new();
-        nanos.hash(&mut hasher);
-        (i as u64).hash(&mut hasher);
-        std::thread::current().id().hash(&mut hasher);
-        let stack_var = 0u8;
-        (&stack_var as *const u8 as u64).hash(&mut hasher);
-        *byte = hasher.finish() as u8;
-    }
-    result
+    let random_state = RandomState::new();
+    let mut hasher = random_state.build_hasher();
+    // Hash a second RandomState to mix additional OS entropy
+    let extra_state = RandomState::new();
+    let extra_hasher = extra_state.build_hasher();
+    hasher.write_u64(extra_hasher.finish());
+    let h = hasher.finish();
+    // Take 4 bytes from the 8-byte hash
+    (h as u32).to_ne_bytes()
 }
 
 /// WebSocket close codes
@@ -504,26 +499,24 @@ impl WsHandshake {
     }
 }
 
-/// Generate a random WebSocket key: 16 random bytes → base64 (RFC 6455 Section 4.1)
+/// Generate a random WebSocket key: 16 random bytes -> base64 (RFC 6455 Section 4.1)
 fn generate_ws_key() -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
+    // Use RandomState which is seeded from OS entropy (unlike DefaultHasher
+    // which uses fixed seeds). Each RandomState::new() call produces a hasher
+    // with unique random keys, making the output unpredictable.
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
 
     let mut bytes = [0u8; 16];
-    for (i, byte) in bytes.iter_mut().enumerate() {
-        let mut hasher = DefaultHasher::new();
-        nanos.hash(&mut hasher);
-        (i as u64).hash(&mut hasher);
-        std::thread::current().id().hash(&mut hasher);
-        let stack_var = 0u8;
-        (&stack_var as *const u8 as u64).hash(&mut hasher);
-        *byte = hasher.finish() as u8;
+    // Fill 16 bytes using two 8-byte hashes from independently-seeded RandomStates
+    for chunk in bytes.chunks_mut(8) {
+        let state = RandomState::new();
+        let mut hasher = state.build_hasher();
+        // Mix in a second RandomState for additional entropy
+        let extra = RandomState::new();
+        hasher.write_u64(extra.build_hasher().finish());
+        let h = hasher.finish().to_ne_bytes();
+        chunk.copy_from_slice(&h[..chunk.len()]);
     }
     base64_encode(&bytes)
 }
