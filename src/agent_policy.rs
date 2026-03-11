@@ -290,8 +290,8 @@ impl AgentPolicy {
             if let Some(ref wd) = self.working_directory {
                 return path_starts_with(path, wd);
             }
-            // No working directory set and no allowed paths = allow all
-            return true;
+            // No working directory set and no allowed paths = deny all (safe default)
+            return false;
         }
         // Check if path is under any allowed path
         for allowed in &self.allowed_paths {
@@ -343,9 +343,9 @@ impl AgentPolicy {
             InternetMode::SearchOnly => false, // only search tool, not direct HTTP
             InternetMode::FullAccess => true,
             InternetMode::AllowList(domains) => {
-                // Extract domain from URL
+                // Extract domain from URL and match on subdomain boundaries
                 let domain = extract_domain(url);
-                domains.iter().any(|d| domain.ends_with(d.as_str()))
+                domains.iter().any(|d| domain == d.as_str() || domain.ends_with(&format!(".{}", d)))
             }
         }
     }
@@ -782,7 +782,9 @@ mod tests {
 
     #[test]
     fn test_validate_action_with_approval() {
-        let policy = AgentPolicy::default();
+        // Policy with a working directory so path checks pass
+        let mut policy = AgentPolicy::default();
+        policy.working_directory = Some(PathBuf::from("/tmp"));
         let handler: Arc<dyn ApprovalHandler> = Arc::new(AutoApproveAll);
 
         // FileRead is Safe → no approval needed → passes

@@ -257,12 +257,59 @@ fn constant_time_compare(a: &str, b: &str) -> bool {
     result == 0
 }
 
+/// Request verifier with nonce replay protection.
+///
+/// Wraps a [`RequestSigner`] and tracks recently seen nonces so that the same
+/// signed request cannot be replayed within the `max_age_secs` window.
+pub struct RequestVerifier {
+    signer: RequestSigner,
+    /// Nonces seen recently, with the timestamp they were first seen.
+    seen_nonces: std::sync::Mutex<std::collections::HashMap<String, u64>>,
+    max_age_secs: u64,
+}
+
+impl RequestVerifier {
+    /// Create a new verifier with the given secret, algorithm, and max request age.
+    pub fn new(secret: &[u8], algorithm: SignatureAlgorithm, max_age_secs: u64) -> Self {
+        Self {
+            signer: RequestSigner::new(secret, algorithm),
+            seen_nonces: std::sync::Mutex::new(std::collections::HashMap::new()),
+            max_age_secs,
+        }
+    }
+
+    /// Verify a signed request, rejecting replays (duplicate nonces).
+    pub fn verify(&self, request: &SignedRequest) -> Result<(), SignatureError> {
+        // First check signature validity and timestamp
+        self.signer.verify(request, self.max_age_secs)?;
+
+        // Then check nonce replay
+        let mut nonces = self.seen_nonces.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Evict expired nonces to prevent unbounded growth
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        nonces.retain(|_, ts| now.saturating_sub(*ts) <= self.max_age_secs);
+
+        if nonces.contains_key(&request.nonce) {
+            return Err(SignatureError::ReplayedNonce);
+        }
+        nonces.insert(request.nonce.clone(), request.timestamp);
+
+        Ok(())
+    }
+}
+
 /// Signature errors
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SignatureError {
     Invalid,
     Expired,
     MissingFields,
+    /// The nonce has already been used (replay attack).
+    ReplayedNonce,
 }
 
 impl std::fmt::Display for SignatureError {
@@ -271,6 +318,7 @@ impl std::fmt::Display for SignatureError {
             Self::Invalid => write!(f, "Invalid signature"),
             Self::Expired => write!(f, "Signature expired"),
             Self::MissingFields => write!(f, "Missing required fields"),
+            Self::ReplayedNonce => write!(f, "Nonce has already been used (possible replay attack)"),
         }
     }
 }

@@ -8,17 +8,34 @@ edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
 license-file = "LICENSE"
-repository = "https://github.com/lander/ai_assistant"
-homepage = "https://github.com/lander/ai_assistant"
+repository = "https://github.com/OrlandoLuque/ai_assistant"
+homepage = "https://ai-assistant.runawaybrains.com/"
 documentation = "https://docs.rs/ai_assistant"
 readme = "README.md"
 keywords = ["ai", "llm", "assistant", "rag", "agent"]
 categories = ["science", "text-processing", "web-programming"]
 exclude = [
     "docs/*.md",
+    "docs/backups/",
     ".claude/",
+    ".run/",
     "target/",
     "PROMPT_MEJORAS.md",
+    "prompt_safe_creative.md",
+    "*.zip",
+    "*.docx",
+    "*.py",
+    "*.tmp",
+    "*.bak",
+    "*.bak2",
+    "src/*.tmp",
+    "src/*.bak",
+    "src/*.bak2",
+    "src/*.py",
+    "src/*.txt",
+    "src/_*",
+    "CLAUDE.md",
+    "PENDING.md",
 ]
 
 [features]

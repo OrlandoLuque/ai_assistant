@@ -6,7 +6,7 @@
 //!
 //! Gated behind the `a2a` feature flag.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -377,6 +377,8 @@ pub const INTERNAL_ERROR: i32 = -32603;
 pub const TASK_NOT_FOUND: i32 = -32001;
 /// Invalid task state transition (application-level)
 pub const INVALID_STATE: i32 = -32002;
+/// Sender agent not authorized (application-level)
+pub const UNAUTHORIZED_AGENT: i32 = -32003;
 
 impl JsonRpcRequest {
     /// Validate that the request is well-formed JSON-RPC 2.0.
@@ -459,6 +461,10 @@ pub struct A2AServer {
     handler: TaskHandler,
     pub tasks: Mutex<HashMap<String, A2ATask>>,
     push_configs: Mutex<HashMap<String, PushNotificationConfig>>,
+    /// Allowlist of agent identifiers permitted to send tasks. If non-empty,
+    /// only agents whose `sender_agent` param matches an entry are accepted.
+    /// An empty set means all agents are allowed (open mode).
+    allowed_agents: Mutex<HashSet<String>>,
 }
 
 impl fmt::Debug for A2AServer {
@@ -468,6 +474,7 @@ impl fmt::Debug for A2AServer {
             .field("handler", &"<...>")
             .field("tasks", &self.tasks)
             .field("push_configs", &self.push_configs)
+            .field("allowed_agents", &self.allowed_agents)
             .finish()
     }
 }
@@ -480,6 +487,24 @@ impl A2AServer {
             handler,
             tasks: Mutex::new(HashMap::new()),
             push_configs: Mutex::new(HashMap::new()),
+            allowed_agents: Mutex::new(HashSet::new()),
+        }
+    }
+
+    /// Set the allowlist of agent identifiers permitted to send tasks.
+    /// When non-empty, only `tasks/send` requests whose `sender_agent` param
+    /// matches an entry in this set will be accepted; all others are rejected
+    /// with `UNAUTHORIZED_AGENT`. An empty set disables the check (open mode).
+    pub fn set_allowed_agents(&self, agents: HashSet<String>) {
+        if let Ok(mut allowed) = self.allowed_agents.lock() {
+            *allowed = agents;
+        }
+    }
+
+    /// Add a single agent identifier to the allowlist.
+    pub fn allow_agent(&self, agent_id: impl Into<String>) {
+        if let Ok(mut allowed) = self.allowed_agents.lock() {
+            allowed.insert(agent_id.into());
         }
     }
 
@@ -578,6 +603,30 @@ impl A2AServer {
     }
 
     fn handle_tasks_send(&self, request: &JsonRpcRequest) -> JsonRpcResponse {
+        // --- Authentication: check sender against allowlist ---
+        if let Ok(allowed) = self.allowed_agents.lock() {
+            if !allowed.is_empty() {
+                let sender = request
+                    .params
+                    .as_ref()
+                    .and_then(|p| p.get("sender_agent"))
+                    .and_then(|v| v.as_str());
+                match sender {
+                    Some(id) if allowed.contains(id) => { /* authorized */ }
+                    _ => {
+                        return JsonRpcResponse::error(
+                            request.id.clone(),
+                            JsonRpcError {
+                                code: UNAUTHORIZED_AGENT,
+                                message: "Sender agent not authorized".to_string(),
+                                data: None,
+                            },
+                        );
+                    }
+                }
+            }
+        }
+
         // Extract the user message from params
         let message = match extract_message_from_params(&request.params) {
             Ok(msg) => msg,
@@ -610,6 +659,10 @@ impl A2AServer {
         }
 
         // Invoke the handler
+        // TODO(security): Task results are not cryptographically signed. A malicious
+        // intermediary could tamper with the response. Future work: add HMAC or
+        // digital-signature envelope around `task_value` so consumers can verify
+        // authenticity and integrity of task results.
         match (self.handler)(&message) {
             Ok(response_msg) => {
                 task.add_message(response_msg);
@@ -2285,6 +2338,102 @@ mod tests {
         };
         let result = server.register_push("nonexistent-task", config);
         assert!(result.is_err());
+    }
+
+    // ---- Allowed-agents authorization tests ----
+
+    #[test]
+    fn test_server_allowed_agents_rejects_unknown_sender() {
+        let server = make_echo_server();
+        server.allow_agent("trusted-agent-1");
+
+        let msg = A2AMessage::text(MessageRole::User, "ping");
+        // Send with an unknown sender_agent
+        let params = serde_json::json!({
+            "message": serde_json::to_value(&msg).unwrap(),
+            "sender_agent": "malicious-agent"
+        });
+        let resp_str = server.handle_request(&rpc_request("tasks/send", Some(params)));
+        let resp: JsonRpcResponse = serde_json::from_str(&resp_str).unwrap();
+        assert!(resp.error.is_some());
+        assert_eq!(resp.error.as_ref().unwrap().code, UNAUTHORIZED_AGENT);
+    }
+
+    #[test]
+    fn test_server_allowed_agents_rejects_missing_sender() {
+        let server = make_echo_server();
+        server.allow_agent("trusted-agent-1");
+
+        let msg = A2AMessage::text(MessageRole::User, "ping");
+        // Send without sender_agent field at all
+        let params = serde_json::json!({
+            "message": serde_json::to_value(&msg).unwrap()
+        });
+        let resp_str = server.handle_request(&rpc_request("tasks/send", Some(params)));
+        let resp: JsonRpcResponse = serde_json::from_str(&resp_str).unwrap();
+        assert!(resp.error.is_some());
+        assert_eq!(resp.error.as_ref().unwrap().code, UNAUTHORIZED_AGENT);
+    }
+
+    #[test]
+    fn test_server_allowed_agents_accepts_trusted_sender() {
+        let server = make_echo_server();
+        server.allow_agent("trusted-agent-1");
+
+        let msg = A2AMessage::text(MessageRole::User, "ping");
+        let params = serde_json::json!({
+            "message": serde_json::to_value(&msg).unwrap(),
+            "sender_agent": "trusted-agent-1"
+        });
+        let resp_str = server.handle_request(&rpc_request("tasks/send", Some(params)));
+        let resp: JsonRpcResponse = serde_json::from_str(&resp_str).unwrap();
+        assert!(resp.error.is_none(), "Expected success but got: {:?}", resp.error);
+        let result = resp.result.expect("result present");
+        assert_eq!(result.get("status").and_then(|v| v.as_str()), Some("Completed"));
+    }
+
+    #[test]
+    fn test_server_empty_allowlist_permits_all() {
+        // Default (empty allowlist) should allow any sender or no sender
+        let server = make_echo_server();
+
+        let msg = A2AMessage::text(MessageRole::User, "ping");
+        let params = serde_json::json!({
+            "message": serde_json::to_value(&msg).unwrap()
+        });
+        let resp_str = server.handle_request(&rpc_request("tasks/send", Some(params)));
+        let resp: JsonRpcResponse = serde_json::from_str(&resp_str).unwrap();
+        assert!(resp.error.is_none(), "Empty allowlist should permit all senders");
+    }
+
+    #[test]
+    fn test_server_set_allowed_agents_bulk() {
+        let server = make_echo_server();
+        let mut agents = HashSet::new();
+        agents.insert("agent-a".to_string());
+        agents.insert("agent-b".to_string());
+        server.set_allowed_agents(agents);
+
+        let msg = A2AMessage::text(MessageRole::User, "ping");
+
+        // agent-a should be allowed
+        let params = serde_json::json!({
+            "message": serde_json::to_value(&msg).unwrap(),
+            "sender_agent": "agent-a"
+        });
+        let resp_str = server.handle_request(&rpc_request("tasks/send", Some(params)));
+        let resp: JsonRpcResponse = serde_json::from_str(&resp_str).unwrap();
+        assert!(resp.error.is_none());
+
+        // agent-c should be rejected
+        let params = serde_json::json!({
+            "message": serde_json::to_value(&msg).unwrap(),
+            "sender_agent": "agent-c"
+        });
+        let resp_str = server.handle_request(&rpc_request("tasks/send", Some(params)));
+        let resp: JsonRpcResponse = serde_json::from_str(&resp_str).unwrap();
+        assert!(resp.error.is_some());
+        assert_eq!(resp.error.as_ref().unwrap().code, UNAUTHORIZED_AGENT);
     }
 
     // ---- State transition exhaustive tests ----

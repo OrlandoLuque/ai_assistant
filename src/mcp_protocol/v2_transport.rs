@@ -190,14 +190,12 @@ pub trait McpSessionStore {
 /// In-memory implementation of `McpSessionStore`.
 pub struct InMemorySessionStore {
     pub(crate) sessions: HashMap<String, McpSession>,
-    next_id: u64,
 }
 
 impl InMemorySessionStore {
     pub fn new() -> Self {
         Self {
             sessions: HashMap::new(),
-            next_id: 1,
         }
     }
 }
@@ -210,8 +208,7 @@ impl Default for InMemorySessionStore {
 
 impl McpSessionStore for InMemorySessionStore {
     fn create_session(&mut self) -> McpSession {
-        let id = format!("mcp-session-{}", self.next_id);
-        self.next_id += 1;
+        let id = super::transport::generate_secure_session_id("mcp-session");
         let now = chrono::Utc::now();
         let session = McpSession {
             session_id: id.clone(),

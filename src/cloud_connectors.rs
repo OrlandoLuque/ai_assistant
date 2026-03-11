@@ -21,6 +21,56 @@ use anyhow::{Context, Result};
 use std::collections::HashMap;
 
 // ============================================================================
+// SSRF Protection
+// ============================================================================
+
+/// Check whether a URL is safe to fetch (i.e. not pointing at private/internal
+/// addresses).  Used before making HTTP requests to user-provided endpoints to
+/// prevent server-side request forgery (SSRF).
+fn is_safe_url(url: &str) -> bool {
+    if let Some(authority) = url
+        .split("://")
+        .nth(1)
+        .and_then(|s| s.split('/').next())
+    {
+        // Handle IPv6 addresses in brackets: [::1], [::1]:8080
+        let host = if authority.starts_with('[') {
+            // Extract the part inside brackets (IPv6 literal)
+            authority
+                .find(']')
+                .map(|end| &authority[1..end])
+                .unwrap_or(authority)
+        } else {
+            // IPv4 or hostname — strip port
+            authority.split(':').next().unwrap_or(authority)
+        };
+
+        let lower = host.to_lowercase();
+        // Block well-known internal hostnames
+        if lower == "localhost"
+            || lower.ends_with(".local")
+            || lower.ends_with(".internal")
+            || lower == "metadata.google.internal"
+        {
+            return false;
+        }
+        // Block IP addresses in private/reserved ranges
+        if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+            return match ip {
+                std::net::IpAddr::V4(v4) => {
+                    !v4.is_loopback()          // 127.0.0.0/8
+                        && !v4.is_private()    // 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+                        && !v4.is_link_local() // 169.254.0.0/16
+                        && v4.octets() != [0, 0, 0, 0]
+                }
+                std::net::IpAddr::V6(v6) => !v6.is_loopback(),
+            };
+        }
+    }
+    true
+}
+
+// ============================================================================
 // CloudStorage Trait
 // ============================================================================
 
@@ -200,6 +250,11 @@ impl S3Client {
 
     /// Execute a signed GET request.
     fn signed_get(&self, url: &str) -> Result<ureq::Response> {
+        // SSRF protection: reject private/internal URLs
+        anyhow::ensure!(
+            is_safe_url(url),
+            "SSRF blocked: S3 request URL points to a private/internal address"
+        );
         if self.has_credentials() {
             let signer = self.signer();
             let auth_headers = signer.sign_request("GET", url, &[], &[]);
@@ -221,6 +276,11 @@ impl S3Client {
 
     /// Execute a signed PUT request.
     fn signed_put(&self, url: &str, data: &[u8], content_type: &str) -> Result<ureq::Response> {
+        // SSRF protection: reject private/internal URLs
+        anyhow::ensure!(
+            is_safe_url(url),
+            "SSRF blocked: S3 request URL points to a private/internal address"
+        );
         if self.has_credentials() {
             let signer = self.signer();
             let extra = [("Content-Type", content_type)];
@@ -245,6 +305,11 @@ impl S3Client {
 
     /// Execute a signed DELETE request.
     fn signed_delete(&self, url: &str) -> Result<ureq::Response> {
+        // SSRF protection: reject private/internal URLs
+        anyhow::ensure!(
+            is_safe_url(url),
+            "SSRF blocked: S3 request URL points to a private/internal address"
+        );
         if self.has_credentials() {
             let signer = self.signer();
             let auth_headers = signer.sign_request("DELETE", url, &[], &[]);
@@ -346,6 +411,11 @@ impl CloudStorage for S3Client {
     fn exists(&self, key: &str) -> Result<bool> {
         log::debug!("S3 exists check: bucket={}, key={}", self.config.bucket, key);
         let url = self.object_url(key);
+        // SSRF protection: reject private/internal URLs
+        anyhow::ensure!(
+            is_safe_url(&url),
+            "SSRF blocked: S3 request URL points to a private/internal address"
+        );
         match self.signed_head(&url) {
             Ok(_) => Ok(true),
             Err(ureq::Error::Status(404, _)) => Ok(false),
@@ -1885,5 +1955,141 @@ mod tests {
         let h1 = signer.sign_request_at("GET", url, &[], b"", "20230524", "20230524T120000Z");
         let h2 = signer.sign_request_at("GET", url, &[], b"", "20230524", "20230524T120000Z");
         assert_eq!(h1, h2);
+    }
+
+    // ========================================================================
+    // SSRF protection tests
+    // ========================================================================
+
+    #[test]
+    fn test_ssrf_blocks_localhost() {
+        assert!(!is_safe_url("http://localhost/latest/meta-data/"));
+        assert!(!is_safe_url("https://localhost:8080/secret"));
+        assert!(!is_safe_url("http://LOCALHOST/admin"));
+    }
+
+    #[test]
+    fn test_ssrf_blocks_loopback_ip() {
+        assert!(!is_safe_url("http://127.0.0.1/"));
+        assert!(!is_safe_url("http://127.0.0.1:9000/bucket/key"));
+        assert!(!is_safe_url("http://127.255.255.255/test"));
+    }
+
+    #[test]
+    fn test_ssrf_blocks_private_10x() {
+        assert!(!is_safe_url("http://10.0.0.1/data"));
+        assert!(!is_safe_url("http://10.255.255.255/secret"));
+    }
+
+    #[test]
+    fn test_ssrf_blocks_private_172x() {
+        assert!(!is_safe_url("http://172.16.0.1/internal"));
+        assert!(!is_safe_url("http://172.31.255.255/admin"));
+    }
+
+    #[test]
+    fn test_ssrf_blocks_private_192x() {
+        assert!(!is_safe_url("http://192.168.0.1/router"));
+        assert!(!is_safe_url("http://192.168.1.100:3000/api"));
+    }
+
+    #[test]
+    fn test_ssrf_blocks_link_local() {
+        // AWS metadata endpoint
+        assert!(!is_safe_url("http://169.254.169.254/latest/meta-data/"));
+        assert!(!is_safe_url("http://169.254.0.1/something"));
+    }
+
+    #[test]
+    fn test_ssrf_blocks_zero_address() {
+        assert!(!is_safe_url("http://0.0.0.0/"));
+    }
+
+    #[test]
+    fn test_ssrf_blocks_internal_hostnames() {
+        assert!(!is_safe_url("http://myservice.local/api"));
+        assert!(!is_safe_url("http://db.internal/query"));
+        assert!(!is_safe_url("http://metadata.google.internal/computeMetadata/v1/"));
+    }
+
+    #[test]
+    fn test_ssrf_blocks_ipv6_loopback() {
+        assert!(!is_safe_url("http://[::1]/"));
+    }
+
+    #[test]
+    fn test_ssrf_allows_public_urls() {
+        assert!(is_safe_url("https://s3.us-east-1.amazonaws.com/bucket/key"));
+        assert!(is_safe_url("https://my-bucket.s3.us-west-2.amazonaws.com/path"));
+        assert!(is_safe_url("https://storage.googleapis.com/bucket/object"));
+        assert!(is_safe_url("https://minio.example.com:9000/data"));
+        assert!(is_safe_url("https://cdn.example.org/file.bin"));
+    }
+
+    #[test]
+    fn test_ssrf_s3_custom_endpoint_blocked() {
+        // An attacker-controlled endpoint pointing to the AWS metadata service
+        let config = S3Config::new("data", "us-east-1", "AKID", "secret")
+            .with_endpoint("http://169.254.169.254");
+        let client = S3Client::new(config);
+        // All operations should fail with SSRF block
+        let err = client.get("latest/meta-data/").unwrap_err();
+        assert!(
+            format!("{}", err).contains("SSRF blocked"),
+            "Expected SSRF error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_ssrf_s3_localhost_endpoint_blocked() {
+        let config = S3Config::new("data", "us-east-1", "AKID", "secret")
+            .with_endpoint("http://localhost:9000");
+        let client = S3Client::new(config);
+        let err = client.get("secret-key").unwrap_err();
+        assert!(
+            format!("{}", err).contains("SSRF blocked"),
+            "Expected SSRF error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_ssrf_s3_private_ip_endpoint_blocked() {
+        let config = S3Config::new("data", "us-east-1", "AKID", "secret")
+            .with_endpoint("http://192.168.1.100:9000");
+        let client = S3Client::new(config);
+        let err = client.put("key", b"data", None).unwrap_err();
+        assert!(
+            format!("{}", err).contains("SSRF blocked"),
+            "Expected SSRF error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_ssrf_s3_exists_blocked() {
+        let config = S3Config::new("data", "us-east-1", "AKID", "secret")
+            .with_endpoint("http://10.0.0.1");
+        let client = S3Client::new(config);
+        let err = client.exists("key").unwrap_err();
+        assert!(
+            format!("{}", err).contains("SSRF blocked"),
+            "Expected SSRF error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_ssrf_s3_delete_blocked() {
+        let config = S3Config::new("data", "us-east-1", "AKID", "secret")
+            .with_endpoint("http://172.16.0.1");
+        let client = S3Client::new(config);
+        let err = client.delete("key").unwrap_err();
+        assert!(
+            format!("{}", err).contains("SSRF blocked"),
+            "Expected SSRF error, got: {}",
+            err
+        );
     }
 }

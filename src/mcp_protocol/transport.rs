@@ -44,13 +44,7 @@ pub struct McpStreamableSession {
 impl McpStreamableSession {
     /// Create a new streamable HTTP session wrapping a server.
     pub fn new(server: McpServer) -> Self {
-        let session_id = format!(
-            "mcp-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis()
-        );
+        let session_id = generate_secure_session_id("mcp");
         Self {
             session_id,
             initialized: false,
@@ -97,4 +91,41 @@ impl McpStreamableSession {
         event.push('\n');
         self.pending_events.push(event);
     }
+}
+
+/// Generate a cryptographically unpredictable session ID.
+///
+/// Uses multiple `RandomState` instances (each seeded from OS entropy) to
+/// harvest 128 bits of randomness, then hex-encodes them. The resulting ID
+/// has the form `{prefix}-{32 hex chars}` (e.g. `mcp-a1b2c3d4...`).
+///
+/// This avoids depending on external crates: `std::collections::hash_map::RandomState`
+/// is guaranteed to be randomly seeded on construction (used for HashDoS resistance).
+pub(crate) fn generate_secure_session_id(prefix: &str) -> String {
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
+
+    // Harvest 128 bits (16 bytes) from 4 independent RandomState instances.
+    // Each RandomState::new() call reads fresh entropy from the OS.
+    let mut bytes = [0u8; 16];
+    for chunk in bytes.chunks_mut(4) {
+        let state = RandomState::new();
+        let mut h = state.build_hasher();
+        // Mix in a second RandomState for additional entropy
+        let extra = RandomState::new();
+        h.write_u64(extra.build_hasher().finish());
+        let val = h.finish();
+        for (i, b) in chunk.iter_mut().enumerate() {
+            *b = (val >> (i * 8)) as u8;
+        }
+    }
+
+    // Hex-encode to produce a 32-character string
+    let mut hex = String::with_capacity(prefix.len() + 1 + 32);
+    hex.push_str(prefix);
+    hex.push('-');
+    for b in &bytes {
+        hex.push_str(&format!("{:02x}", b));
+    }
+    hex
 }

@@ -17,6 +17,41 @@ mod inner {
 
     use crate::error::{AiError, MediaGenerationError};
 
+    // -- SSRF protection helper --------------------------------------------------
+
+    /// Check whether a URL is safe to fetch (i.e. not pointing at private/internal
+    /// addresses).  Used before downloading images from API-provided URLs to
+    /// prevent server-side request forgery.
+    fn is_safe_url(url: &str) -> bool {
+        if let Some(host) = url
+            .split("://")
+            .nth(1)
+            .and_then(|s| s.split('/').next())
+            .and_then(|s| s.split(':').next())
+        {
+            let lower = host.to_lowercase();
+            if lower == "localhost"
+                || lower.ends_with(".local")
+                || lower.ends_with(".internal")
+                || lower == "metadata.google.internal"
+            {
+                return false;
+            }
+            if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+                return match ip {
+                    std::net::IpAddr::V4(v4) => {
+                        !v4.is_loopback()
+                            && !v4.is_private()
+                            && !v4.is_link_local()
+                            && v4.octets() != [0, 0, 0, 0]
+                    }
+                    std::net::IpAddr::V6(v6) => !v6.is_loopback(),
+                };
+            }
+        }
+        true
+    }
+
     // -- Base64 decode helper (no external crate dependency) -------------------
 
     /// Decode a base64-encoded string into raw bytes.
@@ -372,6 +407,14 @@ mod inner {
                             }
                         })?
                     } else if let Some(url) = data["url"].as_str() {
+                        // SSRF protection: reject private/internal URLs
+                        if !is_safe_url(url) {
+                            return Err(MediaGenerationError::GenerationFailed {
+                                provider: self.provider_name().to_string(),
+                                reason: "SSRF blocked: image URL points to a private/internal address".to_string(),
+                            }
+                            .into());
+                        }
                         // Fetch image from URL
                         let img_resp = ureq::get(url)
                             .timeout(std::time::Duration::from_secs(60))
@@ -383,6 +426,7 @@ mod inner {
                         let mut bytes = Vec::new();
                         img_resp
                             .into_reader()
+                            .take(50_000_000) // 50MB limit
                             .read_to_end(&mut bytes)
                             .map_err(|e| MediaGenerationError::GenerationFailed {
                                 provider: self.provider_name().to_string(),
@@ -1029,6 +1073,15 @@ mod inner {
                     reason: "no output URL in prediction result".to_string(),
                 })?;
 
+            // SSRF protection: reject private/internal URLs
+            if !is_safe_url(output_url) {
+                return Err(MediaGenerationError::GenerationFailed {
+                    provider: self.provider_name().to_string(),
+                    reason: "SSRF blocked: output URL points to a private/internal address".to_string(),
+                }
+                .into());
+            }
+
             let img_resp = ureq::get(output_url)
                 .timeout(std::time::Duration::from_secs(60))
                 .call()
@@ -1040,6 +1093,7 @@ mod inner {
             let mut image_bytes = Vec::new();
             img_resp
                 .into_reader()
+                .take(50_000_000) // 50MB limit
                 .read_to_end(&mut image_bytes)
                 .map_err(|e| MediaGenerationError::GenerationFailed {
                     provider: self.provider_name().to_string(),

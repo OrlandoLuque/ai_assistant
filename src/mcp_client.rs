@@ -237,8 +237,14 @@ impl RemoteMcpClient {
 
         match self.try_real_connect() {
             Ok(()) => Ok(()),
-            Err(_) => {
-                // Fallback to simulated mode for testing
+            Err(e) => {
+                // SECURITY: Log a warning when falling back to simulated mode.
+                // Simulated mode returns fake data and should only be used in tests.
+                log::warn!(
+                    "MCP client falling back to simulated mode (server unreachable: {}). \
+                     Tool calls will return synthetic/fake responses.",
+                    e
+                );
                 self.connect_simulated()
             }
         }

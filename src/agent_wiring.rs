@@ -350,10 +350,23 @@ pub fn create_agent_from_definition_with_options(
         eprintln!("[agent_wiring] WARNING: {}", warning);
     }
 
-    // Build the sandbox
+    // Build the sandbox — approval handler derived from the agent's autonomy level.
+    // Only fully autonomous agents auto-approve; others require explicit approval.
+    let approval_handler: Arc<dyn crate::agent_policy::ApprovalHandler> = {
+        use crate::agent_policy::AutonomyLevel;
+        let autonomy = def.agent.autonomy_level
+            .as_deref()
+            .map(parse_autonomy_level)
+            .unwrap_or(AutonomyLevel::Normal);
+        match autonomy {
+            #[allow(deprecated)]
+            AutonomyLevel::Autonomous => Arc::new(AutoApproveAll),
+            _ => Arc::new(crate::agent_policy::AutoDenyAll),
+        }
+    };
     let sandbox = Arc::new(RwLock::new(SandboxValidator::with_approval(
         policy.clone(),
-        Arc::new(AutoApproveAll),
+        approval_handler,
     )));
 
     // Build max_iterations from guardrails

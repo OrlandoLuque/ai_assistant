@@ -136,6 +136,9 @@ pub struct DataSourceConfig {
     pub max_retries: usize,
     /// Base delay between retries in milliseconds (doubles each attempt).
     pub retry_delay_ms: u64,
+    /// When `true`, reject URLs pointing at private/internal addresses (SSRF protection).
+    /// Defaults to `true` — set to `false` only for trusted internal-network use cases.
+    pub ssrf_protection: bool,
 }
 
 impl Default for DataSourceConfig {
@@ -153,6 +156,7 @@ impl Default for DataSourceConfig {
             max_cache_entries: 1000,
             max_retries: 3,
             retry_delay_ms: 1000,
+            ssrf_protection: true,
         }
     }
 }
@@ -742,6 +746,39 @@ impl DataSourceClient {
         Err(last_error.unwrap_or_else(|| anyhow!("Request failed after {} retries", max_retries)))
     }
 
+    /// Check if a URL points at a private/internal address (SSRF protection).
+    fn is_private_url(url: &str) -> bool {
+        if let Some(host) = url
+            .split("://")
+            .nth(1)
+            .and_then(|s| s.split('/').next())
+            .and_then(|s| s.split(':').next())
+        {
+            let lower = host.to_lowercase();
+            if lower == "localhost"
+                || lower.ends_with(".local")
+                || lower.ends_with(".internal")
+                || lower == "metadata.google.internal"
+            {
+                return true;
+            }
+            if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+                return match ip {
+                    std::net::IpAddr::V4(v4) => {
+                        v4.is_loopback()
+                            || v4.is_private()
+                            || v4.is_link_local()
+                            || v4.octets() == [0, 0, 0, 0]
+                            // CGNAT range 100.64.0.0/10
+                            || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64)
+                    }
+                    std::net::IpAddr::V6(v6) => v6.is_loopback(),
+                };
+            }
+        }
+        false
+    }
+
     /// Executes a single HTTP request without retry logic.
     fn execute_request(
         &self,
@@ -749,6 +786,14 @@ impl DataSourceClient {
         method: &str,
         body: Option<&serde_json::Value>,
     ) -> Result<DataSourceResponse> {
+        // SSRF protection: reject requests to private/internal addresses
+        if self.config.ssrf_protection && Self::is_private_url(url) {
+            return Err(anyhow!(
+                "SSRF protection: request to private/internal address blocked: {}",
+                url
+            ));
+        }
+
         let start = Instant::now();
         let timeout_secs = self.config.timeout_ms / 1000;
 

@@ -239,6 +239,21 @@ impl AccessControlManager {
         resource_type: ResourceType,
         permission: Permission,
     ) -> bool {
+        let mut visited = std::collections::HashSet::new();
+        self.role_has_permission_inner(role_name, resource_type, permission, &mut visited)
+    }
+
+    fn role_has_permission_inner(
+        &self,
+        role_name: &str,
+        resource_type: ResourceType,
+        permission: Permission,
+        visited: &mut std::collections::HashSet<String>,
+    ) -> bool {
+        // Cycle detection: skip already-visited roles
+        if !visited.insert(role_name.to_string()) {
+            return false;
+        }
         if let Some(role) = self.roles.get(role_name) {
             // Check direct permissions
             if let Some(perms) = role.permissions.get(&resource_type) {
@@ -247,9 +262,9 @@ impl AccessControlManager {
                 }
             }
 
-            // Check inherited roles
+            // Check inherited roles (with cycle protection)
             for inherited in &role.inherits {
-                if self.role_has_permission(inherited, resource_type, permission) {
+                if self.role_has_permission_inner(inherited, resource_type, permission, visited) {
                     return true;
                 }
             }

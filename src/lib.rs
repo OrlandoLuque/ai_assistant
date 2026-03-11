@@ -551,8 +551,9 @@ pub mod p2p;
 #[cfg(feature = "p2p")]
 pub use p2p::{
     ContradictionReport, IceAgent, IceCandidate, IceCandidateType, IceState, KnowledgeShare,
-    NatDiscoveryResult, NatTraversal, NatType, P2PConfig, P2PManager, P2PStats, PeerConnection,
-    PeerDataTrust, PeerInfo, PeerMessage, PeerReputation, ReputationSystem, TurnConfig,
+    NatDiscoveryResult, NatTraversal, NatType, P2PConfig, P2PManager, P2PStats, P2PTransport,
+    PeerConnection, PeerDataTrust, PeerInfo, PeerMessage, PeerReputation, ReputationSystem,
+    TurnConfig, WireEnvelope,
 };
 
 // =============================================================================
@@ -1702,7 +1703,7 @@ pub use api_key_rotation::{ApiKey, ApiKeyManager, KeyStats, KeyStatus, RotationC
 
 pub use forecasting::{CapacityEstimate, Trend, UsageDataPoint, UsageForecast, UsageForecaster};
 
-pub use request_signing::{RequestSigner, SignatureAlgorithm, SignatureError, SignedRequest};
+pub use request_signing::{RequestSigner, RequestVerifier, SignatureAlgorithm, SignatureError, SignedRequest};
 
 pub use webhooks::{
     verify_webhook_signature, DeliveryResult, WebhookConfig, WebhookEvent, WebhookManager,

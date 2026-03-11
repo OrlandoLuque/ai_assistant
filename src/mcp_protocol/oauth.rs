@@ -176,12 +176,36 @@ impl McpOAuthTokenManager {
     }
 
     /// Generate a PKCE code challenge from a code verifier (S256 method).
-    /// Uses SHA-256 per RFC 7636.
+    /// Uses SHA-256 + base64url encoding per RFC 7636 §4.2.
     pub fn generate_pkce_challenge(verifier: &str) -> (String, String) {
         use crate::request_signing::sha256;
         let hash = sha256::sha256(verifier.as_bytes());
-        let challenge = sha256::hex_encode(&hash);
+        // RFC 7636 requires base64url encoding (no padding) of the SHA-256 hash
+        let challenge = Self::base64url_encode_no_pad(&hash);
         (challenge, "S256".to_string())
+    }
+
+    /// Base64url encode without padding (RFC 4648 §5, used by RFC 7636).
+    fn base64url_encode_no_pad(data: &[u8]) -> String {
+        const ALPHABET: &[u8; 64] =
+            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+        let mut out = String::with_capacity((data.len() * 4 + 2) / 3);
+        let chunks = data.chunks(3);
+        for chunk in chunks {
+            let b0 = chunk[0] as u32;
+            let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
+            let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
+            let triple = (b0 << 16) | (b1 << 8) | b2;
+            out.push(ALPHABET[((triple >> 18) & 0x3F) as usize] as char);
+            out.push(ALPHABET[((triple >> 12) & 0x3F) as usize] as char);
+            if chunk.len() > 1 {
+                out.push(ALPHABET[((triple >> 6) & 0x3F) as usize] as char);
+            }
+            if chunk.len() > 2 {
+                out.push(ALPHABET[(triple & 0x3F) as usize] as char);
+            }
+        }
+        out
     }
 
     /// Get a reference to the config.
