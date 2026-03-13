@@ -103,8 +103,12 @@ enum KnowledgeStatus {
 #[derive(Clone, Copy, PartialEq)]
 enum ModelCategory {
     Chat,
+    Creative,
     Code,
+    Math,
     Vision,
+    Multilingual,
+    Embedding,
     SmallFast,
     LargePowerful,
 }
@@ -113,25 +117,37 @@ impl ModelCategory {
     fn label(&self) -> &'static str {
         match self {
             Self::Chat => "Chat",
+            Self::Creative => "Creative",
             Self::Code => "Code",
+            Self::Math => "Math",
             Self::Vision => "Vision",
-            Self::SmallFast => "Small & Fast",
+            Self::Multilingual => "Multilingual",
+            Self::Embedding => "Embeddings",
+            Self::SmallFast => "Small",
             Self::LargePowerful => "Large",
         }
     }
 
     fn icon(&self) -> &'static str {
         match self {
-            Self::Chat => "\u{1f4ac}",
-            Self::Code => "\u{1f4bb}",
-            Self::Vision => "\u{1f441}",
-            Self::SmallFast => "\u{26a1}",
-            Self::LargePowerful => "\u{1f9e0}",
+            Self::Chat => "\u{1f4ac}",       // speech bubble
+            Self::Creative => "\u{270d}",     // writing hand
+            Self::Code => "\u{1f4bb}",        // laptop
+            Self::Math => "\u{1f9ee}",        // abacus
+            Self::Vision => "\u{1f441}",      // eye
+            Self::Multilingual => "\u{1f310}", // globe
+            Self::Embedding => "\u{1f50d}",   // magnifying glass
+            Self::SmallFast => "\u{26a1}",    // lightning
+            Self::LargePowerful => "\u{1f9e0}", // brain
         }
     }
 
     fn all() -> &'static [ModelCategory] {
-        &[Self::Chat, Self::Code, Self::Vision, Self::SmallFast, Self::LargePowerful]
+        &[
+            Self::Chat, Self::Creative, Self::Code, Self::Math,
+            Self::Vision, Self::Multilingual, Self::Embedding,
+            Self::SmallFast, Self::LargePowerful,
+        ]
     }
 }
 
@@ -145,27 +161,70 @@ struct CatalogModel {
 
 fn model_catalog() -> Vec<CatalogModel> {
     vec![
-        // Chat (General)
-        CatalogModel { name: "llama3.2", size_estimate: "~2.0 GB", description: "Meta Llama 3.2, great all-rounder", category: ModelCategory::Chat },
-        CatalogModel { name: "mistral", size_estimate: "~4.1 GB", description: "Mistral 7B, strong reasoning", category: ModelCategory::Chat },
-        CatalogModel { name: "gemma2", size_estimate: "~5.0 GB", description: "Google Gemma 2, efficient and capable", category: ModelCategory::Chat },
-        CatalogModel { name: "phi3", size_estimate: "~2.3 GB", description: "Microsoft Phi-3, compact but powerful", category: ModelCategory::Chat },
-        // Code
-        CatalogModel { name: "codellama", size_estimate: "~3.8 GB", description: "Meta's code-specialized Llama", category: ModelCategory::Code },
-        CatalogModel { name: "deepseek-coder", size_estimate: "~3.8 GB", description: "DeepSeek code generation model", category: ModelCategory::Code },
-        CatalogModel { name: "qwen2.5-coder", size_estimate: "~4.7 GB", description: "Alibaba Qwen code model, multilingual", category: ModelCategory::Code },
-        // Vision
-        CatalogModel { name: "llava", size_estimate: "~4.7 GB", description: "Vision + language, image understanding", category: ModelCategory::Vision },
-        CatalogModel { name: "llava-llama3", size_estimate: "~5.5 GB", description: "LLaVA on Llama 3 backbone", category: ModelCategory::Vision },
-        // Small & Fast
-        CatalogModel { name: "llama3.2:1b", size_estimate: "~0.7 GB", description: "Tiny Llama, very fast inference", category: ModelCategory::SmallFast },
-        CatalogModel { name: "phi3:mini", size_estimate: "~1.4 GB", description: "Microsoft's smallest Phi-3", category: ModelCategory::SmallFast },
-        CatalogModel { name: "tinyllama", size_estimate: "~0.6 GB", description: "Smallest practical LLM", category: ModelCategory::SmallFast },
-        CatalogModel { name: "qwen2.5:0.5b", size_estimate: "~0.4 GB", description: "Ultra-small Qwen model", category: ModelCategory::SmallFast },
-        // Large & Powerful
-        CatalogModel { name: "llama3.1:70b", size_estimate: "~39 GB", description: "Full-size Llama, near-GPT-4 quality", category: ModelCategory::LargePowerful },
-        CatalogModel { name: "mixtral", size_estimate: "~26 GB", description: "Mixture of Experts, expert routing", category: ModelCategory::LargePowerful },
-        CatalogModel { name: "command-r", size_estimate: "~20 GB", description: "Cohere's RAG-optimized model", category: ModelCategory::LargePowerful },
+        // ── Chat (General) ──────────────────────────────────────────────
+        CatalogModel { name: "llama3.2",   size_estimate: "~2.0 GB",  description: "Meta Llama 3.2, great all-rounder",       category: ModelCategory::Chat },
+        CatalogModel { name: "mistral",    size_estimate: "~4.1 GB",  description: "Mistral 7B, strong reasoning",            category: ModelCategory::Chat },
+        CatalogModel { name: "gemma2",     size_estimate: "~5.0 GB",  description: "Google Gemma 2, efficient and capable",    category: ModelCategory::Chat },
+        CatalogModel { name: "phi3",       size_estimate: "~2.3 GB",  description: "Microsoft Phi-3, compact but powerful",    category: ModelCategory::Chat },
+        CatalogModel { name: "qwen2.5",    size_estimate: "~4.7 GB",  description: "Alibaba Qwen 2.5, well-rounded 7B",       category: ModelCategory::Chat },
+        CatalogModel { name: "neural-chat",size_estimate: "~4.1 GB",  description: "Intel fine-tuned Mistral for conversation",category: ModelCategory::Chat },
+
+        // ── Creative / Narration ────────────────────────────────────────
+        CatalogModel { name: "nous-hermes2",     size_estimate: "~4.1 GB",  description: "Excellent storytelling and creative writing",   category: ModelCategory::Creative },
+        CatalogModel { name: "dolphin-mixtral",   size_estimate: "~26 GB",   description: "Uncensored MoE, rich narrative generation",     category: ModelCategory::Creative },
+        CatalogModel { name: "openhermes",        size_estimate: "~4.1 GB",  description: "Fine-tuned for creative and instructional text",category: ModelCategory::Creative },
+        CatalogModel { name: "samantha-mistral",  size_estimate: "~4.1 GB",  description: "Companion-style, empathetic conversation",      category: ModelCategory::Creative },
+        CatalogModel { name: "yarn-mistral:7b",   size_estimate: "~4.1 GB",  description: "Extended context (128k) for long narratives",   category: ModelCategory::Creative },
+        CatalogModel { name: "stablelm2",         size_estimate: "~1.0 GB",  description: "StabilityAI creative text model",               category: ModelCategory::Creative },
+
+        // ── Code ────────────────────────────────────────────────────────
+        CatalogModel { name: "codellama",       size_estimate: "~3.8 GB",  description: "Meta's code-specialized Llama",              category: ModelCategory::Code },
+        CatalogModel { name: "deepseek-coder",  size_estimate: "~3.8 GB",  description: "DeepSeek code generation model",             category: ModelCategory::Code },
+        CatalogModel { name: "qwen2.5-coder",   size_estimate: "~4.7 GB",  description: "Alibaba Qwen code model, multilingual",      category: ModelCategory::Code },
+        CatalogModel { name: "starcoder2",       size_estimate: "~3.8 GB",  description: "BigCode StarCoder 2, multi-language code",   category: ModelCategory::Code },
+        CatalogModel { name: "codegemma",        size_estimate: "~5.0 GB",  description: "Google code model, fill-in-the-middle",     category: ModelCategory::Code },
+        CatalogModel { name: "codellama:34b",    size_estimate: "~19 GB",   description: "Large CodeLlama for complex code tasks",     category: ModelCategory::Code },
+
+        // ── Math / Reasoning ────────────────────────────────────────────
+        CatalogModel { name: "mathstral",       size_estimate: "~4.1 GB",  description: "Mistral fine-tuned for math & science",     category: ModelCategory::Math },
+        CatalogModel { name: "wizard-math",     size_estimate: "~4.1 GB",  description: "WizardMath, step-by-step problem solving",  category: ModelCategory::Math },
+        CatalogModel { name: "deepseek-math",   size_estimate: "~4.1 GB",  description: "DeepSeek math specialist, competition-level", category: ModelCategory::Math },
+        CatalogModel { name: "nous-hermes2-mixtral", size_estimate: "~26 GB", description: "MoE with strong logical reasoning",     category: ModelCategory::Math },
+
+        // ── Vision ──────────────────────────────────────────────────────
+        CatalogModel { name: "llava",          size_estimate: "~4.7 GB",  description: "Vision + language, image understanding",     category: ModelCategory::Vision },
+        CatalogModel { name: "llava-llama3",   size_estimate: "~5.5 GB",  description: "LLaVA on Llama 3 backbone",                 category: ModelCategory::Vision },
+        CatalogModel { name: "bakllava",       size_estimate: "~4.7 GB",  description: "BakLLaVA, Mistral-based vision model",      category: ModelCategory::Vision },
+        CatalogModel { name: "llava:13b",      size_estimate: "~8.0 GB",  description: "Larger LLaVA for detailed image analysis",  category: ModelCategory::Vision },
+        CatalogModel { name: "moondream",      size_estimate: "~1.0 GB",  description: "Tiny vision model, fast image Q&A",         category: ModelCategory::Vision },
+
+        // ── Multilingual ────────────────────────────────────────────────
+        CatalogModel { name: "aya",            size_estimate: "~4.8 GB",  description: "Cohere Aya, 100+ languages",                category: ModelCategory::Multilingual },
+        CatalogModel { name: "qwen2.5:7b",    size_estimate: "~4.7 GB",  description: "Strong Chinese + English + more",            category: ModelCategory::Multilingual },
+        CatalogModel { name: "mistral-nemo",   size_estimate: "~7.1 GB",  description: "Mistral 12B, multilingual + long context",   category: ModelCategory::Multilingual },
+        CatalogModel { name: "gemma2:2b",      size_estimate: "~1.6 GB",  description: "Google, good multilingual at small size",    category: ModelCategory::Multilingual },
+
+        // ── Embeddings (for RAG) ────────────────────────────────────────
+        CatalogModel { name: "nomic-embed-text",  size_estimate: "~0.3 GB",  description: "Best open-source embedding, 8192 tokens",  category: ModelCategory::Embedding },
+        CatalogModel { name: "mxbai-embed-large",  size_estimate: "~0.7 GB",  description: "MixedBread AI, high quality embeddings",   category: ModelCategory::Embedding },
+        CatalogModel { name: "all-minilm",         size_estimate: "~0.05 GB", description: "Ultra-light sentence embeddings",          category: ModelCategory::Embedding },
+        CatalogModel { name: "snowflake-arctic-embed", size_estimate: "~0.7 GB", description: "Snowflake Arctic, retrieval-optimized", category: ModelCategory::Embedding },
+
+        // ── Small & Fast (< 4 GB VRAM) ─────────────────────────────────
+        CatalogModel { name: "llama3.2:1b",   size_estimate: "~0.7 GB",  description: "Tiny Llama, very fast inference",            category: ModelCategory::SmallFast },
+        CatalogModel { name: "phi3:mini",      size_estimate: "~1.4 GB",  description: "Microsoft's smallest Phi-3",                category: ModelCategory::SmallFast },
+        CatalogModel { name: "tinyllama",      size_estimate: "~0.6 GB",  description: "Smallest practical chat LLM",               category: ModelCategory::SmallFast },
+        CatalogModel { name: "qwen2.5:0.5b",  size_estimate: "~0.4 GB",  description: "Ultra-small Qwen model",                    category: ModelCategory::SmallFast },
+        CatalogModel { name: "gemma2:2b",      size_estimate: "~1.6 GB",  description: "Google's 2B model, fast and capable",       category: ModelCategory::SmallFast },
+        CatalogModel { name: "stablelm2:1.6b", size_estimate: "~1.0 GB",  description: "StabilityAI 1.6B, CPU-friendly",           category: ModelCategory::SmallFast },
+
+        // ── Large & Powerful (16+ GB VRAM) ──────────────────────────────
+        CatalogModel { name: "llama3.1:70b",   size_estimate: "~39 GB",   description: "Full-size Llama 3.1, near-GPT-4 quality",   category: ModelCategory::LargePowerful },
+        CatalogModel { name: "mixtral",         size_estimate: "~26 GB",   description: "Mixture of Experts, 8x7B routing",          category: ModelCategory::LargePowerful },
+        CatalogModel { name: "command-r",       size_estimate: "~20 GB",   description: "Cohere's RAG-optimized 35B model",          category: ModelCategory::LargePowerful },
+        CatalogModel { name: "qwen2.5:72b",    size_estimate: "~41 GB",   description: "Alibaba 72B, top-tier open model",          category: ModelCategory::LargePowerful },
+        CatalogModel { name: "deepseek-coder:33b", size_estimate: "~19 GB", description: "Large DeepSeek for complex code",         category: ModelCategory::LargePowerful },
+        CatalogModel { name: "llama3.1:8b",    size_estimate: "~4.7 GB",  description: "Llama 3.1 8B, 128k context window",         category: ModelCategory::LargePowerful },
     ]
 }
 
@@ -1294,6 +1353,38 @@ impl AiGuiApp {
                 });
 
                 ui.separator();
+
+                // --- VRAM guide ---
+                ui.add_space(4.0);
+                egui::CollapsingHeader::new(
+                    egui::RichText::new("\u{1f4be} VRAM Guide: Which models fit your GPU?")
+                        .size(11.0)
+                        .color(Color32::LIGHT_GRAY),
+                )
+                .default_open(false)
+                .show(ui, |ui| {
+                    let vram_info = [
+                        ("4 GB",  "Small & Fast models, embeddings (tinyllama, phi3:mini, qwen2.5:0.5b)"),
+                        ("6 GB",  "Most 7B models (llama3.2, mistral, codellama, gemma2:2b)"),
+                        ("8 GB",  "7B models comfortably + some 13B quantized (llava, phi3)"),
+                        ("12 GB", "13B models, multiple small models simultaneously"),
+                        ("16 GB", "13B comfortably, some 33B quantized (codellama:34b)"),
+                        ("24 GB", "33-35B models (command-r, deepseek-coder:33b)"),
+                        ("48 GB+","70B+ models (llama3.1:70b, qwen2.5:72b, mixtral)"),
+                        ("CPU",   "Any model works on CPU (slower). 16+ GB RAM recommended."),
+                    ];
+                    egui::Grid::new("vram_guide")
+                        .num_columns(2)
+                        .spacing([12.0, 3.0])
+                        .show(ui, |ui| {
+                            for (vram, desc) in &vram_info {
+                                ui.label(egui::RichText::new(*vram).size(11.0).strong().color(Color32::from_rgb(130, 180, 255)));
+                                ui.label(egui::RichText::new(*desc).size(10.0).color(Color32::LIGHT_GRAY));
+                                ui.end_row();
+                            }
+                        });
+                });
+                ui.add_space(4.0);
 
                 // --- Model list ---
                 let catalog = model_catalog();
