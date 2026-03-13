@@ -96,6 +96,106 @@ enum KnowledgeStatus {
     Error(String),
 }
 
+// =============================================================================
+// Model Wizard Types
+// =============================================================================
+
+#[derive(Clone, Copy, PartialEq)]
+enum ModelCategory {
+    Chat,
+    Code,
+    Vision,
+    SmallFast,
+    LargePowerful,
+}
+
+impl ModelCategory {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::Chat => "Chat",
+            Self::Code => "Code",
+            Self::Vision => "Vision",
+            Self::SmallFast => "Small & Fast",
+            Self::LargePowerful => "Large",
+        }
+    }
+
+    fn icon(&self) -> &'static str {
+        match self {
+            Self::Chat => "\u{1f4ac}",
+            Self::Code => "\u{1f4bb}",
+            Self::Vision => "\u{1f441}",
+            Self::SmallFast => "\u{26a1}",
+            Self::LargePowerful => "\u{1f9e0}",
+        }
+    }
+
+    fn all() -> &'static [ModelCategory] {
+        &[Self::Chat, Self::Code, Self::Vision, Self::SmallFast, Self::LargePowerful]
+    }
+}
+
+#[derive(Clone)]
+struct CatalogModel {
+    name: &'static str,
+    size_estimate: &'static str,
+    description: &'static str,
+    category: ModelCategory,
+}
+
+fn model_catalog() -> Vec<CatalogModel> {
+    vec![
+        // Chat (General)
+        CatalogModel { name: "llama3.2", size_estimate: "~2.0 GB", description: "Meta Llama 3.2, great all-rounder", category: ModelCategory::Chat },
+        CatalogModel { name: "mistral", size_estimate: "~4.1 GB", description: "Mistral 7B, strong reasoning", category: ModelCategory::Chat },
+        CatalogModel { name: "gemma2", size_estimate: "~5.0 GB", description: "Google Gemma 2, efficient and capable", category: ModelCategory::Chat },
+        CatalogModel { name: "phi3", size_estimate: "~2.3 GB", description: "Microsoft Phi-3, compact but powerful", category: ModelCategory::Chat },
+        // Code
+        CatalogModel { name: "codellama", size_estimate: "~3.8 GB", description: "Meta's code-specialized Llama", category: ModelCategory::Code },
+        CatalogModel { name: "deepseek-coder", size_estimate: "~3.8 GB", description: "DeepSeek code generation model", category: ModelCategory::Code },
+        CatalogModel { name: "qwen2.5-coder", size_estimate: "~4.7 GB", description: "Alibaba Qwen code model, multilingual", category: ModelCategory::Code },
+        // Vision
+        CatalogModel { name: "llava", size_estimate: "~4.7 GB", description: "Vision + language, image understanding", category: ModelCategory::Vision },
+        CatalogModel { name: "llava-llama3", size_estimate: "~5.5 GB", description: "LLaVA on Llama 3 backbone", category: ModelCategory::Vision },
+        // Small & Fast
+        CatalogModel { name: "llama3.2:1b", size_estimate: "~0.7 GB", description: "Tiny Llama, very fast inference", category: ModelCategory::SmallFast },
+        CatalogModel { name: "phi3:mini", size_estimate: "~1.4 GB", description: "Microsoft's smallest Phi-3", category: ModelCategory::SmallFast },
+        CatalogModel { name: "tinyllama", size_estimate: "~0.6 GB", description: "Smallest practical LLM", category: ModelCategory::SmallFast },
+        CatalogModel { name: "qwen2.5:0.5b", size_estimate: "~0.4 GB", description: "Ultra-small Qwen model", category: ModelCategory::SmallFast },
+        // Large & Powerful
+        CatalogModel { name: "llama3.1:70b", size_estimate: "~39 GB", description: "Full-size Llama, near-GPT-4 quality", category: ModelCategory::LargePowerful },
+        CatalogModel { name: "mixtral", size_estimate: "~26 GB", description: "Mixture of Experts, expert routing", category: ModelCategory::LargePowerful },
+        CatalogModel { name: "command-r", size_estimate: "~20 GB", description: "Cohere's RAG-optimized model", category: ModelCategory::LargePowerful },
+    ]
+}
+
+#[allow(dead_code)]
+enum PullStatus {
+    InProgress { model: String, last_line: String },
+    Completed(String),
+    Failed { model: String, error: String },
+}
+
+struct ModelWizardState {
+    selected_provider_idx: usize,
+    category_filter: Option<ModelCategory>,
+    pull_rx: Option<mpsc::Receiver<PullStatus>>,
+    pulling_model: Option<String>,
+    pull_progress_line: String,
+}
+
+impl Default for ModelWizardState {
+    fn default() -> Self {
+        Self {
+            selected_provider_idx: 0,
+            category_filter: None,
+            pull_rx: None,
+            pulling_model: None,
+            pull_progress_line: String::new(),
+        }
+    }
+}
+
 /// Metadata captured when an assistant response completes.
 /// Indexed by assistant-message position in conversation.
 struct ResponseDetail {
@@ -213,6 +313,10 @@ struct AiGuiApp {
     toasts: Vec<(String, bool, Instant)>,
     last_dir: Option<PathBuf>,
 
+    // Model wizard
+    show_model_wizard: bool,
+    wizard_state: ModelWizardState,
+
     // Persistence
     data_dir: PathBuf,
 }
@@ -290,6 +394,9 @@ impl AiGuiApp {
             settings: GuiSettings::default(),
             toasts: Vec::new(),
             last_dir: None,
+
+            show_model_wizard: false,
+            wizard_state: ModelWizardState::default(),
 
             data_dir,
         }
@@ -389,18 +496,41 @@ impl AiGuiApp {
                 }
             }
         }
+
+        // 5. Ollama pull progress
+        if let Some(ref rx) = self.wizard_state.pull_rx {
+            let mut done = false;
+            while let Ok(status) = rx.try_recv() {
+                match status {
+                    PullStatus::InProgress { last_line, .. } => {
+                        self.wizard_state.pull_progress_line = last_line;
+                    }
+                    PullStatus::Completed(model) => {
+                        self.wizard_state.pulling_model = None;
+                        self.wizard_state.pull_progress_line.clear();
+                        self.add_toast(&format!("Model '{}' installed!", model), false);
+                        self.assistant.fetch_models();
+                        done = true;
+                        break;
+                    }
+                    PullStatus::Failed { model, error } => {
+                        self.wizard_state.pulling_model = None;
+                        self.wizard_state.pull_progress_line.clear();
+                        self.add_toast(&format!("Failed to pull '{}': {}", model, error), true);
+                        done = true;
+                        break;
+                    }
+                }
+            }
+            if done {
+                self.wizard_state.pull_rx = None;
+            }
+        }
     }
 
     fn apply_scan_result(&mut self, result: ScanResult) {
         if result.report.llm_providers.is_empty() {
-            self.phase = AppPhase::NoProviders(
-                "No local LLM providers detected.\n\n\
-                 To get started:\n\
-                 1. Install Ollama from https://ollama.ai\n\
-                 2. Run: ollama pull llama3\n\
-                 3. Click 'Retry Scan' below"
-                    .to_string(),
-            );
+            self.phase = AppPhase::NoProviders(String::new());
         } else {
             self.assistant.load_config(result.config.clone());
 
@@ -808,47 +938,567 @@ impl AiGuiApp {
                 ui.spinner();
                 ui.add_space(16.0);
                 ui.heading("Scanning for LLM providers...");
-                ui.label("Checking Ollama, LM Studio, and cloud APIs");
+                ui.label("Checking Ollama, LM Studio, and cloud API keys");
             });
         });
     }
 
-    fn render_no_providers_screen(&mut self, ctx: &egui::Context, msg: String) {
+    fn render_no_providers_screen(&mut self, ctx: &egui::Context, _msg: String) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.vertical_centered(|ui| {
-                ui.add_space(ui.available_height() / 4.0);
-                ui.heading("No LLM Providers Found");
-                ui.add_space(16.0);
-                ui.label(&msg);
-                ui.add_space(24.0);
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(30.0);
+                    ui.label(egui::RichText::new("No LLM Providers Found").size(28.0).strong());
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new("Install a local LLM provider to get started")
+                            .size(14.0)
+                            .color(Color32::GRAY),
+                    );
+                    ui.add_space(24.0);
 
-                let field_width = (ui.available_width() * 0.6).min(400.0);
-                ui.allocate_ui(egui::vec2(field_width, 0.0), |ui| {
-                    egui::Grid::new("provider_urls_grid")
-                        .num_columns(2)
-                        .spacing([8.0, 8.0])
-                        .show(ui, |ui| {
-                            ui.label("Ollama URL:");
-                            ui.add_sized(
-                                [ui.available_width(), 20.0],
-                                egui::TextEdit::singleline(&mut self.settings.ollama_url),
-                            );
-                            ui.end_row();
-                            ui.label("LM Studio URL:");
-                            ui.add_sized(
-                                [ui.available_width(), 20.0],
-                                egui::TextEdit::singleline(&mut self.settings.lm_studio_url),
-                            );
-                            ui.end_row();
-                        });
+                    // Provider recommendation cards
+                    let card_width = (ui.available_width() * 0.42).min(320.0);
+                    ui.horizontal(|ui| {
+                        ui.add_space((ui.available_width() - card_width * 2.0 - 16.0).max(0.0) / 2.0);
+
+                        // Ollama card
+                        Self::render_provider_card(
+                            ui,
+                            card_width,
+                            "\u{1f999}", // llama emoji
+                            "Ollama",
+                            "Lightweight CLI tool for running LLMs locally. \
+                             The fastest way to get started.",
+                            "https://ollama.com",
+                            &[
+                                "Download and install from the link above",
+                                "Open a terminal and run:",
+                                "   ollama pull llama3.2",
+                                "Click 'Retry Scan' below",
+                            ],
+                        );
+                        ui.add_space(16.0);
+                        // LM Studio card
+                        Self::render_provider_card(
+                            ui,
+                            card_width,
+                            "\u{1f3ac}", // clapper emoji
+                            "LM Studio",
+                            "Desktop application with a graphical model \
+                             manager and built-in server.",
+                            "https://lmstudio.ai",
+                            &[
+                                "Download and install from the link above",
+                                "Launch LM Studio",
+                                "Download a model from the Discover tab",
+                                "Start the local server (Developer tab)",
+                                "Click 'Retry Scan' below",
+                            ],
+                        );
+                    });
+
+                    ui.add_space(20.0);
+
+                    // Cloud API note
+                    let note_width = (ui.available_width() * 0.7).min(660.0);
+                    ui.allocate_ui(egui::vec2(note_width, 0.0), |ui| {
+                        egui::Frame::none()
+                            .fill(Color32::from_rgb(40, 40, 30))
+                            .rounding(6.0)
+                            .inner_margin(12.0)
+                            .show(ui, |ui| {
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label(egui::RichText::new("\u{1f4a1}").size(14.0));
+                                    ui.label(
+                                        egui::RichText::new(
+                                            "Cloud APIs: Set OPENAI_API_KEY or ANTHROPIC_API_KEY \
+                                             as environment variables, then retry the scan."
+                                        )
+                                        .size(12.0)
+                                        .color(Color32::from_rgb(200, 200, 160)),
+                                    );
+                                });
+                            });
+                    });
+
+                    ui.add_space(24.0);
+                    ui.separator();
+                    ui.add_space(12.0);
+
+                    ui.label(
+                        egui::RichText::new("Already installed? Enter custom URLs:")
+                            .size(12.0)
+                            .color(Color32::GRAY),
+                    );
+                    ui.add_space(8.0);
+
+                    // URL input fields
+                    let field_width = (ui.available_width() * 0.5).min(400.0);
+                    ui.allocate_ui(egui::vec2(field_width, 0.0), |ui| {
+                        egui::Grid::new("provider_urls_grid")
+                            .num_columns(2)
+                            .spacing([8.0, 8.0])
+                            .show(ui, |ui| {
+                                ui.label("Ollama URL:");
+                                ui.add_sized(
+                                    [ui.available_width(), 20.0],
+                                    egui::TextEdit::singleline(&mut self.settings.ollama_url),
+                                );
+                                ui.end_row();
+                                ui.label("LM Studio URL:");
+                                ui.add_sized(
+                                    [ui.available_width(), 20.0],
+                                    egui::TextEdit::singleline(&mut self.settings.lm_studio_url),
+                                );
+                                ui.end_row();
+                            });
+                    });
+                    ui.add_space(16.0);
+
+                    if ui.button("Retry Scan").clicked() {
+                        self.retry_scan();
+                    }
+                    ui.add_space(20.0);
                 });
-                ui.add_space(16.0);
-
-                if ui.button("Retry Scan").clicked() {
-                    self.retry_scan();
-                }
             });
         });
+    }
+
+    fn render_provider_card(
+        ui: &mut Ui,
+        width: f32,
+        icon: &str,
+        name: &str,
+        description: &str,
+        url: &str,
+        steps: &[&str],
+    ) {
+        ui.allocate_ui(egui::vec2(width, 0.0), |ui| {
+            egui::Frame::none()
+                .fill(Color32::from_rgb(35, 40, 50))
+                .rounding(10.0)
+                .inner_margin(16.0)
+                .show(ui, |ui| {
+                    ui.set_min_width(width - 32.0);
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(icon).size(22.0));
+                        ui.label(egui::RichText::new(name).size(18.0).strong());
+                    });
+                    ui.add_space(6.0);
+                    ui.label(
+                        egui::RichText::new(description).size(12.0).color(Color32::LIGHT_GRAY),
+                    );
+                    ui.add_space(8.0);
+                    ui.hyperlink_to(
+                        egui::RichText::new(format!("\u{1f517} {}", url)).size(12.0),
+                        url,
+                    );
+                    ui.add_space(10.0);
+                    ui.label(egui::RichText::new("How to install:").size(12.0).strong());
+                    ui.add_space(4.0);
+                    let mut step_num = 1;
+                    for step in steps.iter() {
+                        if step.starts_with("   ") {
+                            // Indented code-like text (not numbered)
+                            ui.label(
+                                egui::RichText::new(*step)
+                                    .size(12.0)
+                                    .color(Color32::from_rgb(130, 200, 130))
+                                    .monospace(),
+                            );
+                        } else {
+                            ui.label(
+                                egui::RichText::new(format!("{}. {}", step_num, step))
+                                    .size(12.0)
+                                    .color(Color32::LIGHT_GRAY),
+                            );
+                            step_num += 1;
+                        }
+                    }
+                });
+        });
+    }
+
+    // =========================================================================
+    // Model Wizard
+    // =========================================================================
+
+    fn start_ollama_pull(&mut self, model_name: &str) {
+        if self.wizard_state.pulling_model.is_some() {
+            self.add_toast("Already pulling a model, please wait", true);
+            return;
+        }
+
+        let name = model_name.to_string();
+        let (tx, rx) = mpsc::channel::<PullStatus>();
+        self.wizard_state.pull_rx = Some(rx);
+        self.wizard_state.pulling_model = Some(name.clone());
+        self.wizard_state.pull_progress_line.clear();
+
+        std::thread::spawn(move || {
+            let result = std::process::Command::new("ollama")
+                .args(["pull", &name])
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn();
+
+            match result {
+                Ok(mut child) => {
+                    // Read stderr (where ollama writes progress)
+                    if let Some(stderr) = child.stderr.take() {
+                        use std::io::Read as _;
+                        let mut reader = std::io::BufReader::new(stderr);
+                        let mut buf = [0u8; 512];
+                        loop {
+                            match reader.read(&mut buf) {
+                                Ok(0) => break,
+                                Ok(n) => {
+                                    let text = String::from_utf8_lossy(&buf[..n]);
+                                    // Extract the last meaningful line
+                                    let line = text
+                                        .split('\r')
+                                        .filter(|s| !s.trim().is_empty())
+                                        .last()
+                                        .unwrap_or("")
+                                        .trim()
+                                        .to_string();
+                                    if !line.is_empty() {
+                                        let _ = tx.send(PullStatus::InProgress {
+                                            model: name.clone(),
+                                            last_line: line,
+                                        });
+                                    }
+                                }
+                                Err(_) => break,
+                            }
+                        }
+                    }
+                    match child.wait() {
+                        Ok(status) if status.success() => {
+                            let _ = tx.send(PullStatus::Completed(name));
+                        }
+                        Ok(status) => {
+                            let _ = tx.send(PullStatus::Failed {
+                                model: name,
+                                error: format!("Process exited with code: {}", status),
+                            });
+                        }
+                        Err(e) => {
+                            let _ = tx.send(PullStatus::Failed {
+                                model: name,
+                                error: format!("Wait error: {}", e),
+                            });
+                        }
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(PullStatus::Failed {
+                        model: name,
+                        error: format!(
+                            "Could not start ollama. Is it installed and on your PATH? ({})",
+                            e
+                        ),
+                    });
+                }
+            }
+        });
+    }
+
+    fn render_model_wizard(&mut self, ctx: &egui::Context) {
+        if !self.show_model_wizard {
+            return;
+        }
+
+        let mut open = true;
+        let mut pull_request: Option<String> = None;
+
+        egui::Window::new("Model Library")
+            .open(&mut open)
+            .resizable(true)
+            .default_width(560.0)
+            .default_height(500.0)
+            .show(ctx, |ui| {
+                // --- Provider selector + Refresh ---
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("Provider:").size(12.0));
+
+                    // Build provider list from scan data
+                    let providers: Vec<(String, ai_assistant::AiProvider)> =
+                        if let Some(ref scan) = self.scan_result_data {
+                            scan.report
+                                .llm_providers
+                                .iter()
+                                .map(|p| (p.name.clone(), p.provider_type.clone()))
+                                .collect()
+                        } else {
+                            Vec::new()
+                        };
+
+                    if providers.is_empty() {
+                        ui.label(
+                            egui::RichText::new("No providers detected")
+                                .color(Color32::GRAY)
+                                .size(12.0),
+                        );
+                    } else {
+                        let selected_name = providers
+                            .get(self.wizard_state.selected_provider_idx)
+                            .map(|(n, _)| n.as_str())
+                            .unwrap_or("Select...");
+                        egui::ComboBox::from_id_source("wizard_provider")
+                            .selected_text(selected_name)
+                            .width(160.0)
+                            .show_ui(ui, |ui| {
+                                for (i, (name, _)) in providers.iter().enumerate() {
+                                    ui.selectable_value(
+                                        &mut self.wizard_state.selected_provider_idx,
+                                        i,
+                                        name,
+                                    );
+                                }
+                            });
+                    }
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("Refresh Models").clicked() {
+                            self.assistant.fetch_models();
+                        }
+                        if self.assistant.is_fetching_models {
+                            ui.spinner();
+                        }
+                    });
+                });
+
+                ui.add_space(6.0);
+
+                // --- Category filter tabs ---
+                ui.horizontal(|ui| {
+                    let all_selected = self.wizard_state.category_filter.is_none();
+                    if ui
+                        .selectable_label(all_selected, egui::RichText::new("All").size(12.0))
+                        .clicked()
+                    {
+                        self.wizard_state.category_filter = None;
+                    }
+                    for cat in ModelCategory::all() {
+                        let label = format!("{} {}", cat.icon(), cat.label());
+                        let is_selected = self.wizard_state.category_filter == Some(*cat);
+                        if ui
+                            .selectable_label(is_selected, egui::RichText::new(label).size(12.0))
+                            .clicked()
+                        {
+                            self.wizard_state.category_filter = Some(*cat);
+                        }
+                    }
+                });
+
+                ui.separator();
+
+                // --- Model list ---
+                let catalog = model_catalog();
+                let installed_names: Vec<String> = self
+                    .assistant
+                    .available_models
+                    .iter()
+                    .map(|m| m.name.clone())
+                    .collect();
+
+                let providers: Vec<(String, ai_assistant::AiProvider)> =
+                    if let Some(ref scan) = self.scan_result_data {
+                        scan.report
+                            .llm_providers
+                            .iter()
+                            .map(|p| (p.name.clone(), p.provider_type.clone()))
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
+                let selected_provider = providers
+                    .get(self.wizard_state.selected_provider_idx)
+                    .map(|(_, p)| p.clone());
+                let is_ollama = matches!(
+                    selected_provider,
+                    Some(ai_assistant::AiProvider::Ollama)
+                );
+                let is_cloud = selected_provider
+                    .as_ref()
+                    .map(|p| p.is_cloud())
+                    .unwrap_or(false);
+                let is_pulling = self.wizard_state.pulling_model.is_some();
+                let pulling_name = self.wizard_state.pulling_model.clone();
+                let pull_line = self.wizard_state.pull_progress_line.clone();
+
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    let filter = self.wizard_state.category_filter;
+                    let mut current_category: Option<ModelCategory> = None;
+
+                    for model in &catalog {
+                        if let Some(f) = filter {
+                            if model.category != f {
+                                continue;
+                            }
+                        }
+
+                        // Category heading
+                        if current_category != Some(model.category) {
+                            current_category = Some(model.category);
+                            if filter.is_none() {
+                                ui.add_space(10.0);
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "{} {}",
+                                        model.category.icon(),
+                                        model.category.label()
+                                    ))
+                                    .size(14.0)
+                                    .strong(),
+                                );
+                                ui.add_space(4.0);
+                            }
+                        }
+
+                        // Check installed status
+                        let is_installed = installed_names.iter().any(|n| {
+                            n == model.name
+                                || n.starts_with(&format!("{}:", model.name))
+                                || model.name.starts_with(&format!("{}:", n))
+                        });
+                        let is_this_pulling =
+                            pulling_name.as_deref() == Some(model.name);
+
+                        // Model card
+                        egui::Frame::none()
+                            .fill(if is_installed {
+                                Color32::from_rgb(25, 40, 30)
+                            } else {
+                                Color32::from_rgb(30, 32, 38)
+                            })
+                            .rounding(6.0)
+                            .inner_margin(10.0)
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    // Left: model info
+                                    ui.vertical(|ui| {
+                                        ui.set_min_width(
+                                            ui.available_width() - 110.0,
+                                        );
+                                        ui.horizontal(|ui| {
+                                            if is_installed {
+                                                ui.label(
+                                                    egui::RichText::new("\u{2705}")
+                                                        .size(13.0),
+                                                );
+                                            }
+                                            ui.label(
+                                                egui::RichText::new(model.name)
+                                                    .size(13.0)
+                                                    .strong(),
+                                            );
+                                            ui.label(
+                                                egui::RichText::new(
+                                                    model.size_estimate,
+                                                )
+                                                .size(11.0)
+                                                .color(Color32::GRAY),
+                                            );
+                                            if is_installed {
+                                                ui.label(
+                                                    egui::RichText::new(
+                                                        "(installed)",
+                                                    )
+                                                    .size(11.0)
+                                                    .color(Color32::from_rgb(
+                                                        100, 200, 100,
+                                                    )),
+                                                );
+                                            }
+                                        });
+                                        ui.label(
+                                            egui::RichText::new(model.description)
+                                                .size(11.0)
+                                                .color(Color32::LIGHT_GRAY),
+                                        );
+                                        if is_this_pulling && !pull_line.is_empty()
+                                        {
+                                            ui.label(
+                                                egui::RichText::new(&pull_line)
+                                                    .size(10.0)
+                                                    .color(Color32::YELLOW)
+                                                    .monospace(),
+                                            );
+                                        }
+                                    });
+
+                                    // Right: action button
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(
+                                            egui::Align::Center,
+                                        ),
+                                        |ui| {
+                                            if is_this_pulling {
+                                                ui.spinner();
+                                                ui.label(
+                                                    egui::RichText::new(
+                                                        "Pulling...",
+                                                    )
+                                                    .size(11.0)
+                                                    .color(Color32::YELLOW),
+                                                );
+                                            } else if is_installed {
+                                                // Already installed
+                                            } else if is_cloud {
+                                                ui.label(
+                                                    egui::RichText::new(
+                                                        "Available",
+                                                    )
+                                                    .size(11.0)
+                                                    .color(Color32::LIGHT_GREEN),
+                                                );
+                                            } else if is_ollama {
+                                                ui.add_enabled_ui(
+                                                    !is_pulling,
+                                                    |ui| {
+                                                        if ui
+                                                            .button("Pull")
+                                                            .clicked()
+                                                        {
+                                                            pull_request = Some(
+                                                                model
+                                                                    .name
+                                                                    .to_string(),
+                                                            );
+                                                        }
+                                                    },
+                                                );
+                                            } else {
+                                                // LM Studio or other local
+                                                ui.hyperlink_to(
+                                                    egui::RichText::new(
+                                                        "Open LM Studio",
+                                                    )
+                                                    .size(11.0),
+                                                    "https://lmstudio.ai",
+                                                );
+                                            }
+                                        },
+                                    );
+                                });
+                            });
+                        ui.add_space(3.0);
+                    }
+                    ui.add_space(8.0);
+                });
+            });
+
+        if !open {
+            self.show_model_wizard = false;
+        }
+
+        // Handle pull request outside the rendering closure
+        if let Some(model_name) = pull_request {
+            self.start_ollama_pull(&model_name);
+        }
     }
 
     fn render_top_bar(&mut self, ctx: &egui::Context) {
@@ -907,6 +1557,16 @@ impl AiGuiApp {
                     };
                     if ui.button(monitor_label).clicked() {
                         self.show_monitor = !self.show_monitor;
+                    }
+
+                    // Model Library
+                    let wizard_label = if self.show_model_wizard {
+                        "Close Models"
+                    } else {
+                        "Model Library"
+                    };
+                    if ui.button(wizard_label).clicked() {
+                        self.show_model_wizard = !self.show_model_wizard;
                     }
                 });
             });
@@ -1585,6 +2245,7 @@ impl eframe::App for AiGuiApp {
             || self.assistant.is_fetching_models
             || self.assistant.is_indexing
             || self.scan_rx.is_some()
+            || self.wizard_state.pulling_model.is_some()
         {
             ctx.request_repaint();
         }
@@ -1607,6 +2268,7 @@ impl eframe::App for AiGuiApp {
                 self.render_sidebar(ctx);
                 self.render_monitor_panel(ctx);
                 self.render_settings(ctx);
+                self.render_model_wizard(ctx);
 
                 egui::CentralPanel::default().show(ctx, |ui| {
                     self.render_chat_area(ui);
