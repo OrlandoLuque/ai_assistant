@@ -228,11 +228,117 @@ fn model_catalog() -> Vec<CatalogModel> {
     ]
 }
 
+/// Strip ANSI escape sequences and Unicode block/box-drawing characters from ollama output.
+///
+/// Used for both pull progress and error messages, since ollama embeds terminal
+/// control codes that render as squares in egui.
+fn strip_ansi_and_blocks(raw: &str) -> String {
+    // Step 1: Strip ANSI escape sequences (CSI sequences like \x1b[...X, OSC, etc.)
+    let mut no_ansi = String::with_capacity(raw.len());
+    let mut chars = raw.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            // ESC — consume the entire escape sequence
+            if let Some(&next) = chars.peek() {
+                if next == '[' {
+                    // CSI sequence: ESC [ ... (params) final_byte
+                    chars.next(); // consume '['
+                    // Consume parameter bytes (0x30-0x3F) and intermediate bytes (0x20-0x2F)
+                    // then the final byte (0x40-0x7E)
+                    loop {
+                        match chars.peek() {
+                            Some(&ch) if ('\x20'..='\x3f').contains(&ch) => { chars.next(); }
+                            Some(&ch) if ('\x40'..='\x7e').contains(&ch) => { chars.next(); break; }
+                            _ => break, // malformed, stop consuming
+                        }
+                    }
+                } else if next == ']' {
+                    // OSC sequence: ESC ] ... ST (BEL or ESC \)
+                    chars.next();
+                    loop {
+                        match chars.next() {
+                            Some('\x07') => break, // BEL terminates
+                            Some('\x1b') => { chars.next(); break; } // ESC \ terminates
+                            None => break,
+                            _ => {}
+                        }
+                    }
+                } else {
+                    // Other two-char escape (ESC X)
+                    chars.next();
+                }
+            }
+            // else: bare ESC at end, just skip
+        } else {
+            no_ansi.push(c);
+        }
+    }
+
+    // Step 2: Remove Unicode block elements and box drawing chars used for progress bar
+    let cleaned: String = no_ansi
+        .chars()
+        .filter(|c| {
+            !matches!(*c,
+                '\u{2580}'..='\u{259F}' | // block elements (▕█░▏ etc.)
+                '\u{2500}'..='\u{257F}'   // box drawing
+            )
+        })
+        .collect();
+
+    // Collapse multiple spaces into single space
+    let mut result = String::with_capacity(cleaned.len());
+    let mut last_was_space = false;
+    for c in cleaned.chars() {
+        if c == ' ' {
+            if !last_was_space {
+                result.push(' ');
+            }
+            last_was_space = true;
+        } else {
+            result.push(c);
+            last_was_space = false;
+        }
+    }
+
+    // Replace remaining multi-space separators with pipe for readability
+    let result = result.trim().to_string();
+    result
+}
+
 #[allow(dead_code)]
 enum PullStatus {
     InProgress { model: String, last_line: String },
     Completed(String),
     Failed { model: String, error: String },
+}
+
+enum DeleteStatus {
+    Completed(String),
+    Failed { model: String, error: String },
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum WizardTab {
+    Recommended,
+    AllModels,
+    Installed,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum ModelSort {
+    Name,
+    Size,
+    Category,
+}
+
+impl ModelSort {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::Name => "Name",
+            Self::Size => "Size",
+            Self::Category => "Category",
+        }
+    }
 }
 
 struct ModelWizardState {
@@ -241,6 +347,15 @@ struct ModelWizardState {
     pull_rx: Option<mpsc::Receiver<PullStatus>>,
     pulling_model: Option<String>,
     pull_progress_line: String,
+    // Tabs, search, sort, filter
+    tab: WizardTab,
+    search_text: String,
+    sort_by: ModelSort,
+    show_installed_only: bool,
+    custom_pull_name: String,
+    // Delete
+    delete_rx: Option<mpsc::Receiver<DeleteStatus>>,
+    deleting_model: Option<String>,
 }
 
 impl Default for ModelWizardState {
@@ -251,6 +366,13 @@ impl Default for ModelWizardState {
             pull_rx: None,
             pulling_model: None,
             pull_progress_line: String::new(),
+            tab: WizardTab::Recommended,
+            search_text: String::new(),
+            sort_by: ModelSort::Name,
+            show_installed_only: false,
+            custom_pull_name: String::new(),
+            delete_rx: None,
+            deleting_model: None,
         }
     }
 }
@@ -286,6 +408,9 @@ struct GuiSettings {
     temperature: f32,
     max_history: usize,
     graph_enabled: bool,
+    /// If true: Enter sends, Ctrl+Enter inserts newline (default).
+    /// If false: Ctrl+Enter sends, Enter inserts newline.
+    enter_sends: bool,
 }
 
 impl Default for GuiSettings {
@@ -296,6 +421,7 @@ impl Default for GuiSettings {
             temperature: 0.7,
             max_history: 20,
             graph_enabled: false,
+            enter_sends: true,
         }
     }
 }
@@ -583,6 +709,28 @@ impl AiGuiApp {
             }
             if done {
                 self.wizard_state.pull_rx = None;
+            }
+        }
+
+        // 6. Ollama delete completion
+        if let Some(ref rx) = self.wizard_state.delete_rx {
+            if let Ok(status) = rx.try_recv() {
+                match status {
+                    DeleteStatus::Completed(ref model) => {
+                        self.wizard_state.deleting_model = None;
+                        self.add_toast(&format!("Model '{}' deleted", model), false);
+                        // Remove from local list immediately so UI updates instantly
+                        self.assistant.available_models.retain(|m| m.name != *model);
+                        // Also refresh from server to get authoritative list
+                        self.assistant.fetch_models();
+                    }
+                    DeleteStatus::Failed { model, error } => {
+                        self.wizard_state.deleting_model = None;
+                        let clean_error = strip_ansi_and_blocks(&error);
+                        self.add_toast(&format!("Failed to delete '{}': {}", model, clean_error), true);
+                    }
+                }
+                self.wizard_state.delete_rx = None;
             }
         }
     }
@@ -1223,9 +1371,13 @@ impl AiGuiApp {
                                         .trim()
                                         .to_string();
                                     if !line.is_empty() {
+                                        // Clean up progress bar characters for GUI display.
+                                        // Ollama outputs: "pulling abc123:  45% ▕████░░░▏ 1.6 GB/26 GB  118 MB/s  3m30s"
+                                        // We extract: "pulling abc123: 45% - 1.6 GB/26 GB - 118 MB/s - 3m30s"
+                                        let clean = strip_ansi_and_blocks(&line);
                                         let _ = tx.send(PullStatus::InProgress {
                                             model: name.clone(),
-                                            last_line: line,
+                                            last_line: clean,
                                         });
                                     }
                                 }
@@ -1264,6 +1416,53 @@ impl AiGuiApp {
         });
     }
 
+    fn start_ollama_delete(&mut self, model_name: &str) {
+        if self.wizard_state.pulling_model.is_some() {
+            self.add_toast("Can't delete while pulling a model", true);
+            return;
+        }
+        if self.wizard_state.deleting_model.is_some() {
+            self.add_toast("Already deleting a model, please wait", true);
+            return;
+        }
+
+        let name = model_name.to_string();
+        let (tx, rx) = mpsc::channel::<DeleteStatus>();
+        self.wizard_state.delete_rx = Some(rx);
+        self.wizard_state.deleting_model = Some(name.clone());
+
+        std::thread::spawn(move || {
+            let result = std::process::Command::new("ollama")
+                .args(["rm", &name])
+                .output();
+
+            match result {
+                Ok(output) if output.status.success() => {
+                    let _ = tx.send(DeleteStatus::Completed(name));
+                }
+                Ok(output) => {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    let raw_error = if stderr.trim().is_empty() {
+                        stdout.trim().to_string()
+                    } else {
+                        stderr.trim().to_string()
+                    };
+                    let _ = tx.send(DeleteStatus::Failed {
+                        model: name,
+                        error: raw_error,
+                    });
+                }
+                Err(e) => {
+                    let _ = tx.send(DeleteStatus::Failed {
+                        model: name,
+                        error: format!("Could not run ollama: {}", e),
+                    });
+                }
+            }
+        });
+    }
+
     fn render_model_wizard(&mut self, ctx: &egui::Context) {
         if !self.show_model_wizard {
             return;
@@ -1271,325 +1470,423 @@ impl AiGuiApp {
 
         let mut open = true;
         let mut pull_request: Option<String> = None;
+        let mut delete_request: Option<String> = None;
 
         egui::Window::new("Model Library")
             .open(&mut open)
             .resizable(true)
-            .default_width(560.0)
-            .default_height(500.0)
+            .default_width(580.0)
+            .default_height(520.0)
             .show(ctx, |ui| {
                 // --- Provider selector + Refresh ---
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new("Provider:").size(12.0));
-
-                    // Build provider list from scan data
                     let providers: Vec<(String, ai_assistant::AiProvider)> =
                         if let Some(ref scan) = self.scan_result_data {
-                            scan.report
-                                .llm_providers
-                                .iter()
+                            scan.report.llm_providers.iter()
                                 .map(|p| (p.name.clone(), p.provider_type.clone()))
                                 .collect()
                         } else {
                             Vec::new()
                         };
-
                     if providers.is_empty() {
-                        ui.label(
-                            egui::RichText::new("No providers detected")
-                                .color(Color32::GRAY)
-                                .size(12.0),
-                        );
+                        ui.label(egui::RichText::new("No providers detected").color(Color32::GRAY).size(12.0));
                     } else {
-                        let selected_name = providers
-                            .get(self.wizard_state.selected_provider_idx)
-                            .map(|(n, _)| n.as_str())
-                            .unwrap_or("Select...");
+                        let selected_name = providers.get(self.wizard_state.selected_provider_idx)
+                            .map(|(n, _)| n.as_str()).unwrap_or("Select...");
                         egui::ComboBox::from_id_source("wizard_provider")
-                            .selected_text(selected_name)
-                            .width(160.0)
+                            .selected_text(selected_name).width(160.0)
                             .show_ui(ui, |ui| {
                                 for (i, (name, _)) in providers.iter().enumerate() {
-                                    ui.selectable_value(
-                                        &mut self.wizard_state.selected_provider_idx,
-                                        i,
-                                        name,
-                                    );
+                                    ui.selectable_value(&mut self.wizard_state.selected_provider_idx, i, name);
                                 }
                             });
                     }
-
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("Refresh Models").clicked() {
-                            self.assistant.fetch_models();
-                        }
-                        if self.assistant.is_fetching_models {
-                            ui.spinner();
-                        }
+                        if ui.button("Refresh").clicked() { self.assistant.fetch_models(); }
+                        if self.assistant.is_fetching_models { ui.spinner(); }
                     });
                 });
 
-                ui.add_space(6.0);
+                ui.add_space(4.0);
 
-                // --- Category filter tabs ---
+                // --- Tab bar ---
                 ui.horizontal(|ui| {
-                    let all_selected = self.wizard_state.category_filter.is_none();
-                    if ui
-                        .selectable_label(all_selected, egui::RichText::new("All").size(12.0))
-                        .clicked()
-                    {
-                        self.wizard_state.category_filter = None;
-                    }
-                    for cat in ModelCategory::all() {
-                        let label = format!("{} {}", cat.icon(), cat.label());
-                        let is_selected = self.wizard_state.category_filter == Some(*cat);
-                        if ui
-                            .selectable_label(is_selected, egui::RichText::new(label).size(12.0))
-                            .clicked()
-                        {
-                            self.wizard_state.category_filter = Some(*cat);
-                        }
-                    }
+                    ui.selectable_value(&mut self.wizard_state.tab, WizardTab::Recommended, "Recommended");
+                    ui.selectable_value(&mut self.wizard_state.tab, WizardTab::AllModels, "All Models");
+                    let installed_count = self.assistant.available_models.len();
+                    let installed_label = format!("Installed ({})", installed_count);
+                    ui.selectable_value(&mut self.wizard_state.tab, WizardTab::Installed, installed_label);
                 });
-
                 ui.separator();
 
-                // --- VRAM guide ---
-                ui.add_space(4.0);
-                egui::CollapsingHeader::new(
-                    egui::RichText::new("\u{1f4be} VRAM Guide: Which models fit your GPU?")
-                        .size(11.0)
-                        .color(Color32::LIGHT_GRAY),
-                )
-                .default_open(false)
-                .show(ui, |ui| {
-                    let vram_info = [
-                        ("4 GB",  "Small & Fast models, embeddings (tinyllama, phi3:mini, qwen2.5:0.5b)"),
-                        ("6 GB",  "Most 7B models (llama3.2, mistral, codellama, gemma2:2b)"),
-                        ("8 GB",  "7B models comfortably + some 13B quantized (llava, phi3)"),
-                        ("12 GB", "13B models, multiple small models simultaneously"),
-                        ("16 GB", "13B comfortably, some 33B quantized (codellama:34b)"),
-                        ("24 GB", "33-35B models (command-r, deepseek-coder:33b)"),
-                        ("48 GB+","70B+ models (llama3.1:70b, qwen2.5:72b, mixtral)"),
-                        ("CPU",   "Any model works on CPU (slower). 16+ GB RAM recommended."),
-                    ];
-                    egui::Grid::new("vram_guide")
-                        .num_columns(2)
-                        .spacing([12.0, 3.0])
-                        .show(ui, |ui| {
-                            for (vram, desc) in &vram_info {
-                                ui.label(egui::RichText::new(*vram).size(11.0).strong().color(Color32::from_rgb(130, 180, 255)));
-                                ui.label(egui::RichText::new(*desc).size(10.0).color(Color32::LIGHT_GRAY));
-                                ui.end_row();
-                            }
-                        });
-                });
-                ui.add_space(4.0);
-
-                // --- Model list ---
+                // --- Shared state ---
                 let catalog = model_catalog();
-                let installed_names: Vec<String> = self
-                    .assistant
-                    .available_models
-                    .iter()
-                    .map(|m| m.name.clone())
-                    .collect();
-
+                let installed_names: Vec<String> = self.assistant.available_models.iter().map(|m| m.name.clone()).collect();
                 let providers: Vec<(String, ai_assistant::AiProvider)> =
                     if let Some(ref scan) = self.scan_result_data {
-                        scan.report
-                            .llm_providers
-                            .iter()
-                            .map(|p| (p.name.clone(), p.provider_type.clone()))
-                            .collect()
-                    } else {
-                        Vec::new()
-                    };
-                let selected_provider = providers
-                    .get(self.wizard_state.selected_provider_idx)
-                    .map(|(_, p)| p.clone());
-                let is_ollama = matches!(
-                    selected_provider,
-                    Some(ai_assistant::AiProvider::Ollama)
-                );
-                let is_cloud = selected_provider
-                    .as_ref()
-                    .map(|p| p.is_cloud())
-                    .unwrap_or(false);
-                let is_pulling = self.wizard_state.pulling_model.is_some();
+                        scan.report.llm_providers.iter().map(|p| (p.name.clone(), p.provider_type.clone())).collect()
+                    } else { Vec::new() };
+                let selected_provider = providers.get(self.wizard_state.selected_provider_idx).map(|(_, p)| p.clone());
+                let is_ollama = matches!(selected_provider, Some(ai_assistant::AiProvider::Ollama));
+                let is_cloud = selected_provider.as_ref().map(|p| p.is_cloud()).unwrap_or(false);
+                let is_busy = self.wizard_state.pulling_model.is_some() || self.wizard_state.deleting_model.is_some();
                 let pulling_name = self.wizard_state.pulling_model.clone();
+                let deleting_name = self.wizard_state.deleting_model.clone();
                 let pull_line = self.wizard_state.pull_progress_line.clone();
 
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    let filter = self.wizard_state.category_filter;
-                    let mut current_category: Option<ModelCategory> = None;
+                let is_model_installed = |name: &str| -> bool {
+                    installed_names.iter().any(|n| n == name || n.starts_with(&format!("{}:", name)) || name.starts_with(&format!("{}:", n)))
+                };
 
-                    for model in &catalog {
-                        if let Some(f) = filter {
-                            if model.category != f {
-                                continue;
+                match self.wizard_state.tab {
+                    // =============================================================
+                    // TAB 1: Recommended
+                    // =============================================================
+                    WizardTab::Recommended => {
+                        // Category filter
+                        ui.horizontal(|ui| {
+                            let all_sel = self.wizard_state.category_filter.is_none();
+                            if ui.selectable_label(all_sel, egui::RichText::new("All").size(12.0)).clicked() {
+                                self.wizard_state.category_filter = None;
                             }
-                        }
-
-                        // Category heading
-                        if current_category != Some(model.category) {
-                            current_category = Some(model.category);
-                            if filter.is_none() {
-                                ui.add_space(10.0);
-                                ui.label(
-                                    egui::RichText::new(format!(
-                                        "{} {}",
-                                        model.category.icon(),
-                                        model.category.label()
-                                    ))
-                                    .size(14.0)
-                                    .strong(),
-                                );
-                                ui.add_space(4.0);
+                            for cat in ModelCategory::all() {
+                                let label = format!("{} {}", cat.icon(), cat.label());
+                                if ui.selectable_label(self.wizard_state.category_filter == Some(*cat), egui::RichText::new(label).size(12.0)).clicked() {
+                                    self.wizard_state.category_filter = Some(*cat);
+                                }
                             }
-                        }
-
-                        // Check installed status
-                        let is_installed = installed_names.iter().any(|n| {
-                            n == model.name
-                                || n.starts_with(&format!("{}:", model.name))
-                                || model.name.starts_with(&format!("{}:", n))
                         });
-                        let is_this_pulling =
-                            pulling_name.as_deref() == Some(model.name);
+                        ui.separator();
 
-                        // Model card
-                        egui::Frame::none()
-                            .fill(if is_installed {
-                                Color32::from_rgb(25, 40, 30)
-                            } else {
-                                Color32::from_rgb(30, 32, 38)
-                            })
-                            .rounding(6.0)
-                            .inner_margin(10.0)
-                            .show(ui, |ui| {
+                        // VRAM guide
+                        ui.add_space(4.0);
+                        egui::CollapsingHeader::new(
+                            egui::RichText::new("\u{1f4be} VRAM Guide").size(11.0).color(Color32::LIGHT_GRAY),
+                        ).default_open(false).show(ui, |ui| {
+                            let info = [
+                                ("4 GB",  "Small models, embeddings (tinyllama, phi3:mini)"),
+                                ("6 GB",  "Most 7B models (llama3.2, mistral, codellama)"),
+                                ("8 GB",  "7B comfortably + some 13B quantized"),
+                                ("12 GB", "13B models, multiple small models"),
+                                ("16 GB", "13B comfortably, some 33B quantized"),
+                                ("24 GB", "33-35B models (command-r)"),
+                                ("48 GB+","70B+ models (llama3.1:70b, mixtral)"),
+                                ("CPU",   "Any model (slower). 16+ GB RAM recommended."),
+                            ];
+                            egui::Grid::new("vram_guide").num_columns(2).spacing([12.0, 3.0]).show(ui, |ui| {
+                                for (v, d) in &info {
+                                    ui.label(egui::RichText::new(*v).size(11.0).strong().color(Color32::from_rgb(130, 180, 255)));
+                                    ui.label(egui::RichText::new(*d).size(10.0).color(Color32::LIGHT_GRAY));
+                                    ui.end_row();
+                                }
+                            });
+                        });
+                        ui.add_space(4.0);
+
+                        // Model cards
+                        egui::ScrollArea::vertical().id_source("rec_scroll").show(ui, |ui| {
+                            let filter = self.wizard_state.category_filter;
+                            let mut cur_cat: Option<ModelCategory> = None;
+                            for model in &catalog {
+                                if let Some(f) = filter { if model.category != f { continue; } }
+                                // Category heading
+                                if cur_cat != Some(model.category) {
+                                    cur_cat = Some(model.category);
+                                    if filter.is_none() {
+                                        ui.add_space(10.0);
+                                        ui.label(egui::RichText::new(format!("{} {}", model.category.icon(), model.category.label())).size(14.0).strong());
+                                        ui.add_space(4.0);
+                                    }
+                                }
+                                let installed = is_model_installed(model.name);
+                                let this_pulling = pulling_name.as_deref() == Some(model.name);
+                                let this_deleting = deleting_name.as_deref() == Some(model.name);
+                                let (pull, del) = Self::render_model_card(
+                                    ui, model.name, model.size_estimate, model.description,
+                                    installed, this_pulling, this_deleting, is_ollama, is_cloud, is_busy, &pull_line,
+                                );
+                                if pull { pull_request = Some(model.name.to_string()); }
+                                if del { delete_request = Some(model.name.to_string()); }
+                                ui.add_space(3.0);
+                            }
+                            ui.add_space(8.0);
+                        });
+                    }
+
+                    // =============================================================
+                    // TAB 2: All Models
+                    // =============================================================
+                    WizardTab::AllModels => {
+                        // Search + Sort + Filter
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new("\u{1f50d}").size(12.0));
+                            ui.add_sized([160.0, 20.0], egui::TextEdit::singleline(&mut self.wizard_state.search_text).hint_text("Search..."));
+                            ui.separator();
+                            ui.label(egui::RichText::new("Sort:").size(11.0));
+                            egui::ComboBox::from_id_source("sort_combo")
+                                .selected_text(self.wizard_state.sort_by.label())
+                                .width(80.0)
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut self.wizard_state.sort_by, ModelSort::Name, "Name");
+                                    ui.selectable_value(&mut self.wizard_state.sort_by, ModelSort::Size, "Size");
+                                    ui.selectable_value(&mut self.wizard_state.sort_by, ModelSort::Category, "Category");
+                                });
+                            ui.checkbox(&mut self.wizard_state.show_installed_only, egui::RichText::new("Installed only").size(11.0));
+                        });
+                        ui.separator();
+
+                        // Build merged list: catalog + installed (deduplicated)
+                        struct MergedModel {
+                            name: String,
+                            size: String,
+                            description: String,
+                            category: Option<ModelCategory>,
+                            installed: bool,
+                        }
+                        let mut merged: Vec<MergedModel> = Vec::new();
+                        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+                        // Add catalog models
+                        for m in &catalog {
+                            let inst = is_model_installed(m.name);
+                            merged.push(MergedModel {
+                                name: m.name.to_string(), size: m.size_estimate.to_string(),
+                                description: m.description.to_string(), category: Some(m.category), installed: inst,
+                            });
+                            seen.insert(m.name.to_string());
+                        }
+                        // Add installed models not in catalog
+                        for m in &self.assistant.available_models {
+                            if !seen.contains(&m.name) {
+                                let size_str = m.size.clone().unwrap_or_default();
+                                merged.push(MergedModel {
+                                    name: m.name.clone(), size: size_str,
+                                    description: String::new(), category: None, installed: true,
+                                });
+                                seen.insert(m.name.clone());
+                            }
+                        }
+                        // Filter
+                        let search = self.wizard_state.search_text.to_lowercase();
+                        if !search.is_empty() {
+                            merged.retain(|m| m.name.to_lowercase().contains(&search) || m.description.to_lowercase().contains(&search));
+                        }
+                        if self.wizard_state.show_installed_only {
+                            merged.retain(|m| m.installed);
+                        }
+                        // Sort
+                        match self.wizard_state.sort_by {
+                            ModelSort::Name => merged.sort_by(|a, b| a.name.cmp(&b.name)),
+                            ModelSort::Size => merged.sort_by(|a, b| a.size.cmp(&b.size)),
+                            ModelSort::Category => merged.sort_by(|a, b| {
+                                let ca = a.category.map(|c| c.label()).unwrap_or("zzz");
+                                let cb = b.category.map(|c| c.label()).unwrap_or("zzz");
+                                ca.cmp(cb)
+                            }),
+                        }
+
+                        ui.label(egui::RichText::new(format!("{} models", merged.len())).size(10.0).color(Color32::GRAY));
+
+                        egui::ScrollArea::vertical().id_source("all_scroll").show(ui, |ui| {
+                            for m in &merged {
+                                let this_pulling = pulling_name.as_deref() == Some(m.name.as_str());
+                                let this_deleting = deleting_name.as_deref() == Some(m.name.as_str());
+                                let cat_label = m.category.map(|c| format!("{} ", c.label())).unwrap_or_default();
+                                let desc = if m.description.is_empty() { cat_label } else { format!("{}{}", cat_label, m.description) };
+                                let (pull, del) = Self::render_model_card(
+                                    ui, &m.name, &m.size, &desc,
+                                    m.installed, this_pulling, this_deleting, is_ollama, is_cloud, is_busy, &pull_line,
+                                );
+                                if pull { pull_request = Some(m.name.clone()); }
+                                if del { delete_request = Some(m.name.clone()); }
+                                ui.add_space(3.0);
+                            }
+
+                            // Custom pull section
+                            if is_ollama {
+                                ui.add_space(8.0);
+                                ui.separator();
+                                ui.add_space(4.0);
+                                ui.label(egui::RichText::new("Pull any model by name:").size(12.0).color(Color32::LIGHT_GRAY));
                                 ui.horizontal(|ui| {
-                                    // Left: model info
-                                    ui.vertical(|ui| {
-                                        ui.set_min_width(
-                                            ui.available_width() - 110.0,
-                                        );
-                                        ui.horizontal(|ui| {
-                                            if is_installed {
-                                                ui.label(
-                                                    egui::RichText::new("\u{2705}")
-                                                        .size(13.0),
-                                                );
-                                            }
-                                            ui.label(
-                                                egui::RichText::new(model.name)
-                                                    .size(13.0)
-                                                    .strong(),
-                                            );
-                                            ui.label(
-                                                egui::RichText::new(
-                                                    model.size_estimate,
-                                                )
-                                                .size(11.0)
-                                                .color(Color32::GRAY),
-                                            );
-                                            if is_installed {
-                                                ui.label(
-                                                    egui::RichText::new(
-                                                        "(installed)",
-                                                    )
-                                                    .size(11.0)
-                                                    .color(Color32::from_rgb(
-                                                        100, 200, 100,
-                                                    )),
-                                                );
-                                            }
-                                        });
-                                        ui.label(
-                                            egui::RichText::new(model.description)
-                                                .size(11.0)
-                                                .color(Color32::LIGHT_GRAY),
-                                        );
-                                        if is_this_pulling && !pull_line.is_empty()
-                                        {
-                                            ui.label(
-                                                egui::RichText::new(&pull_line)
-                                                    .size(10.0)
-                                                    .color(Color32::YELLOW)
-                                                    .monospace(),
-                                            );
+                                    ui.add_sized([200.0, 20.0],
+                                        egui::TextEdit::singleline(&mut self.wizard_state.custom_pull_name)
+                                            .hint_text("e.g. llama3.2:1b"),
+                                    );
+                                    ui.add_enabled_ui(!is_busy && !self.wizard_state.custom_pull_name.trim().is_empty(), |ui| {
+                                        if ui.button("Pull").clicked() {
+                                            pull_request = Some(self.wizard_state.custom_pull_name.trim().to_string());
+                                            self.wizard_state.custom_pull_name.clear();
                                         }
                                     });
-
-                                    // Right: action button
-                                    ui.with_layout(
-                                        egui::Layout::right_to_left(
-                                            egui::Align::Center,
-                                        ),
-                                        |ui| {
-                                            if is_this_pulling {
-                                                ui.spinner();
-                                                ui.label(
-                                                    egui::RichText::new(
-                                                        "Pulling...",
-                                                    )
-                                                    .size(11.0)
-                                                    .color(Color32::YELLOW),
-                                                );
-                                            } else if is_installed {
-                                                // Already installed
-                                            } else if is_cloud {
-                                                ui.label(
-                                                    egui::RichText::new(
-                                                        "Available",
-                                                    )
-                                                    .size(11.0)
-                                                    .color(Color32::LIGHT_GREEN),
-                                                );
-                                            } else if is_ollama {
-                                                ui.add_enabled_ui(
-                                                    !is_pulling,
-                                                    |ui| {
-                                                        if ui
-                                                            .button("Pull")
-                                                            .clicked()
-                                                        {
-                                                            pull_request = Some(
-                                                                model
-                                                                    .name
-                                                                    .to_string(),
-                                                            );
-                                                        }
-                                                    },
-                                                );
-                                            } else {
-                                                // LM Studio or other local
-                                                ui.hyperlink_to(
-                                                    egui::RichText::new(
-                                                        "Open LM Studio",
-                                                    )
-                                                    .size(11.0),
-                                                    "https://lmstudio.ai",
-                                                );
-                                            }
-                                        },
-                                    );
                                 });
-                            });
-                        ui.add_space(3.0);
+                            }
+                            ui.add_space(8.0);
+                        });
                     }
-                    ui.add_space(8.0);
-                });
+
+                    // =============================================================
+                    // TAB 3: Installed
+                    // =============================================================
+                    WizardTab::Installed => {
+                        // Search + Sort
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new("\u{1f50d}").size(12.0));
+                            ui.add_sized([200.0, 20.0], egui::TextEdit::singleline(&mut self.wizard_state.search_text).hint_text("Search installed..."));
+                            ui.separator();
+                            ui.label(egui::RichText::new("Sort:").size(11.0));
+                            egui::ComboBox::from_id_source("inst_sort_combo")
+                                .selected_text(self.wizard_state.sort_by.label())
+                                .width(80.0)
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut self.wizard_state.sort_by, ModelSort::Name, "Name");
+                                    ui.selectable_value(&mut self.wizard_state.sort_by, ModelSort::Size, "Size");
+                                });
+                        });
+                        ui.separator();
+
+                        let mut installed: Vec<&ModelInfo> = self.assistant.available_models.iter().collect();
+                        // Filter by search
+                        let search = self.wizard_state.search_text.to_lowercase();
+                        if !search.is_empty() {
+                            installed.retain(|m| m.name.to_lowercase().contains(&search));
+                        }
+                        // Sort
+                        match self.wizard_state.sort_by {
+                            ModelSort::Name => installed.sort_by(|a, b| a.name.cmp(&b.name)),
+                            ModelSort::Size => installed.sort_by(|a, b| {
+                                a.size.as_deref().unwrap_or("").cmp(&b.size.as_deref().unwrap_or(""))
+                            }),
+                            _ => installed.sort_by(|a, b| a.name.cmp(&b.name)),
+                        }
+
+                        if installed.is_empty() {
+                            ui.add_space(40.0);
+                            ui.vertical_centered(|ui| {
+                                ui.label(egui::RichText::new("No models installed").size(14.0).color(Color32::GRAY));
+                                ui.add_space(8.0);
+                                ui.label(egui::RichText::new("Check the Recommended tab to get started").size(12.0).color(Color32::DARK_GRAY));
+                            });
+                        } else {
+                            ui.label(egui::RichText::new(format!("{} models installed", installed.len())).size(10.0).color(Color32::GRAY));
+                            egui::ScrollArea::vertical().id_source("inst_scroll").show(ui, |ui| {
+                                for m in &installed {
+                                    let size_str = m.size.clone().unwrap_or_default();
+                                    let desc = m.display_name();
+                                    let this_deleting = deleting_name.as_deref() == Some(m.name.as_str());
+                                    let this_pulling = pulling_name.as_deref() == Some(m.name.as_str());
+                                    let (_, del) = Self::render_model_card(
+                                        ui, &m.name, &size_str, &desc,
+                                        true, this_pulling, this_deleting, is_ollama, is_cloud, is_busy, &pull_line,
+                                    );
+                                    if del { delete_request = Some(m.name.clone()); }
+                                    ui.add_space(3.0);
+                                }
+                                ui.add_space(8.0);
+                            });
+                        }
+                    }
+                }
             });
 
         if !open {
             self.show_model_wizard = false;
         }
 
-        // Handle pull request outside the rendering closure
         if let Some(model_name) = pull_request {
             self.start_ollama_pull(&model_name);
         }
+        if let Some(model_name) = delete_request {
+            // Resolve the actual installed name (catalog may use "llama3.2" but
+            // ollama needs the full tag like "llama3.2:1b")
+            let real_name = self.assistant.available_models.iter()
+                .find(|m| m.name == model_name
+                    || m.name.starts_with(&format!("{}:", model_name))
+                    || model_name.starts_with(&format!("{}:", m.name)))
+                .map(|m| m.name.clone())
+                .unwrap_or(model_name);
+            self.start_ollama_delete(&real_name);
+        }
+    }
+
+    /// Render a single model card. Returns (pull_clicked, delete_clicked).
+    fn render_model_card(
+        ui: &mut Ui,
+        name: &str,
+        size: &str,
+        description: &str,
+        installed: bool,
+        is_pulling: bool,
+        is_deleting: bool,
+        is_ollama: bool,
+        is_cloud: bool,
+        is_busy: bool,
+        pull_line: &str,
+    ) -> (bool, bool) {
+        let mut pull_clicked = false;
+        let mut delete_clicked = false;
+
+        egui::Frame::none()
+            .fill(if installed { Color32::from_rgb(25, 40, 30) } else { Color32::from_rgb(30, 32, 38) })
+            .rounding(6.0)
+            .inner_margin(10.0)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    // Left: info
+                    ui.vertical(|ui| {
+                        ui.set_min_width(ui.available_width() - 140.0);
+                        ui.horizontal(|ui| {
+                            if installed {
+                                ui.label(egui::RichText::new("\u{2705}").size(13.0));
+                            }
+                            ui.label(egui::RichText::new(name).size(13.0).strong());
+                            if !size.is_empty() {
+                                ui.label(egui::RichText::new(size).size(11.0).color(Color32::GRAY));
+                            }
+                            if installed {
+                                ui.label(egui::RichText::new("(installed)").size(11.0).color(Color32::from_rgb(100, 200, 100)));
+                            }
+                        });
+                        if !description.is_empty() && description != name {
+                            ui.label(egui::RichText::new(description).size(11.0).color(Color32::LIGHT_GRAY));
+                        }
+                        if is_pulling && !pull_line.is_empty() {
+                            ui.label(egui::RichText::new(pull_line).size(10.0).color(Color32::YELLOW).monospace());
+                        }
+                    });
+
+                    // Right: actions
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if is_pulling {
+                            ui.spinner();
+                            ui.label(egui::RichText::new("Pulling...").size(11.0).color(Color32::YELLOW));
+                        } else if is_deleting {
+                            ui.spinner();
+                            ui.label(egui::RichText::new("Deleting...").size(11.0).color(Color32::from_rgb(255, 120, 100)));
+                        } else if installed && is_ollama {
+                            // Delete button for installed Ollama models
+                            ui.add_enabled_ui(!is_busy, |ui| {
+                                let btn = ui.button(egui::RichText::new("Delete").size(11.0).color(Color32::from_rgb(255, 100, 80)));
+                                if btn.clicked() {
+                                    delete_clicked = true;
+                                }
+                            });
+                        } else if !installed && is_cloud {
+                            ui.label(egui::RichText::new("Available").size(11.0).color(Color32::LIGHT_GREEN));
+                        } else if !installed && is_ollama {
+                            ui.add_enabled_ui(!is_busy, |ui| {
+                                if ui.button("Pull").clicked() {
+                                    pull_clicked = true;
+                                }
+                            });
+                        } else if !installed {
+                            ui.hyperlink_to(egui::RichText::new("Open LM Studio").size(11.0), "https://lmstudio.ai");
+                        }
+                    });
+                });
+            });
+
+        (pull_clicked, delete_clicked)
     }
 
     fn render_top_bar(&mut self, ctx: &egui::Context) {
@@ -1962,18 +2259,25 @@ impl AiGuiApp {
                     true,
                     "Generating...",
                     50.0,
+                    self.settings.enter_sends,
                 );
                 if ui.button("Stop").clicked() {
                     self.add_toast("Generation will stop after current chunk", false);
                 }
             });
         } else {
+            let send_hint = if self.settings.enter_sends {
+                "Type your message... (Enter to send)"
+            } else {
+                "Type your message... (Ctrl+Enter to send)"
+            };
             let response = widgets::chat_input_multiline(
                 ui,
                 &mut self.input_text,
                 false,
-                "Type your message... (Ctrl+Enter to send)",
+                send_hint,
                 50.0,
+                self.settings.enter_sends,
             );
             if let Some(text) = response {
                 self.send_message(text);
@@ -2275,6 +2579,21 @@ impl AiGuiApp {
                 );
 
                 ui.add_space(12.0);
+                ui.heading("Input");
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut self.settings.enter_sends, "Enter sends message");
+                    ui.label(
+                        egui::RichText::new(if self.settings.enter_sends {
+                            "(Ctrl+Enter for new line)"
+                        } else {
+                            "(Enter for new line, Ctrl+Enter sends)"
+                        })
+                        .size(11.0)
+                        .color(Color32::GRAY),
+                    );
+                });
+
+                ui.add_space(12.0);
 
                 if ui.button("Apply").clicked() {
                     self.assistant.config.ollama_url = self.settings.ollama_url.clone();
@@ -2337,6 +2656,7 @@ impl eframe::App for AiGuiApp {
             || self.assistant.is_indexing
             || self.scan_rx.is_some()
             || self.wizard_state.pulling_model.is_some()
+            || self.wizard_state.deleting_model.is_some()
         {
             ctx.request_repaint();
         }

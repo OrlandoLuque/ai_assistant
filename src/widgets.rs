@@ -401,15 +401,20 @@ pub fn chat_input(
     submitted
 }
 
-/// Multi-line chat input with send button
+/// Multi-line chat input with send button.
 ///
-/// Returns Some(message) when the user submits
+/// `enter_sends`: if true, Enter sends and Ctrl+Enter inserts newline (default);
+///                if false, Ctrl+Enter sends and Enter inserts newline.
+/// Shift+Enter and Alt+Enter always insert a newline regardless of config.
+///
+/// Returns Some(message) when the user submits.
 pub fn chat_input_multiline(
     ui: &mut Ui,
     input_text: &mut String,
     is_generating: bool,
     placeholder: &str,
     max_height: f32,
+    enter_sends: bool,
 ) -> Option<String> {
     let mut submitted = None;
 
@@ -425,13 +430,27 @@ pub fn chat_input_multiline(
                 .desired_rows(1),
         );
 
-        // Submit on Ctrl+Enter for multiline
-        if response.has_focus()
-            && ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Enter))
-            && !input_text.trim().is_empty()
-        {
-            submitted = Some(input_text.trim().to_string());
-            input_text.clear();
+        if response.has_focus() && !input_text.trim().is_empty() {
+            let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let ctrl = ui.input(|i| i.modifiers.ctrl);
+            let shift = ui.input(|i| i.modifiers.shift);
+            let alt = ui.input(|i| i.modifiers.alt);
+
+            if enter {
+                if shift || alt {
+                    // Shift+Enter / Alt+Enter → always insert newline
+                    // (egui TextEdit::multiline handles the newline insertion)
+                } else if enter_sends && !ctrl {
+                    // Default mode: bare Enter → send
+                    submitted = Some(input_text.trim().to_string());
+                    input_text.clear();
+                } else if !enter_sends && ctrl {
+                    // Swapped mode: Ctrl+Enter → send
+                    submitted = Some(input_text.trim().to_string());
+                    input_text.clear();
+                }
+                // Otherwise the key combo inserts a newline via TextEdit
+            }
         }
 
         ui.vertical(|ui| {
@@ -442,8 +461,9 @@ pub fn chat_input_multiline(
                 }
             });
 
+            let hint = if enter_sends { "Enter" } else { "Ctrl+Enter" };
             ui.label(
-                RichText::new("Ctrl+Enter")
+                RichText::new(hint)
                     .size(9.0)
                     .color(Color32::DARK_GRAY),
             );
