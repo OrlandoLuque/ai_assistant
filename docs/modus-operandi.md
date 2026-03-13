@@ -1,109 +1,73 @@
-# Modus Operandi — ai_assistant development sessions
+# Modus Operandi — ai_assistant (project-specific addendum)
+
+This file extends the general modus operandi in Claude Code memory.
+It contains ONLY project-specific rules, state, and patterns.
 
 ## How to continue after a session saturates
 
 When starting a new session, say:
 ```
-Continúa con el desarrollo del proyecto. Lee docs/modus-operandi.md y docs/IMPROVEMENTS.md para saber dónde estamos.
+Continúa con el desarrollo del proyecto. Lee docs/modus-operandi.md y el último docs/IMPROVEMENTS_V*.md para saber dónde estamos.
 ```
 
-## Current state (updated 2026-02-21)
+## Current state (updated 2026-03-09)
 
-- **v1 roadmap**: 39/39 items COMPLETE (Phases 1-11)
-- **v2 roadmap**: Following `docs/IMPROVEMENTS.md`
-  - Phase 1 (Providers): 5/5 HECHO
-  - Phase 2 (Infrastructure): 4/4 HECHO
-  - Phase 3 (Advanced): 5/5 HECHO
-  - Phase 4 (Ecosystem): 4/4 HECHO
-  - Phase 5 (Testing): 4/4 HECHO
-- **v2 roadmap**: COMPLETE (all 22 items HECHO)
-- **Test count**: 2510 (0 failures, 0 clippy warnings)
-- **`cargo publish --dry-run`**: PASSES
-- **Last commit**: pending (all v2 work not yet committed)
+- **Roadmap v1–v10**: ALL COMPLETE
+- **Roadmap v11–v35**: ALL COMPLETE (v35 partial — Blocks E+G1+I done, B-D-F-G2-G3-H pending)
+- **Test count**: 6,700+ (0 failures, 0 clippy warnings)
+- **Source files**: 312 .rs files, ~350K LOC
+- **Feature flags**: 20+ (see README.md for full table)
+- **Status**: Experimental — compiles and passes tests, but not validated in production
+- **Website**: Separated to `ai_assistant-website` repo (GitHub Pages ready)
+- **License**: PolyForm Noncommercial 1.0.0
+- **Domain**: ai-assistant.runawaybrains.com (CNAME configured)
 
-## Standard workflow per phase
-
-### 1. Audit first
-Before implementing anything, audit existing code — many items turn out to be already implemented. Use Explore agents to search the codebase.
-
-### 2. Plan mode
-Enter plan mode for each phase. Key structure:
-- Identify what's truly NEW vs already done
-- Mark already-done items as HECHO in IMPROVEMENTS.md immediately
-- Design workstreams (WS1, WS2...) for parallel implementation
-
-### 3. Parallel agent pattern
-Launch background agents (`run_in_background: true`) for independent workstreams:
-- Each agent creates ONE new file (module) with full implementation + tests
-- Agents should NOT modify lib.rs — the main thread does wiring after agents finish
-- Agent prompt must include: exact types, method signatures, test count target, codebase patterns to follow
-
-### 4. Wiring (main thread, after agents finish)
-1. Add `pub mod <new_module>;` in lib.rs under the correct feature gate section
-2. Add `pub use <new_module>::{Type1, Type2, ...};` re-exports
-3. Run `cargo check --features "full,autonomous,scheduler,butler,browser,distributed-agents,distributed-network"`
-4. Run `cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents" --lib`
-5. Run `cargo clippy --features "full,autonomous,scheduler,butler,browser,distributed-agents" -- -W clippy::all`
-
-### 5. Documentation updates (parallel agents)
-Launch parallel agents for:
-- **HTML docs** (with timestamped backups FIRST):
-  - `docs/feature_matrix.html` — add rows for new modules
-  - `docs/framework_comparison.html` — update roadmap section
-- **Markdown docs**:
-  - `docs/GUIDE.md` — add numbered sections at end
-  - `docs/AGENT_SYSTEM_DESIGN.md` — add numbered sections at end
-  - `docs/TESTING.md` — update test count
-  - `docs/CONCEPTS.md` — add concept explanations
-  - `docs/IMPROVEMENTS.md` — mark items HECHO/PARCIAL
-
-### 6. Commit
-All changes for a phase go in one commit. User must explicitly ask for commit.
-
-## Key patterns & gotchas
+## Project-specific patterns
 
 ### lib.rs module organization
-```
-// CORE MODULES (always available) — line ~105
-// MULTI-AGENT FEATURE — #[cfg(feature = "multi-agent")]
-// ASYNC RUNTIME FEATURE — #[cfg(feature = "async-runtime")]
-// DISTRIBUTED FEATURE — #[cfg(feature = "distributed")]
-// ANALYTICS FEATURE — #[cfg(feature = "analytics")]
-// VISION FEATURE — #[cfg(feature = "vision")]
-// EMBEDDINGS FEATURE — #[cfg(feature = "embeddings")]
-// ADVANCED STREAMING — #[cfg(feature = "advanced-streaming")]
-// ADAPTERS FEATURE — #[cfg(feature = "adapters")]
-// TOOLS FEATURE — #[cfg(feature = "tools")]
-// RAG FEATURE — #[cfg(feature = "rag")]
-// AUTONOMOUS — #[cfg(feature = "autonomous")]
-// etc.
-```
-
-### Concurrent agent modification hazard
-NEVER let agents modify lib.rs — they will overwrite each other's changes. Only the main thread should edit lib.rs after all agents complete.
-
-### HTML backup policy
-MANDATORY before changing HTML docs:
-```bash
-cp docs/feature_matrix.html "docs/backups/feature_matrix_YYYY-MM-DD_HHMM_description.html"
-cp docs/framework_comparison.html "docs/backups/framework_comparison_YYYY-MM-DD_HHMM_description.html"
-```
+Modules are organized by feature gate. Core modules are always available, optional modules
+behind `#[cfg(feature = "...")]`. See lib.rs header comments for the full list.
 
 ### Feature flag rules
 - `dep:X` prefix: if ANY feature uses `dep:X`, ALL must use `dep:X` (never mix)
 - `full` feature includes lightweight features only
-- Heavy features (`distributed-network`, `autonomous`, `p2p`, etc.) are opt-in
+- Heavy features (`distributed-network`, `autonomous`, `p2p`, `containers`, `audio`, etc.) are opt-in
+- See README.md for the complete feature flags table
 
 ### Async pattern
 Uses `Pin<Box<dyn Future<Output = T> + Send + '_>>` — NOT `async-trait` crate.
 
-### Test commands
+### Name collision pattern
+When re-exporting types that conflict across modules, use `as` aliases in lib.rs:
+```rust
+pub use module_a::Foo as ModuleAFoo;
+pub use module_b::Foo as ModuleBFoo;
+```
+See MEMORY.md for the full list of resolved name collisions.
+
+### Wiring checklist (after implementing a new module)
+1. Add `pub mod <new_module>;` in lib.rs under the correct feature gate section
+2. Add `pub use <new_module>::{Type1, Type2, ...};` re-exports
+3. Run compile check
+4. Run tests
+5. Run clippy
+
+### Documentation files to update per phase
+- `docs/GUIDE.md` — add numbered sections at end
+- `docs/AGENT_SYSTEM_DESIGN.md` — add numbered sections at end
+- `docs/TESTING.md` — update test count
+- `docs/CONCEPTS.md` — add concept explanations
+- `docs/IMPROVEMENTS_V*.md` — mark items HECHO/PARCIAL
+- **HTML docs** are in separate `ai_assistant-website` repo
+
+## Test commands
+
 ```bash
 # Standard full test (most features)
-cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents" --lib
+cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite" --lib
 
 # With distributed network
-cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents,distributed-network" --lib
+cargo test --features "full,distributed-network" --lib
 
 # P2P only
 cargo test --features "full,p2p" --lib -- p2p::
@@ -112,36 +76,61 @@ cargo test --features "full,p2p" --lib -- p2p::
 cargo test --features full --lib
 ```
 
-### Build check (all features)
+## Build check
+
 ```bash
-cargo check --features "full,autonomous,scheduler,butler,browser,distributed-agents,distributed-network"
+# Lightweight features
+cargo check --features full
+
+# All features
+cargo check --features "full,autonomous,scheduler,butler,browser,distributed-agents,distributed-network,containers,audio"
 ```
 
 ## What's next
 
-**v2 roadmap COMPLETE** — all 22 items across 5 phases are HECHO.
-- `cargo publish --dry-run` passes
-- All v2 work needs to be committed (user has not requested commit yet)
-- Ready for `cargo publish` when desired
+- **v35 remaining blocks**: B (source renames), C (container abstraction), D (tool framework consolidation), F (naming edge cases), G2-G3 (memory extensions), H (MCP agent tools)
+- **Comprehensive review**: API consistency, dead code, documentation polish
+- **GitHub publication**: repos ready, domain configured
+- **PI registration**: Spain (cultura.gob.es), WIPO PROOF, Safe Creative — PENDING
+
+### Backlog (tareas pendientes no urgentes)
+
+- **Web search en GUI**: Cablear web_search.rs al GUI para que el asistente pueda buscar en internet.
+  Ya implementados en web_search.rs: DuckDuckGo (scraping), Brave Search (API), SearXNG (self-hosted).
+  Pendiente de implementar como SearchProvider: SerpAPI, Tavily, Google Custom Search API, Bing Web Search API.
+  Requiere: UI para configurar el endpoint/API key, integrar resultados como contexto RAG antes de enviar al LLM.
+- **Build release + GitHub Release**: Ejecutar `scripts/build_release.ps1`, subir el zip a GitHub Releases, commit + push de toda la documentación Getting Started.
 
 ## File map (key files)
 
 | File | Purpose |
 |------|---------|
-| `src/lib.rs` | Module declarations + re-exports (~1300 lines) |
-| `src/providers.rs` | Main provider routing (generate_response, streaming) |
+| `src/lib.rs` | Module declarations + re-exports |
+| `src/assistant.rs` | AiAssistant — main user-facing struct |
 | `src/config.rs` | AiProvider enum + AiConfig |
-| `src/cloud_providers.rs` | Cloud API routing (OpenAI, Anthropic, Gemini, etc.) |
-| `src/tools.rs` | ProviderPlugin trait + ToolCall/ToolDefinition |
-| `src/async_providers.rs` | AsyncHttpClient trait, create_runtime() |
-| `src/async_provider_plugin.rs` | AsyncProviderPlugin trait + bridge adapters |
-| `src/llm_judge.rs` | LLM-as-Judge evaluation system |
-| `src/embedding_providers.rs` | EmbeddingProvider trait + 4 implementations |
-| `src/gemini_provider.rs` | GeminiProvider (Google Gemini API) |
-| `src/provider_plugins.rs` | OllamaProvider, KoboldCpp, LMStudio + PromptToolFallback |
-| `src/guardrail_pipeline.rs` | Guard trait + GuardrailPipeline + 6 built-in guards |
-| `.github/workflows/ci.yml` | GitHub Actions CI (check, test, clippy, fmt) |
+| `src/providers.rs` | Provider routing (generate_response, streaming) |
+| `src/server.rs` | Embedded HTTP server (OpenAI-compatible) |
+| `src/server_axum.rs` | Axum-based server (standalone/cluster) |
+| `src/agent_definition.rs` | AgentDefinition — declarative agent config (JSON/TOML) |
+| `src/agent_wiring.rs` | AgentPool, definition→runtime wiring, supervisor |
+| `src/autonomous_loop.rs` | AutonomousAgent — loop with policy, sandbox, cost tracking |
+| `src/multi_agent.rs` | MultiAgentSession, orchestration strategies |
+| `src/memory_service.rs` | Background memory service (episodic, entity, plans) |
+| `src/rag.rs` | RAG database (SQLite + FTS5) |
+| `src/guardrail_pipeline.rs` | Constitutional AI, PII, toxicity, injection detection |
+| `src/mcp_protocol/` | MCP server with 40+ tools |
+| `src/advanced_memory/` | Entity memory, episodic, consolidation |
+| `src/prompt_signature/` | DSPy-style optimizable prompts |
+| `src/document_parsing/` | PDF, EPUB, DOCX, HTML, etc. |
+| `src/advanced_routing.rs` | Bandit algorithms, NFA/DFA routing |
+| `src/distributed_network.rs` | QUIC/TLS 1.3, node security, anti-entropy |
 | `Cargo.toml` | Feature flags + dependencies |
-| `docs/IMPROVEMENTS.md` | v2 roadmap tracking (source of truth) |
-| `docs/GUIDE.md` | User guide (numbered sections) |
-| `docs/AGENT_SYSTEM_DESIGN.md` | Architecture docs (numbered sections) |
+| `docs/IMPROVEMENTS_V35.md` | Current roadmap (source of truth) |
+| `README.md` | Project overview for GitHub |
+
+## Repository structure
+
+| Repo | Content |
+|------|---------|
+| `ai_assistant` (this) | Rust crate source code + dev docs |
+| `ai_assistant-website` | Landing page + interactive HTML docs (GitHub Pages) |
