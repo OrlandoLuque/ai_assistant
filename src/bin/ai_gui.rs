@@ -432,6 +432,11 @@ impl AiGuiApp {
             }
 
             self.phase = AppPhase::Ready;
+
+            // Auto-create a default session if none exists
+            if self.assistant.current_session.is_none() {
+                self.assistant.new_session();
+            }
         }
 
         self.settings.ollama_url = result.config.ollama_url.clone();
@@ -484,13 +489,16 @@ impl AiGuiApp {
     // Chat
     // =========================================================================
 
-    fn send_message(&mut self) {
-        let text = self.input_text.trim().to_string();
+    fn send_message(&mut self, text: String) {
         if text.is_empty() || self.assistant.is_generating {
             return;
         }
-        self.input_text.clear();
         self.last_error = None;
+
+        // Auto-create session if none exists
+        if self.assistant.current_session.is_none() {
+            self.assistant.new_session();
+        }
 
         if self.rag_enabled && !self.knowledge_sources.is_empty() {
             let (knowledge_ctx, _conversation_ctx) = self.assistant.build_rag_context(&text);
@@ -814,13 +822,25 @@ impl AiGuiApp {
                 ui.label(&msg);
                 ui.add_space(24.0);
 
-                ui.horizontal(|ui| {
-                    ui.label("Ollama URL:");
-                    ui.text_edit_singleline(&mut self.settings.ollama_url);
-                });
-                ui.horizontal(|ui| {
-                    ui.label("LM Studio URL:");
-                    ui.text_edit_singleline(&mut self.settings.lm_studio_url);
+                let field_width = (ui.available_width() * 0.6).min(400.0);
+                ui.allocate_ui(egui::vec2(field_width, 0.0), |ui| {
+                    egui::Grid::new("provider_urls_grid")
+                        .num_columns(2)
+                        .spacing([8.0, 8.0])
+                        .show(ui, |ui| {
+                            ui.label("Ollama URL:");
+                            ui.add_sized(
+                                [ui.available_width(), 20.0],
+                                egui::TextEdit::singleline(&mut self.settings.ollama_url),
+                            );
+                            ui.end_row();
+                            ui.label("LM Studio URL:");
+                            ui.add_sized(
+                                [ui.available_width(), 20.0],
+                                egui::TextEdit::singleline(&mut self.settings.lm_studio_url),
+                            );
+                            ui.end_row();
+                        });
                 });
                 ui.add_space(16.0);
 
@@ -1204,8 +1224,8 @@ impl AiGuiApp {
                 "Type your message... (Ctrl+Enter to send)",
                 50.0,
             );
-            if response.is_some() {
-                self.send_message();
+            if let Some(text) = response {
+                self.send_message(text);
             }
         }
     }

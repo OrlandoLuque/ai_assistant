@@ -16,7 +16,43 @@ A comprehensive Rust library for LLM integration — local and cloud. 13+ provid
 > This project compiles and passes 6,696 tests, but it has not been validated in production
 > or real-world usage. Developed iteratively with AI assistance, some modules may be
 > incomplete, loosely wired, or tested only at a surface level. A comprehensive review is
-> pending. **Use at your own risk. Not yet published on crates.io.**
+> pending. **Use at your own risk.**
+
+## Quick Start
+
+### Option A: Download Pre-Built Binaries (No Rust Needed)
+
+Download the latest release from [**GitHub Releases**](https://github.com/OrlandoLuque/ai_assistant/releases), extract, and run:
+
+```bash
+ai_assistant_cli.exe
+```
+
+### Option B: Install from crates.io
+
+```bash
+cargo install ai_assistant --bin ai_assistant_cli --features "full,butler"
+```
+
+### Option C: Clone & Build
+
+```bash
+git clone https://github.com/OrlandoLuque/ai_assistant.git
+cd ai_assistant
+cargo build --release --bin ai_assistant_cli --features "full,butler"
+```
+
+> **Full guide**: See [**docs/GETTING_STARTED.md**](docs/GETTING_STARTED.md) for detailed instructions, server setup, code snippets in multiple languages, and more.
+
+## Included Binaries
+
+| Binary | Description |
+|--------|-------------|
+| `ai_assistant_cli` | Interactive REPL with auto-detection of local LLMs |
+| `ai_gui` | Desktop GUI with chat and .kpkg support (WIP) |
+| `ai_assistant_server` | HTTP API server — OpenAI-compatible drop-in replacement |
+| `kpkg_tool` | Create, inspect, and extract encrypted knowledge packages |
+| `ai_cluster_node` | Distributed cluster node with QUIC mesh and CRDTs |
 
 ## Features
 
@@ -106,7 +142,7 @@ A comprehensive Rust library for LLM integration — local and cloud. 13+ provid
 
 ```bash
 # Clone the repository
-git clone https://github.com/YOUR_USER/ai_assistant.git
+git clone https://github.com/OrlandoLuque/ai_assistant.git
 cd ai_assistant
 
 # Build with default features
@@ -131,13 +167,14 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ai_assistant = { path = "path/to/ai_assistant" }
+# From crates.io (stable release):
+ai_assistant = { version = "0.1", features = ["full"] }
 
-# With all lightweight features:
-ai_assistant = { path = "path/to/ai_assistant", features = ["full"] }
+# From git (latest development version):
+ai_assistant = { git = "https://github.com/OrlandoLuque/ai_assistant", features = ["full"] }
 
 # With autonomous agents:
-ai_assistant = { path = "path/to/ai_assistant", features = ["full", "autonomous", "scheduler", "butler", "browser"] }
+ai_assistant = { version = "0.1", features = ["full", "autonomous", "scheduler", "butler", "browser"] }
 ```
 
 ### Feature Flags
