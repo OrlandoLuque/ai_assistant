@@ -31,7 +31,7 @@ ai_assistant_cli.exe
 ### Option B: Install from crates.io
 
 ```bash
-cargo install ai_assistant --bin ai_assistant_cli --features "full,butler"
+cargo install ai_assistant_core --bin ai_assistant_cli --features "full,butler"
 ```
 
 ### Option C: Clone & Build
@@ -174,13 +174,13 @@ Add to your `Cargo.toml`:
 ```toml
 [dependencies]
 # From crates.io (stable release):
-ai_assistant = { version = "0.1", features = ["full"] }
+ai_assistant_core = { version = "0.1", features = ["full"] }
 
 # From git (latest development version):
-ai_assistant = { git = "https://github.com/OrlandoLuque/ai_assistant", features = ["full"] }
+ai_assistant_core = { git = "https://github.com/OrlandoLuque/ai_assistant", features = ["full"] }
 
 # With autonomous agents:
-ai_assistant = { version = "0.1", features = ["full", "autonomous", "scheduler", "butler", "browser"] }
+ai_assistant_core = { version = "0.1", features = ["full", "autonomous", "scheduler", "butler", "browser"] }
 ```
 
 ### Feature Flags

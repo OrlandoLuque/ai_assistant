@@ -45,16 +45,16 @@ That's it — the CLI auto-detects your local LLM and starts a chat session.
 
 ```bash
 # Install the CLI (compiles from source, takes a few minutes)
-cargo install ai_assistant --bin ai_assistant_cli --features "full,butler"
+cargo install ai_assistant_core --bin ai_assistant_cli --features "full,butler"
 
 # Install the power-user CLI (with diagnostic logging)
-cargo install ai_assistant --bin ai_cli --features "full,diagnostic-logging"
+cargo install ai_assistant_core --bin ai_cli --features "full,diagnostic-logging"
 
 # Install the HTTP server
-cargo install ai_assistant --bin ai_assistant_server --features "full"
+cargo install ai_assistant_core --bin ai_assistant_server --features "full"
 
 # Install the knowledge package tool
-cargo install ai_assistant --bin kpkg_tool --features "rag"
+cargo install ai_assistant_core --bin kpkg_tool --features "rag"
 ```
 
 ---
@@ -406,10 +406,10 @@ See [`examples/clients/curl_examples.sh`](../examples/clients/curl_examples.sh) 
 # Cargo.toml
 [dependencies]
 # From crates.io (stable release):
-ai_assistant = { version = "0.1", features = ["full"] }
+ai_assistant_core = { version = "0.1", features = ["full"] }
 
 # Or from git (latest development version):
-# ai_assistant = { git = "https://github.com/OrlandoLuque/ai_assistant", features = ["full"] }
+# ai_assistant_core = { git = "https://github.com/OrlandoLuque/ai_assistant", features = ["full"] }
 ```
 
 ### Basic Chat
@@ -741,4 +741,4 @@ register_knowledge_tools(&mut server, "knowledge.db".into(), None);
 - [**Examples**](../examples/) — 50+ Rust examples
 - [**Client Examples**](../examples/clients/) — Python, Node.js, Go, C#, Java, curl
 - [**Feature Matrix**](feature_matrix.html) — Interactive feature comparison
-- [**crates.io**](https://crates.io/crates/ai_assistant) — Package page
+- [**crates.io**](https://crates.io/crates/ai_assistant_core) — Package page
