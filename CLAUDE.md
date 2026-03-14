@@ -9,10 +9,10 @@ Esto te da el contexto completo: dónde estamos, qué se ha hecho, cómo trabaja
 
 ## Sobre el Proyecto
 - **Librería Rust** para integración con LLMs locales y cloud
-- **203.427+ líneas de código**, 220+ archivos fuente (.rs), 2.730+ tests
+- **~385K líneas de código**, 315 archivos fuente (.rs), 4.892+ tests
 - **Autor único**: Orlando José Luque Moraira (Lander) — orlando.luque@gmail.com
 - **Estado**: NO publicado en ningún sitio (ni crates.io, ni GitHub público, ni distribuido a terceros)
-- **Feature flags**: 20+ (core, multi-agent, security, analytics, rag, distributed, autonomous, etc.)
+- **Feature flags**: 22+ (core, multi-agent, security, analytics, rag, distributed, autonomous, gui-pro, etc.)
 
 ## Módulos Principales
 - Multi-proveedor LLM: Ollama, LM Studio, OpenAI, Anthropic, Gemini, Bedrock, HuggingFace, y más
@@ -22,7 +22,10 @@ Esto te da el contexto completo: dónde estamos, qué se ha hecho, cómo trabaja
 - Distribuido: CRDTs, DHT Kademlia, MapReduce, QUIC/TLS 1.3
 - Seguridad: RBAC, PII detection, guardrails constitucionales, AES-256-GCM
 - Streaming: SSE, WebSocket RFC 6455, compresión, resumible
-- MCP protocol, WASM, egui widgets, HTTP server embebido
+- FreshContext mode: contexto alternativo que maximiza tokens para conocimiento
+- MCP protocol (40+ tools + 4 knowledge tools), WASM, egui widgets, HTTP server embebido
+- Memory integration: MemoryManager con auto-inyección en FreshContext
+- FreshContext Advisor API: diagnóstico programático (effectiveness, warnings)
 
 ## Decisiones Estratégicas Tomadas (Febrero 2026)
 
@@ -60,7 +63,7 @@ Esto te da el contexto completo: dónde estamos, qué se ha hecho, cómo trabaja
 3. Respetar la estructura modular existente basada en feature flags de Cargo
 4. Zero `.unwrap()` en producción — usar proper error handling siempre
 5. Zero warnings del compilador — compilación limpia en todas las combinaciones de features
-6. Tests para todo — el proyecto tiene 2.730+ tests y debe mantenerse así
+6. Tests para todo — el proyecto tiene 4.892+ tests y debe mantenerse así
 
 ## Documentos Generados
 - `Informe_Viabilidad_ai_assistant.docx` — Informe completo de viabilidad v2 (monetización, PI, licenciamiento)

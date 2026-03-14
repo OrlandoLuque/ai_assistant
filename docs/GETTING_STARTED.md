@@ -650,6 +650,60 @@ Each node runs a full HTTP server + QUIC mesh. State syncs automatically via CRD
 
 ---
 
+## FreshContext Mode
+
+FreshContext is an alternative context strategy that maximizes tokens available for knowledge retrieval:
+
+```rust
+use ai_assistant::{AiAssistant, ContextMode};
+
+let mut assistant = AiAssistant::new();
+// ... configure provider and model ...
+
+// Enable RAG for knowledge retrieval
+assistant.init_rag(&std::path::PathBuf::from("knowledge.db")).unwrap();
+
+// Switch to FreshContext — only last message sent to LLM
+assistant.set_context_mode(ContextMode::FreshContext);
+
+// Check configuration health
+let status = assistant.fresh_context_status(false);
+for w in &status.warnings {
+    println!("Warning: {}", w);
+}
+println!("Effectiveness: {:?}", status.effectiveness);
+```
+
+### Adding Memory to FreshContext
+
+```rust
+use ai_assistant::memory::MemoryConfig;
+
+// Enable memory for session awareness
+assistant.enable_memory(MemoryConfig::default());
+
+// Now FreshContext auto-injects memory context alongside RAG results
+assistant.send_message("What is Rust?".to_string(), "");
+```
+
+---
+
+## MCP Knowledge Tools
+
+Register knowledge tools on an MCP server to let external agents query your documents:
+
+```rust
+use ai_assistant::mcp_protocol::McpServer;
+use ai_assistant::mcp_protocol::knowledge_tools::register_knowledge_tools;
+
+let mut server = McpServer::new("my-server", "1.0.0");
+register_knowledge_tools(&mut server, "knowledge.db".into(), None);
+// Available: search_knowledge, list_knowledge_sources
+// With graph: also query_graph, get_entity
+```
+
+---
+
 ## Feature Flags
 
 `ai_assistant` uses Cargo feature flags to control what gets compiled:

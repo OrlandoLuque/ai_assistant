@@ -747,3 +747,83 @@ GET /butler/features
 ```
 
 Returns a `FeatureFlagAnalysis` JSON with active flags, unnecessary flags, missing flags, and recommended compilation profile.
+
+---
+
+## FreshContext API (rag feature)
+
+### ContextMode
+
+```rust
+assistant.set_context_mode(ContextMode::FreshContext);
+assistant.set_context_mode(ContextMode::Conversation);
+let mode = assistant.context_mode(); // ContextMode
+```
+
+### FreshContext Advisor
+
+```rust
+let status: FreshContextStatus = assistant.fresh_context_status(has_graph: bool);
+// status.mode: ContextMode
+// status.rag_available: bool
+// status.sources_indexed: usize
+// status.graph_available: bool
+// status.memory_available: bool
+// status.available_knowledge_tokens: usize
+// status.warnings: Vec<FreshContextWarning>
+// status.effectiveness: FreshContextEffectiveness
+```
+
+**Warning variants**: `NoRag`, `NoSourcesIndexed`, `NoGraph`, `NoMemory`, `SmallBudget(usize)`
+
+**Effectiveness levels**: `Optimal` (RAG+Graph+Memory), `Good` (RAG+one), `Limited` (RAG only), `Ineffective` (no RAG)
+
+### Memory API
+
+```rust
+assistant.enable_memory(MemoryConfig::default());
+assistant.disable_memory();
+assistant.has_memory() -> bool;
+assistant.memory_manager() -> Option<&MemoryManager>;
+assistant.memory_manager_mut() -> Option<&mut MemoryManager>;
+assistant.build_memory_context(query: &str, max_tokens: usize) -> String;
+```
+
+---
+
+## MCP Knowledge Tools (rag feature)
+
+Registered via `register_knowledge_tools(&mut server, db_path, graph_opt)`.
+
+### search_knowledge
+
+Search indexed documents using BM25.
+
+**Parameters**:
+- `query` (string, required): Search query
+- `max_results` (integer, optional): Maximum results (default: 5)
+- `max_tokens` (integer, optional): Maximum tokens in response (default: 2000)
+
+**Annotations**: `readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`
+
+### list_knowledge_sources
+
+List all indexed document sources. No parameters.
+
+### query_graph
+
+Search entities and relations in the knowledge graph.
+
+**Parameters**:
+- `query` (string, required): Entity or relation to search for
+
+**Requires**: Knowledge graph passed to `register_knowledge_tools()`
+
+### get_entity
+
+Get a specific entity by exact name.
+
+**Parameters**:
+- `name` (string, required): Entity name to look up
+
+**Requires**: Knowledge graph passed to `register_knowledge_tools()`
