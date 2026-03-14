@@ -38,19 +38,85 @@ fn main() -> ExitCode {
         return ExitCode::from(1);
     }
 
-    match args[0].as_str() {
+    // Parse global flags before command dispatch
+    let mut verbose_level = 0u8;
+    let mut log_file: Option<String> = None;
+    let mut command_args: Vec<String> = Vec::new();
+    let mut found_command = false;
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-v" | "--verbose" if !found_command => verbose_level = verbose_level.max(1),
+            "-vv" if !found_command => verbose_level = verbose_level.max(2),
+            "-vvv" if !found_command => verbose_level = verbose_level.max(3),
+            "--debug" if !found_command => verbose_level = verbose_level.max(2),
+            "--log-file" if !found_command => {
+                i += 1;
+                if i < args.len() {
+                    log_file = Some(args[i].clone());
+                }
+            }
+            _ => {
+                found_command = true;
+                command_args.push(args[i].clone());
+            }
+        }
+        i += 1;
+    }
+
+    // Initialize log backend (requires diagnostic-logging feature for env_logger)
+    #[cfg(feature = "diagnostic-logging")]
+    {
+        let log_level = match verbose_level {
+            0 => "warn",
+            1 => "info",
+            2 => "debug",
+            _ => "trace",
+        };
+        let mut log_builder =
+            env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level));
+        if let Some(ref path) = log_file {
+            let file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path);
+            match file {
+                Ok(file) => {
+                    log_builder.target(env_logger::Target::Pipe(Box::new(file)));
+                }
+                Err(e) => {
+                    eprintln!("Warning: could not open log file '{}': {}", path, e);
+                }
+            }
+        }
+        log_builder.init();
+        log::debug!("ai_cli starting, log_level={}, args={:?}", log_level, command_args);
+    }
+    #[cfg(not(feature = "diagnostic-logging"))]
+    {
+        let _ = verbose_level;
+        let _ = log_file;
+    }
+
+    if command_args.is_empty() {
+        print_usage();
+        return ExitCode::from(1);
+    }
+
+    match command_args[0].as_str() {
         "-h" | "--help" | "help" => {
             print_usage();
             ExitCode::SUCCESS
         }
         "scan" => cmd_scan(),
         "providers" => cmd_providers(),
-        "models" => cmd_models(&args[1..]),
-        "config" => cmd_config(&args[1..]),
-        "butler" => cmd_butler(&args[1..]),
-        "query" => cmd_query(&args[1..]),
-        "bench" => cmd_bench(&args[1..]),
-        "test" => cmd_test(&args[1..]),
+        "models" => cmd_models(&command_args[1..]),
+        "config" => cmd_config(&command_args[1..]),
+        "butler" => cmd_butler(&command_args[1..]),
+        "query" => cmd_query(&command_args[1..]),
+        "bench" => cmd_bench(&command_args[1..]),
+        "test" => cmd_test(&command_args[1..]),
         other => {
             eprintln!("Error: unknown command '{}'\n", other);
             print_usage();
@@ -65,7 +131,13 @@ fn main() -> ExitCode {
 
 fn print_usage() {
     println!("ai_cli — Non-interactive CLI for AI Assistant\n");
-    println!("Usage: ai_cli <command> [options]\n");
+    println!("Usage: ai_cli [global-options] <command> [options]\n");
+    println!("Global options:");
+    println!("  -v, --verbose                    Info-level logging");
+    println!("  -vv, --debug                     Debug-level logging");
+    println!("  -vvv                             Trace-level logging (full prompts, contexts)");
+    println!("  --log-file <path>                Write log output to file");
+    println!();
     println!("Commands:");
     println!("  scan                           Detect LLM providers, show environment info");
     println!("  providers                      List detected LLM providers with model counts");

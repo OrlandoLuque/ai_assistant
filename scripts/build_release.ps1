@@ -3,10 +3,11 @@
     Build and package user-facing binaries for a GitHub Release.
 
 .DESCRIPTION
-    Compiles the 5 user-facing binaries in --release mode, packages them into
+    Compiles the 6 user-facing binaries in --release mode, packages them into
     a zip file with a README.txt and SHA256 checksums.
 
     Binaries:
+      ai_cli              (features: full,diagnostic-logging)
       ai_assistant_cli    (features: full,butler)
       ai_gui              (features: gui)
       ai_assistant_server (features: full)
@@ -43,11 +44,12 @@ function Write-Fail { param($msg) Write-Host " -  $msg" -ForegroundColor Red }
 # --------------------------------------------------------------------------- #
 
 $binaries = @(
-    @{ Name = "ai_assistant_cli";    Features = "full,butler";         Desc = "Interactive CLI with auto-detection" },
-    @{ Name = "ai_gui";             Features = "gui";                 Desc = "Desktop GUI (WIP)" },
-    @{ Name = "ai_assistant_server"; Features = "full";                Desc = "HTTP API server (OpenAI-compatible)" },
-    @{ Name = "kpkg_tool";          Features = "rag";                 Desc = "Knowledge package manager" },
-    @{ Name = "ai_cluster_node";    Features = "full,server-cluster"; Desc = "Distributed cluster node (QUIC mesh)" }
+    @{ Name = "ai_cli";             Features = "full,diagnostic-logging"; Desc = "Power-user CLI (scan, query, config, diagnostics)" },
+    @{ Name = "ai_assistant_cli";    Features = "full,butler";            Desc = "Interactive Chat CLI with auto-detection" },
+    @{ Name = "ai_gui";             Features = "gui";                    Desc = "Desktop GUI (WIP)" },
+    @{ Name = "ai_assistant_server"; Features = "full";                   Desc = "HTTP API server (OpenAI-compatible)" },
+    @{ Name = "kpkg_tool";          Features = "rag";                    Desc = "Knowledge package manager" },
+    @{ Name = "ai_cluster_node";    Features = "full,server-cluster";    Desc = "Distributed cluster node (QUIC mesh)" }
 )
 
 # Read version from Cargo.toml if not specified
@@ -157,6 +159,20 @@ Prerequisites
 
 Included Binaries
 -----------------
+
+  ai_cli.exe - Power-User CLI
+    Multi-command tool for scanning providers, querying models, managing
+    configuration, and running diagnostics with verbose logging.
+    Usage:
+      ai_cli.exe scan                         Detect local LLM providers
+      ai_cli.exe query -p "Hello" -P ollama   Send a one-shot query
+      ai_cli.exe models -P ollama             List available models
+      ai_cli.exe config                       Show current configuration
+    Diagnostics (compile-time gated):
+      ai_cli.exe -v  scan                     Info-level logging
+      ai_cli.exe -vv scan                     Debug-level logging
+      ai_cli.exe -vvv scan                    Trace-level logging (full)
+      ai_cli.exe --log-file diag.log scan     Write logs to file
 
   ai_assistant_cli.exe - Interactive Chat CLI
     The fastest way to start chatting. Auto-detects local LLM providers.

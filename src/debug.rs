@@ -622,6 +622,63 @@ impl<'a> RequestHandle<'a> {
     }
 }
 
+/// Logger that implements the `log::Log` trait and stores entries in a `DebugLogger` buffer.
+///
+/// This allows GUI applications to capture all `log::debug!` / `log::trace!` calls
+/// (including `diag_debug!` / `diag_trace!`) into an in-memory ring buffer that can
+/// be rendered in a diagnostic panel.
+///
+/// # Usage
+/// ```ignore
+/// let debug_logger = Arc::new(DebugLogger::with_level(DebugLevel::Trace));
+/// let gui_logger = GuiLogger::new(Arc::clone(&debug_logger));
+/// log::set_boxed_logger(Box::new(gui_logger)).ok();
+/// log::set_max_level(log::LevelFilter::Trace);
+/// // Now all log::debug!, diag_debug!, etc. flow into debug_logger
+/// ```
+pub struct GuiLogger {
+    inner: Arc<DebugLogger>,
+}
+
+impl GuiLogger {
+    /// Create a new GuiLogger that forwards to the given `DebugLogger`.
+    pub fn new(inner: Arc<DebugLogger>) -> Self {
+        Self { inner }
+    }
+}
+
+impl log::Log for GuiLogger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        let level = match metadata.level() {
+            log::Level::Error => DebugLevel::Error,
+            log::Level::Warn => DebugLevel::Warn,
+            log::Level::Info => DebugLevel::Info,
+            log::Level::Debug => DebugLevel::Debug,
+            log::Level::Trace => DebugLevel::Trace,
+        };
+        self.inner.is_enabled(level)
+    }
+
+    fn log(&self, record: &log::Record) {
+        let level = match record.level() {
+            log::Level::Error => DebugLevel::Error,
+            log::Level::Warn => DebugLevel::Warn,
+            log::Level::Info => DebugLevel::Info,
+            log::Level::Debug => DebugLevel::Debug,
+            log::Level::Trace => DebugLevel::Trace,
+        };
+
+        // Use the module path as component, falling back to target
+        let component = record
+            .module_path()
+            .unwrap_or_else(|| record.target());
+
+        self.inner.log(DebugEntry::new(level, component, format!("{}", record.args())));
+    }
+
+    fn flush(&self) {}
+}
+
 /// Global debug instance
 static GLOBAL_DEBUG: std::sync::OnceLock<Arc<DebugLogger>> = std::sync::OnceLock::new();
 
