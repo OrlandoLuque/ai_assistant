@@ -4,16 +4,16 @@
 
 # ai_assistant
 
-A comprehensive Rust library for LLM integration — local and cloud. 13+ providers, 5-tier RAG, multi-agent orchestration, autonomous agents, distributed computing, and 40+ MCP tools. Single crate, zero-runtime, ~353K LOC.
+A comprehensive Rust library for LLM integration — local and cloud. 13+ providers, 5-tier RAG, multi-agent orchestration, autonomous agents, distributed computing, and 40+ MCP tools. Single crate, zero-runtime, ~385K LOC.
 
 ![Rust](https://img.shields.io/badge/Rust-Edition%202021-orange)
 ![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue)
-![Tests](https://img.shields.io/badge/tests-6696-brightgreen)
-![LOC](https://img.shields.io/badge/LOC-353K-blue)
+![Tests](https://img.shields.io/badge/tests-4892-brightgreen)
+![LOC](https://img.shields.io/badge/LOC-385K-blue)
 
 > **Status: Experimental**
 >
-> This project compiles and passes 6,696 tests, but it has not been validated in production
+> This project compiles and passes 4,892+ tests, but it has not been validated in production
 > or real-world usage. Developed iteratively with AI assistance, some modules may be
 > incomplete, loosely wired, or tested only at a surface level. A comprehensive review is
 > pending. **Use at your own risk.**
@@ -49,7 +49,8 @@ cargo build --release --bin ai_assistant_cli --features "full,butler"
 | Binary | Description |
 |--------|-------------|
 | `ai_assistant_cli` | Interactive REPL with auto-detection of local LLMs |
-| `ai_gui` | Desktop GUI with chat and .kpkg support (WIP) |
+| `ai_gui` | Desktop GUI with chat, knowledge management, and FreshContext mode |
+| `ai_gui-pro` | Full-feature desktop app with 18 panels across 6 categories |
 | `ai_assistant_server` | HTTP API server — OpenAI-compatible drop-in replacement |
 | `kpkg_tool` | Create, inspect, and extract encrypted knowledge packages |
 | `ai_cluster_node` | Distributed cluster node with QUIC mesh and CRDTs |
@@ -67,6 +68,8 @@ cargo build --release --bin ai_assistant_cli --features "full,butler"
 
 ### RAG & Knowledge (`rag` feature)
 - **5-tier RAG**: Self-RAG, CRAG, Graph RAG, RAPTOR, auto-selection (28 configurable features)
+- **FreshContext mode**: Alternative context composition — maximizes token budget for knowledge retrieval (~54% more tokens)
+- **MCP knowledge tools**: 4 MCP tools for knowledge access (search_knowledge, query_graph, list_sources, get_entity)
 - **7 vector DB backends**: InMemory, Qdrant, LanceDB, Pinecone, Chroma, Milvus, pgvector
 - **Document parsing**: PDF, EPUB, DOCX, ODT, HTML, TXT, CSV, EML, PPTX, XLSX
 - **Knowledge graphs**: Entity/relation extraction, multi-layer graphs, graph traversal
@@ -84,6 +87,8 @@ cargo build --release --bin ai_assistant_cli --features "full,butler"
 - **Autonomous agent**: 5 autonomy levels, policy-based sandbox, cron scheduler
 - **Browser automation**: Chrome DevTools Protocol (CDP) via WebSocket
 - **Butler Advisor**: 30 optimization recommendations across 6 categories
+- **FreshContext Advisor API**: Library-level diagnostic reporting (effectiveness, warnings) — usable from code and GUI
+- **Memory integration**: Optional MemoryManager with auto-injection in FreshContext mode
 - **Distributed agents**: Task distribution across nodes with heartbeats and MapReduce
 
 ### Advanced Model Routing (`full` feature)
@@ -103,7 +108,7 @@ cargo build --release --bin ai_assistant_cli --features "full,butler"
 ### Streaming & Protocols
 - **SSE streaming**: With gzip compression and aggregation
 - **WebSocket**: RFC 6455 with handshake from scratch
-- **MCP protocol**: 2025-03-26 spec with 40+ tools, annotations, pagination
+- **MCP protocol**: 2025-03-26 spec with 40+ tools, annotations, pagination, knowledge tools
 - **A2A protocol**: Agent-to-agent communication
 
 ### Distributed Computing (`distributed`, `distributed-network` features)
@@ -132,10 +137,10 @@ cargo build --release --bin ai_assistant_cli --features "full,butler"
 
 ### Code Quality
 - **Zero `.unwrap()` in production**: Proper error handling across all files
-- **6,696 tests**: Comprehensive unit tests with 0 clippy warnings
-- **313 source files**: Fully implemented — zero stubs or TODOs
-- **20+ feature flags**: Granular dependency control
-- **~353,000 lines of Rust**: Single crate, modular architecture
+- **4,892+ tests**: Comprehensive unit tests with 0 clippy warnings
+- **315 source files**: Fully implemented — zero stubs or TODOs
+- **22+ feature flags**: Granular dependency control
+- **~385,000 lines of Rust**: Single crate, modular architecture
 - **Security audited**: 32 vulnerabilities identified and fixed (2-pass audit)
 
 ## Building from Source
@@ -205,6 +210,7 @@ ai_assistant = { version = "0.1", features = ["full", "autonomous", "scheduler",
 | `hitl` | Human-in-the-loop approval | No |
 | `webrtc` | WebRTC for voice | No |
 | `devtools` | Agent debugging tools | No |
+| `gui-pro` | Full-feature GUI (18 panels, all modules) | No |
 
 ## Quick Start
 

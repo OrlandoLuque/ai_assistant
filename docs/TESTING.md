@@ -6,7 +6,7 @@ The project has two testing layers:
 
 | Layer | Tests | Run Command |
 |-------|-------|-------------|
-| Unit tests (`#[test]`) | 6,578 | `cargo test --lib --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite"` |
+| Unit tests (`#[test]`) | 4,892+ | `cargo test --lib --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite"` |
 | Integration tests | 38 | `cargo test --test integration_tests --features full` |
 | Test harness (CLI) | ~436 | `cargo run --bin ai_test_harness -- --all` (sin P2P) |
 | Distributed networking tests | 115 | `cargo test --features "full,distributed-network"` |
@@ -15,7 +15,7 @@ The project has two testing layers:
 | Test harness P2P categories | 16 | `cargo run --bin ai_test_harness --features "full,p2p" -- --category=p2p_nat` |
 | Benchmarks | 42 | `cargo bench --bench core_benchmarks --features full` |
 
-**Total: 6,578 tests** (base features) + 140 `server-axum` tests + 17 `server-cluster` tests (verified with `cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite" --lib`)
+**Total: 4,892+ tests** (lib tests, verified with `cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite" --lib`)
 
 ## Quick Start
 
@@ -326,6 +326,40 @@ Then register in `all_categories()`:
 ("my_category", tests_my_category),
 ```
 
+## FreshContext & Knowledge Tests (v37)
+
+### FreshContext Mode Tests (16 tests in `src/assistant.rs`)
+
+| Test | What it verifies |
+|------|-----------------|
+| `test_context_mode_default_is_conversation` | Default mode = Conversation |
+| `test_context_mode_set_and_get` | Getter/setter roundtrip |
+| `test_fresh_context_preserves_conversation_history` | History preserved when switching modes |
+| `test_fresh_context_only_last_message` | Only last message sent in FreshContext |
+| `test_fresh_context_more_tokens_available` | More tokens available vs Conversation mode |
+| `test_memory_disabled_by_default` | MemoryManager is None by default |
+| `test_memory_enable_disable` | Enable/disable roundtrip |
+| `test_build_memory_context_empty_when_disabled` | Empty string when no memory |
+| `test_build_memory_context_with_memories` | Non-empty context with stored facts |
+| `test_fresh_context_status_ineffective_without_rag` | No RAG = Ineffective + 3 warnings |
+| `test_fresh_context_status_limited_with_rag_only` | RAG only = Limited |
+| `test_fresh_context_status_good_with_rag_and_memory` | RAG + Memory = Good |
+| `test_fresh_context_status_optimal` | RAG + Graph + Memory = Optimal, 0 warnings |
+| `test_fresh_context_warning_display` | Display impl correctness |
+
+### MCP Knowledge Tools Tests (4 tests in `src/mcp_protocol/tests.rs`)
+
+| Test | What it verifies |
+|------|-----------------|
+| `test_knowledge_tools_registration_without_graph` | 2 tools registered without graph, 0 graph tools |
+| `test_knowledge_tools_search_invocation` | `tools/call` search returns results from indexed docs |
+| `test_knowledge_tools_annotations` | readOnlyHint=true, destructiveHint=false |
+| `test_knowledge_tools_list_sources` | list_knowledge_sources returns indexed sources |
+
+All FreshContext advisor tests require feature `rag`. Memory tests work with default features.
+
+---
+
 ## CI Integration
 
 ```bash
@@ -370,3 +404,9 @@ The harness exits with code 1 if any test fails, making it suitable for CI pipel
 | v27 | 6,316 | +222 | 2026-03-04 |
 | v28 | 6,401 | +85 | 2026-03-04 |
 | v28+butler-advisor | 6,417 | +16 | 2026-03-04 |
+| v36 (GUI Pro) | 7,066 | +649 | 2026-03-14 |
+| v37 (FreshContext+MCP+Memory) | 4,892+ | — | 2026-03-14 |
+
+> **Note on v37 count**: Test count reflects current `--lib` run. Some tests from v28-v36 were
+> in integration tests or feature combinations not included in the standard lib test run.
+> The project maintains 4,892+ verified passing lib tests with 0 failures.

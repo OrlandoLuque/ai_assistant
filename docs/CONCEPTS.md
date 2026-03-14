@@ -3851,3 +3851,70 @@ Each `ButlerRecommendation` includes: `category` (OptimizationCategory), `priori
 **Related concepts**: [150. Multi-Armed Bandit Routing](#150-multi-armed-bandit-routing), [36. Distributed Computing](#36-distributed-computing-beyond-a-single-machine), [164. Butler Advisor](#164-butler-advisor-optimization-guidance)
 
 **Feature flag**: full
+
+---
+
+## 171. FreshContext Mode: Stateless-by-Choice Context Composition
+
+**The fundamental idea**: In a standard conversation with an LLM, every message you've ever sent is included in the prompt. This means as the conversation grows, less room remains for injected knowledge. FreshContext inverts this: it discards conversation history from the LLM prompt (keeping only the latest message), freeing ~54% more tokens for RAG-retrieved context. The trade-off is explicit — you sacrifice conversational continuity for deeper knowledge grounding.
+
+**How it works**:
+- **Conversation buffer** — messages are still stored locally in `self.conversation` for GUI display, session persistence, and export. FreshContext doesn't erase history; it just doesn't send it.
+- **Token budget redistribution** — `calculate_available_knowledge_tokens()` returns `conversation_tokens = 0` in FreshContext, giving the full budget to RAG, memory, and graph context.
+- **conv_ctx fallback** — the archived conversation can be searched via RAG (`build_rag_context()` returns a `conv_ctx` element), so relevant past messages still appear as retrieved context rather than verbatim history.
+- **Memory injection** — when `MemoryManager` is enabled, a `--- MEMORY CONTEXT ---` block is appended with facts and preferences learned from prior exchanges, partially recovering session awareness.
+
+**When to use it**: Document Q&A, knowledge-base search, research assistants — any scenario where deep retrieval matters more than conversational flow. Not suitable for multi-turn reasoning or dialogue where prior exchanges are essential.
+
+**Related concepts**: [6. RAG](#6-rag-giving-the-ai-your-knowledge), [3. The Context Window](#3-the-context-window-memory-limits), [19. Memory and Decay](#19-memory-and-decay-remembering-what-matters)
+
+**Feature flag**: rag
+
+---
+
+## 172. Lazy-Open Database Pattern
+
+**The fundamental idea**: Some databases (like `rusqlite::Connection`) are `!Send` — they cannot be moved between threads. But many async frameworks (MCP tool handlers, Axum handlers) require closures that are `Send + Sync + 'static`. The lazy-open pattern resolves this by wrapping the database in `Arc<Mutex<Option<T>>>` and opening the connection inside the handler on first use, on the thread that will actually use it.
+
+**How it works**:
+- **Registration time** — only the database path (`PathBuf`) is captured. No connection is opened. The `Arc<Mutex<Option<RagDb>>>` starts as `None`.
+- **First invocation** — the handler checks `lock().is_none()`, opens the connection, and stores it in the `Option`. Subsequent calls reuse the existing connection.
+- **Thread affinity** — the connection is opened on the handler's thread, satisfying `rusqlite`'s constraint. The `Mutex` ensures only one thread accesses it at a time.
+
+**This pattern is original to this project** — not derived from an external library or known pattern. It emerged from the constraint of integrating `rusqlite` with MCP's `Send + Sync + 'static` handler requirements.
+
+**Related concepts**: [61. MCP Protocol](#61-mcp-protocol), [7. Full-Text Search: BM25 and FTS5](#7-full-text-search-bm25-and-fts5)
+
+**Feature flag**: rag
+
+---
+
+## 173. Configuration Health Advisors
+
+**The fundamental idea**: Complex systems have many configuration knobs, and users often enable features without understanding the prerequisites. A configuration health advisor is a diagnostic API that inspects the current state and emits typed warnings about misconfiguration, missing prerequisites, or suboptimal setups — before the user encounters a runtime failure or silent degradation.
+
+**How it works in ai_assistant**:
+- **FreshContext Advisor** — `fresh_context_status()` returns a `FreshContextStatus` struct with an effectiveness level (`Optimal`/`Good`/`Limited`/`Ineffective`) and a list of typed warnings (`NoRag`, `NoGraph`, `NoMemory`, `SmallBudget`). Each warning implements `Display` for human-readable messages.
+- **Butler Advisor** — `butler_scan()` returns optimization recommendations across 6 categories (provider, security, performance, features, config, models).
+- **Both are library-level** — they return typed data structures, not GUI widgets. GUIs consume them for display; library users call them directly from code.
+
+**Design principle**: Advisors never modify configuration — they only observe and report. The user decides what to act on. This follows the "make illegal states representable as warnings, not errors" philosophy.
+
+**Related concepts**: [164. Butler Advisor](#164-butler-advisor-optimization-guidance)
+
+**Feature flag**: rag (FreshContext advisor), butler (Butler advisor)
+
+---
+
+## 174. Memory-Augmented Stateless Context
+
+**The fundamental idea**: FreshContext mode is deliberately stateless — it doesn't send conversation history. But some session awareness is still valuable: knowing the user's name, their stated preferences, facts established earlier in the conversation. The solution is to use a `MemoryManager` that automatically learns facts from each exchange and injects the most relevant ones as a compact `--- MEMORY CONTEXT ---` block alongside RAG results.
+
+**How it works**:
+- **Passive learning** — `poll_response()` feeds both user messages and assistant responses through `MemoryManager::process_message()`, which extracts facts, preferences, and entity references.
+- **Active retrieval** — `build_memory_context(query, max_tokens)` searches stored memories for relevance to the current query and composes a text block within the token budget (default: 512 tokens).
+- **Injection point** — in FreshContext mode, the memory context is appended to the knowledge context before building the system prompt. In Conversation mode, memory is not injected (the history already provides continuity).
+
+**Why 512 tokens for memory?** Memory entries are typically short (facts, preferences, entity attributes). 512 tokens can hold ~20–30 facts, which is sufficient for session context without significantly reducing RAG budget.
+
+**Related concepts**: [171. FreshContext Mode](#171-freshcontext-mode-stateless-by-choice-context-composition), [19. Memory and Decay](#19-memory-and-decay-remembering-what-matters), [95. Advanced Memory](#95-advanced-memory)

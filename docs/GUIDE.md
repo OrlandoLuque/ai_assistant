@@ -148,6 +148,10 @@ This guide covers every feature in the `ai_assistant` crate. Each section explai
 140. [MCP Configuration & Evaluation Tools](#140-mcp-configuration--evaluation-tools)
 141. [OpenAI-Compatible API Server](#141-openai-compatible-api-server)
 142. [Enrichment Config — Full Pipeline Configuration](#142-enrichment-config--full-pipeline-configuration)
+143. [FreshContext Mode](#143-freshcontext-mode)
+144. [MCP Knowledge Tools](#144-mcp-knowledge-tools)
+145. [Memory Integration](#145-memory-integration)
+146. [FreshContext Advisor API](#146-freshcontext-advisor-api)
 
 ---
 
@@ -8464,3 +8468,175 @@ cargo build --release --features "full,server-axum,server-openapi"
 ### pgvector Setup
 
 See `docs/PGVECTOR_SETUP.md` for detailed installation instructions (Docker, Linux, macOS, Windows).
+
+---
+
+## Section 57: FreshContext Mode (v37)
+
+### 143. FreshContext Mode
+
+**What**: An alternative context composition strategy that sends only the user's latest message to the LLM, freeing ~54% more tokens for knowledge retrieval via RAG.
+
+**Why**: In standard `Conversation` mode, the full conversation history consumes token budget. When the primary value comes from knowledge retrieval (e.g., document Q&A), the history is wasted context. FreshContext discards history from the LLM prompt while preserving it in the local conversation buffer for GUI display and persistence.
+
+**How it works**:
+
+```rust
+use ai_assistant::{AiAssistant, ContextMode};
+
+let mut assistant = AiAssistant::new();
+
+// Switch to FreshContext
+assistant.set_context_mode(ContextMode::FreshContext);
+assert_eq!(assistant.context_mode(), ContextMode::FreshContext);
+
+// History is still stored locally
+assistant.send_message("What is Rust?".to_string(), "");
+// ... (response arrives) ...
+assistant.send_message("Tell me more".to_string(), "");
+// Only "Tell me more" is sent to the LLM — but both messages are in assistant.conversation
+
+// Switch back
+assistant.set_context_mode(ContextMode::Conversation);
+// Now all messages are sent again
+```
+
+**Token budget comparison** (8K context window):
+
+| Mode | Conversation tokens | Available for knowledge |
+|------|-------------------|------------------------|
+| Conversation (10 exchanges) | ~3,500 | ~2,500 |
+| FreshContext | 0 | ~6,000 |
+
+**Feature flag**: `rag` (for full integration with knowledge retrieval)
+
+---
+
+### 144. MCP Knowledge Tools
+
+**What**: Four MCP tools that expose the RAG database and knowledge graph to external MCP clients, enabling AI agents to search your indexed documents and query entity relationships.
+
+**Tools registered via `register_knowledge_tools()`**:
+
+| Tool | Description | Parameters |
+|------|-------------|------------|
+| `search_knowledge` | BM25 search over indexed chunks | `query` (required), `max_results`, `max_tokens` |
+| `list_knowledge_sources` | List all indexed document sources | — |
+| `query_graph` | Search entities/relations in knowledge graph | `query` (required) |
+| `get_entity` | Get a specific entity by name | `name` (required) |
+
+**Lazy-open pattern**: The RagDb connection uses `Arc<Mutex<Option<RagDb>>>` — the SQLite connection is opened on first tool invocation, not at registration time. This solves the constraint that `rusqlite::Connection` is `!Send` while MCP handlers require `Send + Sync + 'static`.
+
+```rust
+use ai_assistant::mcp_protocol::McpServer;
+use ai_assistant::mcp_protocol::knowledge_tools::register_knowledge_tools;
+use std::path::PathBuf;
+
+let mut server = McpServer::new("my-server", "1.0.0");
+let db_path = PathBuf::from("knowledge.db");
+let graph = None; // or Some(Arc::new(Mutex::new(knowledge_graph)))
+
+register_knowledge_tools(&mut server, db_path, graph);
+// Tools are now available to MCP clients
+```
+
+All tools have annotations: `readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`.
+
+**Feature flag**: `rag`
+
+---
+
+### 145. Memory Integration
+
+**What**: Optional `MemoryManager` integration in `AiAssistant` that automatically injects session context into FreshContext mode messages, preventing the "stateless" problem of FreshContext.
+
+**How it works**:
+
+```rust
+use ai_assistant::{AiAssistant, ContextMode};
+use ai_assistant::memory::MemoryConfig;
+
+let mut assistant = AiAssistant::new();
+
+// Enable memory
+assistant.enable_memory(MemoryConfig::default());
+assert!(assistant.has_memory());
+
+// Access the memory manager
+if let Some(mm) = assistant.memory_manager_mut() {
+    mm.remember_fact("User prefers Rust", 0.9);
+}
+
+// In FreshContext mode, memory is auto-injected
+assistant.set_context_mode(ContextMode::FreshContext);
+assistant.send_message("Help me write code".to_string(), "");
+// The prompt sent to the LLM includes:
+//   --- MEMORY CONTEXT ---
+//   Current context: ...
+//   Relevant memories:
+//   - User prefers Rust
+
+// Disable memory
+assistant.disable_memory();
+assert!(!assistant.has_memory());
+```
+
+**Memory processing**: Both user messages and assistant responses are automatically processed through `MemoryManager::process_message()` in `poll_response()`, enabling the system to learn facts, preferences, and entities from the conversation.
+
+**Token budget**: 512 tokens are reserved for memory context in FreshContext mode, subtracted from the knowledge retrieval budget.
+
+---
+
+### 146. FreshContext Advisor API
+
+**What**: A library-level diagnostic API that reports the health, effectiveness, and configuration warnings of FreshContext mode. Usable from both GUI code and programmatic library consumers.
+
+**Types**:
+
+```rust
+use ai_assistant::{
+    FreshContextStatus,
+    FreshContextWarning,
+    FreshContextEffectiveness,
+};
+```
+
+| Type | Purpose |
+|------|---------|
+| `FreshContextWarning` | Enum with 5 variants: `NoRag`, `NoSourcesIndexed`, `NoGraph`, `NoMemory`, `SmallBudget(usize)` |
+| `FreshContextEffectiveness` | `Optimal` / `Good` / `Limited` / `Ineffective` |
+| `FreshContextStatus` | Full status report with mode, flags, token budget, warnings, effectiveness |
+
+**Usage from code** (no GUI required):
+
+```rust
+use ai_assistant::{AiAssistant, ContextMode};
+use ai_assistant::memory::MemoryConfig;
+
+let mut assistant = AiAssistant::new();
+assistant.set_context_mode(ContextMode::FreshContext);
+assistant.init_rag(&std::path::PathBuf::from("knowledge.db")).unwrap();
+assistant.enable_memory(MemoryConfig::default());
+
+let status = assistant.fresh_context_status(false); // has_graph = false
+println!("Effectiveness: {:?}", status.effectiveness);
+for w in &status.warnings {
+    println!("Warning: {}", w);  // Display impl provides human-readable messages
+}
+// Output:
+// Effectiveness: Good
+// Warning: Knowledge graph not active — entity and relation context unavailable
+```
+
+**Effectiveness levels**:
+
+| Level | Configuration | Token budget |
+|-------|--------------|-------------|
+| `Optimal` | RAG + Graph + Memory | Maximum |
+| `Good` | RAG + (Graph or Memory) | High |
+| `Limited` | RAG only | Moderate |
+| `Ineffective` | No RAG | Almost useless |
+
+**`has_graph` parameter**: `KnowledgeGraph` lives outside `AiAssistant` (typically on the GUI app struct), so the caller must pass `true` or `false` to indicate whether a graph is active.
+
+**Feature flag**: `rag`
