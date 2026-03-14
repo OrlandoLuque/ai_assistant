@@ -49,6 +49,8 @@ fn main() -> ExitCode {
         "config" => cmd_config(&args[1..]),
         "butler" => cmd_butler(&args[1..]),
         "query" => cmd_query(&args[1..]),
+        "bench" => cmd_bench(&args[1..]),
+        "test" => cmd_test(&args[1..]),
         other => {
             eprintln!("Error: unknown command '{}'\n", other);
             print_usage();
@@ -78,6 +80,8 @@ fn print_usage() {
     println!("    --max-history <n>              Set max history messages");
     println!("  butler [--config <file>]       Run Butler advisor (optimization recommendations)");
     println!("  query [options] <prompt>       Send a one-shot query to an LLM");
+    println!("  bench [--filter <pattern>]     Run Criterion benchmarks (44 benchmarks)");
+    println!("  test [options]                 Run the test harness");
     println!("    --provider <name>              Provider (ollama, openai, anthropic, gemini, ...)");
     println!("    --model <name>                 Model name");
     println!("    --url <url>                    Provider URL");
@@ -98,6 +102,11 @@ fn print_usage() {
     println!("  ai_cli query --provider openai --model gpt-4o \"Explain ownership\"");
     println!("  ai_cli query --config myconfig.json --file prompt.txt");
     println!("  ai_cli query --system \"You are a Rust expert\" \"How do lifetimes work?\"");
+    println!("  ai_cli bench");
+    println!("  ai_cli bench --filter rag");
+    println!("  ai_cli test --all");
+    println!("  ai_cli test --category security");
+    println!("  ai_cli test --list");
 }
 
 // =============================================================================
@@ -862,6 +871,193 @@ fn cmd_query(args: &[String]) -> ExitCode {
         ExitCode::from(1)
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+// =============================================================================
+// bench — run Criterion benchmarks
+// =============================================================================
+
+fn cmd_bench(args: &[String]) -> ExitCode {
+    let mut cargo_args = vec![
+        "bench".to_string(),
+        "--bench".to_string(),
+        "core_benchmarks".to_string(),
+        "--features".to_string(),
+        "full,constrained-decoding,multi-agent,distributed".to_string(),
+    ];
+
+    // Parse our args
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--filter" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: --filter requires a pattern");
+                    return ExitCode::from(1);
+                }
+                // Criterion filter: pass as positional after --
+                cargo_args.push("--".to_string());
+                cargo_args.push(args[i].clone());
+            }
+            "--list" => {
+                cargo_args.push("--".to_string());
+                cargo_args.push("--list".to_string());
+            }
+            other => {
+                eprintln!("Error: unknown option '{}' for 'bench'", other);
+                eprintln!("Usage: ai_cli bench [--filter <pattern>] [--list]");
+                return ExitCode::from(1);
+            }
+        }
+        i += 1;
+    }
+
+    println!("Running: cargo {}\n", cargo_args.join(" "));
+
+    let status = std::process::Command::new("cargo")
+        .args(&cargo_args)
+        .status();
+
+    match status {
+        Ok(s) if s.success() => ExitCode::SUCCESS,
+        Ok(s) => ExitCode::from(s.code().unwrap_or(1) as u8),
+        Err(e) => {
+            eprintln!("Error running cargo bench: {}", e);
+            ExitCode::from(1)
+        }
+    }
+}
+
+// =============================================================================
+// test — run test harness or cargo test
+// =============================================================================
+
+fn cmd_test(args: &[String]) -> ExitCode {
+    // Determine which mode: harness or cargo test
+    let mut harness_mode = false;
+    let mut harness_args: Vec<String> = Vec::new();
+    let mut cargo_features =
+        "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite".to_string();
+    let mut test_filter: Option<String> = None;
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--all" => {
+                harness_mode = true;
+                harness_args.push("--all".to_string());
+            }
+            "--category" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: --category requires a name");
+                    return ExitCode::from(1);
+                }
+                harness_mode = true;
+                harness_args.push(format!("--category={}", args[i]));
+            }
+            "--list" => {
+                harness_mode = true;
+                harness_args.push("--list".to_string());
+            }
+            "--no-color" => {
+                harness_args.push("--no-color".to_string());
+            }
+            "--json" => {
+                harness_args.push("--json".to_string());
+            }
+            "--harness" => {
+                harness_mode = true;
+            }
+            "--lib" => {
+                harness_mode = false;
+            }
+            "--features" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: --features requires a value");
+                    return ExitCode::from(1);
+                }
+                cargo_features = args[i].clone();
+            }
+            "--filter" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: --filter requires a pattern");
+                    return ExitCode::from(1);
+                }
+                test_filter = Some(args[i].clone());
+            }
+            other => {
+                eprintln!("Error: unknown option '{}' for 'test'", other);
+                eprintln!("Usage: ai_cli test [--all|--category <name>|--list|--lib] [--filter <pat>] [--features <f>]");
+                return ExitCode::from(1);
+            }
+        }
+        i += 1;
+    }
+
+    if !harness_mode && harness_args.is_empty() && test_filter.is_none() {
+        // Default: run lib tests
+        println!("Running lib tests (use --all for test harness, --filter to filter)\n");
+    }
+
+    if harness_mode {
+        // Run the test harness binary
+        let mut cargo_args = vec![
+            "run".to_string(),
+            "--bin".to_string(),
+            "ai_test_harness".to_string(),
+            "--features".to_string(),
+            cargo_features,
+            "--".to_string(),
+        ];
+        cargo_args.extend(harness_args);
+
+        println!("Running: cargo {}\n", cargo_args.join(" "));
+
+        let status = std::process::Command::new("cargo")
+            .args(&cargo_args)
+            .status();
+
+        match status {
+            Ok(s) if s.success() => ExitCode::SUCCESS,
+            Ok(s) => ExitCode::from(s.code().unwrap_or(1) as u8),
+            Err(e) => {
+                eprintln!("Error running test harness: {}", e);
+                ExitCode::from(1)
+            }
+        }
+    } else {
+        // Run cargo test --lib
+        let mut cargo_args = vec![
+            "test".to_string(),
+            "--features".to_string(),
+            cargo_features,
+            "--lib".to_string(),
+        ];
+
+        if let Some(ref filter) = test_filter {
+            cargo_args.push("--".to_string());
+            cargo_args.push(filter.clone());
+        }
+
+        println!("Running: cargo {}\n", cargo_args.join(" "));
+
+        let status = std::process::Command::new("cargo")
+            .args(&cargo_args)
+            .status();
+
+        match status {
+            Ok(s) if s.success() => ExitCode::SUCCESS,
+            Ok(s) => ExitCode::from(s.code().unwrap_or(1) as u8),
+            Err(e) => {
+                eprintln!("Error running tests: {}", e);
+                ExitCode::from(1)
+            }
+        }
     }
 }
 
