@@ -224,7 +224,7 @@ Full Documentation
 Getting Started guide:  https://github.com/OrlandoLuque/ai_assistant/blob/master/docs/GETTING_STARTED.md
 API Reference:          https://github.com/OrlandoLuque/ai_assistant/blob/master/docs/API_REFERENCE.md
 Example clients:        https://github.com/OrlandoLuque/ai_assistant/tree/master/examples/clients
-crates.io:              https://crates.io/crates/ai_assistant
+crates.io:              https://crates.io/crates/ai_assistant_core
 
 License: PolyForm Noncommercial 1.0.0
 For commercial licensing, contact: orlando.luque@gmail.com
