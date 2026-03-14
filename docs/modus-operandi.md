@@ -16,8 +16,8 @@ Continúa con el desarrollo del proyecto. Lee docs/modus-operandi.md y el últim
 - **Roadmap v11–v37**: ALL COMPLETE (v35 partial — Blocks E+G1+I done, B-D-F-G2-G3-H pending)
 - **Latest**: V37 — FreshContext mode, MCP knowledge tools, memory integration, advisor API
 - **Test count**: 4,892+ lib tests (0 failures)
-- **Source files**: 315 .rs files, ~385K LOC
-- **Feature flags**: 22+ (see README.md for full table)
+- **Source files**: 316 .rs files, ~363K LOC
+- **Feature flags**: 54 (see README.md for full table)
 - **Status**: Experimental — compiles and passes tests, but not validated in production
 - **Website**: Separated to `ai_assistant-website` repo (GitHub Pages ready)
 - **License**: PolyForm Noncommercial 1.0.0

@@ -4,12 +4,12 @@
 
 # ai_assistant
 
-A comprehensive Rust library for LLM integration — local and cloud. 13+ providers, 5-tier RAG, multi-agent orchestration, autonomous agents, distributed computing, and 40+ MCP tools. Single crate, zero-runtime, ~385K LOC.
+A comprehensive Rust library for LLM integration — local and cloud. 13+ providers, 5-tier RAG, multi-agent orchestration, autonomous agents, distributed computing, and 40+ MCP tools. Single crate, zero-runtime, ~363K LOC.
 
 ![Rust](https://img.shields.io/badge/Rust-Edition%202021-orange)
 ![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue)
 ![Tests](https://img.shields.io/badge/tests-4892-brightgreen)
-![LOC](https://img.shields.io/badge/LOC-385K-blue)
+![LOC](https://img.shields.io/badge/LOC-363K-blue)
 
 > **Status: Experimental**
 >
@@ -48,6 +48,7 @@ cargo build --release --bin ai_assistant_cli --features "full,butler"
 
 | Binary | Description |
 |--------|-------------|
+| `ai_cli` | Power-user CLI with scan, query, config, diagnostics (-v/-vv/-vvv) |
 | `ai_assistant_cli` | Interactive REPL with auto-detection of local LLMs |
 | `ai_gui` | Desktop GUI with chat, knowledge management, and FreshContext mode |
 | `ai_gui-pro` | Full-feature desktop app with 18 panels across 6 categories |
@@ -138,9 +139,9 @@ cargo build --release --bin ai_assistant_cli --features "full,butler"
 ### Code Quality
 - **Zero `.unwrap()` in production**: Proper error handling across all files
 - **4,892+ tests**: Comprehensive unit tests with 0 clippy warnings
-- **315 source files**: Fully implemented — zero stubs or TODOs
-- **22+ feature flags**: Granular dependency control
-- **~385,000 lines of Rust**: Single crate, modular architecture
+- **316 source files**: Fully implemented — zero stubs or TODOs
+- **54 feature flags**: Granular dependency control
+- **~363,000 lines of Rust**: Single crate, modular architecture
 - **Security audited**: 32 vulnerabilities identified and fixed (2-pass audit)
 
 ## Building from Source
@@ -211,6 +212,7 @@ ai_assistant = { version = "0.1", features = ["full", "autonomous", "scheduler",
 | `webrtc` | WebRTC for voice | No |
 | `devtools` | Agent debugging tools | No |
 | `gui-pro` | Full-feature GUI (18 panels, all modules) | No |
+| `diagnostic-logging` | Compile-time diagnostic log macros | No |
 
 ## Quick Start
 
