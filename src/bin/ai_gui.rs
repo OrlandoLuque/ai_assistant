@@ -37,7 +37,7 @@ use ai_assistant::{
     // Widgets
     widgets::{self, ChatColors, RagStatus},
     // Context
-    ContextUsage,
+    ContextMode, ContextUsage, FreshContextEffectiveness, FreshContextWarning,
     // Models
     ModelInfo,
 };
@@ -478,6 +478,9 @@ struct AiGuiApp {
     pattern_extractor: PatternEntityExtractor,
     pending_graph_docs: Vec<(String, String)>,
 
+    // Context mode
+    context_mode: ContextMode,
+
     // Butler / Advisor
     #[allow(dead_code)]
     feature_analysis: Option<FeatureFlagAnalysis>,
@@ -562,6 +565,7 @@ impl AiGuiApp {
             graph_viz: None,
             pattern_extractor: PatternEntityExtractor::new(),
             pending_graph_docs: Vec::new(),
+            context_mode: ContextMode::default(),
 
             // advisor is in scan_result_data
             feature_analysis: None,
@@ -832,16 +836,40 @@ impl AiGuiApp {
         }
         self.last_error = None;
 
+        // Sync context mode to assistant
+        self.assistant.set_context_mode(self.context_mode);
+
         // Auto-create session if none exists
         if self.assistant.current_session.is_none() {
             self.assistant.new_session();
         }
 
         if self.rag_enabled && !self.knowledge_sources.is_empty() {
-            let (knowledge_ctx, _conversation_ctx) = self.assistant.build_rag_context(&text);
+            let (mut knowledge_ctx, conv_ctx) = self.assistant.build_rag_context(&text);
+
+            // In FreshContext mode, include archived conversation context
+            if self.context_mode == ContextMode::FreshContext && !conv_ctx.is_empty() {
+                knowledge_ctx.push_str("\n\n--- RELEVANT PAST CONTEXT ---\n");
+                knowledge_ctx.push_str(&conv_ctx);
+            }
+
+            // In FreshContext mode, also include knowledge graph context
+            if self.context_mode == ContextMode::FreshContext {
+                if let Some(ref kg) = self.knowledge_graph {
+                    if let Ok(result) = kg.query(&text, &self.pattern_extractor) {
+                        if !result.chunks.is_empty() {
+                            knowledge_ctx.push_str("\n\n--- GRAPH CONTEXT ---\n");
+                            for chunk in &result.chunks {
+                                knowledge_ctx.push_str(&chunk.content);
+                                knowledge_ctx.push('\n');
+                            }
+                        }
+                    }
+                }
+            }
+
             self.last_knowledge_ctx = Some(knowledge_ctx.clone());
-            self.assistant
-                .send_message(text, &knowledge_ctx);
+            self.assistant.send_message(text, &knowledge_ctx);
         } else {
             self.last_knowledge_ctx = None;
             self.assistant.send_message_simple(text);
@@ -2091,6 +2119,21 @@ impl AiGuiApp {
         ui.checkbox(&mut self.rag_enabled, "Use knowledge context");
 
         if self.rag_enabled {
+            // Context mode selector
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.label("Context mode:");
+                ui.selectable_value(&mut self.context_mode, ContextMode::Conversation, "Conversation");
+                ui.selectable_value(&mut self.context_mode, ContextMode::FreshContext, "Fresh");
+            });
+            if self.context_mode == ContextMode::FreshContext {
+                ui.colored_label(
+                    Color32::from_rgb(100, 180, 100),
+                    "Each query builds context fresh from knowledge.",
+                );
+            }
+            ui.add_space(4.0);
+
             let indexed_chunks: usize = self
                 .knowledge_sources
                 .iter()
@@ -2110,16 +2153,25 @@ impl AiGuiApp {
 
             // Context budget info — show how much space knowledge has
             if !self.selected_model.is_empty() {
+                // Temporarily set mode so calculation is accurate
+                self.assistant.set_context_mode(self.context_mode);
                 let available = self.assistant.calculate_available_knowledge_tokens("test");
-                let conv_tokens: usize = self.assistant.conversation.iter()
-                    .map(|m| m.content.len() / 4) // rough estimate
-                    .sum();
                 ui.add_space(4.0);
-                ui.colored_label(
-                    Color32::from_gray(140),
-                    format!("Context: ~{} tokens available for knowledge (~{} used by conversation)",
-                        available, conv_tokens),
-                );
+                if self.context_mode == ContextMode::FreshContext {
+                    ui.colored_label(
+                        Color32::from_gray(140),
+                        format!("Context: ~{} tokens available for knowledge (FreshContext)", available),
+                    );
+                } else {
+                    let conv_tokens: usize = self.assistant.conversation.iter()
+                        .map(|m| m.content.len() / 4) // rough estimate
+                        .sum();
+                    ui.colored_label(
+                        Color32::from_gray(140),
+                        format!("Context: ~{} tokens for knowledge (~{} by conversation)",
+                            available, conv_tokens),
+                    );
+                }
                 // Last knowledge usage
                 if let Some(ref usage) = self.assistant.last_knowledge_usage {
                     ui.colored_label(
@@ -2129,6 +2181,33 @@ impl AiGuiApp {
                     );
                 }
             }
+        }
+        // FreshContext advisor: show warnings and effectiveness
+        if self.context_mode == ContextMode::FreshContext {
+            let has_graph = self.knowledge_graph.is_some();
+            let status = self.assistant.fresh_context_status(has_graph);
+            for warning in &status.warnings {
+                let color = match warning {
+                    FreshContextWarning::NoRag | FreshContextWarning::NoSourcesIndexed => {
+                        Color32::from_rgb(220, 120, 50)
+                    }
+                    FreshContextWarning::SmallBudget(_) => Color32::from_rgb(200, 150, 50),
+                    _ => Color32::from_rgb(160, 160, 100),
+                };
+                ui.colored_label(color, format!("  {}", warning));
+            }
+            let (eff_color, eff_label) = match status.effectiveness {
+                FreshContextEffectiveness::Optimal => (Color32::from_rgb(80, 200, 80), "Optimal"),
+                FreshContextEffectiveness::Good => (Color32::from_rgb(100, 180, 100), "Good"),
+                FreshContextEffectiveness::Limited => (Color32::from_rgb(200, 180, 60), "Limited"),
+                FreshContextEffectiveness::Ineffective => {
+                    (Color32::from_rgb(220, 80, 80), "Ineffective")
+                }
+            };
+            ui.colored_label(
+                eff_color,
+                format!("FreshContext effectiveness: {}", eff_label),
+            );
         }
 
         ui.add_space(8.0);

@@ -10,13 +10,14 @@ When starting a new session, say:
 Continúa con el desarrollo del proyecto. Lee docs/modus-operandi.md y el último docs/IMPROVEMENTS_V*.md para saber dónde estamos.
 ```
 
-## Current state (updated 2026-03-09)
+## Current state (updated 2026-03-14)
 
 - **Roadmap v1–v10**: ALL COMPLETE
-- **Roadmap v11–v35**: ALL COMPLETE (v35 partial — Blocks E+G1+I done, B-D-F-G2-G3-H pending)
-- **Test count**: 6,700+ (0 failures, 0 clippy warnings)
-- **Source files**: 312 .rs files, ~350K LOC
-- **Feature flags**: 20+ (see README.md for full table)
+- **Roadmap v11–v37**: ALL COMPLETE (v35 partial — Blocks E+G1+I done, B-D-F-G2-G3-H pending)
+- **Latest**: V37 — FreshContext mode, MCP knowledge tools, memory integration, advisor API
+- **Test count**: 4,892+ lib tests (0 failures)
+- **Source files**: 315 .rs files, ~385K LOC
+- **Feature flags**: 22+ (see README.md for full table)
 - **Status**: Experimental — compiles and passes tests, but not validated in production
 - **Website**: Separated to `ai_assistant-website` repo (GitHub Pages ready)
 - **License**: PolyForm Noncommercial 1.0.0

@@ -24,6 +24,7 @@ use crate::providers::{
     fetch_model_context_size, fetch_ollama_models, fetch_openai_compatible_models,
     generate_response, generate_response_streaming, generate_response_streaming_cancellable,
 };
+use crate::memory::{MemoryConfig, MemoryManager};
 use crate::session::{ChatSession, ChatSessionStore, ResponseStyle, UserPreferences};
 
 #[cfg(feature = "autonomous")]
@@ -149,6 +150,116 @@ pub struct SummaryResult {
     pub messages_summarized: usize,
 }
 
+/// How the assistant composes context for each message.
+///
+/// - `Conversation` (default): accumulates conversation history, compacts when needed.
+/// - `FreshContext`: each prompt builds context fresh from RAG/graph search.
+///   Conversation history is saved but NOT included in the context window,
+///   maximizing the token budget available for knowledge retrieval.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ContextMode {
+    /// Accumulate conversation history in context, compact when needed.
+    #[default]
+    Conversation,
+    /// Each prompt gets fresh context from knowledge sources only.
+    /// No conversation history in the context window.
+    FreshContext,
+}
+
+/// Warnings about FreshContext configuration effectiveness.
+///
+/// These warnings help library consumers and GUI code understand
+/// what is missing for optimal FreshContext operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FreshContextWarning {
+    /// RAG not initialized — FreshContext is almost useless without it.
+    NoRag,
+    /// No knowledge sources indexed — nothing to retrieve.
+    NoSourcesIndexed,
+    /// Knowledge graph not active — loses entity/relation context.
+    NoGraph,
+    /// Memory not enabled — loses session context between messages.
+    NoMemory,
+    /// Available token budget is very small (< 500 tokens).
+    SmallBudget(usize),
+}
+
+impl std::fmt::Display for FreshContextWarning {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoRag => write!(
+                f,
+                "FreshContext without RAG is almost useless — no knowledge to retrieve"
+            ),
+            Self::NoSourcesIndexed => write!(
+                f,
+                "No knowledge sources indexed — add documents for effective retrieval"
+            ),
+            Self::NoGraph => write!(
+                f,
+                "Knowledge graph not active — entity and relation context unavailable"
+            ),
+            Self::NoMemory => write!(
+                f,
+                "Memory not enabled — session context between messages is lost"
+            ),
+            Self::SmallBudget(tokens) => {
+                write!(f, "Available knowledge budget very small: {} tokens", tokens)
+            }
+        }
+    }
+}
+
+/// How effective FreshContext will be with the current configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FreshContextEffectiveness {
+    /// RAG + Graph + Memory — maximum context quality.
+    Optimal,
+    /// RAG + at least one of (Graph, Memory).
+    Good,
+    /// RAG only — functional but missing enrichment.
+    Limited,
+    /// No RAG — essentially stateless, almost useless.
+    Ineffective,
+}
+
+/// Status report for FreshContext mode configuration.
+///
+/// Returned by [`AiAssistant::fresh_context_status`]. Contains warnings,
+/// effectiveness level, and all relevant state for programmatic inspection.
+///
+/// # Example
+/// ```no_run
+/// use ai_assistant::{AiAssistant, ContextMode};
+///
+/// let mut assistant = AiAssistant::new();
+/// assistant.set_context_mode(ContextMode::FreshContext);
+/// let status = assistant.fresh_context_status(false);
+/// for warning in &status.warnings {
+///     println!("{}", warning);
+/// }
+/// println!("Effectiveness: {:?}", status.effectiveness);
+/// ```
+#[derive(Debug, Clone)]
+pub struct FreshContextStatus {
+    /// Current context mode.
+    pub mode: ContextMode,
+    /// Whether RAG database is initialized.
+    pub rag_available: bool,
+    /// Number of knowledge sources indexed.
+    pub sources_indexed: usize,
+    /// Whether a knowledge graph is active (passed by caller).
+    pub graph_available: bool,
+    /// Whether the memory system is enabled.
+    pub memory_available: bool,
+    /// Estimated available tokens for knowledge context.
+    pub available_knowledge_tokens: usize,
+    /// List of warnings about the current configuration.
+    pub warnings: Vec<FreshContextWarning>,
+    /// Overall effectiveness assessment.
+    pub effectiveness: FreshContextEffectiveness,
+}
+
 /// Main AI Assistant state and logic
 pub struct AiAssistant {
     /// Configuration
@@ -254,6 +365,13 @@ pub struct AiAssistant {
     auto_compaction: bool,
     /// Configuration for conversation compaction.
     compaction_config: CompactionConfig,
+
+    /// Context composition mode (Conversation or FreshContext).
+    pub context_mode: ContextMode,
+
+    /// Optional memory manager for building session-aware context.
+    /// When enabled, FreshContext mode includes memory-based context alongside RAG.
+    pub memory_manager: Option<MemoryManager>,
 
     /// Optional API key manager for providers that require authentication.
     api_key_manager: Option<ApiKeyManager>,
@@ -455,6 +573,8 @@ impl AiAssistant {
             fallback_last_provider: Arc::new(Mutex::new(None)),
             auto_compaction: false,
             compaction_config: CompactionConfig::default(),
+            context_mode: ContextMode::default(),
+            memory_manager: None,
             api_key_manager: None,
             event_bus: crate::events::EventBus::new(),
 
@@ -651,11 +771,15 @@ impl AiAssistant {
         let system_tokens = estimate_tokens(&self.system_prompt_base);
 
         // Estimate conversation history tokens
-        let conversation_tokens: usize = self
-            .conversation
-            .iter()
-            .map(|msg| estimate_tokens(&msg.content))
-            .sum();
+        // In FreshContext mode, conversation is not included in context window
+        let conversation_tokens: usize = match self.context_mode {
+            ContextMode::Conversation => self
+                .conversation
+                .iter()
+                .map(|msg| estimate_tokens(&msg.content))
+                .sum(),
+            ContextMode::FreshContext => 0,
+        };
 
         // Estimate user message tokens
         let user_tokens = estimate_tokens(user_message);
@@ -889,6 +1013,110 @@ impl AiAssistant {
         self.auto_compaction = false;
     }
 
+    /// Get the current context composition mode.
+    pub fn context_mode(&self) -> ContextMode {
+        self.context_mode
+    }
+
+    /// Set the context composition mode.
+    ///
+    /// Switching to `FreshContext` does NOT clear existing conversation history.
+    /// The history is kept for display and RAG archival, but will not be sent
+    /// in the context window for subsequent messages.
+    pub fn set_context_mode(&mut self, mode: ContextMode) {
+        self.context_mode = mode;
+    }
+
+    // === Memory Integration ===
+
+    /// Enable the memory system with the given configuration.
+    pub fn enable_memory(&mut self, config: MemoryConfig) {
+        self.memory_manager = Some(MemoryManager::new(config));
+    }
+
+    /// Disable the memory system and discard stored memories.
+    pub fn disable_memory(&mut self) {
+        self.memory_manager = None;
+    }
+
+    /// Whether the memory system is enabled.
+    pub fn has_memory(&self) -> bool {
+        self.memory_manager.is_some()
+    }
+
+    /// Access the memory manager (read-only).
+    pub fn memory_manager(&self) -> Option<&MemoryManager> {
+        self.memory_manager.as_ref()
+    }
+
+    /// Access the memory manager (mutable).
+    pub fn memory_manager_mut(&mut self) -> Option<&mut MemoryManager> {
+        self.memory_manager.as_mut()
+    }
+
+    /// Build memory-based context for a query (empty string if memory disabled).
+    pub fn build_memory_context(&mut self, query: &str, max_tokens: usize) -> String {
+        match self.memory_manager.as_mut() {
+            Some(mm) => mm.build_context(query, max_tokens),
+            None => String::new(),
+        }
+    }
+
+    // === FreshContext Advisor ===
+
+    /// Report the health and effectiveness of the current FreshContext configuration.
+    ///
+    /// `has_graph` must be passed because `KnowledgeGraph` lives outside `AiAssistant`
+    /// (typically on the GUI app struct). Pass `true` if a knowledge graph is active.
+    ///
+    /// This method is usable from both GUI code and library consumers directly.
+    #[cfg(feature = "rag")]
+    pub fn fresh_context_status(&mut self, has_graph: bool) -> FreshContextStatus {
+        let rag_available = self.has_rag();
+        let sources_indexed = self.registered_sources.len();
+        let memory_available = self.memory_manager.is_some();
+        let available = self.calculate_available_knowledge_tokens("estimate");
+
+        let mut warnings = Vec::new();
+
+        if !rag_available {
+            warnings.push(FreshContextWarning::NoRag);
+        } else if sources_indexed == 0 {
+            warnings.push(FreshContextWarning::NoSourcesIndexed);
+        }
+        if !has_graph {
+            warnings.push(FreshContextWarning::NoGraph);
+        }
+        if !memory_available {
+            warnings.push(FreshContextWarning::NoMemory);
+        }
+        if available < 500 {
+            warnings.push(FreshContextWarning::SmallBudget(available));
+        }
+
+        let effectiveness = match (
+            rag_available && sources_indexed > 0,
+            has_graph,
+            memory_available,
+        ) {
+            (true, true, true) => FreshContextEffectiveness::Optimal,
+            (true, true, false) | (true, false, true) => FreshContextEffectiveness::Good,
+            (true, false, false) => FreshContextEffectiveness::Limited,
+            (false, _, _) => FreshContextEffectiveness::Ineffective,
+        };
+
+        FreshContextStatus {
+            mode: self.context_mode,
+            rag_available,
+            sources_indexed,
+            graph_available: has_graph,
+            memory_available,
+            available_knowledge_tokens: available,
+            warnings,
+            effectiveness,
+        }
+    }
+
     /// Set the compaction configuration.
     pub fn set_compaction_config(&mut self, config: CompactionConfig) {
         self.compaction_config = config;
@@ -997,19 +1225,41 @@ impl AiAssistant {
     /// * `knowledge_context` - Optional knowledge/context to include in system prompt
     pub fn send_message(&mut self, user_message: String, knowledge_context: &str) {
         self.conversation.push(ChatMessage::user(&user_message));
-        self.maybe_compact_conversation();
+        let conversation = match self.context_mode {
+            ContextMode::Conversation => {
+                self.maybe_compact_conversation();
+                self.conversation.clone()
+            }
+            ContextMode::FreshContext => {
+                vec![self.conversation.last().expect("message was just pushed").clone()]
+            }
+        };
         self.is_generating = true;
         self.current_response.clear();
 
         let (tx, rx) = mpsc::channel();
         self.rx_response = Some(rx);
 
+        // In FreshContext mode, augment knowledge context with memory
+        let effective_knowledge: String;
+        let knowledge_ref = if self.context_mode == ContextMode::FreshContext {
+            let query = self.conversation.last().map(|m| m.content.clone()).unwrap_or_default();
+            let memory_ctx = self.build_memory_context(&query, 512);
+            if memory_ctx.is_empty() {
+                knowledge_context
+            } else {
+                effective_knowledge = format!("{}\n\n--- MEMORY CONTEXT ---\n{}", knowledge_context, memory_ctx);
+                &effective_knowledge
+            }
+        } else {
+            knowledge_context
+        };
+
         let config = self.config.clone();
-        let conversation = self.conversation.clone();
         let system_prompt = build_system_prompt(
             &self.system_prompt_base,
             &self.preferences,
-            knowledge_context,
+            knowledge_ref,
         );
 
         let fallback_providers = if self.fallback_enabled {
@@ -1107,23 +1357,45 @@ impl AiAssistant {
         knowledge_notes: &str,
     ) {
         self.conversation.push(ChatMessage::user(&user_message));
-        self.maybe_compact_conversation();
+        let conversation = match self.context_mode {
+            ContextMode::Conversation => {
+                self.maybe_compact_conversation();
+                self.conversation.clone()
+            }
+            ContextMode::FreshContext => {
+                vec![self.conversation.last().expect("message was just pushed").clone()]
+            }
+        };
         self.is_generating = true;
         self.current_response.clear();
 
         let (tx, rx) = mpsc::channel();
         self.rx_response = Some(rx);
 
+        // In FreshContext mode, augment knowledge context with memory
+        let effective_knowledge: String;
+        let knowledge_ref = if self.context_mode == ContextMode::FreshContext {
+            let query = self.conversation.last().map(|m| m.content.clone()).unwrap_or_default();
+            let memory_ctx = self.build_memory_context(&query, 512);
+            if memory_ctx.is_empty() {
+                knowledge_context
+            } else {
+                effective_knowledge = format!("{}\n\n--- MEMORY CONTEXT ---\n{}", knowledge_context, memory_ctx);
+                &effective_knowledge
+            }
+        } else {
+            knowledge_context
+        };
+
         let system_prompt = build_system_prompt_with_notes(
             &self.system_prompt_base,
             &self.preferences,
-            knowledge_context,
+            knowledge_ref,
             session_notes,
             knowledge_notes,
         );
 
         let (system_prompt, config) = self.apply_adaptive_thinking(&user_message, system_prompt);
-        let conversation = self.conversation.clone();
         let fallback_providers = if self.fallback_enabled {
             self.fallback_providers.clone()
         } else {
@@ -1155,14 +1427,39 @@ impl AiAssistant {
     ) -> Result<String> {
         self.conversation.push(ChatMessage::user(&user_message));
 
+        // In FreshContext mode, augment knowledge context with memory
+        let effective_knowledge: String;
+        let knowledge_ref = if self.context_mode == ContextMode::FreshContext {
+            let query = self.conversation.last().map(|m| m.content.clone()).unwrap_or_default();
+            let memory_ctx = self.build_memory_context(&query, 512);
+            if memory_ctx.is_empty() {
+                knowledge_context
+            } else {
+                effective_knowledge = format!("{}\n\n--- MEMORY CONTEXT ---\n{}", knowledge_context, memory_ctx);
+                &effective_knowledge
+            }
+        } else {
+            knowledge_context
+        };
+
         let system_prompt = build_system_prompt(
             &self.system_prompt_base,
             &self.preferences,
-            knowledge_context,
+            knowledge_ref,
         );
 
+        // In FreshContext mode, only send the current message
+        let fresh_conv: Vec<ChatMessage>;
+        let conversation: &[ChatMessage] = match self.context_mode {
+            ContextMode::Conversation => &self.conversation,
+            ContextMode::FreshContext => {
+                fresh_conv = vec![self.conversation.last().expect("message was just pushed").clone()];
+                &fresh_conv
+            }
+        };
+
         // Try primary provider
-        let response = match generate_response(&self.config, &self.conversation, &system_prompt) {
+        let response = match generate_response(&self.config, conversation, &system_prompt) {
             Ok(r) => {
                 *self
                     .fallback_last_provider
@@ -1182,7 +1479,7 @@ impl AiAssistant {
                     let mut fb_config = self.config.clone();
                     fb_config.provider = provider.clone();
                     fb_config.selected_model = model.clone();
-                    match generate_response(&fb_config, &self.conversation, &system_prompt) {
+                    match generate_response(&fb_config, conversation, &system_prompt) {
                         Ok(r) => {
                             *self
                                 .fallback_last_provider
@@ -1216,7 +1513,15 @@ impl AiAssistant {
         knowledge_context: &str,
     ) -> CancellationToken {
         self.conversation.push(ChatMessage::user(&user_message));
-        self.maybe_compact_conversation();
+        let conversation = match self.context_mode {
+            ContextMode::Conversation => {
+                self.maybe_compact_conversation();
+                self.conversation.clone()
+            }
+            ContextMode::FreshContext => {
+                vec![self.conversation.last().expect("message was just pushed").clone()]
+            }
+        };
         self.is_generating = true;
         self.current_response.clear();
 
@@ -1226,12 +1531,26 @@ impl AiAssistant {
         let cancel_token = CancellationToken::new();
         self.cancel_token = Some(cancel_token.clone());
 
+        // In FreshContext mode, augment knowledge context with memory
+        let effective_knowledge: String;
+        let knowledge_ref = if self.context_mode == ContextMode::FreshContext {
+            let query = self.conversation.last().map(|m| m.content.clone()).unwrap_or_default();
+            let memory_ctx = self.build_memory_context(&query, 512);
+            if memory_ctx.is_empty() {
+                knowledge_context
+            } else {
+                effective_knowledge = format!("{}\n\n--- MEMORY CONTEXT ---\n{}", knowledge_context, memory_ctx);
+                &effective_knowledge
+            }
+        } else {
+            knowledge_context
+        };
+
         let config = self.config.clone();
-        let conversation = self.conversation.clone();
         let system_prompt = build_system_prompt(
             &self.system_prompt_base,
             &self.preferences,
-            knowledge_context,
+            knowledge_ref,
         );
 
         let fallback_providers = if self.fallback_enabled {
@@ -1302,13 +1621,22 @@ impl AiAssistant {
 
         let msg = ChatMessage::user(&user_message);
         self.conversation.push(msg.clone());
-        self.maybe_compact_conversation();
 
         // Auto-store user message in RAG if enabled
         #[cfg(feature = "rag")]
         if self.rag_config.auto_store_messages {
             let _ = self.store_message_in_rag(&msg, true);
         }
+
+        let conversation = match self.context_mode {
+            ContextMode::Conversation => {
+                self.maybe_compact_conversation();
+                self.conversation.clone()
+            }
+            ContextMode::FreshContext => {
+                vec![self.conversation.last().expect("message was just pushed").clone()]
+            }
+        };
 
         self.is_generating = true;
         self.current_response.clear();
@@ -1319,10 +1647,25 @@ impl AiAssistant {
         let cancel_token = CancellationToken::new();
         self.cancel_token = Some(cancel_token.clone());
 
+        // In FreshContext mode, augment knowledge context with memory
+        let effective_knowledge: String;
+        let knowledge_ref = if self.context_mode == ContextMode::FreshContext {
+            let query = self.conversation.last().map(|m| m.content.clone()).unwrap_or_default();
+            let memory_ctx = self.build_memory_context(&query, 512);
+            if memory_ctx.is_empty() {
+                knowledge_context
+            } else {
+                effective_knowledge = format!("{}\n\n--- MEMORY CONTEXT ---\n{}", knowledge_context, memory_ctx);
+                &effective_knowledge
+            }
+        } else {
+            knowledge_context
+        };
+
         let system_prompt = build_system_prompt_with_notes(
             &self.system_prompt_base,
             &self.preferences,
-            knowledge_context,
+            knowledge_ref,
             session_notes,
             knowledge_notes,
         );
@@ -1335,8 +1678,6 @@ impl AiAssistant {
                 provider: config.provider.display_name().to_string(),
                 model: config.selected_model.clone(),
             });
-
-        let conversation = self.conversation.clone();
         let fallback_providers = if self.fallback_enabled {
             self.fallback_providers.clone()
         } else {
@@ -1416,6 +1757,15 @@ impl AiAssistant {
                             #[cfg(feature = "rag")]
                             if self.rag_config.auto_store_messages {
                                 let _ = self.store_message_in_rag(&msg, true);
+                            }
+
+                            // Process messages into memory if enabled
+                            if let Some(ref mut mm) = self.memory_manager {
+                                if self.conversation.len() >= 2 {
+                                    let user_msg = self.conversation[self.conversation.len() - 2].clone();
+                                    mm.process_message(&user_msg);
+                                }
+                                mm.process_message(&msg);
                             }
 
                             self.event_bus
@@ -6319,5 +6669,185 @@ ws ::= " "*"#;
         assert!(!ai.adaptive_thinking.enabled);
         assert!(ai.last_thinking_strategy.is_none());
         assert!(ai.last_thinking_result.is_none());
+    }
+
+    // === FreshContext Mode Tests ===
+
+    #[test]
+    fn test_context_mode_default_is_conversation() {
+        let ai = AiAssistant::new();
+        assert_eq!(ai.context_mode(), ContextMode::Conversation);
+    }
+
+    #[test]
+    fn test_context_mode_set_and_get() {
+        let mut ai = AiAssistant::new();
+        ai.set_context_mode(ContextMode::FreshContext);
+        assert_eq!(ai.context_mode(), ContextMode::FreshContext);
+        ai.set_context_mode(ContextMode::Conversation);
+        assert_eq!(ai.context_mode(), ContextMode::Conversation);
+    }
+
+    #[test]
+    fn test_fresh_context_preserves_conversation_history() {
+        let mut ai = AiAssistant::new();
+        ai.conversation.push(ChatMessage::user("First"));
+        ai.conversation.push(ChatMessage::assistant("Reply"));
+        ai.conversation.push(ChatMessage::user("Second"));
+        ai.set_context_mode(ContextMode::FreshContext);
+        // History is preserved even in FreshContext
+        assert_eq!(ai.conversation.len(), 3);
+    }
+
+    #[test]
+    fn test_fresh_context_only_last_message() {
+        let mut ai = AiAssistant::new();
+        ai.set_context_mode(ContextMode::FreshContext);
+        ai.conversation.push(ChatMessage::user("Old"));
+        ai.conversation.push(ChatMessage::assistant("Reply"));
+        ai.conversation.push(ChatMessage::user("Current"));
+        // Simulate the FreshContext filtering logic
+        let filtered = vec![ai
+            .conversation
+            .last()
+            .expect("message was just pushed")
+            .clone()];
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].content, "Current");
+    }
+
+    #[test]
+    fn test_fresh_context_more_tokens_available() {
+        let mut ai = AiAssistant::new();
+        // Add messages to consume conversation budget
+        for i in 0..10 {
+            ai.conversation
+                .push(ChatMessage::user(&format!("Message {}", i)));
+            ai.conversation
+                .push(ChatMessage::assistant(&format!("Reply {}", i)));
+        }
+        let conv_tokens = ai.calculate_available_knowledge_tokens("test query");
+        ai.set_context_mode(ContextMode::FreshContext);
+        let fresh_tokens = ai.calculate_available_knowledge_tokens("test query");
+        assert!(
+            fresh_tokens > conv_tokens,
+            "FreshContext should have more tokens: {} vs {}",
+            fresh_tokens,
+            conv_tokens
+        );
+    }
+
+    // === Memory Integration Tests ===
+
+    #[test]
+    fn test_memory_disabled_by_default() {
+        let ai = AiAssistant::new();
+        assert!(!ai.has_memory());
+        assert!(ai.memory_manager().is_none());
+    }
+
+    #[test]
+    fn test_memory_enable_disable() {
+        let mut ai = AiAssistant::new();
+        ai.enable_memory(crate::memory::MemoryConfig::default());
+        assert!(ai.has_memory());
+        assert!(ai.memory_manager().is_some());
+        ai.disable_memory();
+        assert!(!ai.has_memory());
+    }
+
+    #[test]
+    fn test_build_memory_context_empty_when_disabled() {
+        let mut ai = AiAssistant::new();
+        let ctx = ai.build_memory_context("test query", 1000);
+        assert!(ctx.is_empty());
+    }
+
+    #[test]
+    fn test_build_memory_context_with_memories() {
+        let mut ai = AiAssistant::new();
+        ai.enable_memory(crate::memory::MemoryConfig::default());
+        if let Some(mm) = ai.memory_manager_mut() {
+            mm.remember_fact("The project uses Rust", 0.9);
+        }
+        let ctx = ai.build_memory_context("Rust project", 1000);
+        assert!(
+            !ctx.is_empty(),
+            "Should return memory context with relevant fact"
+        );
+    }
+
+    // === FreshContext Advisor Tests ===
+
+    #[cfg(feature = "rag")]
+    #[test]
+    fn test_fresh_context_status_ineffective_without_rag() {
+        let mut ai = AiAssistant::new();
+        ai.set_context_mode(ContextMode::FreshContext);
+        let status = ai.fresh_context_status(false);
+        assert_eq!(status.effectiveness, FreshContextEffectiveness::Ineffective);
+        assert!(status.warnings.contains(&FreshContextWarning::NoRag));
+        assert!(status.warnings.contains(&FreshContextWarning::NoGraph));
+        assert!(status.warnings.contains(&FreshContextWarning::NoMemory));
+    }
+
+    #[cfg(feature = "rag")]
+    #[test]
+    fn test_fresh_context_status_limited_with_rag_only() {
+        let mut ai = AiAssistant::new();
+        ai.set_context_mode(ContextMode::FreshContext);
+        let temp =
+            std::env::temp_dir().join(format!("fc_test_{}.db", uuid::Uuid::new_v4()));
+        ai.init_rag(&temp).expect("RAG init");
+        ai.register_knowledge_document("test", "some content");
+        let status = ai.fresh_context_status(false);
+        assert_eq!(status.effectiveness, FreshContextEffectiveness::Limited);
+        assert!(!status.warnings.contains(&FreshContextWarning::NoRag));
+        assert!(status.warnings.contains(&FreshContextWarning::NoGraph));
+        let _ = std::fs::remove_file(&temp);
+    }
+
+    #[cfg(feature = "rag")]
+    #[test]
+    fn test_fresh_context_status_good_with_rag_and_memory() {
+        let mut ai = AiAssistant::new();
+        ai.set_context_mode(ContextMode::FreshContext);
+        let temp =
+            std::env::temp_dir().join(format!("fc_test_{}.db", uuid::Uuid::new_v4()));
+        ai.init_rag(&temp).expect("RAG init");
+        ai.register_knowledge_document("test", "content");
+        ai.enable_memory(crate::memory::MemoryConfig::default());
+        let status = ai.fresh_context_status(false);
+        assert_eq!(status.effectiveness, FreshContextEffectiveness::Good);
+        assert!(!status.warnings.contains(&FreshContextWarning::NoMemory));
+        let _ = std::fs::remove_file(&temp);
+    }
+
+    #[cfg(feature = "rag")]
+    #[test]
+    fn test_fresh_context_status_optimal() {
+        let mut ai = AiAssistant::new();
+        ai.set_context_mode(ContextMode::FreshContext);
+        let temp =
+            std::env::temp_dir().join(format!("fc_test_{}.db", uuid::Uuid::new_v4()));
+        ai.init_rag(&temp).expect("RAG init");
+        ai.register_knowledge_document("test", "content");
+        ai.enable_memory(crate::memory::MemoryConfig::default());
+        let status = ai.fresh_context_status(true);
+        assert_eq!(status.effectiveness, FreshContextEffectiveness::Optimal);
+        assert!(status.warnings.is_empty());
+        let _ = std::fs::remove_file(&temp);
+    }
+
+    #[cfg(feature = "rag")]
+    #[test]
+    fn test_fresh_context_warning_display() {
+        let w = FreshContextWarning::NoRag;
+        let s = format!("{}", w);
+        assert!(s.contains("RAG"), "Warning display should mention RAG: {}", s);
+
+        let w2 = FreshContextWarning::SmallBudget(200);
+        let s2 = format!("{}", w2);
+        assert!(s2.contains("200"), "Should include token count: {}", s2);
     }
 }

@@ -16,6 +16,8 @@ pub mod v2_annotations;
 pub mod v2_elicitation;
 pub mod v2_batch;
 pub mod v2_completion;
+#[cfg(feature = "rag")]
+pub mod knowledge_tools;
 
 #[cfg(test)]
 #[path = "tests.rs"]
