@@ -207,6 +207,7 @@ impl MemoryStore {
 
     /// Search memories by text (simple keyword matching)
     pub fn search(&mut self, query: &str) -> Vec<&MemoryEntry> {
+        crate::diag_debug!("[memory] search: query_len={}, total_memories={}", query.len(), self.memories.len());
         let query_lower = query.to_lowercase();
         let query_words: Vec<&str> = query_lower.split_whitespace().collect();
 
@@ -243,6 +244,7 @@ impl MemoryStore {
             }
         }
 
+        crate::diag_debug!("[memory] search: found {} matching memories", ids.len());
         ids.iter().filter_map(|id| self.memories.get(id)).collect()
     }
 
@@ -391,6 +393,7 @@ impl MemoryStore {
 
     /// Build a context string from relevant memories
     pub fn build_context(&mut self, query: &str, max_tokens: usize) -> String {
+        crate::diag_debug!("[memory] build_context: max_tokens={}", max_tokens);
         let relevant = self.search(query);
 
         let mut context = String::new();
@@ -409,6 +412,7 @@ impl MemoryStore {
             estimated_tokens += memory_tokens;
         }
 
+        crate::diag_debug!("[memory] build_context: result {} chars, ~{} tokens", context.len(), estimated_tokens);
         context
     }
 }
@@ -554,6 +558,7 @@ impl MemoryManager {
 
     /// Process a message and update memories
     pub fn process_message(&mut self, message: &ChatMessage) {
+        crate::diag_debug!("[memory] process_message: role={:?}, content_len={}", message.role, message.content.len());
         // Add to pending for summarization
         self.long_term.add_message(message.clone());
 
@@ -572,6 +577,7 @@ impl MemoryManager {
 
     /// Store a fact in long-term memory
     pub fn remember_fact(&mut self, fact: &str, importance: f32) -> String {
+        crate::diag_debug!("[memory] remember_fact: importance={:.2}, text={:.200}", importance, fact);
         let memory = MemoryEntry::new(fact, MemoryType::Fact).with_importance(importance);
         self.long_term.add(memory)
     }
@@ -595,6 +601,7 @@ impl MemoryManager {
 
     /// Build context for a query
     pub fn build_context(&mut self, query: &str, max_tokens: usize) -> String {
+        crate::diag_debug!("[memory] MemoryManager::build_context: max_tokens={}", max_tokens);
         let mut context = String::new();
 
         // Add working memory summary
@@ -612,6 +619,8 @@ impl MemoryManager {
             context.push_str(&long_term_context);
         }
 
+        crate::diag_debug!("[memory] MemoryManager::build_context: result {} chars", context.len());
+        crate::diag_trace!("[memory] MemoryManager::build_context: content={:.500}", context);
         context
     }
 

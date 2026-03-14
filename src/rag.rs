@@ -804,9 +804,11 @@ impl RagDb {
     /// Index a document by splitting it into chunks
     /// Returns the number of chunks indexed, or 0 if document was already up-to-date
     pub fn index_document(&self, source: &str, content: &str) -> Result<usize> {
+        crate::diag_debug!("[rag] index_document: source={}, content_len={} chars", source, content.len());
         let (needs_index, content_hash) = self.needs_reindex(source, content)?;
 
         if !needs_index {
+            crate::diag_debug!("[rag] index_document: source={} already up-to-date, skipping", source);
             // Document already indexed with same content
             return Ok(0);
         }
@@ -817,6 +819,7 @@ impl RagDb {
 
         // Index new chunks
         let chunks = chunk_document(source, content);
+        crate::diag_debug!("[rag] index_document: source={}, chunks_created={}", source, chunks.len());
         let now = chrono::Utc::now().to_rfc3339();
         let mut count = 0;
         let mut total_tokens = 0;
@@ -886,6 +889,8 @@ impl RagDb {
         max_tokens: usize,
         top_k: usize,
     ) -> Result<Vec<KnowledgeChunk>> {
+        crate::diag_debug!("[rag] search_knowledge: max_tokens={}, top_k={}", max_tokens, top_k);
+        crate::diag_trace!("[rag] search_knowledge: query={:.300}", query);
         let search_terms = prepare_fts_query(query);
 
         // Join with knowledge_sources to get priority, order by priority DESC then BM25 score
@@ -923,6 +928,15 @@ impl RagDb {
                     break;
                 }
             }
+        }
+
+        crate::diag_debug!("[rag] search_knowledge: found {} results, total_tokens={}", results.len(), total_tokens);
+        #[cfg(feature = "diagnostic-logging")]
+        for (i, chunk) in results.iter().enumerate() {
+            crate::diag_trace!(
+                "[rag] search_knowledge result[{}]: source={}, section={}, tokens={}, text={:.200}",
+                i, chunk.source, chunk.section, chunk.token_count, chunk.content
+            );
         }
 
         Ok(results)
@@ -1015,6 +1029,11 @@ impl RagDb {
         max_tokens: usize,
         top_k: usize,
     ) -> Result<Vec<HybridKnowledgeResult>> {
+        log::debug!(
+            "[rag] hybrid_search: max_tokens={}, top_k={}, bm25_weight={}, semantic_weight={}",
+            max_tokens, top_k, self.hybrid_config.bm25_weight, self.hybrid_config.semantic_weight
+        );
+        crate::diag_trace!("[rag] hybrid_search: query={:.300}", query);
         // Get BM25 results with scores
         let search_terms = prepare_fts_query(query);
 
@@ -1048,6 +1067,12 @@ impl RagDb {
         for row in rows {
             bm25_results.push(row?);
         }
+
+        log::debug!(
+            "[rag] hybrid_search: bm25_hits={}, top_score={:.4}",
+            bm25_results.len(),
+            bm25_results.first().map(|(_, s)| *s).unwrap_or(0.0)
+        );
 
         // Normalize BM25 scores to 0-1 range
         let max_bm25 = bm25_results
@@ -1128,6 +1153,15 @@ impl RagDb {
                     break;
                 }
             }
+        }
+
+        crate::diag_debug!("[rag] hybrid_search: final {} results, total_tokens={}", results.len(), total_tokens);
+        #[cfg(feature = "diagnostic-logging")]
+        for (i, r) in results.iter().enumerate() {
+            crate::diag_trace!(
+                "[rag] hybrid result[{}]: bm25={:.4}, semantic={:?}, combined={:.4}, source={}, text={:.200}",
+                i, r.bm25_score, r.semantic_score, r.combined_score, r.chunk.source, r.chunk.content
+            );
         }
 
         Ok(results)

@@ -228,6 +228,84 @@ macro_rules! safe_log {
     };
 }
 
+/// Macro for safe debug-level logging with automatic PII/key redaction.
+///
+/// Same as `safe_log!` but uses `log::debug!` level.
+#[macro_export]
+macro_rules! safe_log_debug {
+    ($($arg:tt)*) => {
+        log::debug!("{}", $crate::log_redaction::redact(&format!($($arg)*)));
+    };
+}
+
+/// Macro for safe trace-level logging with automatic PII/key redaction.
+///
+/// Same as `safe_log!` but uses `log::trace!` level. Use this for logging
+/// prompts, system prompts, and other content that may contain sensitive data.
+#[macro_export]
+macro_rules! safe_log_trace {
+    ($($arg:tt)*) => {
+        log::trace!("{}", $crate::log_redaction::redact(&format!($($arg)*)));
+    };
+}
+
+// ============================================================================
+// Diagnostic logging macros (compile-time gated)
+// ============================================================================
+
+/// Diagnostic debug-level logging. Compiles to nothing without `diagnostic-logging` feature.
+///
+/// Use for: RAG scores, token budgets, chunk counts, entity counts, relation counts.
+#[cfg(feature = "diagnostic-logging")]
+#[macro_export]
+macro_rules! diag_debug {
+    ($($arg:tt)*) => { log::debug!($($arg)*) };
+}
+
+/// Diagnostic debug-level logging. Compiles to nothing without `diagnostic-logging` feature.
+#[cfg(not(feature = "diagnostic-logging"))]
+#[macro_export]
+macro_rules! diag_debug {
+    ($($arg:tt)*) => {};
+}
+
+/// Diagnostic trace-level logging. Compiles to nothing without `diagnostic-logging` feature.
+///
+/// Use for: full prompt text, search result contents, context previews.
+#[cfg(feature = "diagnostic-logging")]
+#[macro_export]
+macro_rules! diag_trace {
+    ($($arg:tt)*) => { log::trace!($($arg)*) };
+}
+
+/// Diagnostic trace-level logging. Compiles to nothing without `diagnostic-logging` feature.
+#[cfg(not(feature = "diagnostic-logging"))]
+#[macro_export]
+macro_rules! diag_trace {
+    ($($arg:tt)*) => {};
+}
+
+/// Diagnostic trace-level logging with PII redaction.
+/// Compiles to nothing without `diagnostic-logging` feature.
+///
+/// Use for: system prompts, user messages, LLM responses — anything that may
+/// contain API keys, tokens, or other sensitive data.
+#[cfg(feature = "diagnostic-logging")]
+#[macro_export]
+macro_rules! safe_diag_trace {
+    ($($arg:tt)*) => {
+        log::trace!("{}", $crate::log_redaction::redact(&format!($($arg)*)));
+    };
+}
+
+/// Diagnostic trace-level logging with PII redaction.
+/// Compiles to nothing without `diagnostic-logging` feature.
+#[cfg(not(feature = "diagnostic-logging"))]
+#[macro_export]
+macro_rules! safe_diag_trace {
+    ($($arg:tt)*) => {};
+}
+
 // ============================================================================
 // Tests
 // ============================================================================

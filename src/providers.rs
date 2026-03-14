@@ -598,6 +598,15 @@ pub fn generate_response_streaming(
         config.provider,
         config.selected_model
     );
+    crate::diag_debug!(
+        "[provider] streaming to {:?}: model={}, messages={}, system_prompt_len={}",
+        config.provider, config.selected_model, conversation.len(), system_prompt.len()
+    );
+    crate::safe_diag_trace!("[provider] system_prompt={:.1000}", system_prompt);
+    #[cfg(feature = "diagnostic-logging")]
+    if let Some(last) = conversation.last() {
+        crate::safe_diag_trace!("[provider] last_message ({:?}): {:.500}", last.role, last.content);
+    }
 
     let result = match &config.provider {
         AiProvider::Ollama => generate_ollama_streaming(config, conversation, system_prompt, tx),
@@ -675,6 +684,15 @@ pub fn generate_response(
         config.provider,
         config.selected_model
     );
+    crate::diag_debug!(
+        "[provider] sending to {:?}: model={}, messages={}, system_prompt_len={}",
+        config.provider, config.selected_model, conversation.len(), system_prompt.len()
+    );
+    crate::safe_diag_trace!("[provider] system_prompt={:.1000}", system_prompt);
+    #[cfg(feature = "diagnostic-logging")]
+    if let Some(last) = conversation.last() {
+        crate::safe_diag_trace!("[provider] last_message ({:?}): {:.500}", last.role, last.content);
+    }
 
     let result = match &config.provider {
         AiProvider::Ollama => generate_ollama_response(config, conversation, system_prompt),

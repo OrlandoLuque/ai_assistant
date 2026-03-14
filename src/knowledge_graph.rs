@@ -1055,6 +1055,10 @@ impl KnowledgeGraphStore {
         evidence: Option<&str>,
         source_chunk_id: Option<i64>,
     ) -> Result<i64> {
+        log::debug!(
+            "[graph] add_relation: from_id={}, to_id={}, type={}, confidence={:.2}",
+            from_entity_id, to_entity_id, relation_type, confidence
+        );
         let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
         conn.execute(
             r#"INSERT INTO relations (from_entity_id, to_entity_id, relation_type, confidence, evidence, source_chunk_id)
@@ -1077,6 +1081,7 @@ impl KnowledgeGraphStore {
 
     /// Get relations from an entity
     pub fn get_relations_from(&self, entity_id: i64, depth: usize) -> Result<Vec<GraphRelation>> {
+        crate::diag_debug!("[graph] get_relations_from: entity_id={}, depth={}", entity_id, depth);
         let mut relations = Vec::new();
         let mut visited = HashSet::new();
         let mut current_entities = vec![entity_id];
@@ -1136,6 +1141,15 @@ impl KnowledgeGraphStore {
             }
 
             current_entities = next_entities;
+        }
+
+        crate::diag_debug!("[graph] get_relations_from: found {} relations", relations.len());
+        #[cfg(feature = "diagnostic-logging")]
+        for (i, rel) in relations.iter().enumerate() {
+            crate::diag_trace!(
+                "[graph] relation[{}]: {} --[{}]--> {} (weight={:.2})",
+                i, rel.from, rel.relation_type, rel.to, rel.weight
+            );
         }
 
         Ok(relations)
@@ -1464,10 +1478,13 @@ impl KnowledgeGraph {
 
     /// Query the graph for entities mentioned in a query
     pub fn query(&self, query: &str, extractor: &dyn EntityExtractor) -> Result<GraphQueryResult> {
+        crate::diag_debug!("[graph] query: query_len={} chars", query.len());
+        crate::diag_trace!("[graph] query: text={:.300}", query);
         let start = Instant::now();
 
         // Extract entities from query
         let query_entities = extractor.extract_query_entities(query)?;
+        crate::diag_debug!("[graph] query: extracted {} entities: {:?}", query_entities.len(), query_entities);
 
         if query_entities.is_empty() {
             return Ok(GraphQueryResult {
@@ -1511,6 +1528,16 @@ impl KnowledgeGraph {
 
         // Get chunks
         let chunks = self.store.get_chunks_for_entities(&entity_ids)?;
+
+        log::debug!(
+            "[graph] query: found {} entities, {} relations, {} chunks in {}ms",
+            entities_found.len(), all_relations.len(), chunks.len(),
+            start.elapsed().as_millis()
+        );
+        crate::diag_trace!(
+            "[graph] query entities: {:?}",
+            entities_found.iter().map(|e| &e.name).collect::<Vec<_>>()
+        );
 
         Ok(GraphQueryResult {
             entities_found,

@@ -219,6 +219,12 @@ webrtc = ["dep:tokio"]
 # Not in 'full' by default — development-only. Opt-in: --features devtools
 devtools = []
 
+# Diagnostic logging: compile-in debug/trace log calls throughout the library
+# (prompts, contexts, RAG scores, graph traversals, memory retrieval, token budgets).
+# Without this feature, all diagnostic log::debug!/trace! calls compile to NOTHING — zero overhead.
+# Opt-in: --features diagnostic-logging
+diagnostic-logging = ["dep:env_logger"]
+
 # Evaluation benchmark suite: standard benchmarks (HumanEval, MMLU, etc.) with real LLM calls
 # Not in 'full' by default — requires network access and LLM providers. Opt-in: --features eval-suite
 eval-suite = ["eval"]
@@ -271,6 +277,7 @@ redis-backend = ["dep:redis"]
 [dependencies]
 anyhow = "1"
 log = "0.4"
+env_logger = { version = "0.11", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", features = ["serde", "clock"] }

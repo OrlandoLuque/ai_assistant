@@ -1056,8 +1056,14 @@ impl AiAssistant {
 
     /// Build memory-based context for a query (empty string if memory disabled).
     pub fn build_memory_context(&mut self, query: &str, max_tokens: usize) -> String {
+        crate::diag_debug!("[memory-context] build_memory_context: max_tokens={}, memory_enabled={}", max_tokens, self.memory_manager.is_some());
         match self.memory_manager.as_mut() {
-            Some(mm) => mm.build_context(query, max_tokens),
+            Some(mm) => {
+                let result = mm.build_context(query, max_tokens);
+                crate::diag_debug!("[memory-context] result: {} chars", result.len());
+                crate::diag_trace!("[memory-context] content={:.500}", result);
+                result
+            }
             None => String::new(),
         }
     }
@@ -1224,6 +1230,10 @@ impl AiAssistant {
     /// * `user_message` - The user's message
     /// * `knowledge_context` - Optional knowledge/context to include in system prompt
     pub fn send_message(&mut self, user_message: String, knowledge_context: &str) {
+        crate::diag_debug!(
+            "[assistant] send_message: mode={:?}, conversation_len={}, knowledge_context_len={} chars",
+            self.context_mode, self.conversation.len(), knowledge_context.len()
+        );
         self.conversation.push(ChatMessage::user(&user_message));
         let conversation = match self.context_mode {
             ContextMode::Conversation => {
@@ -1356,6 +1366,10 @@ impl AiAssistant {
         session_notes: &str,
         knowledge_notes: &str,
     ) {
+        crate::diag_debug!(
+            "[assistant] send_message_with_notes: mode={:?}, conversation_len={}, knowledge={} chars, session_notes={} chars",
+            self.context_mode, self.conversation.len(), knowledge_context.len(), session_notes.len()
+        );
         self.conversation.push(ChatMessage::user(&user_message));
         let conversation = match self.context_mode {
             ContextMode::Conversation => {
@@ -1425,6 +1439,10 @@ impl AiAssistant {
         user_message: String,
         knowledge_context: &str,
     ) -> Result<String> {
+        crate::diag_debug!(
+            "[assistant] generate_sync: mode={:?}, conversation_len={}, knowledge={} chars",
+            self.context_mode, self.conversation.len(), knowledge_context.len()
+        );
         self.conversation.push(ChatMessage::user(&user_message));
 
         // In FreshContext mode, augment knowledge context with memory
@@ -1512,6 +1530,10 @@ impl AiAssistant {
         user_message: String,
         knowledge_context: &str,
     ) -> CancellationToken {
+        crate::diag_debug!(
+            "[assistant] send_message_cancellable: mode={:?}, conversation_len={}, knowledge={} chars",
+            self.context_mode, self.conversation.len(), knowledge_context.len()
+        );
         self.conversation.push(ChatMessage::user(&user_message));
         let conversation = match self.context_mode {
             ContextMode::Conversation => {
@@ -1613,6 +1635,10 @@ impl AiAssistant {
         session_notes: &str,
         knowledge_notes: &str,
     ) -> CancellationToken {
+        crate::diag_debug!(
+            "[assistant] send_message_cancellable_with_notes: mode={:?}, conversation_len={}, knowledge={} chars",
+            self.context_mode, self.conversation.len(), knowledge_context.len()
+        );
         // Emit message sent event
         self.event_bus.emit(crate::events::AiEvent::MessageSent {
             content_length: user_message.len(),
@@ -1746,6 +1772,14 @@ impl AiAssistant {
                             }
 
                             let msg = ChatMessage::assistant(&self.current_response);
+                            crate::diag_debug!(
+                                "[assistant] poll_response: complete, response={} chars, conversation now {} messages",
+                                self.current_response.len(), self.conversation.len() + 1
+                            );
+                            crate::safe_diag_trace!(
+                                "[assistant] poll_response: response_preview={:.500}",
+                                self.current_response
+                            );
                             self.conversation.push(msg.clone());
                             self.is_generating = false;
                             self.rx_response = None;
@@ -2744,8 +2778,12 @@ impl AiAssistant {
     ///
     /// Returns (knowledge_context, conversation_context) if RAG is enabled
     pub fn build_rag_context(&mut self, query: &str) -> (String, String) {
+        crate::diag_debug!("[rag-context] build_rag_context: query_len={} chars", query.len());
+        crate::safe_diag_trace!("[rag-context] query={:.300}", query);
+
         // Ensure RAG is initialized (lazy initialization if path was set)
         if !self.ensure_rag_initialized() {
+            crate::diag_debug!("[rag-context] RAG not available, returning empty contexts");
             // RAG not available, return empty contexts
             return (String::new(), String::new());
         }
@@ -2773,6 +2811,10 @@ impl AiAssistant {
         } else {
             self.rag_config.max_knowledge_tokens
         };
+        crate::diag_debug!(
+            "[rag-context] effective_max_knowledge_tokens={}, dynamic={}",
+            effective_max_knowledge_tokens, self.rag_config.dynamic_context_enabled
+        );
 
         if let Some(ref db) = self.rag_db {
             // Knowledge RAG with caching
@@ -2800,6 +2842,18 @@ impl AiAssistant {
                         Vec::new()
                     }
                 };
+
+                crate::diag_debug!(
+                    "[rag-context] retrieved {} knowledge chunks, top_k={}",
+                    chunks.len(), self.rag_config.top_k_chunks
+                );
+                #[cfg(feature = "diagnostic-logging")]
+                for (i, chunk) in chunks.iter().enumerate() {
+                    crate::diag_trace!(
+                        "[rag-context] chunk[{}]: source={}, section={}, tokens={}",
+                        i, chunk.source, chunk.section, chunk.token_count
+                    );
+                }
 
                 // Record source access for metrics
                 for chunk in &chunks {
@@ -2856,6 +2910,12 @@ impl AiAssistant {
                 }
             }
         }
+
+        crate::diag_debug!(
+            "[rag-context] result: knowledge={} chars, conversation={} chars",
+            knowledge_context.len(), conversation_context.len()
+        );
+        crate::safe_diag_trace!("[rag-context] knowledge_context_preview={:.500}", knowledge_context);
 
         (knowledge_context, conversation_context)
     }

@@ -20,6 +20,8 @@ use std::time::Instant;
 use eframe::egui::{self, Align2, Color32, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 use petgraph::graph::{Graph as PetGraph, NodeIndex};
 
+use std::sync::Arc;
+
 use ai_assistant::{
     AiAssistant, AiConfig, AiResponse,
     // Analysis
@@ -44,6 +46,8 @@ use ai_assistant::{
     CronExpression,
     // Sandbox
     CodeSandbox, SandboxLanguage,
+    // Debug / diagnostics
+    DebugConfig, DebugLevel, DebugLogger, GuiLogger,
 };
 use ai_assistant::butler::{Butler, EnvironmentReport, FeatureFlagAnalysis};
 
@@ -134,6 +138,7 @@ enum MonitorTab {
     Analysis,
     Graph,
     Audit,
+    Diagnostics,
 }
 
 struct ScanResult {
@@ -688,6 +693,12 @@ struct AiGuiApp {
     show_model_wizard: bool,
     wizard_state: ModelWizardState,
 
+    // Diagnostics
+    debug_logger: Arc<DebugLogger>,
+    diag_level_filter: DebugLevel,
+    diag_component_filter: String,
+    diag_auto_scroll: bool,
+
     // Persistence
     data_dir: PathBuf,
 }
@@ -698,6 +709,16 @@ impl AiGuiApp {
         if let Err(e) = std::fs::create_dir_all(&data_dir) {
             eprintln!("Warning: could not create data dir: {}", e);
         }
+
+        // Initialize diagnostic logger and set as global log backend
+        let debug_logger = Arc::new(DebugLogger::new(DebugConfig {
+            level: DebugLevel::Trace,
+            max_entries: 5000,
+            ..DebugConfig::default()
+        }));
+        let gui_logger = GuiLogger::new(Arc::clone(&debug_logger));
+        log::set_boxed_logger(Box::new(gui_logger)).ok();
+        log::set_max_level(log::LevelFilter::Trace);
 
         let mut assistant = AiAssistant::new();
 
@@ -770,6 +791,11 @@ impl AiGuiApp {
 
             show_model_wizard: false,
             wizard_state: ModelWizardState::default(),
+
+            debug_logger,
+            diag_level_filter: DebugLevel::Debug,
+            diag_component_filter: String::new(),
+            diag_auto_scroll: true,
 
             data_dir,
         }
@@ -3993,6 +4019,7 @@ impl AiGuiApp {
                     ui.selectable_value(&mut self.monitor_tab, MonitorTab::Analysis, "Analysis");
                     ui.selectable_value(&mut self.monitor_tab, MonitorTab::Graph, "Graph");
                     ui.selectable_value(&mut self.monitor_tab, MonitorTab::Audit, "Audit");
+                    ui.selectable_value(&mut self.monitor_tab, MonitorTab::Diagnostics, "Diagnostics");
                 });
                 ui.separator();
 
@@ -4003,6 +4030,7 @@ impl AiGuiApp {
                         MonitorTab::Analysis => self.render_monitor_analysis(ui),
                         MonitorTab::Graph => self.render_monitor_graph(ui),
                         MonitorTab::Audit => self.render_monitor_audit(ui),
+                        MonitorTab::Diagnostics => self.render_monitor_diagnostics(ui),
                     }
                 });
             });
@@ -4157,6 +4185,86 @@ impl AiGuiApp {
         } else {
             widgets::audit_log_panel(ui, &self.audit_events, 50);
         }
+    }
+
+    fn render_monitor_diagnostics(&mut self, ui: &mut Ui) {
+        // Toolbar: level filter, component filter, clear, auto-scroll
+        ui.horizontal(|ui| {
+            ui.label("Level:");
+            let levels = [
+                (DebugLevel::Error, "Error"),
+                (DebugLevel::Warn, "Warn"),
+                (DebugLevel::Info, "Info"),
+                (DebugLevel::Debug, "Debug"),
+                (DebugLevel::Trace, "Trace"),
+            ];
+            for (level, label) in &levels {
+                ui.selectable_value(&mut self.diag_level_filter, *level, *label);
+            }
+
+            ui.separator();
+            ui.label("Component:");
+            ui.add(egui::TextEdit::singleline(&mut self.diag_component_filter)
+                .desired_width(120.0)
+                .hint_text("filter..."));
+
+            ui.separator();
+            ui.checkbox(&mut self.diag_auto_scroll, "Auto-scroll");
+
+            if ui.button("Clear").clicked() {
+                self.debug_logger.clear();
+            }
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(format!("{} entries", self.debug_logger.entry_count()));
+            });
+        });
+        ui.separator();
+
+        // Get filtered entries
+        let entries = self.debug_logger.all_entries();
+        let filtered: Vec<_> = entries.iter().filter(|e| {
+            e.level <= self.diag_level_filter
+                && (self.diag_component_filter.is_empty()
+                    || e.component.contains(&self.diag_component_filter))
+        }).collect();
+
+        // Log entries table
+        let text_style = egui::TextStyle::Monospace;
+        let row_height = ui.text_style_height(&text_style) + 2.0;
+
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .stick_to_bottom(self.diag_auto_scroll)
+            .show_rows(ui, row_height, filtered.len(), |ui, row_range| {
+                for i in row_range {
+                    if let Some(entry) = filtered.get(i) {
+                        let color = match entry.level {
+                            DebugLevel::Error => Color32::from_rgb(255, 80, 80),
+                            DebugLevel::Warn  => Color32::from_rgb(255, 200, 60),
+                            DebugLevel::Info  => Color32::from_rgb(120, 200, 255),
+                            DebugLevel::Debug => Color32::from_rgb(180, 180, 180),
+                            DebugLevel::Trace => Color32::from_rgb(120, 120, 120),
+                            DebugLevel::Off   => Color32::DARK_GRAY,
+                        };
+
+                        ui.horizontal(|ui| {
+                            ui.colored_label(color, format!("{:>5}", entry.level.as_str()));
+                            ui.colored_label(Color32::from_rgb(150, 180, 220),
+                                format!("[{}]", entry.component));
+                            ui.label(&entry.message);
+                            if let Some(ref ctx) = entry.context {
+                                ui.colored_label(Color32::from_rgb(100, 100, 100),
+                                    format!("| {}", ctx));
+                            }
+                            if let Some(dur) = entry.duration {
+                                ui.colored_label(Color32::from_rgb(200, 160, 80),
+                                    format!("({:.1}ms)", dur.as_secs_f64() * 1000.0));
+                            }
+                        });
+                    }
+                }
+            });
     }
 
     fn render_settings(&mut self, ctx: &egui::Context) {

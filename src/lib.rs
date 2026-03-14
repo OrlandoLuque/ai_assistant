@@ -403,7 +403,7 @@ pub use fallback::{
 
 pub use debug::{
     configure_global_debug, global_debug, set_debug_level, CapturedRequest, DebugConfig,
-    DebugEntry, DebugLevel, DebugLogger, DebugReport, RequestInspector,
+    DebugEntry, DebugLevel, DebugLogger, DebugReport, GuiLogger, RequestInspector,
 };
 
 pub use persistence::{
