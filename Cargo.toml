@@ -374,6 +374,10 @@ path = "src/bin/kpkg_tool.rs"
 required-features = ["rag"]
 
 [[bin]]
+name = "ai_cli"
+path = "src/bin/ai_cli.rs"
+
+[[bin]]
 name = "ai_assistant_cli"
 path = "src/bin/ai_assistant_cli.rs"
 
