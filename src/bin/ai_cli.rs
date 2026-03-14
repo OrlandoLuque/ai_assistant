@@ -18,9 +18,9 @@
 //! ai_cli query [options] <prompt>       One-shot LLM query
 //! ```
 
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
-use std::process::ExitCode;
+use std::process::{ExitCode, Stdio};
 use std::time::{Duration, Instant};
 
 use ai_assistant::{AiAssistant, AiConfig, AiResponse};
@@ -80,8 +80,18 @@ fn print_usage() {
     println!("    --max-history <n>              Set max history messages");
     println!("  butler [--config <file>]       Run Butler advisor (optimization recommendations)");
     println!("  query [options] <prompt>       Send a one-shot query to an LLM");
-    println!("  bench [--filter <pattern>]     Run Criterion benchmarks (44 benchmarks)");
-    println!("  test [options]                 Run the test harness");
+    println!("  bench [options]                Run Criterion benchmarks (44 benchmarks)");
+    println!("    --filter <pattern>             Filter benchmarks by name");
+    println!("    --list                         List available benchmarks");
+    println!("    --output <dir>                 Output directory (default: results/)");
+    println!("  test [options]                 Run tests (lib or harness), save results");
+    println!("    --all                          Run test harness (all categories)");
+    println!("    --category <name>              Run specific harness category");
+    println!("    --list                         List harness categories");
+    println!("    --lib                          Run cargo test --lib (default)");
+    println!("    --filter <pattern>             Filter test names");
+    println!("    --features <flags>             Override feature flags");
+    println!("    --output <dir>                 Output directory (default: results/)");
     println!("    --provider <name>              Provider (ollama, openai, anthropic, gemini, ...)");
     println!("    --model <name>                 Model name");
     println!("    --url <url>                    Provider URL");
@@ -875,7 +885,7 @@ fn cmd_query(args: &[String]) -> ExitCode {
 }
 
 // =============================================================================
-// bench — run Criterion benchmarks
+// bench — run Criterion benchmarks with output capture
 // =============================================================================
 
 fn cmd_bench(args: &[String]) -> ExitCode {
@@ -886,8 +896,8 @@ fn cmd_bench(args: &[String]) -> ExitCode {
         "--features".to_string(),
         "full,constrained-decoding,multi-agent,distributed".to_string(),
     ];
+    let mut output_dir = PathBuf::from("results");
 
-    // Parse our args
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -897,7 +907,6 @@ fn cmd_bench(args: &[String]) -> ExitCode {
                     eprintln!("Error: --filter requires a pattern");
                     return ExitCode::from(1);
                 }
-                // Criterion filter: pass as positional after --
                 cargo_args.push("--".to_string());
                 cargo_args.push(args[i].clone());
             }
@@ -905,42 +914,38 @@ fn cmd_bench(args: &[String]) -> ExitCode {
                 cargo_args.push("--".to_string());
                 cargo_args.push("--list".to_string());
             }
+            "--output" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: --output requires a directory");
+                    return ExitCode::from(1);
+                }
+                output_dir = PathBuf::from(&args[i]);
+            }
             other => {
                 eprintln!("Error: unknown option '{}' for 'bench'", other);
-                eprintln!("Usage: ai_cli bench [--filter <pattern>] [--list]");
+                eprintln!("Usage: ai_cli bench [--filter <pattern>] [--list] [--output <dir>]");
                 return ExitCode::from(1);
             }
         }
         i += 1;
     }
 
-    println!("Running: cargo {}\n", cargo_args.join(" "));
-
-    let status = std::process::Command::new("cargo")
-        .args(&cargo_args)
-        .status();
-
-    match status {
-        Ok(s) if s.success() => ExitCode::SUCCESS,
-        Ok(s) => ExitCode::from(s.code().unwrap_or(1) as u8),
-        Err(e) => {
-            eprintln!("Error running cargo bench: {}", e);
-            ExitCode::from(1)
-        }
-    }
+    let cmd_str = format!("cargo {}", cargo_args.join(" "));
+    run_and_capture("bench", &cmd_str, "cargo", &cargo_args, &output_dir)
 }
 
 // =============================================================================
-// test — run test harness or cargo test
+// test — run test harness or cargo test with output capture
 // =============================================================================
 
 fn cmd_test(args: &[String]) -> ExitCode {
-    // Determine which mode: harness or cargo test
     let mut harness_mode = false;
     let mut harness_args: Vec<String> = Vec::new();
     let mut cargo_features =
         "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite".to_string();
     let mut test_filter: Option<String> = None;
+    let mut output_dir = PathBuf::from("results");
 
     let mut i = 0;
     while i < args.len() {
@@ -990,23 +995,25 @@ fn cmd_test(args: &[String]) -> ExitCode {
                 }
                 test_filter = Some(args[i].clone());
             }
+            "--output" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: --output requires a directory");
+                    return ExitCode::from(1);
+                }
+                output_dir = PathBuf::from(&args[i]);
+            }
             other => {
                 eprintln!("Error: unknown option '{}' for 'test'", other);
-                eprintln!("Usage: ai_cli test [--all|--category <name>|--list|--lib] [--filter <pat>] [--features <f>]");
+                eprintln!("Usage: ai_cli test [--all|--category <name>|--list|--lib] [--filter <pat>] [--features <f>] [--output <dir>]");
                 return ExitCode::from(1);
             }
         }
         i += 1;
     }
 
-    if !harness_mode && harness_args.is_empty() && test_filter.is_none() {
-        // Default: run lib tests
-        println!("Running lib tests (use --all for test harness, --filter to filter)\n");
-    }
-
-    if harness_mode {
-        // Run the test harness binary
-        let mut cargo_args = vec![
+    let cargo_args = if harness_mode {
+        let mut a = vec![
             "run".to_string(),
             "--bin".to_string(),
             "ai_test_harness".to_string(),
@@ -1014,51 +1021,227 @@ fn cmd_test(args: &[String]) -> ExitCode {
             cargo_features,
             "--".to_string(),
         ];
-        cargo_args.extend(harness_args);
-
-        println!("Running: cargo {}\n", cargo_args.join(" "));
-
-        let status = std::process::Command::new("cargo")
-            .args(&cargo_args)
-            .status();
-
-        match status {
-            Ok(s) if s.success() => ExitCode::SUCCESS,
-            Ok(s) => ExitCode::from(s.code().unwrap_or(1) as u8),
-            Err(e) => {
-                eprintln!("Error running test harness: {}", e);
-                ExitCode::from(1)
-            }
+        // Force no-color in harness for clean log files
+        if !harness_args.contains(&"--no-color".to_string()) {
+            a.push("--no-color".to_string());
         }
+        a.extend(harness_args);
+        a
     } else {
-        // Run cargo test --lib
-        let mut cargo_args = vec![
+        let mut a = vec![
             "test".to_string(),
             "--features".to_string(),
             cargo_features,
             "--lib".to_string(),
         ];
-
         if let Some(ref filter) = test_filter {
-            cargo_args.push("--".to_string());
-            cargo_args.push(filter.clone());
+            a.push("--".to_string());
+            a.push(filter.clone());
         }
+        a
+    };
 
-        println!("Running: cargo {}\n", cargo_args.join(" "));
+    let label = if harness_mode { "test-harness" } else { "test-lib" };
+    let cmd_str = format!("cargo {}", cargo_args.join(" "));
+    run_and_capture(label, &cmd_str, "cargo", &cargo_args, &output_dir)
+}
 
-        let status = std::process::Command::new("cargo")
-            .args(&cargo_args)
-            .status();
+// =============================================================================
+// Shared: run a command, tee output to terminal + log file
+// =============================================================================
 
-        match status {
-            Ok(s) if s.success() => ExitCode::SUCCESS,
-            Ok(s) => ExitCode::from(s.code().unwrap_or(1) as u8),
-            Err(e) => {
-                eprintln!("Error running tests: {}", e);
-                ExitCode::from(1)
+fn run_and_capture(
+    label: &str,
+    display_cmd: &str,
+    program: &str,
+    args: &[String],
+    output_dir: &PathBuf,
+) -> ExitCode {
+    // Create output directory
+    if let Err(e) = std::fs::create_dir_all(output_dir) {
+        eprintln!("Error creating output dir '{}': {}", output_dir.display(), e);
+        return ExitCode::from(1);
+    }
+
+    // Generate timestamped filename
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = now.as_secs();
+    // Format as YYYYMMDD_HHMMSS (UTC-approximation from epoch)
+    let days = secs / 86400;
+    let day_secs = secs % 86400;
+    let hours = day_secs / 3600;
+    let minutes = (day_secs % 3600) / 60;
+    let seconds = day_secs % 60;
+    // Approximate date from epoch days (good enough for filenames)
+    let (year, month, day) = epoch_days_to_date(days);
+    let timestamp = format!(
+        "{:04}{:02}{:02}_{:02}{:02}{:02}",
+        year, month, day, hours, minutes, seconds
+    );
+
+    let log_file = output_dir.join(format!("{}_{}.log", label, timestamp));
+
+    println!("Command: {}", display_cmd);
+    println!("Log:     {}\n", log_file.display());
+
+    // Spawn process with piped stdout+stderr
+    let mut child = match std::process::Command::new(program)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Error spawning '{}': {}", program, e);
+            return ExitCode::from(1);
+        }
+    };
+
+    let start = Instant::now();
+    let mut all_output = Vec::new();
+
+    // Header for log file
+    let header = format!(
+        "# ai_cli {} — {}\n# Command: {}\n# Date: {}\n# Platform: {} {}\n{}\n",
+        label,
+        timestamp,
+        display_cmd,
+        timestamp,
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        "=".repeat(78),
+    );
+    all_output.extend_from_slice(header.as_bytes());
+
+    // Read stdout in a separate thread, stderr in main thread
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    let stdout_handle = std::thread::spawn(move || {
+        let mut lines = Vec::new();
+        if let Some(out) = stdout {
+            let reader = BufReader::new(out);
+            for line in reader.lines() {
+                if let Ok(l) = line {
+                    println!("{}", l);
+                    lines.push(l);
+                }
             }
         }
+        lines
+    });
+
+    let stderr_handle = std::thread::spawn(move || {
+        let mut lines = Vec::new();
+        if let Some(err) = stderr {
+            let reader = BufReader::new(err);
+            for line in reader.lines() {
+                if let Ok(l) = line {
+                    eprintln!("{}", l);
+                    lines.push(l);
+                }
+            }
+        }
+        lines
+    });
+
+    let status = child.wait();
+    let elapsed = start.elapsed();
+
+    let stdout_lines = stdout_handle.join().unwrap_or_default();
+    let stderr_lines = stderr_handle.join().unwrap_or_default();
+
+    // Build log content
+    if !stdout_lines.is_empty() {
+        all_output.extend_from_slice(b"\n--- STDOUT ---\n");
+        for line in &stdout_lines {
+            all_output.extend_from_slice(line.as_bytes());
+            all_output.push(b'\n');
+        }
     }
+    if !stderr_lines.is_empty() {
+        all_output.extend_from_slice(b"\n--- STDERR ---\n");
+        for line in &stderr_lines {
+            all_output.extend_from_slice(line.as_bytes());
+            all_output.push(b'\n');
+        }
+    }
+
+    let exit_code = match &status {
+        Ok(s) => s.code().unwrap_or(-1),
+        Err(_) => -1,
+    };
+
+    // Footer with summary
+    let footer = format!(
+        "\n{}\n# Finished: exit code {}, elapsed {:.2}s\n# Total output: {} stdout lines, {} stderr lines\n",
+        "=".repeat(78),
+        exit_code,
+        elapsed.as_secs_f64(),
+        stdout_lines.len(),
+        stderr_lines.len(),
+    );
+    all_output.extend_from_slice(footer.as_bytes());
+
+    // Write log file
+    match std::fs::write(&log_file, &all_output) {
+        Ok(()) => {
+            let size_kb = all_output.len() / 1024;
+            eprintln!(
+                "\nResults saved to: {} ({} KB, {:.1}s)",
+                log_file.display(),
+                size_kb,
+                elapsed.as_secs_f64(),
+            );
+        }
+        Err(e) => {
+            eprintln!("Warning: could not write log file '{}': {}", log_file.display(), e);
+        }
+    }
+
+    match status {
+        Ok(s) if s.success() => ExitCode::SUCCESS,
+        Ok(s) => ExitCode::from(s.code().unwrap_or(1) as u8),
+        Err(e) => {
+            eprintln!("Error waiting for process: {}", e);
+            ExitCode::from(1)
+        }
+    }
+}
+
+/// Convert days since Unix epoch to (year, month, day).
+fn epoch_days_to_date(mut days: u64) -> (u64, u64, u64) {
+    // Simplified Gregorian calendar calculation
+    let mut year = 1970;
+    loop {
+        let days_in_year = if is_leap(year) { 366 } else { 365 };
+        if days < days_in_year {
+            break;
+        }
+        days -= days_in_year;
+        year += 1;
+    }
+    let months_days: [u64; 12] = if is_leap(year) {
+        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    } else {
+        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    };
+    let mut month = 1;
+    for &md in &months_days {
+        if days < md {
+            break;
+        }
+        days -= md;
+        month += 1;
+    }
+    (year, month, days + 1)
+}
+
+fn is_leap(year: u64) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
 }
 
 // =============================================================================
