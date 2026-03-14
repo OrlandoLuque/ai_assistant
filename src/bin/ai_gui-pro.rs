@@ -809,6 +809,17 @@ impl AiGuiApp {
         // 2. Model fetching
         if self.assistant.is_fetching_models {
             self.assistant.poll_models();
+            // Fetching just finished and still no models → inform and open wizard
+            if !self.assistant.is_fetching_models
+                && self.assistant.available_models.is_empty()
+            {
+                self.show_model_wizard = true;
+                self.toasts.push((
+                    "Providers detected but no models installed. Use the Model Library to download one.".to_string(),
+                    false,
+                    Instant::now(),
+                ));
+            }
         }
 
         // 3. Response polling
