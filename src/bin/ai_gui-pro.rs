@@ -40,6 +40,10 @@ use ai_assistant::{
     ContextUsage,
     // Models
     ModelInfo,
+    // Scheduler
+    CronExpression,
+    // Sandbox
+    CodeSandbox, SandboxLanguage,
 };
 use ai_assistant::butler::{Butler, EnvironmentReport, FeatureFlagAnalysis};
 
@@ -55,11 +59,73 @@ enum AppPhase {
 }
 
 #[derive(PartialEq, Clone, Copy)]
-enum SidebarTab {
-    Sessions,
-    Knowledge,
-    Butler,
+enum SidebarCategory {
+    Chat, Agents, Knowledge, Generate, Optimize, System,
 }
+
+impl SidebarCategory {
+    fn label(&self) -> &'static str {
+        match self { Self::Chat => "CHAT", Self::Agents => "AGENTS", Self::Knowledge => "KNOWLEDGE", Self::Generate => "GENERATE", Self::Optimize => "OPTIMIZE", Self::System => "SYSTEM" }
+    }
+    fn all() -> &'static [Self] { &[Self::Chat, Self::Agents, Self::Knowledge, Self::Generate, Self::Optimize, Self::System] }
+}
+
+#[derive(PartialEq, Clone, Copy)]
+enum SidebarPanel {
+    Chat, Sessions,
+    AgentPool, ToolsMcp, Automation,
+    RagSources, Memory, CloudStorage,
+    Media, Audio,
+    PromptLab, Evaluation,
+    Security, Analytics, DevTools, Cluster, Butler, Settings,
+}
+
+impl SidebarPanel {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::Chat => "Chat", Self::Sessions => "Sessions",
+            Self::AgentPool => "Agent Pool", Self::ToolsMcp => "Tools / MCP", Self::Automation => "Automation",
+            Self::RagSources => "RAG Sources", Self::Memory => "Memory", Self::CloudStorage => "Cloud Storage",
+            Self::Media => "Media", Self::Audio => "Audio",
+            Self::PromptLab => "Prompt Lab", Self::Evaluation => "Evaluation",
+            Self::Security => "Security", Self::Analytics => "Analytics", Self::DevTools => "DevTools",
+            Self::Cluster => "Cluster", Self::Butler => "Butler", Self::Settings => "Settings",
+        }
+    }
+    #[allow(dead_code)]
+    fn category(&self) -> SidebarCategory {
+        match self {
+            Self::Chat | Self::Sessions => SidebarCategory::Chat,
+            Self::AgentPool | Self::ToolsMcp | Self::Automation => SidebarCategory::Agents,
+            Self::RagSources | Self::Memory | Self::CloudStorage => SidebarCategory::Knowledge,
+            Self::Media | Self::Audio => SidebarCategory::Generate,
+            Self::PromptLab | Self::Evaluation => SidebarCategory::Optimize,
+            _ => SidebarCategory::System,
+        }
+    }
+    fn panels_for(cat: SidebarCategory) -> &'static [Self] {
+        match cat {
+            SidebarCategory::Chat => &[Self::Chat, Self::Sessions],
+            SidebarCategory::Agents => &[Self::AgentPool, Self::ToolsMcp, Self::Automation],
+            SidebarCategory::Knowledge => &[Self::RagSources, Self::Memory, Self::CloudStorage],
+            SidebarCategory::Generate => &[Self::Media, Self::Audio],
+            SidebarCategory::Optimize => &[Self::PromptLab, Self::Evaluation],
+            SidebarCategory::System => &[Self::Security, Self::Analytics, Self::DevTools, Self::Cluster, Self::Butler, Self::Settings],
+        }
+    }
+}
+
+#[derive(PartialEq, Clone, Copy)]
+#[allow(dead_code)]
+enum AutomationTab { Scheduler, Browser, Sandbox, Workflows }
+
+#[derive(PartialEq, Clone, Copy)]
+#[allow(dead_code)]
+enum MemoryTab { Episodic, Procedural, Entity }
+
+#[derive(PartialEq, Clone, Copy)]
+#[allow(dead_code)]
+enum SecurityTab { Overview, Guardrails, Pii, Rbac, AuditLog }
 
 #[derive(PartialEq, Clone, Copy)]
 enum MonitorTab {
@@ -408,6 +474,8 @@ struct GuiSettings {
     temperature: f32,
     max_history: usize,
     graph_enabled: bool,
+    history_depth: usize,
+    timeout_secs: u32,
     /// If true: Enter sends, Ctrl+Enter inserts newline (default).
     /// If false: Ctrl+Enter sends, Enter inserts newline.
     enter_sends: bool,
@@ -421,7 +489,121 @@ impl Default for GuiSettings {
             temperature: 0.7,
             max_history: 20,
             graph_enabled: false,
+            history_depth: 10,
+            timeout_secs: 60,
             enter_sends: true,
+        }
+    }
+}
+
+#[allow(dead_code)]
+struct PanelStates {
+    // Navigation
+    expanded_categories: std::collections::HashSet<u8>, // which sidebar categories are expanded (use category index)
+
+    // Agent Pool
+    agent_list: Vec<(String, String, String)>, // (id, name, role)
+    new_agent_name: String,
+    new_agent_role: String,
+    agent_selected: Option<usize>,
+
+    // Tools/MCP
+    tool_search: String,
+    tool_selected: Option<usize>,
+
+    // Automation
+    auto_tab: AutomationTab,
+    cron_expression: String,
+    cron_task_name: String,
+    browser_url: String,
+    browser_output: String,
+    sandbox_code: String,
+    sandbox_language: String,
+    sandbox_output: String,
+
+    // Memory
+    memory_tab: MemoryTab,
+    memory_search: String,
+
+    // Cloud Storage
+    cloud_provider: String, // "s3" or "gdrive"
+    cloud_path: String,
+    cloud_bucket: String,
+
+    // Media
+    media_prompt: String,
+    media_model: String,
+    media_results: Vec<String>, // paths to generated images
+
+    // Audio
+    audio_input_path: String,
+    audio_output_text: String,
+    tts_input: String,
+    tts_voice: String,
+
+    // Prompt Lab
+    sig_name: String,
+    sig_inputs: Vec<(String, String)>, // (name, description)
+    sig_outputs: Vec<(String, String)>,
+    optimization_running: bool,
+    optimization_results: Vec<(String, f64)>, // (config, score)
+
+    // Evaluation
+    eval_suite_name: String,
+    eval_samples: Vec<(String, String)>, // (input, expected)
+    eval_results: Vec<(String, f64, String)>, // (sample, score, output)
+
+    // Security
+    security_tab: SecurityTab,
+    pii_enabled: bool,
+    guardrails_enabled: bool,
+    rate_limit_rpm: u32,
+    rbac_roles: Vec<(String, Vec<String>)>, // (role, permissions)
+
+    // Analytics
+    analytics_time_range: String, // "1h", "24h", "7d"
+
+    // DevTools
+    devtools_recording: bool,
+    devtools_events: Vec<String>,
+    devtools_breakpoints: Vec<String>,
+
+    // Cluster
+    cluster_nodes: Vec<(String, String, String)>, // (id, address, status)
+    cluster_bootstrap: String,
+
+    // Settings sections
+    settings_section: u8, // 0=Provider, 1=Generation, 2=Security, 3=RAG, etc.
+    system_prompt: String,
+    max_tokens: u32,
+    top_p: f32,
+    frequency_penalty: f32,
+    presence_penalty: f32,
+}
+
+impl Default for PanelStates {
+    fn default() -> Self {
+        let mut expanded = std::collections::HashSet::new();
+        expanded.insert(0); // Chat category expanded by default
+        Self {
+            expanded_categories: expanded,
+            agent_list: Vec::new(), new_agent_name: String::new(), new_agent_role: "Researcher".to_string(), agent_selected: None,
+            tool_search: String::new(), tool_selected: None,
+            auto_tab: AutomationTab::Scheduler, cron_expression: "0 * * * *".to_string(), cron_task_name: String::new(),
+            browser_url: String::new(), browser_output: String::new(),
+            sandbox_code: String::new(), sandbox_language: "python".to_string(), sandbox_output: String::new(),
+            memory_tab: MemoryTab::Episodic, memory_search: String::new(),
+            cloud_provider: "s3".to_string(), cloud_path: "/".to_string(), cloud_bucket: String::new(),
+            media_prompt: String::new(), media_model: "dall-e-3".to_string(), media_results: Vec::new(),
+            audio_input_path: String::new(), audio_output_text: String::new(), tts_input: String::new(), tts_voice: "alloy".to_string(),
+            sig_name: String::new(), sig_inputs: Vec::new(), sig_outputs: Vec::new(), optimization_running: false, optimization_results: Vec::new(),
+            eval_suite_name: String::new(), eval_samples: Vec::new(), eval_results: Vec::new(),
+            security_tab: SecurityTab::Overview, pii_enabled: true, guardrails_enabled: true, rate_limit_rpm: 60,
+            rbac_roles: Vec::new(),
+            analytics_time_range: "1h".to_string(),
+            devtools_recording: false, devtools_events: Vec::new(), devtools_breakpoints: Vec::new(),
+            cluster_nodes: Vec::new(), cluster_bootstrap: String::new(),
+            settings_section: 0, system_prompt: String::new(), max_tokens: 4096, top_p: 0.9, frequency_penalty: 0.0, presence_penalty: 0.0,
         }
     }
 }
@@ -490,7 +672,8 @@ struct AiGuiApp {
     audit_events: Vec<AuditEvent>,
 
     // UI state
-    sidebar_tab: SidebarTab,
+    active_panel: SidebarPanel,
+    panels: PanelStates,
     monitor_tab: MonitorTab,
     show_settings: bool,
     show_monitor: bool,
@@ -572,7 +755,8 @@ impl AiGuiApp {
             analysis_msg_count: 0,
             audit_events: Vec::new(),
 
-            sidebar_tab: SidebarTab::Sessions,
+            active_panel: SidebarPanel::Chat,
+            panels: PanelStates::default(),
             monitor_tab: MonitorTab::Overview,
             show_settings: false,
             show_monitor: false,
@@ -1024,20 +1208,16 @@ impl AiGuiApp {
         }
     }
 
-    /// Re-index already-loaded knowledge sources into the graph.
-    /// Used when the graph is enabled AFTER documents were already loaded and indexed.
     fn reindex_existing_sources_into_graph(&mut self) {
         if self.knowledge_graph.is_none() {
             self.init_knowledge_graph();
         }
-        // Re-read the files from disk and index them into the graph
         let sources: Vec<KnowledgeSourceInfo> = self.knowledge_sources.clone();
         for ks in &sources {
             if ks.status != KnowledgeStatus::Indexed {
-                continue; // only re-index successfully indexed sources
+                continue;
             }
             if ks.is_kpkg {
-                // Re-read .kpkg
                 if let Ok(data) = std::fs::read(&ks.file_path) {
                     let reader = KpkgReader::<AppKeyProvider>::with_app_key();
                     if let Ok(docs) = reader.read(&data) {
@@ -1047,11 +1227,8 @@ impl AiGuiApp {
                         }
                     }
                 }
-            } else {
-                // Re-read text file
-                if let Ok(content) = std::fs::read_to_string(&ks.file_path) {
-                    self.pending_graph_docs.push((ks.name.clone(), content));
-                }
+            } else if let Ok(content) = std::fs::read_to_string(&ks.file_path) {
+                self.pending_graph_docs.push((ks.name.clone(), content));
             }
         }
         if !self.pending_graph_docs.is_empty() {
@@ -1998,26 +2175,44 @@ impl AiGuiApp {
 
     fn render_sidebar(&mut self, ctx: &egui::Context) {
         egui::SidePanel::left("sidebar")
-            .default_width(220.0)
-            .min_width(180.0)
+            .default_width(200.0)
+            .min_width(160.0)
             .show(ctx, |ui| {
-                // Tab buttons
-                ui.horizontal(|ui| {
-                    ui.selectable_value(&mut self.sidebar_tab, SidebarTab::Sessions, "Sessions");
-                    ui.selectable_value(&mut self.sidebar_tab, SidebarTab::Knowledge, "Knowledge");
-                    ui.selectable_value(&mut self.sidebar_tab, SidebarTab::Butler, "Butler");
-                });
+                ui.heading("ai_assistant Pro");
                 ui.separator();
 
-                match self.sidebar_tab {
-                    SidebarTab::Sessions => self.render_sessions_tab(ui),
-                    SidebarTab::Knowledge => self.render_knowledge_tab(ui),
-                    SidebarTab::Butler => self.render_butler_tab(ui),
-                }
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    for (cat_idx, cat) in SidebarCategory::all().iter().enumerate() {
+                        let is_expanded = self.panels.expanded_categories.contains(&(cat_idx as u8));
+                        ui.horizontal(|ui| {
+                            let arrow = if is_expanded { "\u{25BC}" } else { "\u{25B6}" }; // down / right triangle
+                            if ui.selectable_label(false, format!("{} {}", arrow, cat.label())).clicked() {
+                                if is_expanded {
+                                    self.panels.expanded_categories.remove(&(cat_idx as u8));
+                                } else {
+                                    self.panels.expanded_categories.insert(cat_idx as u8);
+                                }
+                            }
+                        });
+
+                        if is_expanded {
+                            for panel in SidebarPanel::panels_for(*cat) {
+                                let selected = self.active_panel == *panel;
+                                ui.horizontal(|ui| {
+                                    ui.add_space(16.0);
+                                    if ui.selectable_label(selected, panel.label()).clicked() {
+                                        self.active_panel = *panel;
+                                    }
+                                });
+                            }
+                        }
+                        ui.add_space(2.0);
+                    }
+                });
             });
     }
 
-    fn render_sessions_tab(&mut self, ui: &mut Ui) {
+    fn render_sessions_panel(&mut self, ui: &mut Ui) {
         if ui.button("+ New Chat").clicked() {
             self.assistant.new_session();
             self.add_audit(AuditEventType::SessionCreated);
@@ -2047,7 +2242,7 @@ impl AiGuiApp {
         }
     }
 
-    fn render_knowledge_tab(&mut self, ui: &mut Ui) {
+    fn render_knowledge_panel(&mut self, ui: &mut Ui) {
         if ui.button("Load Files").clicked() {
             self.load_knowledge_files();
         }
@@ -2108,11 +2303,11 @@ impl AiGuiApp {
             };
             widgets::rag_status_compact(ui, &status);
 
-            // Context budget info — show how much space knowledge has
+            // Context budget info
             if !self.selected_model.is_empty() {
                 let available = self.assistant.calculate_available_knowledge_tokens("test");
                 let conv_tokens: usize = self.assistant.conversation.iter()
-                    .map(|m| m.content.len() / 4) // rough estimate
+                    .map(|m| m.content.len() / 4)
                     .sum();
                 ui.add_space(4.0);
                 ui.colored_label(
@@ -2120,7 +2315,6 @@ impl AiGuiApp {
                     format!("Context: ~{} tokens available for knowledge (~{} used by conversation)",
                         available, conv_tokens),
                 );
-                // Last knowledge usage
                 if let Some(ref usage) = self.assistant.last_knowledge_usage {
                     ui.colored_label(
                         Color32::from_gray(140),
@@ -2138,7 +2332,6 @@ impl AiGuiApp {
         let prev = self.settings.graph_enabled;
         ui.checkbox(&mut self.settings.graph_enabled, "Knowledge Graph");
         if self.settings.graph_enabled && !prev {
-            // Enabling graph: init DB + index any pending docs
             self.init_knowledge_graph();
             if !self.pending_graph_docs.is_empty() {
                 self.index_pending_graph_docs();
@@ -2150,12 +2343,10 @@ impl AiGuiApp {
         // Reset graph button (only when graph is enabled)
         if self.settings.graph_enabled {
             if ui.button("Rebuild Graph").clicked() {
-                // Clear existing graph data
                 if let Some(ref kg) = self.knowledge_graph {
                     let _ = kg.clear();
                 }
                 self.graph_viz = None;
-                // Re-index all loaded sources
                 if !self.knowledge_sources.is_empty() {
                     self.reindex_existing_sources_into_graph();
                     self.add_toast("Knowledge graph rebuilt", false);
@@ -2166,7 +2357,7 @@ impl AiGuiApp {
         }
     }
 
-    fn render_butler_tab(&mut self, ui: &mut Ui) {
+    fn render_butler_panel(&mut self, ui: &mut Ui) {
         // Runtime info
         if let Some(ref result) = self.scan_result_data {
             let rt = &result.report.runtime;
@@ -2241,6 +2432,1257 @@ impl AiGuiApp {
                     });
             }
         }
+    }
+
+    fn render_agent_pool_panel(&mut self, ui: &mut Ui) {
+        ui.heading("Agent Pool");
+        ui.add_space(4.0);
+
+        // Create new agent
+        egui::Frame::none()
+            .fill(Color32::from_gray(30))
+            .rounding(8.0)
+            .inner_margin(egui::Margin::same(10.0))
+            .show(ui, |ui| {
+                ui.label("Create Agent");
+                ui.horizontal(|ui| {
+                    ui.label("Name:");
+                    ui.text_edit_singleline(&mut self.panels.new_agent_name);
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Role:");
+                    egui::ComboBox::from_id_source("agent_role_combo")
+                        .selected_text(&self.panels.new_agent_role)
+                        .show_ui(ui, |ui| {
+                            for role in &["Coordinator", "Researcher", "Analyst", "Writer", "Reviewer", "Executor", "Validator"] {
+                                ui.selectable_value(&mut self.panels.new_agent_role, role.to_string(), *role);
+                            }
+                        });
+                });
+                if ui.button("Add Agent").clicked() && !self.panels.new_agent_name.is_empty() {
+                    let id = format!("agent_{}", self.panels.agent_list.len() + 1);
+                    self.panels.agent_list.push((
+                        id,
+                        self.panels.new_agent_name.clone(),
+                        self.panels.new_agent_role.clone(),
+                    ));
+                    self.panels.new_agent_name.clear();
+                    self.add_toast("Agent created", false);
+                }
+            });
+
+        ui.add_space(8.0);
+        ui.separator();
+        ui.label(format!("{} agents registered", self.panels.agent_list.len()));
+        ui.add_space(4.0);
+
+        // Agent list
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            let mut delete_idx = None;
+            for (i, (id, name, role)) in self.panels.agent_list.iter().enumerate() {
+                let selected = self.panels.agent_selected == Some(i);
+                egui::Frame::none()
+                    .fill(if selected { Color32::from_gray(45) } else { Color32::from_gray(30) })
+                    .rounding(6.0)
+                    .inner_margin(egui::Margin::same(8.0))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            if ui.selectable_label(selected, format!("{} ({})", name, role)).clicked() {
+                                self.panels.agent_selected = Some(i);
+                            }
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if ui.small_button("Delete").clicked() {
+                                    delete_idx = Some(i);
+                                }
+                                ui.colored_label(Color32::from_gray(120), id);
+                            });
+                        });
+                    });
+                ui.add_space(2.0);
+            }
+            if let Some(idx) = delete_idx {
+                self.panels.agent_list.remove(idx);
+                self.panels.agent_selected = None;
+            }
+        });
+    }
+
+    fn render_tools_panel(&mut self, ui: &mut Ui) {
+        ui.heading("Tools / MCP");
+        ui.add_space(4.0);
+
+        ui.horizontal(|ui| {
+            ui.label("Search:");
+            ui.text_edit_singleline(&mut self.panels.tool_search);
+        });
+        ui.separator();
+
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            // Built-in tool categories
+            let tool_groups: &[(&str, &[&str])] = &[
+                ("Browser Automation", &["navigate", "click", "type_text", "screenshot", "get_text", "execute_script"]),
+                ("Code Sandbox", &["execute_python", "execute_javascript", "execute_bash"]),
+                ("File Operations", &["read_file", "write_file", "list_directory"]),
+                ("RAG / Knowledge", &["search_knowledge", "add_document", "list_sources"]),
+                ("Web / HTTP", &["http_get", "http_post", "fetch_url"]),
+                ("System", &["get_time", "get_env", "run_command"]),
+            ];
+
+            let search_lower = self.panels.tool_search.to_lowercase();
+            for (group_name, tools) in tool_groups {
+                let matching: Vec<&&str> = tools.iter()
+                    .filter(|t| search_lower.is_empty() || t.to_lowercase().contains(&search_lower) || group_name.to_lowercase().contains(&search_lower))
+                    .collect();
+                if matching.is_empty() { continue; }
+
+                ui.collapsing(*group_name, |ui| {
+                    for tool_name in matching {
+                        egui::Frame::none()
+                            .fill(Color32::from_gray(30))
+                            .rounding(4.0)
+                            .inner_margin(egui::Margin::same(6.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.colored_label(Color32::from_rgb(120, 200, 255), *tool_name);
+                                    ui.colored_label(Color32::from_gray(100), format!("({} tool)", group_name.split_whitespace().next().unwrap_or("")));
+                                });
+                            });
+                        ui.add_space(1.0);
+                    }
+                });
+            }
+
+            ui.add_space(12.0);
+            ui.separator();
+            ui.label("MCP Servers");
+            ui.add_space(4.0);
+            ui.colored_label(Color32::from_gray(140), "Configure MCP server connections in Settings > Provider.");
+            ui.label("Supported transports: StdIO, SSE, WebSocket");
+            ui.label("Supported auth: OAuth 2.0 with PKCE");
+        });
+    }
+
+    fn render_automation_panel(&mut self, ui: &mut Ui) {
+        ui.heading("Automation");
+        ui.add_space(4.0);
+
+        // Sub-tabs
+        ui.horizontal(|ui| {
+            for (tab, label) in &[(AutomationTab::Scheduler, "Scheduler"), (AutomationTab::Browser, "Browser"), (AutomationTab::Sandbox, "Code Sandbox"), (AutomationTab::Workflows, "Workflows")] {
+                if ui.selectable_label(self.panels.auto_tab == *tab, *label).clicked() {
+                    self.panels.auto_tab = *tab;
+                }
+            }
+        });
+        ui.separator();
+
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            match self.panels.auto_tab {
+                AutomationTab::Scheduler => {
+                    ui.label("Cron Scheduler");
+                    ui.add_space(4.0);
+                    egui::Frame::none()
+                        .fill(Color32::from_gray(30))
+                        .rounding(8.0)
+                        .inner_margin(egui::Margin::same(10.0))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label("Task name:");
+                                ui.text_edit_singleline(&mut self.panels.cron_task_name);
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label("Cron expr:");
+                                ui.text_edit_singleline(&mut self.panels.cron_expression);
+                            });
+                            // Validate cron expression
+                            match CronExpression::parse(&self.panels.cron_expression) {
+                                Ok(_) => {
+                                    ui.colored_label(Color32::from_rgb(100, 200, 100), "Valid cron expression");
+                                }
+                                Err(e) => {
+                                    ui.colored_label(Color32::from_rgb(255, 100, 100), format!("Invalid: {}", e));
+                                }
+                            }
+                            if ui.button("Add Job").clicked() && !self.panels.cron_task_name.is_empty() {
+                                self.add_toast(&format!("Scheduled: {}", self.panels.cron_task_name), false);
+                                self.panels.cron_task_name.clear();
+                            }
+                        });
+                    ui.add_space(8.0);
+                    ui.label("Common patterns:");
+                    ui.colored_label(Color32::from_gray(140), "  0 * * * *    — every hour");
+                    ui.colored_label(Color32::from_gray(140), "  */5 * * * *  — every 5 minutes");
+                    ui.colored_label(Color32::from_gray(140), "  0 9 * * 1-5  — weekdays at 9am");
+                    ui.colored_label(Color32::from_gray(140), "  0 0 * * *    — daily at midnight");
+                }
+                AutomationTab::Browser => {
+                    ui.label("Browser Automation (Chrome DevTools Protocol)");
+                    ui.add_space(4.0);
+                    egui::Frame::none()
+                        .fill(Color32::from_gray(30))
+                        .rounding(8.0)
+                        .inner_margin(egui::Margin::same(10.0))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label("URL:");
+                                ui.text_edit_singleline(&mut self.panels.browser_url);
+                                if ui.button("Navigate").clicked() && !self.panels.browser_url.is_empty() {
+                                    self.panels.browser_output = format!("Navigating to {}...\n(Browser session must be started from agent context)", self.panels.browser_url);
+                                }
+                            });
+                            ui.horizontal(|ui| {
+                                if ui.button("Screenshot").clicked() {
+                                    self.panels.browser_output = "Screenshot capture requires active browser session.".to_string();
+                                }
+                                if ui.button("Get Page Text").clicked() {
+                                    self.panels.browser_output = "Page text extraction requires active browser session.".to_string();
+                                }
+                            });
+                        });
+                    ui.add_space(4.0);
+                    if !self.panels.browser_output.is_empty() {
+                        egui::Frame::none()
+                            .fill(Color32::from_gray(25))
+                            .rounding(4.0)
+                            .inner_margin(egui::Margin::same(8.0))
+                            .show(ui, |ui| {
+                                ui.monospace(&self.panels.browser_output);
+                            });
+                    }
+                }
+                AutomationTab::Sandbox => {
+                    ui.label("Code Sandbox — Safe Execution Environment");
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.label("Language:");
+                        egui::ComboBox::from_id_source("sandbox_lang")
+                            .selected_text(&self.panels.sandbox_language)
+                            .show_ui(ui, |ui| {
+                                for lang in &["python", "javascript", "bash"] {
+                                    ui.selectable_value(&mut self.panels.sandbox_language, lang.to_string(), *lang);
+                                }
+                            });
+                    });
+                    ui.add_space(4.0);
+                    ui.label("Code:");
+                    ui.add(egui::TextEdit::multiline(&mut self.panels.sandbox_code)
+                        .font(egui::TextStyle::Monospace)
+                        .desired_rows(8)
+                        .desired_width(f32::INFINITY));
+
+                    ui.horizontal(|ui| {
+                        if ui.button("Execute").clicked() && !self.panels.sandbox_code.is_empty() {
+                            let sandbox = CodeSandbox::new();
+                            let lang = match self.panels.sandbox_language.as_str() {
+                                "javascript" => SandboxLanguage::JavaScript,
+                                "bash" => SandboxLanguage::Bash,
+                                _ => SandboxLanguage::Python,
+                            };
+                            let result = sandbox.execute(&lang, &self.panels.sandbox_code);
+                            let mut out = String::new();
+                            if !result.stdout.is_empty() { out.push_str(&format!("STDOUT:\n{}\n", result.stdout)); }
+                            if !result.stderr.is_empty() { out.push_str(&format!("STDERR:\n{}\n", result.stderr)); }
+                            out.push_str(&format!("Exit: {} | Duration: {:?}", result.exit_code, result.duration));
+                            if result.timed_out { out.push_str(" | TIMED OUT"); }
+                            self.panels.sandbox_output = out;
+                        }
+                        if ui.button("Clear").clicked() {
+                            self.panels.sandbox_output.clear();
+                            self.panels.sandbox_code.clear();
+                        }
+                    });
+
+                    if !self.panels.sandbox_output.is_empty() {
+                        ui.add_space(4.0);
+                        ui.label("Output:");
+                        egui::Frame::none()
+                            .fill(Color32::from_gray(20))
+                            .rounding(4.0)
+                            .inner_margin(egui::Margin::same(8.0))
+                            .show(ui, |ui| {
+                                ui.monospace(&self.panels.sandbox_output);
+                            });
+                    }
+                }
+                AutomationTab::Workflows => {
+                    ui.label("Event-Driven Workflows");
+                    ui.add_space(4.0);
+                    ui.label("Define workflows with nodes and event-driven transitions.");
+                    ui.label("Supports checkpointing, breakpoints, and durable execution.");
+                    ui.add_space(8.0);
+                    ui.colored_label(Color32::from_gray(140), "Workflow editor: design workflows visually by chaining nodes.");
+                    ui.colored_label(Color32::from_gray(140), "Each node processes an event and produces outputs for downstream nodes.");
+                    ui.add_space(8.0);
+                    ui.label("Workflow templates:");
+                    for (name, desc) in &[
+                        ("Document Pipeline", "Ingest -> Parse -> Chunk -> Embed -> Store"),
+                        ("Agent Loop", "Plan -> Execute -> Evaluate -> Refine"),
+                        ("RAG Pipeline", "Query -> Retrieve -> Rank -> Generate -> Validate"),
+                    ] {
+                        egui::Frame::none()
+                            .fill(Color32::from_gray(30))
+                            .rounding(4.0)
+                            .inner_margin(egui::Margin::same(6.0))
+                            .show(ui, |ui| {
+                                ui.strong(*name);
+                                ui.colored_label(Color32::from_gray(160), *desc);
+                            });
+                        ui.add_space(2.0);
+                    }
+                }
+            }
+        });
+    }
+
+    fn render_memory_panel(&mut self, ui: &mut Ui) {
+        ui.heading("Memory");
+        ui.add_space(4.0);
+
+        // Sub-tabs
+        ui.horizontal(|ui| {
+            for (tab, label) in &[(MemoryTab::Episodic, "Episodic"), (MemoryTab::Procedural, "Procedural"), (MemoryTab::Entity, "Entity")] {
+                if ui.selectable_label(self.panels.memory_tab == *tab, *label).clicked() {
+                    self.panels.memory_tab = *tab;
+                }
+            }
+        });
+
+        ui.horizontal(|ui| {
+            ui.label("Search:");
+            ui.text_edit_singleline(&mut self.panels.memory_search);
+        });
+        ui.separator();
+
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            match self.panels.memory_tab {
+                MemoryTab::Episodic => {
+                    ui.label("Episodic Memory — Experiences and interactions");
+                    ui.add_space(4.0);
+                    ui.colored_label(Color32::from_gray(140), "Episodic memory stores conversation episodes with timestamps.");
+                    ui.colored_label(Color32::from_gray(140), "Each episode captures context, emotions, and outcomes.");
+                    ui.add_space(8.0);
+                    let episode_count = self.assistant.conversation.len() / 2;
+                    ui.label(format!("Current session episodes: {}", episode_count));
+                    ui.add_space(4.0);
+                    // Show recent episodes from conversation
+                    for (i, msg) in self.assistant.conversation.iter().enumerate().rev().take(10) {
+                        let prefix = if msg.role == "user" { "Q" } else { "A" };
+                        let snippet: String = msg.content.chars().take(80).collect();
+                        egui::Frame::none()
+                            .fill(Color32::from_gray(30))
+                            .rounding(4.0)
+                            .inner_margin(egui::Margin::same(6.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.colored_label(Color32::from_rgb(120, 180, 255), format!("#{} [{}]", i, prefix));
+                                    ui.label(format!("{}...", snippet));
+                                });
+                            });
+                        ui.add_space(1.0);
+                    }
+                }
+                MemoryTab::Procedural => {
+                    ui.label("Procedural Memory — Learned skills and procedures");
+                    ui.add_space(4.0);
+                    ui.colored_label(Color32::from_gray(140), "Procedural memory stores learned patterns, frequently used tools,");
+                    ui.colored_label(Color32::from_gray(140), "and successful strategies for future reuse.");
+                    ui.add_space(8.0);
+                    ui.label("No procedures recorded yet in this session.");
+                    ui.label("Procedures are learned from repeated successful task completions.");
+                }
+                MemoryTab::Entity => {
+                    ui.label("Entity Memory — Known entities and relationships");
+                    ui.add_space(4.0);
+                    ui.colored_label(Color32::from_gray(140), "Entity memory tracks people, places, concepts, and their relationships.");
+                    ui.add_space(8.0);
+                    // Show entities from knowledge graph if available
+                    if let Some(ref viz) = self.graph_viz {
+                        let count = viz.graph.node_count();
+                        ui.label(format!("{} entities in knowledge graph", count));
+                        ui.add_space(4.0);
+                        let search = self.panels.memory_search.to_lowercase();
+                        for idx in viz.graph.node_indices().take(20) {
+                            let node = &viz.graph[idx];
+                            if !search.is_empty() && !node.name.to_lowercase().contains(&search) {
+                                continue;
+                            }
+                            egui::Frame::none()
+                                .fill(Color32::from_gray(30))
+                                .rounding(4.0)
+                                .inner_margin(egui::Margin::same(6.0))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.colored_label(Color32::from_rgb(200, 160, 255), &node.entity_type);
+                                        ui.strong(&node.name);
+                                        ui.colored_label(Color32::from_gray(120), format!("({} mentions)", node.mention_count));
+                                    });
+                                });
+                            ui.add_space(1.0);
+                        }
+                    } else {
+                        ui.label("No entities yet. Load knowledge sources and enable the knowledge graph.");
+                    }
+                }
+            }
+        });
+    }
+
+    fn render_cloud_panel(&mut self, ui: &mut Ui) {
+        ui.heading("Cloud Storage");
+        ui.add_space(4.0);
+
+        ui.horizontal(|ui| {
+            ui.label("Provider:");
+            egui::ComboBox::from_id_source("cloud_provider")
+                .selected_text(&self.panels.cloud_provider)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.panels.cloud_provider, "s3".to_string(), "Amazon S3");
+                    ui.selectable_value(&mut self.panels.cloud_provider, "gdrive".to_string(), "Google Drive");
+                    ui.selectable_value(&mut self.panels.cloud_provider, "azure".to_string(), "Azure Blob");
+                    ui.selectable_value(&mut self.panels.cloud_provider, "gcs".to_string(), "Google Cloud Storage");
+                });
+        });
+
+        ui.separator();
+
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            match self.panels.cloud_provider.as_str() {
+                "s3" => {
+                    ui.label("Amazon S3 Configuration");
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.label("Bucket:");
+                        ui.text_edit_singleline(&mut self.panels.cloud_bucket);
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Path:");
+                        ui.text_edit_singleline(&mut self.panels.cloud_path);
+                    });
+                    ui.add_space(4.0);
+                    ui.colored_label(Color32::from_gray(140), "Configure AWS credentials via environment variables:");
+                    ui.colored_label(Color32::from_gray(120), "  AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION");
+                    ui.add_space(8.0);
+                    if self.panels.cloud_bucket.is_empty() {
+                        ui.label("Enter a bucket name to browse files.");
+                    } else {
+                        if ui.button("List Objects").clicked() {
+                            self.add_toast("S3 listing requires configured credentials", false);
+                        }
+                    }
+                }
+                "gdrive" => {
+                    ui.label("Google Drive Configuration");
+                    ui.add_space(4.0);
+                    ui.colored_label(Color32::from_gray(140), "Configure OAuth token for Google Drive access.");
+                    ui.colored_label(Color32::from_gray(140), "Supports file listing, upload, and download.");
+                    ui.add_space(8.0);
+                    if ui.button("Authenticate").clicked() {
+                        self.add_toast("Google Drive OAuth flow not yet wired", false);
+                    }
+                }
+                _ => {
+                    ui.label(format!("{} storage — configure credentials in Settings > Provider", self.panels.cloud_provider.to_uppercase()));
+                }
+            }
+        });
+    }
+
+    fn render_media_panel(&mut self, ui: &mut Ui) {
+        ui.heading("Media Generation");
+        ui.add_space(4.0);
+
+        ui.horizontal(|ui| {
+            ui.label("Model:");
+            egui::ComboBox::from_id_source("media_model")
+                .selected_text(&self.panels.media_model)
+                .show_ui(ui, |ui| {
+                    for m in &["dall-e-3", "dall-e-2", "stable-diffusion", "flux", "runway", "sora"] {
+                        ui.selectable_value(&mut self.panels.media_model, m.to_string(), *m);
+                    }
+                });
+        });
+
+        ui.add_space(4.0);
+        ui.label("Prompt:");
+        ui.add(egui::TextEdit::multiline(&mut self.panels.media_prompt)
+            .desired_rows(3)
+            .desired_width(f32::INFINITY));
+
+        ui.horizontal(|ui| {
+            if ui.button("Generate Image").clicked() && !self.panels.media_prompt.is_empty() {
+                self.add_toast(&format!("Image generation via {} requires API key configuration", self.panels.media_model), false);
+            }
+            if ui.button("Clear Gallery").clicked() {
+                self.panels.media_results.clear();
+            }
+        });
+
+        ui.separator();
+
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            if self.panels.media_results.is_empty() {
+                ui.colored_label(Color32::from_gray(140), "No generated images yet.");
+                ui.add_space(8.0);
+                ui.label("Supported providers:");
+                for (name, desc) in &[
+                    ("DALL-E 3", "OpenAI — highest quality, prompt rewriting"),
+                    ("DALL-E 2", "OpenAI — fast, lower cost"),
+                    ("Stable Diffusion", "Local or API — open source, customizable"),
+                    ("Flux", "Replicate — fast, high quality"),
+                    ("Runway", "Video generation from text or image"),
+                    ("Sora", "OpenAI — text-to-video"),
+                ] {
+                    egui::Frame::none()
+                        .fill(Color32::from_gray(30))
+                        .rounding(4.0)
+                        .inner_margin(egui::Margin::same(6.0))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.strong(*name);
+                                ui.colored_label(Color32::from_gray(140), *desc);
+                            });
+                        });
+                    ui.add_space(1.0);
+                }
+            } else {
+                ui.label(format!("{} generated images:", self.panels.media_results.len()));
+                for path in &self.panels.media_results {
+                    ui.label(path);
+                }
+            }
+        });
+    }
+
+    fn render_audio_panel(&mut self, ui: &mut Ui) {
+        ui.heading("Audio — STT / TTS");
+        ui.add_space(4.0);
+
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            // Speech-to-Text section
+            egui::Frame::none()
+                .fill(Color32::from_gray(30))
+                .rounding(8.0)
+                .inner_margin(egui::Margin::same(10.0))
+                .show(ui, |ui| {
+                    ui.strong("Speech-to-Text (STT)");
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.label("Audio file:");
+                        ui.text_edit_singleline(&mut self.panels.audio_input_path);
+                        if ui.button("Browse...").clicked() {
+                            if let Some(path) = rfd::FileDialog::new()
+                                .add_filter("Audio", &["wav", "mp3", "ogg", "flac", "m4a"])
+                                .pick_file()
+                            {
+                                self.panels.audio_input_path = path.display().to_string();
+                            }
+                        }
+                    });
+                    if ui.button("Transcribe").clicked() {
+                        if self.panels.audio_input_path.is_empty() {
+                            self.add_toast("Select an audio file first", true);
+                        } else {
+                            self.add_toast("STT requires a configured speech provider (OpenAI, Google, or local Whisper)", false);
+                        }
+                    }
+                    if !self.panels.audio_output_text.is_empty() {
+                        ui.add_space(4.0);
+                        ui.label("Transcription:");
+                        egui::Frame::none()
+                            .fill(Color32::from_gray(20))
+                            .rounding(4.0)
+                            .inner_margin(egui::Margin::same(8.0))
+                            .show(ui, |ui| {
+                                ui.label(&self.panels.audio_output_text);
+                            });
+                    }
+                });
+
+            ui.add_space(12.0);
+
+            // Text-to-Speech section
+            egui::Frame::none()
+                .fill(Color32::from_gray(30))
+                .rounding(8.0)
+                .inner_margin(egui::Margin::same(10.0))
+                .show(ui, |ui| {
+                    ui.strong("Text-to-Speech (TTS)");
+                    ui.add_space(4.0);
+                    ui.label("Text:");
+                    ui.add(egui::TextEdit::multiline(&mut self.panels.tts_input)
+                        .desired_rows(3)
+                        .desired_width(f32::INFINITY));
+                    ui.horizontal(|ui| {
+                        ui.label("Voice:");
+                        egui::ComboBox::from_id_source("tts_voice")
+                            .selected_text(&self.panels.tts_voice)
+                            .show_ui(ui, |ui| {
+                                for v in &["alloy", "echo", "fable", "onyx", "nova", "shimmer"] {
+                                    ui.selectable_value(&mut self.panels.tts_voice, v.to_string(), *v);
+                                }
+                            });
+                    });
+                    if ui.button("Synthesize").clicked() {
+                        if self.panels.tts_input.is_empty() {
+                            self.add_toast("Enter text to synthesize", true);
+                        } else {
+                            self.add_toast("TTS requires a configured speech provider", false);
+                        }
+                    }
+                });
+
+            ui.add_space(12.0);
+            ui.label("Supported providers:");
+            ui.colored_label(Color32::from_gray(140), "  OpenAI (Whisper STT + TTS)");
+            ui.colored_label(Color32::from_gray(140), "  Google Cloud Speech");
+            ui.colored_label(Color32::from_gray(140), "  Piper TTS (local, offline)");
+            ui.colored_label(Color32::from_gray(140), "  Coqui TTS (local, offline)");
+            ui.colored_label(Color32::from_gray(140), "  Whisper.cpp (local STT, offline)");
+        });
+    }
+
+    fn render_prompt_lab_panel(&mut self, ui: &mut Ui) {
+        ui.heading("Prompt Lab");
+        ui.add_space(4.0);
+
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            // Signature editor
+            egui::Frame::none()
+                .fill(Color32::from_gray(30))
+                .rounding(8.0)
+                .inner_margin(egui::Margin::same(10.0))
+                .show(ui, |ui| {
+                    ui.strong("Prompt Signature");
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.label("Name:");
+                        ui.text_edit_singleline(&mut self.panels.sig_name);
+                    });
+
+                    ui.add_space(4.0);
+                    ui.label("Input fields:");
+                    let mut remove_input = None;
+                    for (i, (name, desc)) in self.panels.sig_inputs.iter_mut().enumerate() {
+                        ui.horizontal(|ui| {
+                            ui.text_edit_singleline(name);
+                            ui.text_edit_singleline(desc);
+                            if ui.small_button("X").clicked() { remove_input = Some(i); }
+                        });
+                    }
+                    if let Some(idx) = remove_input { self.panels.sig_inputs.remove(idx); }
+                    if ui.small_button("+ Add input").clicked() {
+                        self.panels.sig_inputs.push(("input".to_string(), "description".to_string()));
+                    }
+
+                    ui.add_space(4.0);
+                    ui.label("Output fields:");
+                    let mut remove_output = None;
+                    for (i, (name, desc)) in self.panels.sig_outputs.iter_mut().enumerate() {
+                        ui.horizontal(|ui| {
+                            ui.text_edit_singleline(name);
+                            ui.text_edit_singleline(desc);
+                            if ui.small_button("X").clicked() { remove_output = Some(i); }
+                        });
+                    }
+                    if let Some(idx) = remove_output { self.panels.sig_outputs.remove(idx); }
+                    if ui.small_button("+ Add output").clicked() {
+                        self.panels.sig_outputs.push(("output".to_string(), "description".to_string()));
+                    }
+                });
+
+            ui.add_space(12.0);
+
+            // Optimization
+            egui::Frame::none()
+                .fill(Color32::from_gray(30))
+                .rounding(8.0)
+                .inner_margin(egui::Margin::same(10.0))
+                .show(ui, |ui| {
+                    ui.strong("Optimization");
+                    ui.add_space(4.0);
+                    ui.label("Optimizers: BootstrapFewShot, Grid Search, Bayesian, GEPA, MIPROv2, SIMBA");
+                    ui.label("Metrics: ExactMatch, F1Score, ContainsAnswer, Custom");
+                    ui.add_space(4.0);
+                    if self.panels.optimization_running {
+                        ui.colored_label(Color32::from_rgb(255, 200, 50), "Optimization in progress...");
+                    } else if ui.button("Run Optimization").clicked() {
+                        if self.panels.sig_name.is_empty() {
+                            self.add_toast("Name the signature first", true);
+                        } else {
+                            self.add_toast("Optimization requires training data and a configured LLM", false);
+                        }
+                    }
+
+                    if !self.panels.optimization_results.is_empty() {
+                        ui.add_space(4.0);
+                        ui.label("Results:");
+                        for (config, score) in &self.panels.optimization_results {
+                            ui.horizontal(|ui| {
+                                ui.label(config);
+                                ui.colored_label(Color32::from_rgb(100, 200, 100), format!("{:.3}", score));
+                            });
+                        }
+                    }
+                });
+        });
+    }
+
+    fn render_eval_panel(&mut self, ui: &mut Ui) {
+        ui.heading("Evaluation");
+        ui.add_space(4.0);
+
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            // Eval suite
+            egui::Frame::none()
+                .fill(Color32::from_gray(30))
+                .rounding(8.0)
+                .inner_margin(egui::Margin::same(10.0))
+                .show(ui, |ui| {
+                    ui.strong("Evaluation Suite");
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.label("Suite name:");
+                        ui.text_edit_singleline(&mut self.panels.eval_suite_name);
+                    });
+
+                    ui.add_space(4.0);
+                    ui.label(format!("{} test samples", self.panels.eval_samples.len()));
+                    let mut remove_sample = None;
+                    for (i, (input, expected)) in self.panels.eval_samples.iter_mut().enumerate() {
+                        ui.horizontal(|ui| {
+                            ui.add(egui::TextEdit::singleline(input).hint_text("Input"));
+                            ui.add(egui::TextEdit::singleline(expected).hint_text("Expected"));
+                            if ui.small_button("X").clicked() { remove_sample = Some(i); }
+                        });
+                    }
+                    if let Some(idx) = remove_sample { self.panels.eval_samples.remove(idx); }
+                    if ui.small_button("+ Add sample").clicked() {
+                        self.panels.eval_samples.push((String::new(), String::new()));
+                    }
+
+                    ui.add_space(4.0);
+                    if ui.button("Run Evaluation").clicked() {
+                        if self.panels.eval_samples.is_empty() {
+                            self.add_toast("Add test samples first", true);
+                        } else {
+                            self.add_toast("Evaluation requires a configured LLM provider", false);
+                        }
+                    }
+                });
+
+            ui.add_space(12.0);
+
+            // Results
+            if !self.panels.eval_results.is_empty() {
+                egui::Frame::none()
+                    .fill(Color32::from_gray(30))
+                    .rounding(8.0)
+                    .inner_margin(egui::Margin::same(10.0))
+                    .show(ui, |ui| {
+                        ui.strong("Results");
+                        for (sample, score, output) in &self.panels.eval_results {
+                            ui.horizontal(|ui| {
+                                let color = if *score > 0.8 { Color32::from_rgb(100, 200, 100) }
+                                    else if *score > 0.5 { Color32::from_rgb(200, 200, 100) }
+                                    else { Color32::from_rgb(255, 100, 100) };
+                                ui.colored_label(color, format!("{:.1}%", score * 100.0));
+                                ui.label(sample);
+                                ui.colored_label(Color32::from_gray(120), output);
+                            });
+                        }
+                    });
+            }
+
+            ui.add_space(12.0);
+
+            // Available tools
+            ui.label("Evaluation capabilities:");
+            for cap in &[
+                "A/B Testing — compare model outputs with statistical significance",
+                "Benchmarks — code, math, reasoning, multilingual benchmarks",
+                "Hallucination Detection — claim extraction and verification",
+                "Red Teaming — automated adversarial testing",
+                "Self-Consistency — multi-sample voting for reliability",
+                "Output Validation — format and schema compliance",
+                "Confidence Scoring — calibrated uncertainty estimates",
+            ] {
+                ui.colored_label(Color32::from_gray(140), format!("  {}", cap));
+            }
+        });
+    }
+
+    fn render_security_panel(&mut self, ui: &mut Ui) {
+        ui.heading("Security");
+        ui.add_space(4.0);
+
+        // Sub-tabs
+        ui.horizontal(|ui| {
+            let tabs = [
+                (SecurityTab::Overview, "Overview"),
+                (SecurityTab::Pii, "PII Detection"),
+                (SecurityTab::Guardrails, "Guardrails"),
+                (SecurityTab::Rbac, "RBAC"),
+                (SecurityTab::AuditLog, "Audit Log"),
+            ];
+            for (tab, label) in &tabs {
+                if ui.selectable_label(self.panels.security_tab == *tab, *label).clicked() {
+                    self.panels.security_tab = *tab;
+                }
+            }
+        });
+        ui.separator();
+
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            match self.panels.security_tab {
+                SecurityTab::Overview => {
+                    egui::Frame::none()
+                        .fill(Color32::from_gray(30))
+                        .rounding(8.0)
+                        .inner_margin(egui::Margin::same(12.0))
+                        .show(ui, |ui| {
+                            ui.heading("Security Status");
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                let pii_color = if self.panels.pii_enabled { Color32::from_rgb(100, 220, 100) } else { Color32::from_rgb(180, 180, 180) };
+                                ui.colored_label(pii_color, if self.panels.pii_enabled { "\u{2705} PII Detection: ON" } else { "\u{274c} PII Detection: OFF" });
+                            });
+                            ui.horizontal(|ui| {
+                                let guard_color = if self.panels.guardrails_enabled { Color32::from_rgb(100, 220, 100) } else { Color32::from_rgb(180, 180, 180) };
+                                ui.colored_label(guard_color, if self.panels.guardrails_enabled { "\u{2705} Guardrails: ON" } else { "\u{274c} Guardrails: OFF" });
+                            });
+                            ui.label(format!("Rate limit: {} RPM", self.panels.rate_limit_rpm));
+                            ui.label(format!("Audit events: {}", self.audit_events.len()));
+                            ui.label(format!("RBAC roles: {}", self.panels.rbac_roles.len()));
+                        });
+                }
+                SecurityTab::Pii => {
+                    ui.checkbox(&mut self.panels.pii_enabled, "Enable PII detection");
+                    ui.add_space(8.0);
+                    if self.panels.pii_enabled {
+                        ui.label("Detected PII types: Email, Phone, SSN, Credit Card, IP Address");
+                        ui.label("Redaction strategy: Replace with [REDACTED]");
+                        ui.add_space(4.0);
+                        ui.label("PII detection runs automatically on all messages when enabled.");
+                    } else {
+                        ui.colored_label(Color32::from_rgb(200, 200, 100), "PII detection is disabled. Enable it to scan messages for personally identifiable information.");
+                    }
+                }
+                SecurityTab::Guardrails => {
+                    ui.checkbox(&mut self.panels.guardrails_enabled, "Enable content guardrails");
+                    ui.add_space(8.0);
+                    if self.panels.guardrails_enabled {
+                        ui.label("Active guardrails:");
+                        ui.label("  - Toxicity filter");
+                        ui.label("  - Bias detection");
+                        ui.label("  - Jailbreak/attack prevention");
+                        ui.label("  - Constitutional AI principles");
+                    }
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        ui.label("Rate limit (RPM):");
+                        ui.add(egui::DragValue::new(&mut self.panels.rate_limit_rpm).clamp_range(1..=1000));
+                    });
+                }
+                SecurityTab::Rbac => {
+                    ui.label("Role-Based Access Control");
+                    ui.add_space(4.0);
+                    if self.panels.rbac_roles.is_empty() {
+                        ui.label("No custom roles defined. Default roles: Admin, User, Guest.");
+                        if ui.button("Add default roles").clicked() {
+                            self.panels.rbac_roles.push(("Admin".to_string(), vec!["read".to_string(), "write".to_string(), "execute".to_string(), "delete".to_string()]));
+                            self.panels.rbac_roles.push(("User".to_string(), vec!["read".to_string(), "write".to_string()]));
+                            self.panels.rbac_roles.push(("Guest".to_string(), vec!["read".to_string()]));
+                        }
+                    } else {
+                        for (role, perms) in &self.panels.rbac_roles {
+                            egui::Frame::none()
+                                .fill(Color32::from_gray(35))
+                                .rounding(4.0)
+                                .inner_margin(egui::Margin::same(8.0))
+                                .show(ui, |ui| {
+                                    ui.strong(role);
+                                    ui.label(format!("Permissions: {}", perms.join(", ")));
+                                });
+                            ui.add_space(2.0);
+                        }
+                    }
+                }
+                SecurityTab::AuditLog => {
+                    ui.label(format!("{} audit events", self.audit_events.len()));
+                    ui.add_space(4.0);
+                    if self.audit_events.is_empty() {
+                        ui.label("No audit events recorded yet.");
+                    } else {
+                        for event in self.audit_events.iter().rev().take(50) {
+                            ui.horizontal(|ui| {
+                                ui.monospace(format!("{:?}", event.event_type));
+                                ui.colored_label(Color32::from_gray(140), event.timestamp.format("%H:%M:%S").to_string());
+                            });
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    fn render_analytics_panel(&mut self, ui: &mut Ui) {
+        ui.heading("Analytics");
+        ui.add_space(4.0);
+
+        ui.horizontal(|ui| {
+            ui.label("Time range:");
+            for range in &["1h", "24h", "7d", "30d"] {
+                if ui.selectable_label(self.panels.analytics_time_range == *range, *range).clicked() {
+                    self.panels.analytics_time_range = range.to_string();
+                }
+            }
+        });
+        ui.separator();
+
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            // Session metrics
+            egui::Frame::none()
+                .fill(Color32::from_gray(30))
+                .rounding(8.0)
+                .inner_margin(egui::Margin::same(10.0))
+                .show(ui, |ui| {
+                    ui.strong("Session Metrics");
+                    ui.add_space(4.0);
+                    let msg_count = self.assistant.conversation.len();
+                    let user_msgs = self.assistant.conversation.iter().filter(|m| m.role == "user").count();
+                    let ai_msgs = self.assistant.conversation.iter().filter(|m| m.role == "assistant").count();
+                    ui.horizontal(|ui| {
+                        ui.label(format!("Messages: {}", msg_count));
+                        ui.separator();
+                        ui.label(format!("User: {}", user_msgs));
+                        ui.separator();
+                        ui.label(format!("AI: {}", ai_msgs));
+                    });
+
+                    // Response time stats from details
+                    if !self.response_details.is_empty() {
+                        let times: Vec<u64> = self.response_details.iter().map(|d| d.response_time_ms).collect();
+                        let avg = times.iter().sum::<u64>() / times.len() as u64;
+                        let min = times.iter().min().unwrap_or(&0);
+                        let max = times.iter().max().unwrap_or(&0);
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            ui.label(format!("Avg response: {}ms", avg));
+                            ui.separator();
+                            ui.label(format!("Min: {}ms", min));
+                            ui.separator();
+                            ui.label(format!("Max: {}ms", max));
+                        });
+
+                        // Token usage
+                        let total_in: usize = self.response_details.iter().map(|d| d.input_tokens).sum();
+                        let total_out: usize = self.response_details.iter().map(|d| d.output_tokens).sum();
+                        ui.horizontal(|ui| {
+                            ui.label(format!("Total tokens — in: {}, out: {}", total_in, total_out));
+                        });
+                    }
+                });
+
+            ui.add_space(12.0);
+
+            // Knowledge stats
+            egui::Frame::none()
+                .fill(Color32::from_gray(30))
+                .rounding(8.0)
+                .inner_margin(egui::Margin::same(10.0))
+                .show(ui, |ui| {
+                    ui.strong("Knowledge Base");
+                    ui.add_space(4.0);
+                    ui.label(format!("Sources loaded: {}", self.knowledge_sources.len()));
+                    let indexed = self.knowledge_sources.iter().filter(|k| k.status == KnowledgeStatus::Indexed).count();
+                    ui.label(format!("Indexed: {}", indexed));
+                    if let Some(ref viz) = self.graph_viz {
+                        ui.label(format!("Graph entities: {}", viz.graph.node_count()));
+                        ui.label(format!("Graph relations: {}", viz.graph.edge_count()));
+                    }
+                });
+
+            ui.add_space(12.0);
+
+            // Monitoring stats
+            egui::Frame::none()
+                .fill(Color32::from_gray(30))
+                .rounding(8.0)
+                .inner_margin(egui::Margin::same(10.0))
+                .show(ui, |ui| {
+                    ui.strong("Monitoring");
+                    ui.add_space(4.0);
+                    ui.label(format!("Audit events: {}", self.audit_events.len()));
+                    if let Some(ref sentiment) = self.sentiment_cache {
+                        ui.label(format!("Sentiment: {:?}", sentiment.overall));
+                    }
+                    ui.label(format!("Topics detected: {}", self.topics_cache.len()));
+                    ui.label(format!("Models available: {}", self.assistant.available_models.len()));
+                });
+        });
+    }
+
+    fn render_devtools_panel(&mut self, ui: &mut Ui) {
+        ui.heading("DevTools — Agent Debugger");
+        ui.add_space(4.0);
+
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            // Recording controls
+            egui::Frame::none()
+                .fill(Color32::from_gray(30))
+                .rounding(8.0)
+                .inner_margin(egui::Margin::same(10.0))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        let recording_label = if self.panels.devtools_recording { "Stop Recording" } else { "Start Recording" };
+                        let recording_color = if self.panels.devtools_recording { Color32::from_rgb(255, 80, 80) } else { Color32::from_rgb(100, 200, 100) };
+                        if ui.colored_label(recording_color, recording_label).clicked() {
+                            self.panels.devtools_recording = !self.panels.devtools_recording;
+                            if self.panels.devtools_recording {
+                                self.add_toast("Recording agent events...", false);
+                            } else {
+                                self.add_toast("Recording stopped", false);
+                            }
+                        }
+                        ui.separator();
+                        ui.label(format!("{} events", self.panels.devtools_events.len()));
+                        if ui.small_button("Clear").clicked() {
+                            self.panels.devtools_events.clear();
+                        }
+                    });
+                });
+
+            ui.add_space(8.0);
+
+            // Breakpoints
+            egui::Frame::none()
+                .fill(Color32::from_gray(30))
+                .rounding(8.0)
+                .inner_margin(egui::Margin::same(10.0))
+                .show(ui, |ui| {
+                    ui.strong("Breakpoints");
+                    ui.add_space(4.0);
+                    if self.panels.devtools_breakpoints.is_empty() {
+                        ui.colored_label(Color32::from_gray(140), "No breakpoints set.");
+                    }
+                    let mut remove_bp = None;
+                    for (i, bp) in self.panels.devtools_breakpoints.iter().enumerate() {
+                        ui.horizontal(|ui| {
+                            ui.colored_label(Color32::from_rgb(255, 100, 100), "\u{25cf}"); // red dot
+                            ui.label(bp);
+                            if ui.small_button("X").clicked() { remove_bp = Some(i); }
+                        });
+                    }
+                    if let Some(idx) = remove_bp { self.panels.devtools_breakpoints.remove(idx); }
+                    ui.add_space(4.0);
+                    ui.label("Breakpoint types: tool_call, agent_state_change, error, confidence_low");
+                });
+
+            ui.add_space(8.0);
+
+            // Event log
+            if !self.panels.devtools_events.is_empty() {
+                egui::Frame::none()
+                    .fill(Color32::from_gray(25))
+                    .rounding(8.0)
+                    .inner_margin(egui::Margin::same(10.0))
+                    .show(ui, |ui| {
+                        ui.strong("Event Log");
+                        for event in self.panels.devtools_events.iter().rev().take(30) {
+                            ui.monospace(event);
+                        }
+                    });
+            }
+
+            ui.add_space(8.0);
+            ui.label("Capabilities:");
+            ui.colored_label(Color32::from_gray(140), "  ExecutionRecorder — record agent actions for replay");
+            ui.colored_label(Color32::from_gray(140), "  PerformanceProfiler — step-by-step timing");
+            ui.colored_label(Color32::from_gray(140), "  StateInspector — inspect agent state at any point");
+            ui.colored_label(Color32::from_gray(140), "  StateDiff — compare state between steps");
+        });
+    }
+
+    fn render_cluster_panel(&mut self, ui: &mut Ui) {
+        ui.heading("Cluster — Distributed Nodes");
+        ui.add_space(4.0);
+
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            // Bootstrap
+            egui::Frame::none()
+                .fill(Color32::from_gray(30))
+                .rounding(8.0)
+                .inner_margin(egui::Margin::same(10.0))
+                .show(ui, |ui| {
+                    ui.strong("Cluster Configuration");
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.label("Bootstrap address:");
+                        ui.text_edit_singleline(&mut self.panels.cluster_bootstrap);
+                    });
+                    ui.horizontal(|ui| {
+                        if ui.button("Join Cluster").clicked() {
+                            if self.panels.cluster_bootstrap.is_empty() {
+                                self.add_toast("Enter a bootstrap address", true);
+                            } else {
+                                self.add_toast(&format!("Joining cluster at {}", self.panels.cluster_bootstrap), false);
+                            }
+                        }
+                        if ui.button("Start as Seed").clicked() {
+                            self.add_toast("Starting as seed node on this machine", false);
+                        }
+                    });
+                });
+
+            ui.add_space(8.0);
+
+            // Node list
+            egui::Frame::none()
+                .fill(Color32::from_gray(30))
+                .rounding(8.0)
+                .inner_margin(egui::Margin::same(10.0))
+                .show(ui, |ui| {
+                    ui.strong(format!("Nodes ({} known)", self.panels.cluster_nodes.len()));
+                    ui.add_space(4.0);
+                    if self.panels.cluster_nodes.is_empty() {
+                        ui.colored_label(Color32::from_gray(140), "No nodes connected. Join or start a cluster.");
+                    }
+                    for (id, addr, status) in &self.panels.cluster_nodes {
+                        ui.horizontal(|ui| {
+                            let color = match status.as_str() {
+                                "online" => Color32::from_rgb(100, 200, 100),
+                                "offline" => Color32::from_rgb(200, 100, 100),
+                                _ => Color32::from_rgb(200, 200, 100),
+                            };
+                            ui.colored_label(color, "\u{25cf}");
+                            ui.label(format!("{} — {}", id, addr));
+                            ui.colored_label(Color32::from_gray(120), status);
+                        });
+                    }
+                });
+
+            ui.add_space(8.0);
+
+            // Distributed features
+            ui.label("Distributed capabilities:");
+            for cap in &[
+                "DHT (Kademlia) — distributed hash table for key-value storage",
+                "CRDTs — conflict-free replicated data types (GCounter, PNCounter, ORSet, LWWMap)",
+                "MapReduce — distributed computation over data chunks",
+                "QUIC Transport — multiplexed, encrypted node-to-node communication",
+                "Consistent Hashing — data sharding across nodes",
+                "Failure Detection — phi-accrual heartbeat monitoring",
+                "Merkle Sync — anti-entropy data synchronization",
+            ] {
+                ui.colored_label(Color32::from_gray(140), format!("  {}", cap));
+            }
+        });
+    }
+
+    fn render_settings_panel(&mut self, ui: &mut Ui) {
+        ui.heading("Settings");
+        ui.add_space(4.0);
+
+        // Section selector
+        ui.horizontal(|ui| {
+            let sections = ["Provider", "Generation", "Security", "RAG", "Agents", "Memory", "UI"];
+            for (i, label) in sections.iter().enumerate() {
+                if ui.selectable_label(self.panels.settings_section == i as u8, *label).clicked() {
+                    self.panels.settings_section = i as u8;
+                }
+            }
+        });
+        ui.separator();
+
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            match self.panels.settings_section {
+                0 => {
+                    // Provider settings
+                    ui.label("Provider URLs");
+                    ui.horizontal(|ui| {
+                        ui.label("Ollama:");
+                        ui.text_edit_singleline(&mut self.settings.ollama_url);
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("LM Studio:");
+                        ui.text_edit_singleline(&mut self.settings.lm_studio_url);
+                    });
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        ui.label("Default model:");
+                        ui.label(&self.selected_model);
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Request timeout (s):");
+                        let mut timeout = self.settings.timeout_secs;
+                        ui.add(egui::DragValue::new(&mut timeout).clamp_range(5..=300));
+                        self.settings.timeout_secs = timeout;
+                    });
+                }
+                1 => {
+                    // Generation settings
+                    ui.label("System prompt:");
+                    ui.add(egui::TextEdit::multiline(&mut self.panels.system_prompt)
+                        .desired_rows(4)
+                        .desired_width(f32::INFINITY));
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        ui.label("Temperature:");
+                        ui.add(egui::Slider::new(&mut self.settings.temperature, 0.0..=2.0));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Top P:");
+                        ui.add(egui::Slider::new(&mut self.panels.top_p, 0.0..=1.0));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Max tokens:");
+                        ui.add(egui::DragValue::new(&mut self.panels.max_tokens).clamp_range(64..=32768));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Frequency penalty:");
+                        ui.add(egui::Slider::new(&mut self.panels.frequency_penalty, -2.0..=2.0));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Presence penalty:");
+                        ui.add(egui::Slider::new(&mut self.panels.presence_penalty, -2.0..=2.0));
+                    });
+                }
+                2 => {
+                    // Security settings
+                    ui.checkbox(&mut self.panels.pii_enabled, "Enable PII detection");
+                    ui.checkbox(&mut self.panels.guardrails_enabled, "Enable guardrails");
+                    ui.horizontal(|ui| {
+                        ui.label("Rate limit (RPM):");
+                        ui.add(egui::DragValue::new(&mut self.panels.rate_limit_rpm).clamp_range(1..=1000));
+                    });
+                }
+                3 => {
+                    // RAG settings
+                    ui.checkbox(&mut self.rag_enabled, "Enable RAG");
+                    ui.horizontal(|ui| {
+                        ui.label("History depth:");
+                        ui.add(egui::DragValue::new(&mut self.settings.history_depth).clamp_range(1..=100));
+                    });
+                    ui.checkbox(&mut self.settings.graph_enabled, "Enable knowledge graph");
+                }
+                4 => {
+                    // Agent settings
+                    ui.label("Default orchestration strategy, agent pool limits, and approval policies are configured in the Agent Pool panel.");
+                }
+                5 => {
+                    // Memory settings
+                    ui.label("Memory stores (episodic, procedural, entity) are browsed in the Memory panel. Configure retention and consolidation here.");
+                    ui.add_space(4.0);
+                    ui.label("(Memory settings integration pending — use defaults)");
+                }
+                6 => {
+                    // UI settings
+                    ui.checkbox(&mut self.settings.enter_sends, "Enter sends message (Shift+Enter for newline)");
+                    ui.checkbox(&mut self.show_monitor, "Show monitor panel");
+                }
+                _ => {}
+            }
+        });
     }
 
     fn render_chat_area(&mut self, ui: &mut Ui) {
@@ -2539,7 +3981,7 @@ impl AiGuiApp {
 
     fn render_monitor_graph(&mut self, ui: &mut Ui) {
         if !self.settings.graph_enabled {
-            ui.label("Enable 'Knowledge Graph' in the Knowledge tab to visualize.");
+            ui.label("Enable 'Knowledge Graph' in the RAG Sources panel to visualize.");
             return;
         }
 
@@ -2764,7 +4206,26 @@ impl eframe::App for AiGuiApp {
                 self.render_model_wizard(ctx);
 
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    self.render_chat_area(ui);
+                    match self.active_panel {
+                        SidebarPanel::Chat => { self.render_chat_area(ui); }
+                        SidebarPanel::Sessions => { self.render_sessions_panel(ui); }
+                        SidebarPanel::AgentPool => { self.render_agent_pool_panel(ui); }
+                        SidebarPanel::ToolsMcp => { self.render_tools_panel(ui); }
+                        SidebarPanel::Automation => { self.render_automation_panel(ui); }
+                        SidebarPanel::RagSources => { self.render_knowledge_panel(ui); }
+                        SidebarPanel::Memory => { self.render_memory_panel(ui); }
+                        SidebarPanel::CloudStorage => { self.render_cloud_panel(ui); }
+                        SidebarPanel::Media => { self.render_media_panel(ui); }
+                        SidebarPanel::Audio => { self.render_audio_panel(ui); }
+                        SidebarPanel::PromptLab => { self.render_prompt_lab_panel(ui); }
+                        SidebarPanel::Evaluation => { self.render_eval_panel(ui); }
+                        SidebarPanel::Security => { self.render_security_panel(ui); }
+                        SidebarPanel::Analytics => { self.render_analytics_panel(ui); }
+                        SidebarPanel::DevTools => { self.render_devtools_panel(ui); }
+                        SidebarPanel::Cluster => { self.render_cluster_panel(ui); }
+                        SidebarPanel::Butler => { self.render_butler_panel(ui); }
+                        SidebarPanel::Settings => { self.render_settings_panel(ui); }
+                    }
                 });
             }
         }
