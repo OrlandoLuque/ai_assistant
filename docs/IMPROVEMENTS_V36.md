@@ -150,10 +150,10 @@ Documento de planificacion con 5 iteraciones que cubre:
 
 ---
 
-## Proximos pasos (planificado, no implementado)
+## Proximos pasos
 
-- **FreshContext mode**: Modo de contexto donde cada prompt genera contexto fresco
-  desde RAG/grafos/memoria en vez de acumular historial de conversacion
-- **MCP knowledge tools**: Registrar herramientas MCP para busqueda de conocimiento
-  (`search_knowledge`, `query_graph`, `list_sources`, `get_entity`)
-- **Model Library 3 tabs**: Tres vistas (Recommended/All/Installed) con delete, sort, filter
+- [x] **FreshContext mode**: Implementado en V37 — ContextMode enum, 5 send_message variants,
+  memoria integrada, advisor API programatico
+- [x] **MCP knowledge tools**: Implementado en V37 — 4 tools (search_knowledge, query_graph,
+  list_knowledge_sources, get_entity) con lazy-open RagDb
+- [ ] **Model Library 3 tabs**: Tres vistas (Recommended/All/Installed) con delete, sort, filter

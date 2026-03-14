@@ -212,7 +212,10 @@ pub mod wasm;
 pub mod wasm_hooks;
 
 // Core re-exports
-pub use assistant::{AiAssistant, SummaryResult};
+pub use assistant::{
+    AiAssistant, ContextMode, FreshContextEffectiveness, FreshContextStatus,
+    FreshContextWarning, SummaryResult,
+};
 pub use config::{AiConfig, AiProvider};
 pub use context::{
     clear_context_size_cache, context_size_cache_len, estimate_tokens,

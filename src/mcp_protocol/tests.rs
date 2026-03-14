@@ -1997,3 +1997,175 @@ this is garbage"#;
         assert_eq!(result.total, Some(100));
         assert_eq!(result.suggestions.len(), 1);
     }
+
+    // === Knowledge Tools Tests ===
+
+    #[cfg(feature = "rag")]
+    #[test]
+    fn test_knowledge_tools_registration_without_graph() {
+        use crate::mcp_protocol::knowledge_tools::register_knowledge_tools;
+
+        let mut server = McpServer::new("test-knowledge", "1.0.0");
+        let db_path = std::env::temp_dir().join(format!(
+            "test_kt_{}.db",
+            uuid::Uuid::new_v4()
+        ));
+        register_knowledge_tools(&mut server, db_path.clone(), None);
+
+        let req = McpRequest::new("initialize")
+            .with_id(1u64)
+            .with_params(serde_json::json!({
+                "protocolVersion": MCP_VERSION,
+                "clientInfo": {"name": "test"},
+                "capabilities": {}
+            }));
+        server.handle_request(req);
+
+        let list_req = McpRequest::new("tools/list").with_id(2u64);
+        let resp = server.handle_request(list_req);
+        let tools = resp.result.unwrap()["tools"]
+            .as_array()
+            .unwrap()
+            .clone();
+        let names: Vec<String> = tools
+            .iter()
+            .map(|t| t["name"].as_str().unwrap().to_string())
+            .collect();
+
+        assert!(names.contains(&"search_knowledge".to_string()));
+        assert!(names.contains(&"list_knowledge_sources".to_string()));
+        // Graph tools should NOT be registered without graph
+        assert!(!names.contains(&"query_graph".to_string()));
+        assert!(!names.contains(&"get_entity".to_string()));
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[cfg(feature = "rag")]
+    #[test]
+    fn test_knowledge_tools_search_invocation() {
+        use crate::mcp_protocol::knowledge_tools::register_knowledge_tools;
+        use crate::rag::RagDb;
+
+        let db_path = std::env::temp_dir().join(format!(
+            "test_kt_search_{}.db",
+            uuid::Uuid::new_v4()
+        ));
+        {
+            let db = RagDb::open(&db_path).expect("create db");
+            db.index_document(
+                "test-doc",
+                "Rust is a systems programming language focused on safety and performance.",
+            )
+            .expect("index");
+        }
+
+        let mut server = McpServer::new("test-search", "1.0.0");
+        register_knowledge_tools(&mut server, db_path.clone(), None);
+
+        let req = McpRequest::new("initialize")
+            .with_id(1u64)
+            .with_params(serde_json::json!({
+                "protocolVersion": MCP_VERSION,
+                "clientInfo": {"name": "test"},
+                "capabilities": {}
+            }));
+        server.handle_request(req);
+
+        let call_req = McpRequest::new("tools/call")
+            .with_id(3u64)
+            .with_params(serde_json::json!({
+                "name": "search_knowledge",
+                "arguments": {"query": "Rust safety", "max_results": 3}
+            }));
+        let resp = server.handle_request(call_req);
+        assert!(resp.result.is_some(), "search_knowledge should return result");
+        assert!(resp.error.is_none(), "search_knowledge should not error");
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[cfg(feature = "rag")]
+    #[test]
+    fn test_knowledge_tools_annotations() {
+        use crate::mcp_protocol::knowledge_tools::register_knowledge_tools;
+
+        let mut server = McpServer::new("test-ann", "1.0.0");
+        let db_path = std::env::temp_dir().join(format!(
+            "test_kt_ann_{}.db",
+            uuid::Uuid::new_v4()
+        ));
+        register_knowledge_tools(&mut server, db_path.clone(), None);
+
+        let req = McpRequest::new("initialize")
+            .with_id(1u64)
+            .with_params(serde_json::json!({
+                "protocolVersion": MCP_VERSION,
+                "clientInfo": {"name": "test"},
+                "capabilities": {}
+            }));
+        server.handle_request(req);
+
+        let list_req = McpRequest::new("tools/list").with_id(2u64);
+        let resp = server.handle_request(list_req);
+        let tools = resp.result.unwrap()["tools"]
+            .as_array()
+            .unwrap()
+            .clone();
+        let search = tools
+            .iter()
+            .find(|t| t["name"] == "search_knowledge")
+            .unwrap();
+
+        assert_eq!(search["annotations"]["readOnlyHint"], true);
+        assert_eq!(search["annotations"]["destructiveHint"], false);
+        assert_eq!(search["annotations"]["idempotentHint"], true);
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[cfg(feature = "rag")]
+    #[test]
+    fn test_knowledge_tools_list_sources() {
+        use crate::mcp_protocol::knowledge_tools::register_knowledge_tools;
+        use crate::rag::RagDb;
+
+        let db_path = std::env::temp_dir().join(format!(
+            "test_kt_list_{}.db",
+            uuid::Uuid::new_v4()
+        ));
+        {
+            let db = RagDb::open(&db_path).expect("create db");
+            db.index_document("doc-alpha", "Alpha content")
+                .expect("index");
+            db.index_document("doc-beta", "Beta content")
+                .expect("index");
+        }
+
+        let mut server = McpServer::new("test-list", "1.0.0");
+        register_knowledge_tools(&mut server, db_path.clone(), None);
+
+        let req = McpRequest::new("initialize")
+            .with_id(1u64)
+            .with_params(serde_json::json!({
+                "protocolVersion": MCP_VERSION,
+                "clientInfo": {"name": "test"},
+                "capabilities": {}
+            }));
+        server.handle_request(req);
+
+        let call_req = McpRequest::new("tools/call")
+            .with_id(3u64)
+            .with_params(serde_json::json!({
+                "name": "list_knowledge_sources",
+                "arguments": {}
+            }));
+        let resp = server.handle_request(call_req);
+        assert!(
+            resp.result.is_some(),
+            "list_knowledge_sources should return result"
+        );
+        assert!(resp.error.is_none());
+
+        let _ = std::fs::remove_file(&db_path);
+    }

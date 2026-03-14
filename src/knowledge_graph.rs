@@ -1457,6 +1457,11 @@ impl KnowledgeGraph {
         Ok(result)
     }
 
+    /// Look up an entity by name (delegates to the store).
+    pub fn get_entity_by_name(&self, name: &str) -> Result<Option<Entity>> {
+        self.store.get_entity_by_name(name)
+    }
+
     /// Query the graph for entities mentioned in a query
     pub fn query(&self, query: &str, extractor: &dyn EntityExtractor) -> Result<GraphQueryResult> {
         let start = Instant::now();
