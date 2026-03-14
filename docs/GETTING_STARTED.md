@@ -47,6 +47,9 @@ That's it — the CLI auto-detects your local LLM and starts a chat session.
 # Install the CLI (compiles from source, takes a few minutes)
 cargo install ai_assistant --bin ai_assistant_cli --features "full,butler"
 
+# Install the power-user CLI (with diagnostic logging)
+cargo install ai_assistant --bin ai_cli --features "full,diagnostic-logging"
+
 # Install the HTTP server
 cargo install ai_assistant --bin ai_assistant_server --features "full"
 
@@ -64,6 +67,9 @@ cd ai_assistant
 
 # Build the CLI
 cargo build --release --bin ai_assistant_cli --features "full,butler"
+
+# Build the power-user CLI
+cargo build --release --bin ai_cli --features "full,diagnostic-logging"
 
 # Build the server
 cargo build --release --bin ai_assistant_server --features "full"
@@ -86,6 +92,7 @@ Binaries are in `target/release/`.
 
 | Binary | Features | Description |
 |--------|----------|-------------|
+| `ai_cli` | `full,diagnostic-logging` | Power-user CLI (scan, query, config, diagnostics) |
 | `ai_assistant_cli` | `full,butler` | Interactive REPL with auto-detection |
 | `ai_gui` | `gui` | Desktop GUI (WIP) |
 | `ai_assistant_server` | `full` | HTTP API server (OpenAI-compatible) |

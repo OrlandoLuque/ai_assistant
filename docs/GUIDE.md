@@ -152,6 +152,7 @@ This guide covers every feature in the `ai_assistant` crate. Each section explai
 144. [MCP Knowledge Tools](#144-mcp-knowledge-tools)
 145. [Memory Integration](#145-memory-integration)
 146. [FreshContext Advisor API](#146-freshcontext-advisor-api)
+147. [Diagnostic Logging](#147-diagnostic-logging)
 
 ---
 
@@ -8640,3 +8641,55 @@ for w in &status.warnings {
 **`has_graph` parameter**: `KnowledgeGraph` lives outside `AiAssistant` (typically on the GUI app struct), so the caller must pass `true` or `false` to indicate whether a graph is active.
 
 **Feature flag**: `rag`
+
+---
+
+## 147. Diagnostic Logging
+
+**What**: Compile-time gated diagnostic logging throughout the library. When the `diagnostic-logging` feature is enabled, detailed debug/trace logs are emitted at every critical path: prompt construction, RAG search, knowledge graph queries, memory retrieval, provider requests. When disabled, all diagnostic macros compile to nothing — zero overhead.
+
+**Feature flag**: `diagnostic-logging`
+
+```rust
+// In Cargo.toml:
+// [features]
+// diagnostic-logging = ["dep:env_logger"]
+
+// Library macros (compile to nothing when feature is off):
+diag_debug!("[assistant] send_message: mode={:?}, msgs={}", mode, count);
+diag_trace!("[rag] result[{}]: score={:.4}, source={}", i, score, source);
+safe_diag_trace!("[provider] system_prompt: {}", prompt); // PII-redacted
+
+// CLI usage:
+// ai_cli -v scan          → info level
+// ai_cli -vv query ...    → debug level
+// ai_cli -vvv query ...   → trace level (full prompts, contexts, scores)
+// ai_cli --log-file d.log → write to file
+```
+
+**GUI integration**: Both `ai_gui` and `ai_gui-pro` include a **Diagnostics** tab in the bottom monitor panel. All `log::debug!` and `log::trace!` calls are captured into a 5,000-entry ring buffer (`DebugLogger`) and displayed with:
+- Color-coded levels (red=Error, yellow=Warn, blue=Info, gray=Debug)
+- Component filter (text search on module path)
+- Level filter selector
+- Auto-scroll toggle
+- Clear button
+
+**Available macros**:
+
+| Macro | When feature enabled | When feature disabled |
+|-------|---------------------|----------------------|
+| `diag_debug!(...)` | `log::debug!(...)` | `{}` (no-op) |
+| `diag_trace!(...)` | `log::trace!(...)` | `{}` (no-op) |
+| `safe_diag_trace!(...)` | `log::trace!("{}", redact(...))` | `{}` (no-op) |
+
+**Logged components**:
+
+| Component tag | What it logs |
+|--------------|-------------|
+| `[assistant]` | send_message entry, poll_response, system prompt size |
+| `[rag-context]` | Query, token budget, chunks retrieved, final context |
+| `[rag]` | index_document, search_knowledge, hybrid search scores |
+| `[graph]` | add_relation, get_relations_from, query results |
+| `[memory]` | search, build_context, process_message, remember_fact |
+| `[memory-context]` | Memory context building (query, result size) |
+| `[provider]` | Model, message count, system prompt, response size |
