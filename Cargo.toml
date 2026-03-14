@@ -227,9 +227,27 @@ eval-suite = ["eval"]
 # Not in 'full' by default — heavy native C++ dep. Opt-in: --features whisper-local
 whisper-local = ["dep:whisper-rs", "audio"]
 
-# Desktop GUI application: eframe window + egui widgets + file dialogs + Butler + RAG + graph viz
+# Desktop GUI application: eframe + egui widgets + file dialogs + Butler + RAG + graph viz
 # Not in 'full' — brings windowing deps. Run: cargo run --bin ai_gui --features gui
 gui = ["dep:eframe", "dep:rfd", "dep:petgraph", "egui-widgets", "rag", "butler"]
+
+# Desktop GUI Pro: full library + all optional features wired into the GUI.
+# Run: cargo run --bin ai_gui-pro --features gui-pro
+gui-pro = [
+    "gui", "full",
+    "scheduler",
+    "browser",
+    "code-sandbox",
+    "hitl",
+    "devtools",
+    "audio",
+    "media-generation",
+    "constrained-decoding",
+    "prompt-signatures",
+    "cloud-connectors",
+    "integrity-check",
+    "workflows",
+]
 
 # === Microservice Features (v30) ===
 
@@ -378,6 +396,11 @@ required-features = ["server-axum"]
 name = "ai_gui"
 path = "src/bin/ai_gui.rs"
 required-features = ["gui"]
+
+[[bin]]
+name = "ai_gui-pro"
+path = "src/bin/ai_gui-pro.rs"
+required-features = ["gui-pro"]
 
 [[example]]
 name = "autonomous_agent"
