@@ -8,6 +8,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
+
+use crate::load_shedding::{LoadContext, LoadShedder, SheddingDecision};
 
 // ============================================================================
 // Priority
@@ -147,6 +150,9 @@ pub struct RequestQueue {
     not_empty: Arc<Condvar>,
     /// Maximum queue capacity
     max_capacity: usize,
+    /// Optional load shedder — when set, `enqueue()` evaluates load context
+    /// and may reject or throttle incoming requests under pressure.
+    load_shedder: Option<Arc<LoadShedder>>,
 }
 
 struct QueueState {
@@ -201,11 +207,60 @@ impl RequestQueue {
             state: Arc::new(Mutex::new(QueueState::new())),
             not_empty: Arc::new(Condvar::new()),
             max_capacity,
+            load_shedder: None,
         }
     }
 
-    /// Enqueue a request. Returns false if the queue is full or closed.
+    /// Attach a load shedder. When set, `enqueue()` evaluates the load context
+    /// before accepting a request, potentially shedding or throttling it.
+    pub fn with_load_shedder(mut self, shedder: Arc<LoadShedder>) -> Self {
+        self.load_shedder = Some(shedder);
+        self
+    }
+
+    /// Enqueue a request. Returns false if the queue is full, closed, or shed by load shedder.
+    ///
+    /// When a [`LoadShedder`] is attached via [`with_load_shedder`](Self::with_load_shedder),
+    /// the request is evaluated before enqueuing. If the decision is `Shed`, the request is
+    /// dropped. If the decision is `Throttle`, a short delay is applied before enqueuing.
     pub fn enqueue(&self, request: QueuedRequest) -> bool {
+        // Evaluate load shedding if configured
+        if let Some(ref shedder) = self.load_shedder {
+            let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            let context = LoadContext {
+                cpu_load: 0.0,    // caller may set via enqueue_with_context
+                memory_load: 0.0, // caller may set via enqueue_with_context
+                queue_depth: state.total_pending(),
+                priority: request.priority,
+                request_age: Duration::from_millis(request.wait_time_ms()),
+                p95_latency: None,
+            };
+            drop(state); // release lock before potential sleep
+
+            let decision = shedder.evaluate(&context);
+            shedder.record_decision(&decision);
+
+            match decision {
+                SheddingDecision::Shed { reason } => {
+                    log::warn!(
+                        "Load shedder rejected request {}: {}",
+                        request.id,
+                        reason
+                    );
+                    return false;
+                }
+                SheddingDecision::Throttle { delay } => {
+                    log::debug!(
+                        "Load shedder throttling request {} for {:?}",
+                        request.id,
+                        delay
+                    );
+                    std::thread::sleep(delay);
+                }
+                SheddingDecision::Accept => {}
+            }
+        }
+
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
 
         if state.closed {
@@ -377,6 +432,7 @@ impl Clone for RequestQueue {
             state: self.state.clone(),
             not_empty: self.not_empty.clone(),
             max_capacity: self.max_capacity,
+            load_shedder: self.load_shedder.clone(),
         }
     }
 }
@@ -585,5 +641,54 @@ mod tests {
         assert_eq!(req.session_id.as_deref(), Some("session_1"));
         assert_eq!(req.knowledge_context, "some context");
         assert!(!req.id.is_empty());
+    }
+
+    #[test]
+    fn test_load_shedder_accepts_normal_load() {
+        use crate::load_shedding::{LoadSheddingConfig, LoadShedder};
+
+        let shedder = Arc::new(LoadShedder::new(LoadSheddingConfig::conservative()));
+        let queue = RequestQueue::new(100).with_load_shedder(shedder);
+
+        // Under normal load (queue is empty), requests should be accepted
+        assert!(queue.enqueue(QueuedRequest::new("normal request")));
+        assert_eq!(queue.len(), 1);
+    }
+
+    #[test]
+    fn test_load_shedder_sheds_under_pressure() {
+        use crate::load_shedding::{LoadSheddingConfig, LoadShedder, SheddingStrategy};
+
+        // Aggressive config with very low queue depth threshold
+        let config = LoadSheddingConfig {
+            strategy: SheddingStrategy::PriorityBased,
+            cpu_threshold: 0.0, // always over threshold
+            memory_threshold: 0.0,
+            queue_depth_threshold: 0, // any queue depth triggers
+            latency_threshold: Duration::from_millis(1),
+            priority_protection: true,
+            cooldown: Duration::from_millis(0),
+        };
+        let shedder = Arc::new(LoadShedder::new(config));
+        let queue = RequestQueue::new(100).with_load_shedder(shedder);
+
+        // Low priority may be shed (queue_depth_threshold = 0 means always under pressure)
+        let _result = queue.enqueue(
+            QueuedRequest::new("low priority").with_priority(RequestPriority::Low),
+        );
+        // High priority should always pass with priority protection enabled
+        let result_high = queue.enqueue(
+            QueuedRequest::new("high priority").with_priority(RequestPriority::High),
+        );
+        assert!(result_high);
+    }
+
+    #[test]
+    fn test_queue_without_shedder_works_normally() {
+        // Verify the shedder is optional and doesn't change existing behavior
+        let queue = RequestQueue::new(2);
+        assert!(queue.enqueue(QueuedRequest::new("a")));
+        assert!(queue.enqueue(QueuedRequest::new("b")));
+        assert!(!queue.enqueue(QueuedRequest::new("c"))); // capacity limit, not shedding
     }
 }

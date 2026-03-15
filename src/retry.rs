@@ -562,7 +562,14 @@ impl ResilientExecutor {
         self
     }
 
-    /// Execute an operation with both retry and circuit breaker protection
+    /// Execute an operation with both retry and circuit breaker protection.
+    ///
+    /// When an [`AdaptiveTimeout`](crate::adaptive_timeout::AdaptiveTimeout) is attached,
+    /// each successful attempt records its latency so future timeouts adapt.
+    ///
+    /// When a [`DeadLetterQueue`](crate::message_queue::DeadLetterQueue) is attached,
+    /// permanently failed operations (all retries exhausted) are captured with their
+    /// full error history.
     pub fn execute<T, F>(&mut self, mut operation: F) -> Result<T>
     where
         F: FnMut() -> Result<T>,
@@ -577,6 +584,10 @@ impl ResilientExecutor {
 
         if result.success {
             self.circuit_breaker.record_success();
+            // Record latency for adaptive timeout
+            if let Some(ref at) = self.adaptive_timeout {
+                at.record(result.total_duration);
+            }
             Ok(result.value.expect("value must be present on success"))
         } else {
             self.circuit_breaker.record_failure();
@@ -585,6 +596,28 @@ impl ResilientExecutor {
                 .last()
                 .and_then(|a| a.error.clone())
                 .unwrap_or_else(|| "Unknown error".to_string());
+
+            // Dead-letter the failed operation
+            if let Some(ref dlq) = self.dead_letter_queue {
+                let error_history: Vec<String> = result
+                    .error_history
+                    .iter()
+                    .filter_map(|a| a.error.clone())
+                    .collect();
+
+                let category = crate::message_queue::FailureCategory::from_error(&last_error);
+                let msg = crate::message_queue::QueueMessage::new(
+                    &format!("Failed operation after {} attempts", result.attempts),
+                );
+                dlq.add_detailed(
+                    msg,
+                    last_error.clone(),
+                    category,
+                    result.attempts,
+                    error_history,
+                );
+            }
+
             Err(anyhow!(
                 "Operation failed after {} attempts: {}",
                 result.attempts,
@@ -825,5 +858,64 @@ mod tests {
         assert_eq!(cb.failure_count(), 1);
         cb.record_success();
         assert_eq!(cb.failure_count(), 0);
+    }
+
+    #[test]
+    fn test_resilient_executor_records_adaptive_timeout() {
+        use crate::adaptive_timeout::{AdaptiveTimeout, AdaptiveTimeoutConfig};
+
+        let at = Arc::new(AdaptiveTimeout::new(AdaptiveTimeoutConfig::responsive()));
+        let mut executor = ResilientExecutor::new(
+            RetryConfig::no_retry(),
+            5,
+            Duration::from_secs(30),
+        )
+        .with_adaptive_timeout(at.clone());
+
+        // Execute a successful operation
+        let result = executor.execute(|| Ok(42));
+        assert!(result.is_ok());
+
+        // Adaptive timeout should have recorded the latency
+        assert!(at.sample_count() >= 1);
+    }
+
+    #[test]
+    fn test_resilient_executor_dead_letters_on_failure() {
+        use crate::message_queue::DeadLetterQueue;
+
+        let dlq = Arc::new(DeadLetterQueue::new(100));
+        let mut executor = ResilientExecutor::new(
+            RetryConfig {
+                max_retries: 1,
+                initial_delay: Duration::from_millis(1),
+                ..RetryConfig::default()
+            },
+            5,
+            Duration::from_secs(30),
+        )
+        .with_dead_letter_queue(dlq.clone());
+
+        // Execute a failing operation (timeout error → retryable)
+        let result: Result<i32> = executor.execute(|| Err(anyhow!("Connection refused")));
+        assert!(result.is_err());
+
+        // The DLQ should have captured the failed operation
+        assert_eq!(dlq.len(), 1);
+        let stats = dlq.stats();
+        assert_eq!(stats.total, 1);
+    }
+
+    #[test]
+    fn test_resilient_executor_no_dlq_without_config() {
+        let mut executor = ResilientExecutor::new(
+            RetryConfig::no_retry(),
+            5,
+            Duration::from_secs(30),
+        );
+
+        // No DLQ attached — failure should not panic
+        let result: Result<i32> = executor.execute(|| Err(anyhow!("some error")));
+        assert!(result.is_err());
     }
 }

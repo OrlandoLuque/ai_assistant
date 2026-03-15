@@ -81,13 +81,20 @@ Reconexion basada en checkpoints con Last-Event-ID:
 ### 8. Integration Wiring
 
 - `ResilientExecutor.adaptive_timeout: Option<Arc<AdaptiveTimeout>>` — timeout dinamico
-- `ResilientExecutor.dead_letter_queue: Option<Arc<DeadLetterQueue>>` — captura automatica
+- `ResilientExecutor.dead_letter_queue: Option<Arc<DeadLetterQueue>>` — captura automatica de fallos permanentes
+- `ResilientExecutor.execute()` ahora registra latencia en adaptive timeout y dead-letters en DLQ
 - Builder methods: `with_adaptive_timeout()`, `with_dead_letter_queue()`
+- `RequestQueue.load_shedder: Option<Arc<LoadShedder>>` — evaluacion de carga en `enqueue()`
+- Builder method: `with_load_shedder()`
+- `ResilientProviderRegistry.bulkhead_registry: Option<Arc<BulkheadRegistry>>` — aislamiento per-provider
+- `ResilientProviderRegistry.fault_injector: Option<Arc<FaultInjector>>` (cfg chaos-testing)
+- Setter methods: `set_bulkhead_registry()`, `set_fault_injector()`
+- `FailureCategory::from_error()` — clasificacion automatica de errores
 - Feature `chaos-testing` en Cargo.toml (opt-in, no en `full`)
 
 ---
 
-## Tests nuevos: ~103
+## Tests nuevos: ~110
 
 ### En `src/bulkhead.rs` (~18 tests):
 | Test | Que verifica |
@@ -158,10 +165,12 @@ Disconnect/resume, backoff, server retry override, chunk replay.
 | `src/adaptive_timeout.rs` | +~700 LOC: nuevo modulo completo |
 | `src/load_shedding.rs` | +~400 LOC: nuevo modulo completo |
 | `src/fault_injection.rs` | +~650 LOC: nuevo modulo completo |
-| `src/message_queue.rs` | +~280 LOC: DLQ enhanced + 12 tests |
+| `src/message_queue.rs` | +~300 LOC: DLQ enhanced + from_error() + 13 tests |
 | `src/websocket_streaming.rs` | +~350 LOC: WS reconnect + 12 tests |
 | `src/resumable_streaming.rs` | +~300 LOC: SSE reconnect + 10 tests |
-| `src/retry.rs` | +~20 LOC: campos opcionales AdaptiveTimeout + DLQ |
+| `src/retry.rs` | +~70 LOC: adaptive timeout + DLQ integration activa + 3 tests |
+| `src/request_queue.rs` | +~50 LOC: load shedder integration + 3 tests |
+| `src/providers.rs` | +~60 LOC: bulkhead + fault injector integration |
 | `src/lib.rs` | +~10 LOC: pub mod + re-exports |
 | `Cargo.toml` | +3 LOC: feature chaos-testing |
 | `docs/CONCEPTS.md` | +7 secciones (175-181) |
@@ -177,7 +186,7 @@ Disconnect/resume, backoff, server retry override, chunk replay.
 |---------|-------|
 | **LOC totales** | ~388K |
 | **Archivos fuente** | 319 .rs |
-| **Tests** | 4,995 (lib, features full+chaos-testing) |
+| **Tests** | 5,002 (lib, features full+chaos-testing) |
 | **Feature flags** | 55 (+1: chaos-testing) |
 | **Binarios** | 9 |
 
@@ -209,8 +218,9 @@ Disconnect/resume, backoff, server retry override, chunk replay.
 
 ## Proximos pasos (planificado, no implementado)
 
-- Conectar `LoadShedder` a `RequestQueue.enqueue()` (optional check)
-- Conectar `FaultInjector` a `ResilientProviderRegistry` (test-only wiring)
-- Conectar `BulkheadRegistry` a `ResilientProviderRegistry`
+- ~~Conectar `LoadShedder` a `RequestQueue.enqueue()`~~ — HECHO
+- ~~Conectar `FaultInjector` a `ResilientProviderRegistry`~~ — HECHO
+- ~~Conectar `BulkheadRegistry` a `ResilientProviderRegistry`~~ — HECHO
+- ~~Activar `ResilientExecutor.execute()` con adaptive timeout + DLQ~~ — HECHO
 - Persistencia opcional del DLQ (file/SQLite)
 - Dashboard de metricas de resiliencia (via OTel spans)

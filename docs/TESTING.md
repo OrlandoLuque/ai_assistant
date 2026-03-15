@@ -406,11 +406,11 @@ The harness exits with code 1 if any test fails, making it suitable for CI pipel
 | v28+butler-advisor | 6,417 | +16 | 2026-03-04 |
 | v36 (GUI Pro) | 7,066 | +649 | 2026-03-14 |
 | v37 (FreshContext+MCP+Memory) | 4,892+ | — | 2026-03-14 |
-| v38 (Resilience Engineering) | 4,995 | +103 | 2026-03-15 |
+| v38 (Resilience Engineering) | 5,002 | +110 | 2026-03-15 |
 
 > **Note on v37 count**: Test count reflects current `--lib` run. Some tests from v28-v36 were
 > in integration tests or feature combinations not included in the standard lib test run.
-> The project maintains 4,995 verified passing lib tests with 0 failures.
+> The project maintains 5,002 verified passing lib tests with 0 failures.
 
 ### V38 — New Resilience Test Modules
 
