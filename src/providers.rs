@@ -1743,6 +1743,16 @@ pub struct ResilientProviderRegistry {
     health_status: HashMap<String, ProviderHealthStatus>,
     /// Per-provider rate-limit state (keyed by `ProviderConfig::name`)
     rate_limits: HashMap<String, ProviderRateState>,
+    /// Optional bulkhead registry — when set, each provider attempt must acquire
+    /// a bulkhead permit before proceeding. If the bulkhead is full, the provider
+    /// is skipped and the next fallback is tried.
+    pub bulkhead_registry: Option<std::sync::Arc<crate::bulkhead::BulkheadRegistry>>,
+    /// Optional fault injector — when set, faults are evaluated before each
+    /// provider attempt. If a fault is injected, the attempt fails without
+    /// calling the actual provider. Only available in test builds or with
+    /// the `chaos-testing` feature.
+    #[cfg(any(test, feature = "chaos-testing"))]
+    pub fault_injector: Option<std::sync::Arc<crate::fault_injection::FaultInjector>>,
 }
 
 impl ResilientProviderRegistry {
@@ -1765,6 +1775,9 @@ impl ResilientProviderRegistry {
             pool: None,
             health_status,
             rate_limits,
+            bulkhead_registry: None,
+            #[cfg(any(test, feature = "chaos-testing"))]
+            fault_injector: None,
         }
     }
 
@@ -1798,6 +1811,34 @@ impl ResilientProviderRegistry {
     /// Attach a connection pool handle for HTTP reuse.
     pub fn set_pool(&mut self, pool: ConnectionPoolHandle) {
         self.pool = Some(pool);
+    }
+
+    /// Attach a bulkhead registry for per-provider concurrency isolation.
+    ///
+    /// When set, `generate_with_fallback()` attempts to acquire a bulkhead permit
+    /// for each provider before calling the operation. If the bulkhead is full,
+    /// the provider is skipped and the next fallback is tried.
+    ///
+    /// Bulkhead names should match provider names. If no bulkhead is registered
+    /// for a provider name, the request proceeds without isolation.
+    pub fn set_bulkhead_registry(
+        &mut self,
+        registry: std::sync::Arc<crate::bulkhead::BulkheadRegistry>,
+    ) {
+        self.bulkhead_registry = Some(registry);
+    }
+
+    /// Attach a fault injector for chaos testing.
+    ///
+    /// When set, `generate_with_fallback()` evaluates fault rules before each
+    /// provider attempt. If a fault is injected, the attempt fails with a
+    /// simulated error without calling the actual provider.
+    #[cfg(any(test, feature = "chaos-testing"))]
+    pub fn set_fault_injector(
+        &mut self,
+        injector: std::sync::Arc<crate::fault_injection::FaultInjector>,
+    ) {
+        self.fault_injector = Some(injector);
     }
 
     // -- Circuit breaker helpers -------------------------------------------
@@ -1887,6 +1928,50 @@ impl ResilientProviderRegistry {
                 );
                 continue;
             }
+
+            // Fault injection check (chaos testing only)
+            #[cfg(any(test, feature = "chaos-testing"))]
+            if let Some(ref injector) = self.fault_injector {
+                let result = injector.check(name, &format!("provider:{}", name));
+                if result.injected {
+                    let fault_desc = result
+                        .rule_name
+                        .as_deref()
+                        .unwrap_or("unknown");
+                    log::warn!(
+                        "[llm] fault_injected provider={} rule={}",
+                        name,
+                        fault_desc
+                    );
+                    errors.push((name.clone(), format!("Injected fault: {}", fault_desc)));
+                    self.record_failure(name);
+                    continue;
+                }
+            }
+
+            // Bulkhead check — acquire a permit for this provider
+            let _bulkhead_permit = if let Some(ref registry) = self.bulkhead_registry {
+                match registry.try_acquire(name) {
+                    Ok(permit) => Some(permit),
+                    Err(crate::bulkhead::BulkheadError::Full) => {
+                        log::debug!(
+                            "[llm] resilient provider={} status=skipped reason=bulkhead_full",
+                            name
+                        );
+                        continue;
+                    }
+                    Err(crate::bulkhead::BulkheadError::NotFound(_)) => {
+                        // No bulkhead registered for this provider — proceed without isolation
+                        None
+                    }
+                    Err(crate::bulkhead::BulkheadError::Timeout) => {
+                        // try_acquire doesn't timeout, but handle for completeness
+                        None
+                    }
+                }
+            } else {
+                None
+            };
 
             tried_any = true;
             log::info!(

@@ -260,6 +260,24 @@ pub enum FailureCategory {
     Unknown,
 }
 
+impl FailureCategory {
+    /// Classify a failure category from an error message string.
+    pub fn from_error(error: &str) -> Self {
+        let lower = error.to_lowercase();
+        if lower.contains("timeout") || lower.contains("timed out") {
+            Self::Timeout
+        } else if lower.contains("rate limit") || lower.contains("429") || lower.contains("too many requests") {
+            Self::RateLimited
+        } else if lower.contains("unavailable") || lower.contains("503") || lower.contains("connection refused") {
+            Self::ProviderUnavailable
+        } else if lower.contains("invalid") || lower.contains("400") || lower.contains("bad request") {
+            Self::InvalidRequest
+        } else {
+            Self::Unknown
+        }
+    }
+}
+
 impl std::fmt::Display for FailureCategory {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -791,6 +809,19 @@ mod tests {
         let entries = dlq.peek_all();
         assert_eq!(entries[0].message.payload, "m2");
         assert_eq!(entries[1].message.payload, "m3");
+    }
+
+    #[test]
+    fn test_failure_category_from_error() {
+        assert_eq!(FailureCategory::from_error("Request timed out"), FailureCategory::Timeout);
+        assert_eq!(FailureCategory::from_error("timeout waiting for response"), FailureCategory::Timeout);
+        assert_eq!(FailureCategory::from_error("HTTP 429 Too Many Requests"), FailureCategory::RateLimited);
+        assert_eq!(FailureCategory::from_error("rate limit exceeded"), FailureCategory::RateLimited);
+        assert_eq!(FailureCategory::from_error("Service unavailable 503"), FailureCategory::ProviderUnavailable);
+        assert_eq!(FailureCategory::from_error("Connection refused"), FailureCategory::ProviderUnavailable);
+        assert_eq!(FailureCategory::from_error("Invalid API key 400"), FailureCategory::InvalidRequest);
+        assert_eq!(FailureCategory::from_error("Bad request"), FailureCategory::InvalidRequest);
+        assert_eq!(FailureCategory::from_error("some random error"), FailureCategory::Unknown);
     }
 
     #[test]
