@@ -504,6 +504,7 @@ struct AiGuiApp {
     show_monitor: bool,
     settings: GuiSettings,
     toasts: Vec<(String, bool, Instant)>,
+    update_rx: Option<std::sync::mpsc::Receiver<ai_assistant::update_checker::UpdateInfo>>,
     last_dir: Option<PathBuf>,
 
     // Model wizard
@@ -603,6 +604,7 @@ impl AiGuiApp {
             show_monitor: false,
             settings: GuiSettings::default(),
             toasts: Vec::new(),
+            update_rx: Some(ai_assistant::update_checker::check_for_update_bg(env!("CARGO_PKG_VERSION"))),
             last_dir: None,
 
             show_model_wizard: false,
@@ -2929,6 +2931,18 @@ impl eframe::App for AiGuiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Poll background tasks
         self.poll_all();
+
+        // Check for update notification
+        if let Some(ref rx) = self.update_rx {
+            if let Ok(info) = rx.try_recv() {
+                self.toasts.push((
+                    format!("Update available: v{} \u{2192} v{} — {}", info.current, info.latest, info.url),
+                    false,
+                    Instant::now(),
+                ));
+                self.update_rx = None; // Only show once
+            }
+        }
 
         // Request repaint while tasks are active
         if self.assistant.is_generating

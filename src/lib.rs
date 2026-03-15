@@ -598,6 +598,7 @@ pub mod scheduler;
 pub mod task_board;
 #[cfg(feature = "scheduler")]
 pub mod trigger_system;
+pub mod update_checker;
 #[cfg(feature = "autonomous")]
 pub mod user_interaction;
 #[cfg(feature = "scheduler")]
