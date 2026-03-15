@@ -132,6 +132,9 @@ fn provider_from_name(name: &str) -> ai_assistant::AiProvider {
 fn main() -> ExitCode {
     let cli = parse_args();
 
+    // Background update check
+    let update_rx = ai_assistant::update_checker::check_for_update_bg(env!("CARGO_PKG_VERSION"));
+
     // =========================================================================
     // Docker executor init
     // =========================================================================
@@ -262,6 +265,10 @@ fn main() -> ExitCode {
 
     println!("AI Assistant CLI");
     println!("Type /help for commands, /models to list models, /exit to quit.\n");
+
+    if let Ok(info) = update_rx.try_recv() {
+        println!("  Update available: v{} \u{2192} v{} \u{2014} {}", info.current, info.latest, info.url);
+    }
 
     let stdin = io::stdin();
     let mut stdout = io::stdout();

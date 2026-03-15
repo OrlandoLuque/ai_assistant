@@ -74,6 +74,9 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    // Check for updates (spawn early so it has time to complete)
+    let update_rx = ai_assistant::update_checker::check_for_update_bg(env!("CARGO_PKG_VERSION"));
+
     let config = match build_config(&cli) {
         Ok(c) => c,
         Err(e) => {
@@ -136,6 +139,12 @@ fn main() -> ExitCode {
 
     let server = AxumServer::new(config);
     let addr = server.config().bind_address();
+
+    if let Ok(info) = update_rx.try_recv() {
+        eprintln!("  Update available: v{} \u{2192} v{}", info.current, info.latest);
+        eprintln!("  Download: {}", info.url);
+        eprintln!();
+    }
 
     eprintln!("AI Assistant Standalone v{}", env!("CARGO_PKG_VERSION"));
     eprintln!("Server: http://{}", addr);

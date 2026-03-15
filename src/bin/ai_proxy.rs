@@ -113,6 +113,9 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    // Check for updates (spawn early so it has time to complete)
+    let update_rx = ai_assistant::update_checker::check_for_update_bg(env!("CARGO_PKG_VERSION"));
+
     if cli.backends.is_none() {
         eprintln!("Error: --backends is required");
         eprintln!();
@@ -160,6 +163,12 @@ fn main() -> ExitCode {
             eprintln!("Failed to create tokio runtime: {}", e);
             std::process::exit(1);
         });
+
+    if let Ok(info) = update_rx.try_recv() {
+        eprintln!("  Update available: v{} \u{2192} v{}", info.current, info.latest);
+        eprintln!("  Download: {}", info.url);
+        eprintln!();
+    }
 
     eprintln!("AI Proxy v{}", env!("CARGO_PKG_VERSION"));
     eprintln!("Listening on: http://0.0.0.0:{}", port);

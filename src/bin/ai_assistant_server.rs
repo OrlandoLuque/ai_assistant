@@ -58,6 +58,9 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    // Check for updates (spawn early so it has time to complete)
+    let update_rx = ai_assistant::update_checker::check_for_update_bg(env!("CARGO_PKG_VERSION"));
+
     let config = match build_config(&cli) {
         Ok(c) => c,
         Err(e) => {
@@ -89,6 +92,12 @@ fn main() -> ExitCode {
     // Register Ctrl-C handler.
     if let Err(e) = ctrlc_register(shutdown_flag, &server) {
         eprintln!("Warning: failed to register Ctrl-C handler: {}", e);
+    }
+
+    if let Ok(info) = update_rx.try_recv() {
+        eprintln!("  Update available: v{} \u{2192} v{}", info.current, info.latest);
+        eprintln!("  Download: {}", info.url);
+        eprintln!();
     }
 
     eprintln!("Starting AI Assistant server...");

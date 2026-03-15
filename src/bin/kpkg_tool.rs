@@ -23,7 +23,10 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    match args[1].as_str() {
+    // Background update check
+    let update_rx = ai_assistant::update_checker::check_for_update_bg(env!("CARGO_PKG_VERSION"));
+
+    let result = match args[1].as_str() {
         "create" => match run_create(&args[2..]) {
             Ok(_) => ExitCode::SUCCESS,
             Err(e) => {
@@ -61,7 +64,17 @@ fn main() -> ExitCode {
             print_usage();
             ExitCode::FAILURE
         }
+    };
+
+    // Check for updates before exit
+    if let Ok(info) = update_rx.try_recv() {
+        eprintln!();
+        eprintln!("  Update available: v{} \u{2192} v{}", info.current, info.latest);
+        eprintln!("  Download: {}", info.url);
+        eprintln!();
     }
+
+    result
 }
 
 fn print_usage() {
