@@ -214,6 +214,7 @@ impl Default for SseWriter {
 
 /// SSE Error types
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum SseError {
     IoError(String),
     ParseError(String),

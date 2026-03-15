@@ -519,6 +519,7 @@ impl FactStore {
 
 /// Schedule for automatic consolidation.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum ConsolidationSchedule {
     /// Only consolidate when explicitly called.
     OnDemand,

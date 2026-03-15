@@ -22,6 +22,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Categories of adversarial attacks against AI systems.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum AttackCategory {
     PromptInjection,
     Jailbreak,
@@ -99,6 +100,7 @@ impl AttackCategory {
 
 /// Severity level of an attack or vulnerability finding.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum AttackSeverity {
     Low,
     Medium,
@@ -174,6 +176,7 @@ pub struct AttackInstance {
 
 /// How a vulnerability was detected in a model response.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum DetectionMethod {
     PatternMatch { pattern: String },
     KeywordPresence { keywords: Vec<String> },
@@ -792,6 +795,7 @@ impl DefenseEvaluator {
 
 /// Configuration for a red team test run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct RedTeamConfig {
     /// Number of attack instances to generate per category.
     pub attacks_per_category: usize,

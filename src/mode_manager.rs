@@ -11,6 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Operation modes from least to most capable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub enum OperationMode {
     /// Simple conversation, no tools.
     Chat = 0,

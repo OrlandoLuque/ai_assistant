@@ -40,6 +40,7 @@ pub trait MctsState: Clone + std::fmt::Debug {
 
 /// Configuration for the MCTS planner.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct MctsConfig {
     /// Maximum number of MCTS iterations (selection-expansion-simulation-backprop cycles).
     pub max_iterations: usize,
@@ -191,6 +192,7 @@ pub struct MctsResult<A: Clone + std::fmt::Debug> {
 
 /// Policy used during the simulation (rollout) phase.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum SimulationPolicy {
     /// Pick a random action at each step.
     Random,
@@ -626,6 +628,7 @@ pub struct PrmRule {
 
 /// Types of checks a PRM rule can perform.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum PrmRuleCheck {
     /// Step description must contain the given keyword.
     ContainsKeyword(String),
@@ -816,6 +819,7 @@ impl ProcessRewardModel for LlmPRM {
 
 /// Strategy for aggregating scores from multiple PRMs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum AggregationStrategy {
     /// Arithmetic mean of all scores.
     Average,
@@ -927,6 +931,7 @@ impl PrmAggregator {
 
 /// Configuration for the refinement loop.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct RefinementConfig {
     /// Maximum number of refinement iterations.
     pub max_iterations: usize,
@@ -963,6 +968,7 @@ pub struct ExecutionFeedback {
 
 /// Strategy for refining a plan.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum RefinementStrategy {
     /// Re-plan from the point of failure.
     ReplanFromFailure,

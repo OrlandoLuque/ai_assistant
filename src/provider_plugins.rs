@@ -1423,6 +1423,7 @@ impl ProviderPlugin for OpenAICompatibleProvider {
 
 /// Provider discovery configuration
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct DiscoveryConfig {
     /// Check Ollama at default port
     pub check_ollama: bool,

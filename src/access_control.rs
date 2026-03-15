@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 
 /// Permission types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Permission {
     Read,
     Write,
@@ -17,6 +18,7 @@ pub enum Permission {
 
 /// Resource types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ResourceType {
     Conversation,
     Message,
@@ -38,6 +40,7 @@ pub struct AccessControlEntry {
 
 /// Access condition
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum AccessCondition {
     TimeRange { start: u64, end: u64 },
     IpRange(String),
@@ -495,6 +498,7 @@ impl Default for AccessControlManager {
 
 /// Access check result
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum AccessResult {
     Allowed,
     Denied(String),

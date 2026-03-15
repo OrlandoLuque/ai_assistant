@@ -15,6 +15,7 @@ use std::collections::{HashMap, HashSet};
 
 /// Configuration for hallucination detection
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct HallucinationConfig {
     /// Minimum confidence for claims
     pub min_claim_confidence: f64,
@@ -42,6 +43,7 @@ impl Default for HallucinationConfig {
 
 /// Types of potential hallucinations
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum HallucinationType {
     /// Made up fact
     FactualError,
@@ -110,6 +112,7 @@ pub struct Claim {
 
 /// Types of claims
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ClaimType {
     /// Statement of fact
     Factual,
@@ -524,6 +527,7 @@ impl Default for HallucinationDetector {
 }
 
 /// Builder for hallucination configuration
+#[non_exhaustive]
 pub struct HallucinationConfigBuilder {
     config: HallucinationConfig,
 }

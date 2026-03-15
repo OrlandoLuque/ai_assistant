@@ -39,6 +39,7 @@ use crate::node_security::{CertificateManager, JoinToken, NodeIdentity};
 
 /// Configuration for a network node.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct NetworkConfig {
     /// Address to listen on. Use `0.0.0.0:0` for auto-assigned port.
     pub listen_addr: SocketAddr,
@@ -81,6 +82,7 @@ impl Default for NetworkConfig {
 
 /// Replication configuration.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct ReplicationConfig {
     /// Minimum number of copies to maintain.
     pub min_copies: usize,
@@ -111,6 +113,7 @@ impl Default for ReplicationConfig {
 
 /// Write mode for replication.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum WriteMode {
     /// Wait for `write_quorum` acknowledgements before returning success.
     Synchronous,
@@ -120,6 +123,7 @@ pub enum WriteMode {
 
 /// Discovery configuration for finding peers on the local network.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct DiscoveryConfig {
     /// Enable UDP broadcast for LAN discovery.
     pub enable_broadcast: bool,
@@ -185,6 +189,7 @@ impl PeerState {
 
 /// Events emitted by the network node.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum NetworkEvent {
     /// A new peer connected.
     PeerConnected(NodeId, SocketAddr),
@@ -2299,6 +2304,7 @@ impl DeadNodeTracker {
 
 /// 9.4: Conflict resolution strategy
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ConflictResolution {
     LastWriteWins,
     HighestVersion,
@@ -2367,6 +2373,7 @@ impl VersionConflict {
 
 /// 9.5: Quorum enforcement modes
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum QuorumMode {
     /// All reads/writes require quorum
     Strict,
@@ -2377,6 +2384,7 @@ pub enum QuorumMode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum QuorumLevel {
     One,
     Majority,
@@ -2384,6 +2392,7 @@ pub enum QuorumLevel {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct QuorumConfig {
     pub mode: QuorumMode,
     pub replication_factor: usize,

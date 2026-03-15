@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 /// Typing indicator state
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum TypingState {
     Idle,
     Typing,

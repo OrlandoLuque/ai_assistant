@@ -43,6 +43,7 @@ fn language_key(lang: &Language) -> String {
 
 /// Configuration for container-based sandboxing.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ContainerSandboxConfig {
     /// Base sandbox config (timeout, output limits, etc.)
     pub sandbox_config: SandboxConfig,
@@ -287,6 +288,7 @@ impl Drop for ContainerSandbox {
 
 /// Execution backend that automatically selects between container and process
 /// isolation based on Docker availability.
+#[non_exhaustive]
 pub enum ExecutionBackend {
     /// Docker container isolation (real isolation)
     Container(Box<ContainerSandbox>),
@@ -417,6 +419,7 @@ pub struct SandboxExecutionResult {
 /// Configuration for the [`SandboxSelector`] that governs backend preference
 /// and resource limits.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct SandboxSelectorConfig {
     /// Preferred backend names in priority order.
     pub preferred_backends: Vec<String>,

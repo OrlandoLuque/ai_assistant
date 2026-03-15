@@ -15,9 +15,10 @@ Continúa con el desarrollo del proyecto. Lee docs/modus-operandi.md y el últim
 - **Roadmap v1–v10**: ALL COMPLETE
 - **Roadmap v11–v37**: ALL COMPLETE (v35 partial — Blocks E+G1+I done, B-D-F-G2-G3-H pending)
 - **V38**: COMPLETE — Resilience Engineering (Bulkhead, Adaptive Timeouts, Load Shedding, Chaos Engineering, Enhanced DLQ, WS/SSE Auto-Reconnect)
-- **Latest**: V38 — Resilience Engineering Completa
-- **Test count**: 5,002 lib tests (0 failures)
-- **Source files**: 319 .rs files, ~388K LOC
+- **V39**: COMPLETE — API Stability Hardening (#[non_exhaustive] on 454 enums + 246 structs, Default/new() constructors, trait stability docs)
+- **Latest**: V39 — API Stability Hardening
+- **Test count**: 6,829 lib tests (0 failures)
+- **Source files**: 319 .rs files, ~389K LOC
 - **Feature flags**: 55 (+1: chaos-testing)
 - **Status**: Experimental — compiles and passes tests, but not validated in production
 - **Website**: Separated to `ai_assistant-website` repo (GitHub Pages ready)
@@ -66,7 +67,7 @@ See MEMORY.md for the full list of resolved name collisions.
 
 ```bash
 # Standard full test (most features)
-cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite" --lib
+cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite,chaos-testing" --lib
 
 # With distributed network
 cargo test --features "full,distributed-network" --lib

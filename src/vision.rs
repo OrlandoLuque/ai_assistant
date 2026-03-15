@@ -22,6 +22,7 @@ pub struct ImageInput {
 /// Image data representation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
+#[non_exhaustive]
 pub enum ImageData {
     /// Base64 encoded image
     Base64(String),
@@ -32,6 +33,7 @@ pub enum ImageData {
 /// Detail level for image processing
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
+#[non_exhaustive]
 pub enum ImageDetail {
     /// Low detail (faster, less tokens)
     Low,

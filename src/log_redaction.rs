@@ -20,6 +20,7 @@ use std::sync::OnceLock;
 
 /// Configuration for log redaction behavior.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct RedactionConfig {
     /// Whether redaction is enabled. Default: true.
     pub enabled: bool,

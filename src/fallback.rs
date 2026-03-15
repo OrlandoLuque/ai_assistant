@@ -119,6 +119,7 @@ impl Default for ProviderState {
 
 /// Provider availability status
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ProviderStatus {
     /// Provider is available
     Available,

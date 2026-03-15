@@ -6,6 +6,7 @@ use crate::retry::RetryConfig;
 
 /// Available AI provider types
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
 pub enum AiProvider {
     /// Ollama (native API)
     Ollama,
@@ -136,6 +137,7 @@ impl AiProvider {
 
 /// AI Assistant configuration
 #[derive(Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct AiConfig {
     /// Current provider
     pub provider: AiProvider,

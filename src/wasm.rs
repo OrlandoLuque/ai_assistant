@@ -97,6 +97,7 @@ impl Default for PlatformCapabilities {
 
 /// Individual platform capabilities
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub enum Capability {
     /// File system access
     Filesystem,
@@ -177,6 +178,7 @@ pub mod time {
 /// HTTP client abstraction for WASM/native
 pub mod http {
     /// HTTP method
+    #[non_exhaustive]
     #[derive(Debug, Clone, Copy)]
     pub enum Method {
         Get,

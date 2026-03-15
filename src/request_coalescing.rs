@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 
 /// Configuration for request coalescing
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct CoalescingConfig {
     /// Maximum time to wait for similar requests
     pub coalescing_window: Duration,
@@ -574,6 +575,7 @@ fn rand_u64() -> u64 {
 
 /// Builder for creating coalescing configurations
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct CoalescingConfigBuilder {
     config: CoalescingConfig,
 }

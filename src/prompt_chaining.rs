@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 
 /// Configuration for prompt chaining
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ChainConfig {
     /// Maximum steps in a chain
     pub max_steps: usize,
@@ -70,6 +71,7 @@ pub struct VariableExtraction {
 
 /// Methods for extracting data from responses
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum ExtractionMethod {
     /// Use the full response
     FullResponse,
@@ -89,6 +91,7 @@ pub enum ExtractionMethod {
 
 /// Condition for step execution
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum StepCondition {
     /// Variable equals value
     VarEquals(String, String),

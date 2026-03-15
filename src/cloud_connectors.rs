@@ -110,6 +110,11 @@ pub struct ListResult {
 }
 
 /// Unified cloud storage interface.
+///
+/// # Stability
+///
+/// New methods may be added to this trait in minor versions with default
+/// implementations. Required methods will only change in major versions.
 pub trait CloudStorage {
     /// List objects in the storage.
     fn list(&self, options: &ListOptions) -> Result<ListResult>;
@@ -136,6 +141,7 @@ pub trait CloudStorage {
 
 /// Amazon S3 storage client configuration.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct S3Config {
     /// S3 bucket name
     pub bucket: String,
@@ -434,6 +440,7 @@ impl CloudStorage for S3Client {
 
 /// Google Drive storage client configuration.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct GoogleDriveConfig {
     /// OAuth2 access token
     pub access_token: String,
@@ -1082,6 +1089,7 @@ fn extract_xml_value(xml: &str, tag: &str) -> Option<String> {
 
 /// Supported cloud providers.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum CloudProvider {
     Aws,
     Azure,
@@ -1095,6 +1103,7 @@ pub enum CloudProvider {
 
 /// S3 operation types for request building.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum S3Operation {
     GetObject,
     PutObject,
@@ -1182,6 +1191,7 @@ impl S3Request {
 
 /// Azure Blob Storage operation types.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum AzureBlobOperation {
     GetBlob,
     PutBlob,
@@ -1260,6 +1270,7 @@ impl AzureBlobRequest {
 
 /// Google Cloud Storage operation types.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum GcsOperation {
     GetObject,
     InsertObject,
@@ -1345,6 +1356,7 @@ impl GcsRequest {
 
 /// Generic storage operation (provider-agnostic).
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum StorageOperation {
     Get,
     Put,

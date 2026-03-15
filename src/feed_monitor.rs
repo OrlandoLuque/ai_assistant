@@ -58,6 +58,7 @@ pub struct FeedMetadata {
 
 /// Feed format type.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum FeedFormat {
     /// RSS 2.0 format.
     Rss2,
@@ -86,6 +87,7 @@ pub struct ParsedFeed {
 ///
 /// Durations are stored as integer milliseconds (u64) for reliable serialization.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct FeedMonitorConfig {
     /// Map of feed name to feed URL.
     pub feeds: HashMap<String, String>,

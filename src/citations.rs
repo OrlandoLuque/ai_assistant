@@ -14,6 +14,7 @@ use std::collections::HashMap;
 
 /// Configuration for citation generation
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct CitationConfig {
     /// Citation style
     pub style: CitationStyle,
@@ -44,6 +45,7 @@ impl Default for CitationConfig {
 
 /// Citation styles
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum CitationStyle {
     /// [1], [2], etc.
     Numeric,
@@ -86,6 +88,7 @@ pub struct Source {
 
 /// Types of sources
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum SourceType {
     /// Web page
     WebPage,
@@ -544,6 +547,7 @@ pub struct UnverifiedCitation {
 }
 
 /// Builder for citation configuration
+#[non_exhaustive]
 pub struct CitationConfigBuilder {
     config: CitationConfig,
 }

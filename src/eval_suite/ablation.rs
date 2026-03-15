@@ -42,6 +42,7 @@ pub struct RunSummary {
 
 /// Recommendation from an ablation study.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum AblationRecommendation {
     /// Technique significantly improves quality
     Enable {

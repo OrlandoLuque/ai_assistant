@@ -13,6 +13,7 @@ use std::collections::HashMap;
 
 /// Subtask categories within agent workflows.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum Subtask {
     /// Breaking a complex task into steps
     TaskDecomposition,

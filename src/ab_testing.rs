@@ -11,6 +11,7 @@ use std::collections::HashMap;
 
 /// Errors that can occur in the A/B testing framework.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum AbTestError {
     /// The requested experiment was not found.
     ExperimentNotFound,
@@ -41,6 +42,7 @@ impl std::error::Error for AbTestError {}
 
 /// Status of an experiment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ExperimentStatus {
     Running,
     Stopped,

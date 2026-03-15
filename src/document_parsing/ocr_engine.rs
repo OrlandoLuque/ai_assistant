@@ -6,6 +6,7 @@
 
 /// OCR engine configuration.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct OcrConfig {
     /// Minimum confidence threshold for character recognition (0.0 - 1.0).
     pub min_confidence: f32,

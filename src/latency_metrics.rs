@@ -436,6 +436,7 @@ impl Default for LatencyTracker {
 
 /// Latency trend direction
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum LatencyTrend {
     /// Latency is increasing
     Increasing { change_percent: f64 },

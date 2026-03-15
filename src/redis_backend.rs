@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 
 /// Redis connection configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct RedisConfig {
     /// Redis connection URL (redis://host:port or rediss://host:port for TLS).
     pub url: String,

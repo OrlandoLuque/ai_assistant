@@ -53,6 +53,7 @@ impl TokenUsage {
 
 /// Configuration for a benchmark run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct RunConfig {
     /// Number of samples per problem for Pass@k (k=1 for accuracy benchmarks)
     pub samples_per_problem: usize,

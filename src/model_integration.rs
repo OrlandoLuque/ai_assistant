@@ -24,6 +24,7 @@ pub struct ChatMessage {
 /// Message role
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[non_exhaustive]
 pub enum ChatRole {
     System,
     User,
@@ -47,6 +48,11 @@ pub struct FunctionCall {
 }
 
 /// Model provider trait
+///
+/// # Stability
+///
+/// New methods may be added to this trait in minor versions with default
+/// implementations. Required methods will only change in major versions.
 pub trait ModelProvider: Send + Sync {
     /// Send messages and get a response
     fn chat(
@@ -76,6 +82,7 @@ pub struct ChatResponse {
 
 /// Reason for response completion
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum FinishReason {
     Stop,
     ToolCalls,
@@ -94,6 +101,7 @@ pub struct TokenUsage {
 
 /// Model errors
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum ModelError {
     ConnectionError(String),
     RateLimitError,

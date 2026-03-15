@@ -14,6 +14,7 @@ use crate::cost::{BudgetManager, BudgetStatus, CostEstimator};
 
 /// Classification of an AI API request for cost tracking purposes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum RequestType {
     Chat,
     Embedding,
@@ -334,6 +335,7 @@ impl CostDashboard {
 
 /// Configuration for automatic cost tracking and budget enforcement.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct CostAwareConfig {
     /// Whether cost tracking is enabled.
     pub enabled: bool,
@@ -368,6 +370,7 @@ impl Default for CostAwareConfig {
 
 /// Decision returned by `CostMiddleware::pre_request`.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum CostDecision {
     /// Request is within budget — proceed.
     Allow,

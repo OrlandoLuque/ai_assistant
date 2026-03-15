@@ -33,6 +33,7 @@ use std::time::{Duration, Instant};
 
 /// Priority levels for requests
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Priority {
     /// System critical - immediate processing
     Critical = 0,
@@ -243,6 +244,7 @@ impl Ord for QueueEntry {
 
 /// Queue configuration
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct QueueConfig {
     /// Maximum queue size
     pub max_size: usize,
@@ -582,6 +584,7 @@ pub struct QueueStats {
 
 /// Queue errors
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum QueueError {
     /// Queue is at capacity
     QueueFull,

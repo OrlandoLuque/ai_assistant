@@ -86,6 +86,7 @@ pub struct QualityIssue {
 
 /// Types of quality issues
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum QualityIssueType {
     /// Response is off-topic
     Irrelevant,
@@ -141,6 +142,7 @@ impl QualityIssueType {
 
 /// Configuration for quality analysis
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct QualityConfig {
     /// Minimum expected response length
     pub min_response_length: usize,

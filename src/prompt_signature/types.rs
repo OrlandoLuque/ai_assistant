@@ -12,6 +12,7 @@ use crate::error::AiError;
 
 /// The data type of a signature field.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
 pub enum FieldType {
     /// Free-form text
     Text,

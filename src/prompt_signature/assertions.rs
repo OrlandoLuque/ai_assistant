@@ -8,6 +8,7 @@ use super::types::Signature;
 
 /// Result of checking a prompt assertion.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum AssertionResult {
     /// The assertion passed.
     Pass,

@@ -23,6 +23,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// How to handle data received from peers
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum PeerDataTrust {
     /// Ignore all peer data (P2P for discovery only)
     Ignore,
@@ -42,14 +43,27 @@ impl Default for PeerDataTrust {
 
 /// TURN server configuration
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct TurnConfig {
     pub url: String,
     pub username: Option<String>,
     pub credential: Option<String>,
 }
 
+impl TurnConfig {
+    /// Create a new TURN server config with the given URL.
+    pub fn new(url: impl Into<String>) -> Self {
+        Self {
+            url: url.into(),
+            username: None,
+            credential: None,
+        }
+    }
+}
+
 /// P2P network configuration
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct P2PConfig {
     /// Enable P2P networking
     pub enabled: bool,
@@ -127,6 +141,7 @@ impl Default for P2PConfig {
 
 /// Type of NAT detected
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum NatType {
     /// No NAT (public IP)
     None,
@@ -592,6 +607,7 @@ impl NatTraversal {
 
 /// ICE candidate type
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum IceCandidateType {
     /// Direct host address
     Host,
@@ -643,6 +659,7 @@ impl IceCandidate {
 
 /// ICE connection state
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum IceState {
     /// Gathering candidates
     Gathering,
@@ -947,6 +964,7 @@ impl ReputationSystem {
 
 /// Types of messages that can be sent between peers
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum PeerMessage {
     /// Ping to check liveness
     Ping { timestamp: u64 },

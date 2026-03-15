@@ -29,6 +29,7 @@ use crate::shared_folder::SharedFolder;
 
 /// Output document format.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum OutputFormat {
     Pdf,
     Docx,
@@ -105,6 +106,7 @@ impl OutputFormat {
 
 /// Source content format hint.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum SourceFormat {
     Markdown,
     Html,
@@ -232,6 +234,7 @@ pub struct DocumentResult {
 
 /// Errors from document pipeline operations.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum DocumentError {
     /// Error originating from the container executor.
     ContainerError(ContainerError),
@@ -281,6 +284,7 @@ impl From<std::io::Error> for DocumentError {
 
 /// Configuration for the document pipeline.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct DocumentPipelineConfig {
     /// Docker image with document tools (default: "pandoc/extra:latest" — has pandoc + LaTeX).
     pub image: String,

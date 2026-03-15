@@ -111,6 +111,7 @@ fn compute_sentence_scores(text: &str) -> Vec<(String, f64)> {
 
 /// Context window configuration
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ContextWindowConfig {
     /// Maximum tokens in the context window
     pub max_tokens: usize,
@@ -138,6 +139,7 @@ impl Default for ContextWindowConfig {
 
 /// Strategy for evicting messages
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum EvictionStrategy {
     /// Remove oldest messages first
     OldestFirst,
@@ -532,6 +534,7 @@ impl Default for OverflowThresholds {
 
 /// Severity level of context window overflow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum OverflowLevel {
     /// Usage is within normal bounds
     Normal,
@@ -561,6 +564,7 @@ impl OverflowLevel {
 /// maximum token budget by subtracting a response reserve. When unknown, a
 /// fallback value is used.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct AutoTokenConfig {
     /// Known context window size of the model, if available
     pub model_context_window: Option<usize>,

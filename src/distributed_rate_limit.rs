@@ -136,6 +136,7 @@ impl DistributedRateLimiter {
 }
 
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum DistributedRateLimitResult {
     Allowed {
         remaining_requests: usize,

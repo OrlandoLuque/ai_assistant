@@ -32,6 +32,7 @@ use std::time::{Duration, Instant};
 
 /// Budget time period
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum BudgetPeriod {
     /// Per-hour budget
     Hourly,
@@ -214,6 +215,7 @@ pub struct BudgetCheckResult {
 
 /// Budget alert types
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum BudgetAlert {
     /// Approaching limit
     ApproachingLimit { percentage: f64 },

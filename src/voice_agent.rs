@@ -20,6 +20,7 @@ mod inner {
     // ========================================================================
 
     /// Audio encoding format for voice chunks.
+    #[non_exhaustive]
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     pub enum AudioFormat {
         /// Raw PCM 16-bit signed little-endian
@@ -229,6 +230,7 @@ mod inner {
     // ========================================================================
 
     /// Configuration for the energy-based voice activity detector.
+    #[non_exhaustive]
     #[derive(Debug, Clone)]
     pub struct VadConfig {
         /// RMS energy threshold for speech detection (0.0 - 1.0). Default: 0.02.
@@ -253,6 +255,7 @@ mod inner {
     }
 
     /// Events emitted by the VAD detector.
+    #[non_exhaustive]
     #[derive(Debug, Clone, PartialEq)]
     pub enum VadEvent {
         /// Speech has started at the given timestamp.
@@ -403,6 +406,7 @@ mod inner {
     // ========================================================================
 
     /// Policy for handling user interruptions while the agent is speaking.
+    #[non_exhaustive]
     #[derive(Debug, Clone, PartialEq)]
     pub enum InterruptionPolicy {
         /// Stop speaking instantly when user interrupts.
@@ -439,6 +443,7 @@ mod inner {
     // ========================================================================
 
     /// Who is speaking in a conversation turn.
+    #[non_exhaustive]
     #[derive(Debug, Clone, PartialEq)]
     pub enum TurnSpeaker {
         /// The human user.
@@ -472,6 +477,7 @@ mod inner {
     }
 
     /// Policy governing how turns are managed.
+    #[non_exhaustive]
     #[derive(Debug, Clone, PartialEq)]
     pub enum TurnPolicy {
         /// Speakers must strictly alternate (user, agent, user, agent, ...).
@@ -594,6 +600,7 @@ mod inner {
     // ========================================================================
 
     /// State machine for a voice session.
+    #[non_exhaustive]
     #[derive(Debug, Clone, PartialEq)]
     pub enum VoiceSessionState {
         /// Session created but not active.
@@ -751,6 +758,7 @@ mod inner {
     // ========================================================================
 
     /// Configuration for a voice agent instance.
+    #[non_exhaustive]
     #[derive(Debug, Clone)]
     pub struct VoiceAgentConfig {
         /// STT model identifier (e.g. "whisper-1", "google-chirp").
@@ -1090,6 +1098,7 @@ mod inner {
     // ========================================================================
 
     #[cfg(feature = "webrtc")]
+    #[non_exhaustive]
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct WebRtcConfig {
         pub stun_servers: Vec<String>,
@@ -1123,6 +1132,7 @@ mod inner {
     }
 
     #[cfg(feature = "webrtc")]
+    #[non_exhaustive]
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     pub enum WebRtcAudioCodec {
         Opus,
@@ -1155,6 +1165,7 @@ mod inner {
     }
 
     #[cfg(feature = "webrtc")]
+    #[non_exhaustive]
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     pub enum IceCandidateType {
         Host,
@@ -1164,6 +1175,7 @@ mod inner {
     }
 
     #[cfg(feature = "webrtc")]
+    #[non_exhaustive]
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct RtpStreamConfig {
         pub ssrc: u32,
@@ -1377,6 +1389,7 @@ mod inner {
     // ========================================================================
 
     /// Describes the audio I/O capabilities of a model.
+    #[non_exhaustive]
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     pub enum AudioModelCapability {
         /// Model only accepts and produces text.
@@ -1390,6 +1403,7 @@ mod inner {
     }
 
     /// Configuration for a Speech-to-Speech pipeline.
+    #[non_exhaustive]
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct S2SConfig {
         /// Model identifier for the S2S model.
@@ -1405,6 +1419,7 @@ mod inner {
     }
 
     /// Fallback strategy when the model does not support direct audio I/O.
+    #[non_exhaustive]
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     pub enum S2SFallbackMode {
         /// Standard fallback: STT -> LLM -> TTS

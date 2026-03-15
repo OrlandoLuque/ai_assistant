@@ -28,6 +28,7 @@ pub struct UsageForecast {
 
 /// Usage trend
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Trend {
     Increasing,
     Stable,

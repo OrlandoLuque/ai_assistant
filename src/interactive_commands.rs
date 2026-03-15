@@ -14,6 +14,7 @@ use std::sync::{Arc, RwLock};
 
 /// All possible parsed intents from user input.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum UserIntent {
     AddTask {
         description: String,

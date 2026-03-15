@@ -96,6 +96,7 @@ impl MemoryEntry {
 
 /// Type of memory
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum MemoryType {
     /// Summary of a conversation segment
     Summary,
@@ -117,6 +118,7 @@ pub enum MemoryType {
 
 /// Configuration for the memory system
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct MemoryConfig {
     /// Maximum number of memories to retain
     pub max_memories: usize,

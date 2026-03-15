@@ -48,6 +48,7 @@ impl TableCell {
 
 /// The source format from which a table was extracted.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum TableSourceFormat {
     /// Markdown pipe-delimited table.
     Markdown,
@@ -222,6 +223,7 @@ impl ExtractedTable {
 
 /// Configuration for the table extractor.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct TableExtractorConfig {
     /// Whether to detect Markdown pipe tables.
     pub detect_markdown: bool,

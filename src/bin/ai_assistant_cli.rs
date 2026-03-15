@@ -682,12 +682,14 @@ fn main() -> ExitCode {
                     println!("Unknown command: /{cmd}. Type /help for available commands.");
                 }
                 ReplCommand::Exit => unreachable!("Exit handled by ReplAction::Exit"),
+                _ => { eprintln!("Unknown command"); }
             },
             ReplAction::Continue => {}
             ReplAction::Exit => {
                 println!("Goodbye!");
                 break;
             }
+            _ => { eprintln!("Unknown action"); }
         }
     }
 

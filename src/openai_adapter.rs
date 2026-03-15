@@ -206,6 +206,7 @@ pub struct OpenAIErrorDetail {
 
 /// OpenAI client configuration
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct OpenAIConfig {
     pub api_key: String,
     pub base_url: String,
@@ -425,6 +426,7 @@ struct ModelInfo {
 
 /// OpenAI adapter error
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum OpenAIAdapterError {
     Network(String),
     Serialization(String),

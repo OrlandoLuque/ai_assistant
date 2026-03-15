@@ -547,6 +547,7 @@ pub fn connection_status(ui: &mut Ui, is_fetching: bool, model_count: usize) {
 
 /// Configuration for RAG control widgets
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct RagWidgetConfig {
     /// Whether the user can toggle knowledge RAG
     pub knowledge_rag_editable: bool,
@@ -893,6 +894,7 @@ struct NotesManagerState {
 
 /// Type of notes editor currently active
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum NotesEditorType {
     Session,
     Global,
@@ -901,6 +903,7 @@ pub enum NotesEditorType {
 
 /// Configuration for NotesManager widget
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct NotesManagerConfig {
     /// Enable session notes
     pub session_enabled: bool,
@@ -1415,6 +1418,7 @@ pub struct NotesEditorResponse {
 
 /// Configuration for notes editor widgets
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct NotesEditorConfig {
     /// Label for session notes button
     pub session_button_label: String,
@@ -2236,6 +2240,7 @@ pub fn retrieved_chunks_panel(ui: &mut Ui, chunks: &[RetrievedChunkInfo], title:
 
 /// Configuration for an LLM provider
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ProviderConfig {
     /// Provider name (Ollama, LM Studio, etc.)
     pub name: String,
@@ -2251,6 +2256,7 @@ pub struct ProviderConfig {
 
 /// Connection status for a provider
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum ProviderStatus {
     Unknown,
     Checking,
@@ -2266,6 +2272,7 @@ impl Default for ProviderStatus {
 
 /// Response from provider configuration widget
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct ProviderConfigResponse {
     /// Provider URL was changed (provider_name, new_url)
     pub url_changed: Option<(String, String)>,
@@ -3095,6 +3102,7 @@ pub fn backup_status_panel(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum BackupAction {
     None,
     CreateBackup,
@@ -3487,6 +3495,7 @@ pub fn advanced_metrics_panel(ui: &mut Ui, metrics_history: &[MessageMetrics]) {
 
 /// Mode for knowledge source selection
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum KnowledgeSelectionMode {
     /// No knowledge selected
     #[default]
@@ -3619,6 +3628,7 @@ pub struct KnowledgeSelectorResponse {
 
 /// Configuration for knowledge selector widget
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct KnowledgeSelectorConfig {
     /// Label shown before the selector
     pub label: String,

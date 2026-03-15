@@ -13,6 +13,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Represents a single field in a cron expression.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum CronField {
     /// Wildcard `*` — matches any value.
     Any,
@@ -252,6 +253,7 @@ fn describe_field(field: &CronField) -> String {
 
 /// The action a scheduled job should trigger when it fires.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum ScheduledAction {
     /// Run an agent with the given profile and task description.
     RunAgent { profile: String, task: String },

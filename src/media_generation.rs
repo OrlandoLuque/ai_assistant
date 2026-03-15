@@ -106,6 +106,7 @@ mod inner {
     // --- Enums --------------------------------------------------------------
 
     /// Style preset for image generation.
+    #[non_exhaustive]
     #[derive(Debug, Clone, PartialEq)]
     pub enum ImageStyle {
         Natural,
@@ -130,6 +131,7 @@ mod inner {
     }
 
     /// Quality level for generated images.
+    #[non_exhaustive]
     #[derive(Debug, Clone, PartialEq)]
     pub enum ImageQuality {
         Draft,
@@ -150,6 +152,7 @@ mod inner {
     }
 
     /// Output image format.
+    #[non_exhaustive]
     #[derive(Debug, Clone, PartialEq)]
     pub enum ImageFormat {
         Png,
@@ -172,6 +175,7 @@ mod inner {
     // --- Config & result structs --------------------------------------------
 
     /// Configuration for an image generation request.
+    #[non_exhaustive]
     #[derive(Debug, Clone)]
     pub struct ImageGenConfig {
         /// Output width in pixels.
@@ -1183,6 +1187,7 @@ mod inner {
     // ========================================================================
 
     /// Operation type for image editing.
+    #[non_exhaustive]
     #[derive(Debug, Clone, PartialEq)]
     pub enum ImageEditOperation {
         Inpaint,
@@ -1207,6 +1212,7 @@ mod inner {
     }
 
     /// Configuration for an image editing request.
+    #[non_exhaustive]
     #[derive(Debug, Clone)]
     pub struct ImageEditConfig {
         /// The editing operation to apply.
@@ -1385,6 +1391,7 @@ mod inner {
     // --- Enums --------------------------------------------------------------
 
     /// Video output resolution.
+    #[non_exhaustive]
     #[derive(Debug, Clone, PartialEq)]
     pub enum VideoResolution {
         SD480,
@@ -1405,6 +1412,7 @@ mod inner {
     }
 
     /// Aspect ratio for video output.
+    #[non_exhaustive]
     #[derive(Debug, Clone, PartialEq)]
     pub enum AspectRatio {
         /// 1:1
@@ -1432,6 +1440,7 @@ mod inner {
     }
 
     /// Video container / codec format.
+    #[non_exhaustive]
     #[derive(Debug, Clone, PartialEq)]
     pub enum VideoFormat {
         Mp4,
@@ -1450,6 +1459,7 @@ mod inner {
     }
 
     /// Status of an async video generation job.
+    #[non_exhaustive]
     #[derive(Debug, Clone, PartialEq)]
     pub enum VideoJobStatus {
         Queued,
@@ -1476,6 +1486,7 @@ mod inner {
     // --- Config & result structs --------------------------------------------
 
     /// Configuration for a video generation request.
+    #[non_exhaustive]
     #[derive(Debug, Clone)]
     pub struct VideoGenConfig {
         /// Desired duration in seconds.
@@ -1879,6 +1890,7 @@ mod inner {
     // ========================================================================
 
     /// Strategy for extracting frames from a video for analysis.
+    #[non_exhaustive]
     #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
     pub enum FrameExtractionStrategy {
         /// Extract a frame every `interval_ms` milliseconds.
@@ -1893,6 +1905,7 @@ mod inner {
     }
 
     /// Output format for a video analysis result.
+    #[non_exhaustive]
     #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
     pub enum AnalysisOutputFormat {
         /// A single-paragraph summary of the entire video.
@@ -1906,6 +1919,7 @@ mod inner {
     }
 
     /// Configuration for video frame analysis.
+    #[non_exhaustive]
     #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
     pub struct VideoAnalysisConfig {
         /// How frames are selected for analysis.

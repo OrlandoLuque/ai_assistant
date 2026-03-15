@@ -6,6 +6,7 @@ use std::collections::{HashMap, VecDeque};
 
 /// Type of audit event
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum AuditEventType {
     /// Message sent to AI
     MessageSent,
@@ -98,6 +99,7 @@ impl AuditEvent {
 
 /// Configuration for audit logging
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct AuditConfig {
     /// Enable audit logging
     pub enabled: bool,

@@ -7,6 +7,7 @@ use super::episodic::Episode;
 
 /// Policy controlling when memories are synchronized between sessions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum MemorySyncPolicy {
     /// Synchronize immediately on every change.
     Eager,

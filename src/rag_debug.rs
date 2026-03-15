@@ -59,6 +59,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Debug verbosity level for RAG operations
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum RagDebugLevel {
     /// No debug output
     #[default]
@@ -104,6 +105,7 @@ impl RagDebugLevel {
 
 /// Configuration for RAG debug logging
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct RagDebugConfig {
     /// Whether debug logging is enabled
     pub enabled: bool,
@@ -236,6 +238,7 @@ impl RagDebugConfig {
 /// A single step in the RAG process
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
+#[non_exhaustive]
 pub enum RagDebugStep {
     /// Initial query received
     QueryReceived { query: String, timestamp_ms: u64 },

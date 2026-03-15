@@ -6,6 +6,7 @@ use std::collections::HashMap;
 
 /// Template category
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum TemplateCategory {
     Coding,
     Writing,

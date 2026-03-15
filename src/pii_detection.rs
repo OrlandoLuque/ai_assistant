@@ -15,6 +15,7 @@ use std::collections::HashMap;
 
 /// Configuration for PII detection
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct PiiConfig {
     /// PII types to detect
     pub detect_types: Vec<PiiType>,
@@ -49,6 +50,7 @@ impl Default for PiiConfig {
 
 /// Types of PII
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum PiiType {
     /// Email addresses
     Email,
@@ -101,6 +103,7 @@ impl PiiType {
 
 /// Redaction strategies
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum RedactionStrategy {
     /// Replace with placeholder like [EMAIL]
     Replace,
@@ -116,6 +119,7 @@ pub enum RedactionStrategy {
 
 /// Sensitivity levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SensitivityLevel {
     /// Only high-confidence matches
     Low,
@@ -561,6 +565,7 @@ impl Default for PiiDetector {
 }
 
 /// Builder for PII configuration
+#[non_exhaustive]
 pub struct PiiConfigBuilder {
     config: PiiConfig,
 }

@@ -138,6 +138,7 @@ pub(crate) fn base64url_encode(data: &[u8]) -> String {
 
 /// MCP v2 OAuth configuration (simplified for the v2 flow with PKCE).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct McpV2OAuthConfig {
     pub authorization_endpoint: String,
     pub token_endpoint: String,
@@ -145,6 +146,20 @@ pub struct McpV2OAuthConfig {
     pub client_secret: Option<String>,
     pub scopes: Vec<String>,
     pub redirect_uri: String,
+}
+
+impl McpV2OAuthConfig {
+    /// Create a new MCP v2 OAuth config with the given client credentials.
+    pub fn new(client_id: impl Into<String>, client_secret: impl Into<String>) -> Self {
+        Self {
+            authorization_endpoint: String::new(),
+            token_endpoint: String::new(),
+            client_id: Some(client_id.into()),
+            client_secret: Some(client_secret.into()),
+            scopes: Vec::new(),
+            redirect_uri: String::new(),
+        }
+    }
 }
 
 /// OAuth 2.1 token with expiry tracking.

@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 
 /// Configuration for self-consistency
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ConsistencyConfig {
     /// Number of samples to generate
     pub num_samples: usize,
@@ -424,6 +425,7 @@ fn extract_categorical_answer(response: &str) -> String {
 
 /// Builder for consistency configuration
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct ConsistencyConfigBuilder {
     config: ConsistencyConfig,
 }

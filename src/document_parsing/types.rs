@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 /// Supported document formats.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum DocumentFormat {
     Epub,
     Docx,
@@ -171,6 +172,7 @@ impl ParsedDocument {
 
 /// Configuration for the document parser.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct DocumentParserConfig {
     /// Whether to preserve paragraph breaks as double newlines.
     pub preserve_paragraphs: bool,

@@ -11,6 +11,11 @@
 //! - [`TokenBudget`] / [`TokenAllocation`] — helpers for allocating tokens across prompt parts
 
 /// Trait for counting tokens in text.
+///
+/// # Stability
+///
+/// New methods may be added to this trait in minor versions with default
+/// implementations. Required methods will only change in major versions.
 pub trait TokenCounter: Send + Sync {
     /// Count the number of tokens in `text`.
     fn count(&self, text: &str) -> usize;

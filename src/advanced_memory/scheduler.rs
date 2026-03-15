@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 /// A task that can be scheduled for periodic execution on the memory system.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum SchedulerTask {
     /// Run memory consolidation.
     Consolidate,
@@ -20,6 +21,7 @@ pub enum SchedulerTask {
 
 /// Configuration for the memory scheduler.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct SchedulerConfig {
     /// Interval between consolidation runs, in seconds.
     pub consolidation_interval_secs: u64,

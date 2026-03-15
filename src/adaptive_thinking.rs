@@ -62,6 +62,7 @@ use std::collections::HashMap;
 /// and clamped to min/max bounds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ThinkingDepth {
     /// Greetings, thanks, confirmations, trivial chitchat.
     /// No reasoning needed — quick, conversational response.
@@ -129,6 +130,7 @@ impl ThinkingDepth {
 /// and an explicitly configured RAG tier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum RagTierPriority {
     /// Adaptive thinking's suggestion takes precedence (default).
     Adaptive,
@@ -209,6 +211,7 @@ pub struct ThinkingStrategy {
 /// Disabled by default for backwards compatibility. Enable with `enabled: true`
 /// or use `AiAssistant::enable_adaptive_thinking()`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct AdaptiveThinkingConfig {
     /// Master enable/disable switch. Default: `false`.
     pub enabled: bool,

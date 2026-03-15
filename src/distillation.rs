@@ -29,6 +29,7 @@ mod inner {
     pub type TrajectoryId = String;
 
     /// The type of action performed in a trajectory step.
+    #[non_exhaustive]
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
     pub enum StepType {
         /// An LLM inference call.
@@ -63,6 +64,7 @@ mod inner {
     }
 
     /// The final outcome of a trajectory.
+    #[non_exhaustive]
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
     pub enum TrajectoryOutcome {
         /// The task completed successfully.
@@ -544,6 +546,7 @@ mod inner {
     }
 
     /// Which outcome types are required to pass the filter.
+    #[non_exhaustive]
     #[derive(Debug, Clone, PartialEq)]
     pub enum RequiredOutcome {
         /// Only successful trajectories.
@@ -743,6 +746,7 @@ mod inner {
     // ========================================================================
 
     /// The output format for the fine-tuning dataset.
+    #[non_exhaustive]
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
     pub enum DatasetFormat {
         /// OpenAI fine-tuning JSONL (messages array).
@@ -767,6 +771,7 @@ mod inner {
     }
 
     /// How to flatten a multi-step trajectory into a training example.
+    #[non_exhaustive]
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
     pub enum FlatteningStrategy {
         /// Use only the last LLM response as output.
@@ -778,6 +783,7 @@ mod inner {
     }
 
     /// Configuration for dataset building.
+    #[non_exhaustive]
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct DatasetConfig {
         pub format: DatasetFormat,
@@ -1072,6 +1078,7 @@ mod inner {
     // ========================================================================
 
     /// Configuration for the data flywheel.
+    #[non_exhaustive]
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct FlywheelConfig {
         /// How many hours back to consider trajectories. Default: 24.
@@ -1102,6 +1109,7 @@ mod inner {
     }
 
     /// Status of a flywheel cycle.
+    #[non_exhaustive]
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
     pub enum CycleStatus {
         /// Cycle is currently running.

@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 
 /// Configuration for model warmup
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct WarmupConfig {
     /// Interval between warmup pings
     pub warmup_interval: Duration,
@@ -369,6 +370,7 @@ pub struct ScheduledWarmup {
 
 /// Time specification for scheduled warmup
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum WarmupTime {
     /// Warm at specific hour (0-23)
     AtHour(u8),
@@ -379,6 +381,7 @@ pub enum WarmupTime {
 }
 
 /// Builder for warmup configuration
+#[non_exhaustive]
 pub struct WarmupConfigBuilder {
     config: WarmupConfig,
 }

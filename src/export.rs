@@ -16,6 +16,7 @@ use std::path::Path;
 
 /// Supported export formats
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ExportFormat {
     /// JSON format (human-readable)
     Json,

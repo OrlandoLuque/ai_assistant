@@ -33,6 +33,7 @@ pub struct HealthCheckResult {
 
 /// Types of health checks
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum HealthCheckType {
     /// Simple connectivity check
     Ping,
@@ -46,6 +47,7 @@ pub enum HealthCheckType {
 
 /// Health status of a provider
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum HealthStatus {
     /// Provider is healthy
     Healthy,
@@ -99,6 +101,7 @@ impl Default for ProviderHealth {
 
 /// Configuration for health checking
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct HealthCheckConfig {
     /// Check interval
     pub interval: Duration,

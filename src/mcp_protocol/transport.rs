@@ -8,6 +8,7 @@ use super::types::*;
 /// MCP Transport type (2025-03-26 spec adds Streamable HTTP)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum McpTransport {
     /// Standard HTTP POST (JSON-RPC over HTTP).
     Http,

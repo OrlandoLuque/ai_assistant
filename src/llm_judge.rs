@@ -11,6 +11,7 @@ use std::fmt;
 
 /// Criteria for LLM-based evaluation of responses.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum EvalCriterion {
     /// Is the response relevant to the query?
     Relevance,

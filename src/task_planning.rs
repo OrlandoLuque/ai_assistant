@@ -25,6 +25,7 @@ use uuid::Uuid;
 
 /// Status of a plan step.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum StepStatus {
     Pending,
     InProgress,
@@ -35,6 +36,7 @@ pub enum StepStatus {
 
 /// Priority level of a plan step.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum StepPriority {
     Critical,
     High,

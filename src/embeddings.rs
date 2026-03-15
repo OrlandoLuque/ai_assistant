@@ -9,6 +9,7 @@ use std::collections::HashMap;
 
 /// Configuration for local embeddings
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct EmbeddingConfig {
     /// Dimensionality of the embedding vectors
     pub dimensions: usize,
@@ -391,6 +392,7 @@ pub struct SearchResult {
 
 /// Configuration for hybrid search
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct HybridSearchConfig {
     /// Weight for keyword/BM25 score (0.0 to 1.0)
     pub keyword_weight: f32,

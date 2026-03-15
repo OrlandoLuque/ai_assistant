@@ -15,6 +15,7 @@ use std::time::{Duration, SystemTime};
 
 /// Configuration for analytics
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct AnalyticsConfig {
     /// Enable detailed tracking
     pub detailed_tracking: bool,
@@ -59,6 +60,7 @@ pub struct AnalyticsEvent {
 
 /// Event types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum EventType {
     /// Conversation started
     ConversationStart,
@@ -80,6 +82,7 @@ pub enum EventType {
 
 /// Event value types
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum EventValue {
     String(String),
     Int(i64),
@@ -454,6 +457,7 @@ pub struct ExportedEvent {
 }
 
 /// Builder for analytics config
+#[non_exhaustive]
 pub struct AnalyticsConfigBuilder {
     config: AnalyticsConfig,
 }

@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 /// Pin type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum PinType {
     /// User explicitly pinned
     User,

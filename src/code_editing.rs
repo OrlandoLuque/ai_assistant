@@ -15,6 +15,7 @@ use crate::edit_operations::{EditError, TextEditor};
 
 /// Language configuration for code editing
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct LanguageConfig {
     /// Language identifier
     pub language: String,
@@ -256,6 +257,7 @@ impl EditSuggestion {
 
 /// Category of edit
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum EditCategory {
     /// Bug fix
     BugFix,
@@ -628,6 +630,7 @@ pub struct CodeSearch {
 
 /// Scope for code search
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SearchScope {
     /// Search everywhere
     All,

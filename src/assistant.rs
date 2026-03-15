@@ -80,6 +80,7 @@ pub struct IndexingResult {
 /// Progress update during indexing
 #[cfg(feature = "rag")]
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum IndexingProgress {
     /// Starting to index a document
     Starting {
@@ -157,6 +158,7 @@ pub struct SummaryResult {
 ///   Conversation history is saved but NOT included in the context window,
 ///   maximizing the token budget available for knowledge retrieval.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum ContextMode {
     /// Accumulate conversation history in context, compact when needed.
     #[default]
@@ -171,6 +173,7 @@ pub enum ContextMode {
 /// These warnings help library consumers and GUI code understand
 /// what is missing for optimal FreshContext operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum FreshContextWarning {
     /// RAG not initialized — FreshContext is almost useless without it.
     NoRag,
@@ -212,6 +215,7 @@ impl std::fmt::Display for FreshContextWarning {
 
 /// How effective FreshContext will be with the current configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum FreshContextEffectiveness {
     /// RAG + Graph + Memory — maximum context quality.
     Optimal,

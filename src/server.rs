@@ -97,6 +97,7 @@ fn tls_accept(
 
 /// Authentication configuration for the server.
 #[derive(Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct AuthConfig {
     /// Whether authentication is enabled (default: false).
     pub enabled: bool,
@@ -132,6 +133,7 @@ impl Default for AuthConfig {
 
 /// Result of an authentication check.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum AuthResult {
     /// The request was authenticated successfully.
     Authenticated,
@@ -143,6 +145,7 @@ pub enum AuthResult {
 
 /// CORS (Cross-Origin Resource Sharing) configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct CorsConfig {
     /// Allowed origins (default: ["*"]).
     pub allowed_origins: Vec<String>,
@@ -234,6 +237,7 @@ fn extract_client_ip(headers: &[(String, String)], trust_proxy: bool) -> String 
 /// When provided in `ServerConfig`, the server will use HTTPS.
 /// When `None` (the default), the server falls back to plain HTTP.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct TlsConfig {
     /// Path to the PEM-encoded certificate file.
     pub cert_path: String,
@@ -241,8 +245,19 @@ pub struct TlsConfig {
     pub key_path: String,
 }
 
+impl TlsConfig {
+    /// Create a new TLS configuration with the given certificate and key paths.
+    pub fn new(cert_path: impl Into<String>, key_path: impl Into<String>) -> Self {
+        Self {
+            cert_path: cert_path.into(),
+            key_path: key_path.into(),
+        }
+    }
+}
+
 /// Configuration for the embedded HTTP server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ServerConfig {
     /// Host to bind to (default: "127.0.0.1").
     pub host: String,
@@ -288,6 +303,7 @@ pub struct ServerConfig {
 
 /// Granular guardrail configuration for the enrichment pipeline.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct GuardrailEnrichmentConfig {
     /// Enable attack/injection detection guard. Default: true (when guardrails enabled).
     #[serde(default = "default_true")]
@@ -372,6 +388,7 @@ impl Default for GuardrailEnrichmentConfig {
 
 /// RAG retrieval configuration for enrichment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct RagEnrichmentConfig {
     /// Enable knowledge-base RAG retrieval. Default: true (when RAG enabled).
     #[serde(default = "default_true")]
@@ -416,6 +433,7 @@ impl Default for RagEnrichmentConfig {
 
 /// Context composition / token budget configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ContextEnrichmentConfig {
     /// Enable context budget management. Default: false.
     #[serde(default)]
@@ -448,6 +466,7 @@ impl Default for ContextEnrichmentConfig {
 
 /// Conversation compaction configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct CompactionEnrichmentConfig {
     /// Enable conversation compaction. Default: false.
     #[serde(default)]
@@ -484,6 +503,7 @@ impl Default for CompactionEnrichmentConfig {
 
 /// Auto model selection configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ModelSelectionEnrichmentConfig {
     /// Enable auto model selection. Default: false.
     #[serde(default)]
@@ -516,6 +536,7 @@ impl Default for ModelSelectionEnrichmentConfig {
 
 /// Cost tracking and budget configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct CostEnrichmentConfig {
     /// Enable cost tracking/budget enforcement. Default: false.
     #[serde(default)]
@@ -548,6 +569,7 @@ impl Default for CostEnrichmentConfig {
 
 /// Adaptive thinking / chain-of-thought configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ThinkingEnrichmentConfig {
     /// Enable adaptive thinking. Default: false.
     #[serde(default)]
@@ -595,6 +617,7 @@ impl Default for ThinkingEnrichmentConfig {
 /// are applied to incoming requests.
 /// All features are disabled by default for backward compatibility.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct EnrichmentConfig {
     /// Enable RAG knowledge retrieval for incoming queries.
     #[serde(default)]
@@ -881,6 +904,7 @@ impl ServerMetrics {
 
 /// Audit event types for compliance logging.
 #[derive(Debug, Clone, Serialize)]
+#[non_exhaustive]
 pub enum AuditEventType {
     AuthSuccess,
     AuthFailure,

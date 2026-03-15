@@ -157,6 +157,7 @@ impl SearchQuery {
 
 /// Search mode for matching
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SearchMode {
     /// Exact phrase match
     Exact,

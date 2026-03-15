@@ -7,6 +7,7 @@ use super::consolidation::SemanticFact;
 
 /// A memory extraction result from analyzing conversational text.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum MemoryExtraction {
     /// A new semantic fact was extracted.
     NewFact { fact: SemanticFact },
@@ -33,6 +34,7 @@ pub enum MemoryExtraction {
 
 /// Configuration for the automatic memory extractor.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ExtractionConfig {
     /// Minimum confidence for an extraction to be accepted.
     pub min_confidence: f64,
@@ -63,6 +65,7 @@ impl Default for ExtractionConfig {
 
 /// The type of pattern an extraction rule matches.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ExtractionRuleType {
     /// Matches fact patterns (subject-predicate-object).
     FactPattern,

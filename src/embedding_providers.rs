@@ -16,6 +16,11 @@ use crate::embeddings::{EmbeddingConfig, LocalEmbedder};
 // ============================================================================
 
 /// Trait for embedding providers — both local and remote API-based.
+///
+/// # Stability
+///
+/// New methods may be added to this trait in minor versions with default
+/// implementations. Required methods will only change in major versions.
 pub trait EmbeddingProvider: Send + Sync {
     /// Provider name
     fn name(&self) -> &str;

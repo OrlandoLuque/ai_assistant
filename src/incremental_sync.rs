@@ -7,6 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Sync operation type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
 pub enum SyncOperation {
     Add,
     Update,
@@ -311,6 +312,7 @@ impl Default for IncrementalSyncManager {
 
 /// Sync errors
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SyncError {
     VersionMismatch,
     InvalidDelta,

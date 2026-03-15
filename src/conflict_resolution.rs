@@ -7,6 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Conflict type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ConflictType {
     /// Both sides modified same content
     ConcurrentModification,
@@ -71,6 +72,7 @@ impl Conflict {
 
 /// Resolution strategy
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ResolutionStrategy {
     /// Keep local version
     KeepLocal,
@@ -334,6 +336,7 @@ impl Default for ConflictResolver {
 
 /// Conflict errors
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ConflictError {
     NotFound,
     AlreadyResolved,

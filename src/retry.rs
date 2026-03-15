@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 /// Retry strategy configuration
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct RetryConfig {
     /// Maximum number of retry attempts
     pub max_retries: u32,
@@ -112,6 +113,7 @@ impl RetryConfig {
 
 /// Types of errors that can be retried
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RetryableError {
     /// Connection was refused
     ConnectionRefused,
@@ -390,6 +392,7 @@ pub struct CircuitBreaker {
 
 /// State of the circuit breaker
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CircuitState {
     /// Circuit is closed, requests pass through normally
     Closed,

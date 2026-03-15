@@ -20,6 +20,7 @@ use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextPar
 
 /// Audio encoding format.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum AudioFormat {
     Wav,
     Mp3,
@@ -74,6 +75,7 @@ impl AudioFormat {
 
 /// Configuration for a speech provider.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct SpeechConfig {
     /// API key for authentication.
     pub api_key: Option<String>,
@@ -167,6 +169,11 @@ pub struct SynthesisResult {
 // ============================================================================
 
 /// Unified trait for speech-to-text and text-to-speech providers.
+///
+/// # Stability
+///
+/// New methods may be added to this trait in minor versions with default
+/// implementations. Required methods will only change in major versions.
 pub trait SpeechProvider: Send + Sync {
     /// Provider name (e.g., "openai", "google").
     fn name(&self) -> &str;

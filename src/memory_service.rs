@@ -19,6 +19,7 @@ use std::time::Duration;
 // ============================================================================
 
 /// Top-level command sent to the MemoryService.
+#[non_exhaustive]
 pub enum MemoryCommand {
     /// Episodic memory operations.
     Episodic(EpisodicCmd),
@@ -31,6 +32,7 @@ pub enum MemoryCommand {
 }
 
 /// Commands for the episodic memory store.
+#[non_exhaustive]
 pub enum EpisodicCmd {
     /// Add an episode.
     AddEpisode(Episode),
@@ -51,6 +53,7 @@ pub enum EpisodicCmd {
 }
 
 /// Commands for the entity store.
+#[non_exhaustive]
 pub enum EntityCmd {
     /// Add an entity record.
     Add(EntityRecord),
@@ -78,6 +81,7 @@ pub enum EntityCmd {
 }
 
 /// Commands for plan persistence.
+#[non_exhaustive]
 pub enum PlanCmd {
     /// Save a plan.
     Save {
@@ -102,6 +106,7 @@ pub enum PlanCmd {
 }
 
 /// System-level commands.
+#[non_exhaustive]
 pub enum SystemCmd {
     /// Shutdown the memory service (flush and stop).
     Shutdown,
@@ -115,6 +120,7 @@ pub enum SystemCmd {
 
 /// Configuration for the memory service.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct MemoryServiceConfig {
     /// Maximum episodes before eviction.
     pub max_episodes: usize,

@@ -34,6 +34,7 @@ use std::path::{Path, PathBuf};
 
 /// Detected storage format of a file or byte buffer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum StorageFormat {
     /// bincode + gzip compressed binary format.
     Binary,

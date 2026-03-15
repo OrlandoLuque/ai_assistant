@@ -8,12 +8,10 @@ use ai_assistant::{AiAssistant, AiConfig, AiProvider};
 
 fn main() {
     // Configure for Ollama (default local LLM provider)
-    let config = AiConfig {
-        provider: AiProvider::Ollama,
-        selected_model: "llama3".to_string(),
-        ollama_url: "http://localhost:11434".to_string(),
-        ..Default::default()
-    };
+    let mut config = AiConfig::default();
+    config.provider = AiProvider::Ollama;
+    config.selected_model = "llama3".to_string();
+    config.ollama_url = "http://localhost:11434".to_string();
 
     // Create assistant instance
     let mut assistant = AiAssistant::new();

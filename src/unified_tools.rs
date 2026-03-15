@@ -30,6 +30,7 @@ use std::sync::Arc;
 /// JSON Schema parameter type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[non_exhaustive]
 pub enum ParamType {
     String,
     Number,
@@ -539,6 +540,7 @@ impl ToolOutput {
 
 /// Error type for tool execution failures.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ToolError {
     /// Tool not found in registry.
     NotFound(String),
@@ -574,6 +576,7 @@ impl std::error::Error for ToolError {}
 
 /// Controls how the model selects tools.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ToolChoice {
     /// Model decides whether to call a tool.
     Auto,

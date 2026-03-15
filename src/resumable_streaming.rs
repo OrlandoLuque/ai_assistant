@@ -33,6 +33,7 @@ pub struct StreamChunk {
 
 /// Configuration for resumable streaming.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ResumableStreamConfig {
     /// How often to create a checkpoint (every N chunks).
     pub checkpoint_interval: u64,
@@ -276,6 +277,7 @@ pub fn format_sse_event(chunk: &StreamChunk) -> String {
 
 /// Configuration for SSE auto-reconnection.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct SseReconnectConfig {
     /// Maximum number of reconnection attempts before giving up.
     pub max_attempts: u32,

@@ -13,6 +13,7 @@ use std::collections::HashMap;
 
 /// Standard benchmark suite types.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum BenchmarkSuiteType {
     /// HumanEval: function completion from docstring (164 problems, Pass@k)
     HumanEval,
@@ -70,6 +71,7 @@ impl std::fmt::Display for BenchmarkSuiteType {
 
 /// Problem category for cross-suite grouping.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ProblemCategory {
     /// Code generation, completion, bug fixing
     Coding,
@@ -112,6 +114,7 @@ impl std::fmt::Display for ProblemCategory {
 
 /// Answer format expected from the LLM.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum AnswerFormat {
     /// Free-form code generation (evaluated by reference matching or test execution)
     Code {

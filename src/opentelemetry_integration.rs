@@ -149,6 +149,7 @@ impl AiSpan {
 
 /// Configuration for the OTel tracer.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct OtelConfig {
     /// Service name for the tracer
     pub service_name: String,
@@ -549,6 +550,7 @@ impl MetricsCollector {
 
 /// Export format for span data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ExportFormat {
     /// Standard JSON array of spans
     Json,
@@ -725,6 +727,7 @@ impl TracingMiddleware {
 
 /// GenAI system/provider identifiers following OTel GenAI semantic conventions.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum GenAiSystem {
     OpenAI,
     Anthropic,
@@ -893,6 +896,7 @@ impl GenAiAttributes {
 
 /// Types of GenAI events that can occur during an operation.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum GenAiEventType {
     /// A prompt was sent to the model
     Prompt,
@@ -941,6 +945,7 @@ impl GenAiEvent {
 
 /// Status of an agent span.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum SpanStatus {
     /// Span completed successfully
     Ok,
@@ -1299,6 +1304,7 @@ impl PricingTable {
 
 /// Result of checking whether a cost is within budget.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum BudgetCheckResult {
     /// Cost is allowed within the budget
     Allowed,

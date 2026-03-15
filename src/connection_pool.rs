@@ -31,6 +31,7 @@ use std::time::{Duration, Instant};
 
 /// Configuration for the connection pool
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct PoolConfig {
     /// Maximum connections per host
     pub max_connections_per_host: usize,

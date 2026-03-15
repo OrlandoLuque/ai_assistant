@@ -67,6 +67,7 @@ pub struct StoredMessage {
 
 /// RAG configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct RagConfig {
     /// Enable RAG for knowledge base
     pub knowledge_rag_enabled: bool,
@@ -285,6 +286,7 @@ impl KnowledgeUsage {
 
 /// Configuration for hybrid search
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct HybridRagConfig {
     /// Weight for BM25/FTS5 score (0.0 to 1.0)
     pub bm25_weight: f32,
@@ -1920,6 +1922,7 @@ pub fn build_conversation_context(messages: &[StoredMessage]) -> String {
 
 /// Configuration for discourse-aware chunking
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct DiscourseConfig {
     /// Minimum chunk size in characters
     pub min_chunk_size: usize,
@@ -1960,6 +1963,7 @@ pub struct DiscourseChunkMetadata {
 
 /// Types of discourse elements
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum DiscourseType {
     Heading,
     Paragraph,
@@ -1972,6 +1976,7 @@ pub enum DiscourseType {
 
 /// Types of boundaries between chunks
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum BoundaryType {
     HeadingBreak,
     ParagraphBreak,

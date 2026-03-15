@@ -1084,11 +1084,10 @@ mod rag_methods_tests {
 
     #[test]
     fn test_query_expander_config() {
-        let config = QueryExpanderConfig {
-            max_expansions: 3,
-            use_synonyms: false,
-            prompt_template: Some("Custom: {query}".into()),
-        };
+        let mut config = QueryExpanderConfig::default();
+        config.max_expansions = 3;
+        config.use_synonyms = false;
+        config.prompt_template = Some("Custom: {query}".into());
         let expander = AdvancedQueryExpander::with_config(config);
 
         // With synonyms disabled, synonym_expand should still work but expand() won't use it
@@ -1154,11 +1153,10 @@ mod rag_methods_tests {
 
     #[test]
     fn test_multi_query_config() {
-        let config = MultiQueryConfig {
-            max_sub_queries: 2,
-            min_complexity_threshold: 0.1, // Very low threshold
-            prompt_template: None,
-        };
+        let mut config = MultiQueryConfig::default();
+        config.max_sub_queries = 2;
+        config.min_complexity_threshold = 0.1; // Very low threshold
+        config.prompt_template = None;
         let decomposer = MultiQueryDecomposer::with_config(config);
         let llm = MockLlm::new("Sub 1\nSub 2\nSub 3");
 
@@ -1186,11 +1184,10 @@ mod rag_methods_tests {
 
     #[test]
     fn test_hyde_config() {
-        let config = HydeConfig {
-            target_length: 100,
-            num_hypotheticals: 3,
-            prompt_template: Some("Custom: {query}".into()),
-        };
+        let mut config = HydeConfig::default();
+        config.target_length = 100;
+        config.num_hypotheticals = 3;
+        config.prompt_template = Some("Custom: {query}".into());
         let hyde = HydeGenerator::with_config(config);
         let llm = MockLlm::new("Hypothetical doc");
 
@@ -1245,10 +1242,9 @@ mod rag_methods_tests {
 
     #[test]
     fn test_rrf_config() {
-        let config = RrfConfig {
-            k: 30.0, // Different k value
-            max_results: 5,
-        };
+        let mut config = RrfConfig::default();
+        config.k = 30.0; // Different k value
+        config.max_results = 5;
         let fusion = RrfFusion::with_config(config);
 
         let list1 = vec![
@@ -1285,11 +1281,10 @@ mod rag_methods_tests {
 
     #[test]
     fn test_contextual_compressor_config() {
-        let config = CompressionConfig {
-            target_tokens: 50,
-            min_tokens: 10,
-            prompt_template: Some("Extract relevant: {query}\n{content}".into()),
-        };
+        let mut config = CompressionConfig::default();
+        config.target_tokens = 50;
+        config.min_tokens = 10;
+        config.prompt_template = Some("Extract relevant: {query}\n{content}".into());
         let compressor = ContextualCompressor::with_config(config);
         let llm = MockLlm::new("Short compressed result");
 
@@ -1325,9 +1320,11 @@ mod rag_methods_tests {
 
     #[test]
     fn test_self_reflection_actions() {
-        let evaluator = SelfRagEvaluator::with_config(SelfRagConfig {
-            confidence_threshold: 0.6,
-            context_preview_length: 500,
+        let evaluator = SelfRagEvaluator::with_config({
+            let mut c = SelfRagConfig::default();
+            c.confidence_threshold = 0.6;
+            c.context_preview_length = 500;
+            c
         });
 
         // High confidence -> UseAsIs
@@ -1363,10 +1360,9 @@ mod rag_methods_tests {
 
     #[test]
     fn test_crag_evaluator_actions() {
-        let config = CragConfig {
-            correct_threshold: 0.7,
-            ambiguous_threshold: 0.4,
-        };
+        let mut config = CragConfig::default();
+        config.correct_threshold = 0.7;
+        config.ambiguous_threshold = 0.4;
         let evaluator = CragEvaluator::with_config(config);
 
         // High quality -> Correct
@@ -1436,7 +1432,8 @@ mod rag_methods_tests {
 
     #[test]
     fn test_adaptive_strategy_with_llm_disabled() {
-        let config = AdaptiveStrategyConfig { use_llm: false };
+        let mut config = AdaptiveStrategyConfig::default();
+        config.use_llm = false;
         let selector = AdaptiveStrategySelector::with_config(config);
         let llm = MockLlm::new("KEYWORD"); // Should be ignored
 
@@ -1476,11 +1473,10 @@ mod rag_methods_tests {
 
     #[test]
     fn test_llm_reranker_config() {
-        let config = LlmRerankerConfig {
-            max_chunks: 5,
-            chunk_preview_length: 100,
-            prompt_template: Some("Custom prompt".into()),
-        };
+        let mut config = LlmRerankerConfig::default();
+        config.max_chunks = 5;
+        config.chunk_preview_length = 100;
+        config.prompt_template = Some("Custom prompt".into());
         let reranker = LlmReranker::with_config(config);
         let llm = MockLlm::new("1");
 
@@ -1530,11 +1526,10 @@ mod rag_methods_tests {
 
     #[test]
     fn test_graph_rag_retriever_extract_entities() {
-        let config = GraphRagConfig {
-            max_depth: 2,
-            max_entities: 10,
-            entity_types: vec!["SHIP".into(), "MANUFACTURER".into()],
-        };
+        let mut config = GraphRagConfig::default();
+        config.max_depth = 2;
+        config.max_entities = 10;
+        config.entity_types = vec!["SHIP".into(), "MANUFACTURER".into()];
         let retriever = GraphRagRetriever::new(config);
         let llm = MockLlm::new("SHIP: Aurora MR\nMANUFACTURER: RSI\nSHIP: Mustang Alpha");
 
@@ -1550,11 +1545,10 @@ mod rag_methods_tests {
 
     #[test]
     fn test_raptor_config() {
-        let config = RaptorConfig {
-            max_levels: 4,
-            chunks_per_summary: 10,
-            summary_length: 300,
-        };
+        let mut config = RaptorConfig::default();
+        config.max_levels = 4;
+        config.chunks_per_summary = 10;
+        config.summary_length = 300;
 
         assert_eq!(config.max_levels, 4);
         assert_eq!(config.chunks_per_summary, 10);

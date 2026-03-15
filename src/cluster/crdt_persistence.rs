@@ -199,6 +199,7 @@ pub struct WalEntry {
 
 /// CRDT operation types for WAL replay.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum WalOperation {
     /// Increment a counter.
     Increment { key: String, amount: u64 },

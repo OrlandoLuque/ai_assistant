@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 /// Cache configuration
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct EmbeddingCacheConfig {
     /// Maximum number of entries
     pub max_entries: usize,

@@ -18,6 +18,7 @@ use std::time::Duration;
 
 /// Error type for container operations.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum ContainerError {
     /// Docker daemon is not running or not installed.
     DockerNotAvailable,

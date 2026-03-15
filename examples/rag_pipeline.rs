@@ -61,9 +61,10 @@ impl RetrievalCallback for StubRetrieval {
 fn main() {
     // 1. Build an in-memory knowledge graph with known entities
     let graph = KnowledgeGraphBuilder::new()
-        .with_config(KnowledgeGraphConfig {
-            max_traversal_depth: 3,
-            ..Default::default()
+        .with_config({
+            let mut c = KnowledgeGraphConfig::default();
+            c.max_traversal_depth = 3;
+            c
         })
         .add_entity("Aegis Dynamics", KGEntityType::Organization)
         .add_entity("Sabre", KGEntityType::Product)

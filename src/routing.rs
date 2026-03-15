@@ -9,6 +9,7 @@ use std::collections::HashMap;
 
 /// Task type for routing decisions
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum TaskType {
     /// General chat/conversation
     Chat,

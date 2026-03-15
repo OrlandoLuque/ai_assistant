@@ -66,6 +66,7 @@ const APP_KEY_SEED: &[u8] = b"ai_assistant_kpkg_v1_default_seed_2024";
 
 /// Errors that can occur during package operations
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum KpkgError {
     /// Data is too short to contain valid package
     DataTooShort,
@@ -156,6 +157,7 @@ impl ExamplePair {
 /// Allows packages to specify their preferred RAG settings that override
 /// or merge with the global configuration.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
 pub struct RagPackageConfig {
     /// Preferred chunk size in tokens
     #[serde(default, skip_serializing_if = "Option::is_none")]

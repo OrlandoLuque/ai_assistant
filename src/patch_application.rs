@@ -33,6 +33,7 @@ use std::fmt;
 
 /// A single line in a patch hunk
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum PatchLine {
     /// Context line (unchanged)
     Context(String),
@@ -389,6 +390,7 @@ impl fmt::Display for Patch {
 
 /// Error during patch parsing
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum PatchParseError {
     /// No hunks found in patch
     NoHunks,
@@ -412,6 +414,7 @@ impl std::error::Error for PatchParseError {}
 
 /// Error during patch application
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum PatchApplyError {
     /// Context doesn't match
     ContextMismatch {
@@ -501,6 +504,7 @@ pub struct PatchResult {
 
 /// Configuration for patch application
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct PatchConfig {
     /// Allow fuzzy matching (ignore whitespace differences)
     pub fuzzy: bool,

@@ -75,6 +75,7 @@ pub struct DetectedProvider {
 
 /// The type of software project detected in the working directory.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ProjectType {
     Rust,
     Node,
@@ -1342,6 +1343,7 @@ impl Default for Butler {
 
 /// Category of optimization recommendation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum OptimizationCategory {
     /// Reduce latency, use caching, batch requests, compiled routing.
     Efficiency,
@@ -1372,6 +1374,7 @@ impl fmt::Display for OptimizationCategory {
 
 /// Priority level for a recommendation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum RecommendationPriority {
     /// Nice to have, minor improvement.
     Low,
@@ -1459,6 +1462,7 @@ impl AdvisorReport {
 /// Captures which features and settings are currently active so the advisor
 /// can determine what is already enabled vs. what should be recommended.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct AdvisorConfig {
     /// Whether response caching is enabled.
     pub caching_enabled: bool,
@@ -2112,6 +2116,7 @@ fn dirs_home() -> Option<std::path::PathBuf> {
 
 /// Deployment scenario for compilation profile recommendation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum DeploymentScenario {
     /// Core only — smallest binary, chat only
     MinimalChat,

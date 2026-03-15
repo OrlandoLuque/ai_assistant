@@ -14,6 +14,7 @@ use std::collections::HashMap;
 
 /// Configuration for multi-model comparison.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ComparisonConfig {
     /// Confidence level for significance testing (default 0.95)
     pub confidence_level: f64,

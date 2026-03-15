@@ -8,11 +8,9 @@ use ai_assistant::{DistanceMetric, InMemoryVectorDb, VectorDb, VectorDbConfig};
 
 fn main() {
     // Configure vector database
-    let config = VectorDbConfig {
-        dimensions: 3,
-        collection_name: "demo".to_string(),
-        ..Default::default()
-    };
+    let mut config = VectorDbConfig::default();
+    config.dimensions = 3;
+    config.collection_name = "demo".to_string();
 
     let mut db = InMemoryVectorDb::new(config);
 

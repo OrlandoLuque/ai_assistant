@@ -13,6 +13,7 @@ use super::types::{
 
 /// Search strategy for the discrete optimization stage.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum DiscreteSearchStrategy {
     /// Try all combinations exhaustively
     Exhaustive,
@@ -24,6 +25,7 @@ pub enum DiscreteSearchStrategy {
 
 /// Configuration for MIPROv2 optimizer.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct MIPROv2Config {
     /// Maximum number of bootstrapped demonstrations
     pub max_bootstrapped_demos: usize,

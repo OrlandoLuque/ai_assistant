@@ -220,6 +220,7 @@ pub struct ExtractionRule {
 
 /// Configuration for HTML extraction.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct HtmlExtractionConfig {
     /// Domain-specific extraction rules
     pub rules: Vec<ExtractionRule>,

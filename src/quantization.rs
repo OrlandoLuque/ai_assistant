@@ -38,6 +38,7 @@ use std::collections::HashMap;
 /// rather than Rust CamelCase to match how users refer to these formats.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[allow(non_camel_case_types)]
+#[non_exhaustive]
 pub enum QuantFormat {
     /// Full precision (FP32)
     FP32,
@@ -308,6 +309,7 @@ pub struct QuantRecommendation {
 
 /// Model size categories
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ModelSize {
     /// ~1B parameters
     Tiny,

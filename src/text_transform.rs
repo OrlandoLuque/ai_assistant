@@ -33,6 +33,7 @@ use std::collections::HashSet;
 
 /// A text transformation operation
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum Transform {
     /// Simple find and replace
     Replace {

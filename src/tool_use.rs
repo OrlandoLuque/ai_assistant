@@ -110,6 +110,7 @@ impl ToolParameter {
 /// Parameter types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[non_exhaustive]
 pub enum ParameterType {
     String,
     Number,
@@ -220,6 +221,7 @@ impl Tool {
 
 /// Tool execution error
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum ToolError {
     /// Missing required parameter
     MissingParameter(String),

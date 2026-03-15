@@ -16,6 +16,7 @@ pub struct HfModel {
 
 /// Hugging Face task types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum HfTask {
     TextGeneration,
     Text2TextGeneration,
@@ -200,6 +201,7 @@ impl HfRequest {
 
 /// Hugging Face response
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum HfResponse {
     TextGeneration(Vec<TextGenerationResult>),
     Conversational(ConversationalResult),
@@ -242,6 +244,7 @@ pub struct ClassificationResult {
 
 /// Hugging Face client configuration
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct HfConfig {
     pub api_token: Option<String>,
     pub base_url: String,
@@ -424,6 +427,7 @@ impl Default for HfClient {
 
 /// Hugging Face error
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum HfError {
     Network(String),
     Serialization(String),

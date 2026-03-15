@@ -6,6 +6,7 @@ use std::collections::HashMap;
 
 /// Compaction configuration
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct CompactionConfig {
     /// Maximum messages before compaction
     pub max_messages: usize,
@@ -268,6 +269,7 @@ impl Default for ConversationCompactor {
 }
 
 /// Builder for compaction config
+#[non_exhaustive]
 pub struct CompactionConfigBuilder {
     config: CompactionConfig,
 }

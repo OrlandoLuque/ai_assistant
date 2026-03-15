@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 /// How much autonomy the agent has.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum AutonomyLevel {
     /// Every action requires user approval.
     Paranoid,
@@ -24,6 +25,7 @@ pub enum AutonomyLevel {
 
 /// How the agent can access the internet.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum InternetMode {
     /// No internet access at all.
     Disabled,
@@ -37,6 +39,7 @@ pub enum InternetMode {
 
 /// Risk level of an action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub enum RiskLevel {
     Safe,
     Low,
@@ -47,6 +50,7 @@ pub enum RiskLevel {
 
 /// Type of action an agent wants to perform.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ActionType {
     FileRead,
     FileWrite,

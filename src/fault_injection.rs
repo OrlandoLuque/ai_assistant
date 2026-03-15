@@ -18,6 +18,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// The kind of fault to inject.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum FaultType {
     /// Simulate additional latency between `min` and `max`.
     Latency {
@@ -51,6 +52,7 @@ pub enum FaultType {
 
 /// Determines which requests a [`FaultRule`] applies to.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum FaultTarget {
     /// Matches every request regardless of target name or message content.
     All,

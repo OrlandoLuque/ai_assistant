@@ -47,6 +47,7 @@ use std::path::Path;
 
 /// Complete configuration file structure
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[non_exhaustive]
 pub struct ConfigFile {
     /// Provider configuration
     #[serde(default)]
@@ -83,6 +84,7 @@ pub struct ConfigFile {
 
 /// Provider configuration section
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ProviderConfig {
     /// Provider type: "ollama", "lmstudio", "textgenwebui", "kobold", "localai", "openai_compatible"
     #[serde(rename = "type", default)]
@@ -115,6 +117,7 @@ impl Default for ProviderConfig {
 
 /// URL configuration section
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct UrlConfig {
     /// Ollama API URL
     #[serde(default = "default_ollama_url")]
@@ -167,6 +170,7 @@ impl Default for UrlConfig {
 
 /// Generation configuration section
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct GenerationConfig {
     /// Temperature (0.0 - 2.0)
     #[serde(default = "default_temperature")]
@@ -220,6 +224,7 @@ impl Default for GenerationConfig {
 
 /// RAG configuration section
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct RagFileConfig {
     /// Enable knowledge RAG
     #[serde(default)]
@@ -289,6 +294,7 @@ impl Default for RagFileConfig {
 
 /// Hybrid search configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct HybridConfig {
     /// Enable semantic search
     #[serde(default)]
@@ -322,6 +328,7 @@ impl Default for HybridConfig {
 
 /// Security configuration section
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct SecurityConfig {
     /// Enable rate limiting
     #[serde(default)]
@@ -360,6 +367,7 @@ impl Default for SecurityConfig {
 
 /// Cache configuration section
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct CacheConfig {
     /// Enable response caching
     #[serde(default)]
@@ -406,6 +414,7 @@ impl Default for CacheConfig {
 
 /// Logging configuration section
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct LoggingConfig {
     /// Log level: "trace", "debug", "info", "warn", "error"
     #[serde(default = "default_log_level")]
@@ -440,6 +449,7 @@ impl Default for LoggingConfig {
 /// both in the CLI REPL (`enabled`) and via the MCP endpoint (`mcp_enabled`).
 /// Both default to `false` — Docker features must be explicitly opted into.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ContainersConfig {
     /// Whether container management commands are enabled (default: false).
     #[serde(default)]
@@ -475,6 +485,7 @@ impl Default for ContainersConfig {
 
 /// Configuration file format
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub enum ConfigFormat {
     /// TOML format
     Toml,
@@ -1011,6 +1022,7 @@ mod platform_dirs {
 
 /// A validation error for a specific configuration field.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct ConfigValidationError {
     pub field: String,
     pub message: String,
@@ -1122,6 +1134,7 @@ use std::time::{Duration, SystemTime};
 
 /// Tracks which config fields can be hot-reloaded vs require restart.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ReloadScope {
     /// Can be applied without restart (model, temperature, log level)
     HotReload,
@@ -1142,6 +1155,7 @@ pub struct ReloadResult {
 
 /// Watches a configuration file for changes and applies hot-reloadable settings.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct ConfigWatcher {
     /// Path to the config file being watched
     path: PathBuf,

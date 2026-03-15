@@ -30,6 +30,7 @@ pub struct StreamingMetrics {
 
 /// Configuration for streaming metrics
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct MetricsConfig {
     /// Sliding window size for rate calculation (in tokens)
     pub window_size: usize,

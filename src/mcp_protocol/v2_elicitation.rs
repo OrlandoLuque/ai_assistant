@@ -6,6 +6,7 @@ use std::collections::HashMap;
 /// Action the user/host takes when responding to an elicitation request.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ElicitAction {
     Accept,
     Deny,
@@ -15,6 +16,7 @@ pub enum ElicitAction {
 /// Describes the type of an elicitation field.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type")]
+#[non_exhaustive]
 pub enum ElicitFieldType {
     #[serde(rename = "text")]
     Text,

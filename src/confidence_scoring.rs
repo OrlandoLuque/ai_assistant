@@ -14,6 +14,7 @@ use std::collections::HashMap;
 
 /// Configuration for confidence scoring
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ConfidenceConfig {
     /// Use token probabilities if available
     pub use_logprobs: bool,
@@ -99,6 +100,7 @@ pub struct UncertaintyIndicator {
 
 /// Types of uncertainty
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum UncertaintyType {
     /// Hedging language
     Hedging,
@@ -114,6 +116,7 @@ pub enum UncertaintyType {
 
 /// Reliability levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Reliability {
     /// Highly reliable
     High,
@@ -501,6 +504,7 @@ pub struct CalibrationStats {
 }
 
 /// Builder for confidence configuration
+#[non_exhaustive]
 pub struct ConfidenceConfigBuilder {
     config: ConfidenceConfig,
 }

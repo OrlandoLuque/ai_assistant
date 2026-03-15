@@ -277,6 +277,7 @@ impl AxumRateLimiter {
 
 /// Application error type that implements `IntoResponse`.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum AppError {
     /// Bad request (400).
     BadRequest(String),

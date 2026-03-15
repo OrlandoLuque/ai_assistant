@@ -14,6 +14,7 @@ use std::fmt;
 
 /// The modality (content type) of a chunk.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ModalityType {
     Text,
     Image,
@@ -355,6 +356,7 @@ fn extract_attr(tag: &str, attr_name: &str) -> Option<String> {
 
 /// Configuration for multi-modal retrieval.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct MultiModalConfig {
     /// Weight for text chunks (0.0 to 1.0). Default: 0.7.
     pub text_weight: f64,

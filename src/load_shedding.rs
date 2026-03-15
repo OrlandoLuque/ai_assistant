@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 
 /// Strategy for deciding which requests to shed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SheddingStrategy {
     /// Shed lowest-priority requests first.
     PriorityBased,
@@ -37,6 +38,7 @@ impl Default for SheddingStrategy {
 
 /// Configuration for load shedding behavior.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct LoadSheddingConfig {
     /// Shedding strategy to use.
     pub strategy: SheddingStrategy,
@@ -124,6 +126,7 @@ pub struct LoadContext {
 
 /// Decision from load shedding evaluation.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum SheddingDecision {
     /// Accept the request for processing.
     Accept,

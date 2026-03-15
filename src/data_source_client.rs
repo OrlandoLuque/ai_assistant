@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 
 /// Supported authentication methods for API requests.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum AuthMethod {
     /// No authentication.
     None,
@@ -40,6 +41,7 @@ impl Default for AuthMethod {
 
 /// Strategy for paginating through API results.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum PaginationStrategy {
     /// No pagination - single request returns all results.
     None,
@@ -111,6 +113,7 @@ impl RateLimitPolicy {
 
 /// Configuration for a [`DataSourceClient`] instance.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct DataSourceConfig {
     /// Base URL of the API (e.g., "https://api.example.com/v1").
     pub base_url: String,

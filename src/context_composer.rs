@@ -38,6 +38,7 @@ use std::fmt;
 /// Variants are ordered from highest to lowest priority so that derived
 /// `Ord` gives a useful default ordering for prompt assembly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum ContextSection {
     /// System prompt — always included, highest priority.
     SystemPrompt,
@@ -70,6 +71,7 @@ impl ContextSection {
 /// Priority class that governs how budget is allocated and whether a
 /// section may be trimmed.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub enum SectionPriority {
     /// Never trimmed — always gets its full content.
     Fixed,
@@ -119,6 +121,7 @@ impl Default for OverflowThresholds {
 
 /// Severity of a context-window overflow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum OverflowLevel {
     /// Usage is within comfortable limits.
     Normal,
@@ -132,6 +135,7 @@ pub enum OverflowLevel {
 
 /// Recommended action for a given overflow level.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum OverflowAction {
     /// No action required.
     None,
@@ -154,6 +158,7 @@ pub enum OverflowAction {
 
 /// Top-level configuration for [`ContextComposer`].
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ContextComposerConfig {
     /// Total token budget for the entire prompt (input side).
     pub total_budget: usize,
@@ -167,6 +172,19 @@ pub struct ContextComposerConfig {
     pub overflow_thresholds: OverflowThresholds,
     /// Whether hybrid compaction (summarise + trim) is enabled.
     pub hybrid_compaction: bool,
+}
+
+impl Default for ContextComposerConfig {
+    fn default() -> Self {
+        Self {
+            total_budget: 4096,
+            response_reserve: 1024,
+            section_budgets: Vec::new(),
+            overflow_detection: false,
+            overflow_thresholds: OverflowThresholds::default(),
+            hybrid_compaction: false,
+        }
+    }
 }
 
 /// Result of budget allocation for a single section.
@@ -769,6 +787,7 @@ pub struct ContextCompiler {
 
 /// Segment type for the context compiler.
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum SegmentType {
     System,
     Tools,

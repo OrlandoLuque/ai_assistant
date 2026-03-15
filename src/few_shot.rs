@@ -33,6 +33,7 @@ use std::time::Instant;
 
 /// Example category for organization
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ExampleCategory {
     /// Factual question answering
     FactualQA,
@@ -186,6 +187,7 @@ impl Example {
 
 /// Configuration for few-shot selection
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct SelectionConfig {
     /// Maximum examples to select
     pub max_examples: usize,

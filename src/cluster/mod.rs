@@ -45,6 +45,7 @@ use self::metrics::ClusterMetrics;
 
 /// Configuration for cluster mode.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ClusterConfig {
     /// Unique node identifier.
     pub node_id: String,

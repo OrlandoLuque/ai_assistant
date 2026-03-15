@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 /// Configuration for rate limiting
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct RateLimitConfig {
     /// Maximum requests per minute
     pub requests_per_minute: usize,
@@ -214,6 +215,7 @@ pub struct RateLimitStatus {
 
 /// Result of rate limit check
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum RateLimitResult {
     Allowed {
         requests_remaining: usize,
@@ -233,6 +235,7 @@ impl RateLimitResult {
 
 /// Reason for rate limit denial
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RateLimitReason {
     TooManyRequests,
     TooManyTokens,

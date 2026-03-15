@@ -43,6 +43,7 @@ pub struct TemplateVariable {
 
 /// Type of variable for validation
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum VariableType {
     /// Free-form text
     Text,

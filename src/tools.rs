@@ -11,6 +11,7 @@ use std::collections::HashMap;
 /// Type of parameter
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+#[non_exhaustive]
 pub enum ParameterType {
     String,
     Number,
@@ -626,6 +627,7 @@ fn simple_eval(expr: &str) -> Result<f64, String> {
 
 /// Where an argument value comes from in a tool chain step
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum ArgumentSource {
     /// Hardcoded value
     Literal(Value),
@@ -637,6 +639,7 @@ pub enum ArgumentSource {
 
 /// Transformation to apply to a step's output before passing to next step
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum OutputTransform {
     /// Pass output as-is
     Identity,
@@ -809,6 +812,7 @@ impl ToolChain {
 
 /// Type of validation to apply to a tool argument
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum ValidationType {
     /// Field must exist and not be null
     Required,
@@ -935,6 +939,7 @@ impl Default for ToolValidator {
 
 /// Configuration for retrying failed tool calls
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ToolRetryConfig {
     pub max_retries: u32,
     pub backoff_base_ms: u64,
@@ -990,6 +995,7 @@ impl RetryableToolCall {
 
 /// Status of an approval request
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum ApprovalStatus {
     Pending,
     Approved,

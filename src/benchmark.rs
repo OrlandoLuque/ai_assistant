@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 
 /// Configuration for benchmark runs
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct BenchmarkConfig {
     /// Number of iterations per test
     pub iterations: usize,

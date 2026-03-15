@@ -19,6 +19,7 @@ use std::collections::HashMap;
 
 /// Configuration for the search engine.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ConfigSearchConfig {
     /// Confidence level for statistical significance (default 0.95)
     pub confidence_level: f64,
@@ -46,6 +47,7 @@ impl Default for ConfigSearchConfig {
 
 /// What to optimize for during configuration search.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum SearchObjective {
     /// Maximize quality regardless of cost
     MaxQuality,
@@ -133,6 +135,7 @@ pub struct SearchCost {
 
 /// Final result of a configuration search.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ConfigSearchResult {
     /// Baseline configuration and its measurement
     pub baseline: ConfigMeasurement,
@@ -233,6 +236,7 @@ impl ConfigSearchResult {
 /// 3. Use Welch's t-test to verify significance of improvements
 /// 4. Optionally re-sweep highest-variance dimensions (adaptive priority)
 /// 5. Track evolution and cost throughout
+#[non_exhaustive]
 pub struct ConfigSearchEngine {
     config: ConfigSearchConfig,
     generator: MultiModelGenerator,

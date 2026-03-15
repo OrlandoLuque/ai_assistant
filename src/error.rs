@@ -10,6 +10,7 @@ use std::fmt;
 
 /// Main error type for the AI assistant library
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum AiError {
     /// Configuration errors
     Config(ConfigError),
@@ -218,6 +219,7 @@ impl AiError {
 
 /// Errors related to configuration
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ConfigError {
     /// Missing required configuration value
     MissingValue { field: String, description: String },
@@ -307,6 +309,7 @@ impl From<ConfigError> for AiError {
 
 /// Errors related to AI providers (Ollama, LM Studio, etc.)
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ProviderError {
     /// Provider is not available/reachable
     Unavailable { provider: String, url: String },
@@ -444,6 +447,7 @@ impl From<ProviderError> for AiError {
 
 /// Errors related to the RAG system
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum RagError {
     /// Database error
     Database { operation: String, reason: String },
@@ -523,6 +527,7 @@ impl From<RagError> for AiError {
 
 /// Errors related to network operations
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum NetworkError {
     /// Connection failed
     ConnectionFailed { url: String, reason: String },
@@ -603,6 +608,7 @@ impl From<NetworkError> for AiError {
 
 /// Errors related to input validation
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ValidationError {
     /// Empty input
     EmptyInput { field: String },
@@ -688,6 +694,7 @@ impl From<ValidationError> for AiError {
 
 /// Errors related to resource limits
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ResourceLimitError {
     /// Rate limit exceeded
     RateLimitExceeded {
@@ -961,6 +968,7 @@ impl From<serde_json::Error> for AiError {
 
 /// Errors related to the event-driven workflow engine
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum WorkflowError {
     /// Node not found in workflow graph
     NodeNotFound { node_id: String },
@@ -1064,6 +1072,7 @@ impl From<WorkflowError> for AiError {
 
 /// Errors related to the advanced memory system (episodic, procedural, entity)
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum AdvancedMemoryError {
     /// Failed to store a memory entry
     StoreFailed { memory_type: String, reason: String },
@@ -1141,6 +1150,7 @@ impl From<AdvancedMemoryError> for AiError {
 
 /// Errors related to the Agent-to-Agent protocol
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum A2AError {
     /// Task not found
     TaskNotFound { task_id: String },
@@ -1233,6 +1243,7 @@ impl From<A2AError> for AiError {
 
 /// Errors related to real-time voice agent operations
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum VoiceAgentError {
     /// Audio stream connection failed
     StreamFailed { reason: String },
@@ -1307,6 +1318,7 @@ impl From<VoiceAgentError> for AiError {
 
 /// Errors related to image and video generation
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum MediaGenerationError {
     /// Provider not available
     ProviderUnavailable { provider: String, reason: String },
@@ -1380,6 +1392,7 @@ impl From<MediaGenerationError> for AiError {
 
 /// Errors related to the trace-to-distillation pipeline
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum DistillationError {
     /// Trajectory collection failed
     CollectionFailed { reason: String },
@@ -1445,6 +1458,7 @@ impl From<DistillationError> for AiError {
 
 /// Errors related to grammar-guided constrained decoding
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ConstrainedDecodingError {
     /// Grammar compilation failed
     GrammarCompilationFailed { reason: String },
@@ -1504,6 +1518,7 @@ impl From<ConstrainedDecodingError> for AiError {
 
 /// Errors related to Human-in-the-Loop operations
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum HitlError {
     /// Approval request timed out waiting for human response
     ApprovalTimeout { tool_name: String, timeout_secs: u64 },
@@ -1578,6 +1593,7 @@ impl From<HitlError> for AiError {
 
 /// Errors related to remote MCP client connections
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum McpClientError {
     /// Failed to connect to remote MCP server
     ConnectionFailed { url: String, reason: String },
@@ -1658,6 +1674,7 @@ impl From<McpClientError> for AiError {
 
 /// Errors related to agent trajectory evaluation
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum AgentEvalError {
     /// Trajectory is empty — nothing to evaluate
     TrajectoryEmpty { agent_id: String },
@@ -1723,6 +1740,7 @@ impl From<AgentEvalError> for AiError {
 
 /// Errors related to automated red teaming
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum RedTeamError {
     /// Attack generation failed
     GenerationFailed { category: String, reason: String },
@@ -1782,6 +1800,7 @@ impl From<RedTeamError> for AiError {
 
 /// Errors related to Monte Carlo Tree Search planning
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum MctsError {
     /// Maximum iterations reached without finding a solution
     MaxIterations { iterations: usize, best_reward: f64 },
@@ -1856,6 +1875,7 @@ impl From<MctsError> for AiError {
 
 /// Errors related to agent debugging and profiling tools
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum DevToolsError {
     /// Recording failed
     RecordingFailed { agent_id: String, reason: String },
@@ -1915,6 +1935,7 @@ impl From<DevToolsError> for AiError {
 
 /// Errors related to evaluation benchmark suite execution
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum EvalSuiteError {
     /// Benchmark dataset file not found or unreadable
     DatasetLoadFailed { path: String, reason: String },
@@ -2013,6 +2034,7 @@ impl From<EvalSuiteError> for AiError {
 
 /// Errors specific to the advanced routing system (bandits, NFA/DFA, DAGs, ensembles).
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum AdvancedRoutingError {
     /// Invalid routing configuration
     InvalidConfig { field: String, reason: String },

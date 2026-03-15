@@ -126,6 +126,7 @@ impl PromptVariant {
 
 /// Optimization configuration
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct OptimizerConfig {
     /// Minimum uses before considering for best selection
     pub min_uses_for_selection: u64,

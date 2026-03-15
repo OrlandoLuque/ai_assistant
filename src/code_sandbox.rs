@@ -16,6 +16,7 @@ use std::time::Duration;
 
 /// Supported programming languages for execution.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum Language {
     Python,
     JavaScript,
@@ -54,6 +55,7 @@ impl Language {
 
 /// Configuration for the code sandbox.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct SandboxConfig {
     /// Maximum execution time
     pub timeout: Duration,

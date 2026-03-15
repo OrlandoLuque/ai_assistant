@@ -307,6 +307,7 @@ pub struct SnapshotDiff {
 }
 
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum MemoryChange {
     Added(MemoryItem),
     Removed(String),

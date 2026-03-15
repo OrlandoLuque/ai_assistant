@@ -107,6 +107,7 @@ impl Default for Glossary {
 
 /// Categories of translation issues that can be detected.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
 pub enum TranslationIssueType {
     /// Content present in source but missing in target.
     MissingContent,
@@ -204,6 +205,7 @@ pub struct TranslationAnalysisResult {
 
 /// Configuration for the translation analyzer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct TranslationAnalysisConfig {
     /// Glossary to use for terminology checks.
     pub glossary: Glossary,

@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 /// API key status
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum KeyStatus {
     Active,
     RateLimited,
@@ -101,6 +102,7 @@ impl ApiKey {
 
 /// Key rotation configuration
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct RotationConfig {
     pub auto_rotate: bool,
     pub rotation_interval: Option<Duration>,

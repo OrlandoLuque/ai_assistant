@@ -213,21 +213,17 @@ fn build_config(cli: &CliArgs) -> Result<ServerConfig, String> {
         config.port = port;
     }
     if let Some(ref key) = cli.api_key {
-        config.auth = AuthConfig {
-            enabled: true,
-            bearer_tokens: vec![key.clone()],
-            api_keys: vec![],
-            exempt_paths: vec!["/health".to_string()],
-        };
+        let mut auth = AuthConfig::default();
+        auth.enabled = true;
+        auth.bearer_tokens = vec![key.clone()];
+        auth.exempt_paths = vec!["/health".to_string()];
+        config.auth = auth;
     }
 
     // TLS: both cert and key must be provided together.
     match (&cli.tls_cert, &cli.tls_key) {
         (Some(cert), Some(key)) => {
-            config.tls = Some(TlsConfig {
-                cert_path: cert.clone(),
-                key_path: key.clone(),
-            });
+            config.tls = Some(TlsConfig::new(cert.clone(), key.clone()));
         }
         (Some(_), None) => {
             return Err("--tls-cert requires --tls-key".to_string());

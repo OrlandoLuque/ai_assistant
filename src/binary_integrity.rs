@@ -29,6 +29,7 @@ use std::path::Path;
 
 /// Result of integrity verification
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum IntegrityResult {
     /// Binary passed all integrity checks
     Valid,
@@ -78,6 +79,7 @@ impl std::error::Error for IntegrityResult {}
 
 /// Configuration for integrity checking
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct IntegrityConfig {
     /// Expected SHA256 hash (hex string, 64 chars)
     pub expected_hash: Option<String>,

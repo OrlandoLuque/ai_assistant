@@ -6,6 +6,7 @@ use std::collections::HashMap;
 
 /// User intent types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Intent {
     Question,
     Command,

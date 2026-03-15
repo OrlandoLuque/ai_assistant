@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 /// Evaluation metric types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum MetricType {
     // Quality metrics
     Relevance,
@@ -565,6 +566,7 @@ impl Default for Benchmarker {
 
 /// A/B Test configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct AbTestConfig {
     pub name: String,
     pub variant_a: String,
@@ -1028,6 +1030,7 @@ use std::sync::Arc;
 
 /// Configuration for LLM-as-judge evaluation.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct LlmJudgeConfig {
     /// Metrics to evaluate (default: Relevance, Coherence, Helpfulness, Safety)
     pub metrics: Vec<MetricType>,

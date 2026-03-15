@@ -12,6 +12,7 @@
 
 /// Configuration for CoT parsing
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct CotConfig {
     /// Markers that indicate reasoning steps
     pub step_markers: Vec<String>,
@@ -73,6 +74,7 @@ pub struct ReasoningStep {
 
 /// Types of reasoning steps
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum StepType {
     /// Problem understanding
     Understanding,
@@ -497,6 +499,7 @@ pub struct ValidationResult {
 }
 
 /// Builder for CoT configuration
+#[non_exhaustive]
 pub struct CotConfigBuilder {
     config: CotConfig,
 }

@@ -6,6 +6,7 @@ use std::collections::HashMap;
 
 /// Summary configuration
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct SummaryConfig {
     pub max_length: usize,
     pub include_key_points: bool,
@@ -28,6 +29,7 @@ impl Default for SummaryConfig {
 
 /// Summary style
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SummaryStyle {
     Concise,
     Detailed,

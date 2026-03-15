@@ -461,6 +461,9 @@ fn tests_security() -> CategoryResult {
             ai_assistant::SanitizationResult::Blocked { ref reason } => {
                 return Err(format!("clean text should not be blocked: {}", reason));
             }
+            _ => {
+                return Err("unexpected SanitizationResult variant".to_string());
+            }
         }
         Ok(())
     }));
@@ -474,6 +477,7 @@ fn tests_security() -> CategoryResult {
             ai_assistant::SanitizationResult::Clean { output } => output,
             ai_assistant::SanitizationResult::Sanitized { output, .. } => output,
             ai_assistant::SanitizationResult::Blocked { reason } => return Err(reason),
+            _ => return Err("unexpected SanitizationResult variant".to_string()),
         };
         assert_test!(!output.contains('\x00'), "null bytes should be removed");
         Ok(())
@@ -1193,10 +1197,8 @@ fn tests_embeddings() -> CategoryResult {
     let mut results = Vec::new();
 
     results.push(run_test("LocalEmbedder train and embed", || {
-        let config = ai_assistant::EmbeddingConfig {
-            dimensions: 32,
-            ..Default::default()
-        };
+        let mut config = ai_assistant::EmbeddingConfig::default();
+        config.dimensions = 32;
         let mut embedder = ai_assistant::LocalEmbedder::new(config);
         let corpus: Vec<&str> = vec![
             "Rust is a systems programming language",
@@ -1211,10 +1213,8 @@ fn tests_embeddings() -> CategoryResult {
     }));
 
     results.push(run_test("Cosine similarity", || {
-        let config = ai_assistant::EmbeddingConfig {
-            dimensions: 32,
-            ..Default::default()
-        };
+        let mut config = ai_assistant::EmbeddingConfig::default();
+        config.dimensions = 32;
         let mut embedder = ai_assistant::LocalEmbedder::new(config);
         let corpus: Vec<&str> = vec![
             "Rust programming language safety",
@@ -1238,10 +1238,8 @@ fn tests_embeddings() -> CategoryResult {
     }));
 
     results.push(run_test("SemanticIndex search", || {
-        let config = ai_assistant::EmbeddingConfig {
-            dimensions: 32,
-            ..Default::default()
-        };
+        let mut config = ai_assistant::EmbeddingConfig::default();
+        config.dimensions = 32;
         let mut index = ai_assistant::SemanticIndex::new(config);
 
         let docs = vec![
@@ -1570,12 +1568,11 @@ fn tests_rate_limiter() -> CategoryResult {
     }));
 
     results.push(run_test("RateLimiter usage tracking", || {
-        let config = ai_assistant::RateLimitConfig {
-            requests_per_minute: 10,
-            tokens_per_minute: 1000,
-            max_concurrent: 5,
-            cooldown_seconds: 0,
-        };
+        let mut config = ai_assistant::RateLimitConfig::default();
+        config.requests_per_minute = 10;
+        config.tokens_per_minute = 1000;
+        config.max_concurrent = 5;
+        config.cooldown_seconds = 0;
         let mut limiter = ai_assistant::RateLimiter::new(config);
         limiter.record_request_start();
         limiter.record_request_end(100);
@@ -1653,15 +1650,14 @@ fn tests_chunking() -> CategoryResult {
     let mut results = Vec::new();
 
     results.push(run_test("SmartChunker paragraph strategy", || {
-        let config = ai_assistant::ChunkingConfig {
-            strategy: ai_assistant::ChunkingStrategy::Paragraph,
-            target_tokens: 10,
-            min_tokens: 3,
-            max_tokens: 50,
-            overlap_tokens: 0,
-            preserve_markdown: false,
-            preserve_code_blocks: false,
-        };
+        let mut config = ai_assistant::ChunkingConfig::default();
+        config.strategy = ai_assistant::ChunkingStrategy::Paragraph;
+        config.target_tokens = 10;
+        config.min_tokens = 3;
+        config.max_tokens = 50;
+        config.overlap_tokens = 0;
+        config.preserve_markdown = false;
+        config.preserve_code_blocks = false;
         let chunker = ai_assistant::SmartChunker::new(config);
         let doc = "First paragraph with some content here that should be long enough to trigger splitting.\n\nSecond paragraph with entirely different content that also has enough words.\n\nThird paragraph with yet more text to ensure we get multiple chunks out of this document.";
         let chunks = chunker.chunk(doc);
@@ -1672,15 +1668,14 @@ fn tests_chunking() -> CategoryResult {
     }));
 
     results.push(run_test("SmartChunker sentence strategy", || {
-        let config = ai_assistant::ChunkingConfig {
-            strategy: ai_assistant::ChunkingStrategy::Sentence,
-            target_tokens: 50,
-            min_tokens: 5,
-            max_tokens: 100,
-            overlap_tokens: 0,
-            preserve_markdown: false,
-            preserve_code_blocks: false,
-        };
+        let mut config = ai_assistant::ChunkingConfig::default();
+        config.strategy = ai_assistant::ChunkingStrategy::Sentence;
+        config.target_tokens = 50;
+        config.min_tokens = 5;
+        config.max_tokens = 100;
+        config.overlap_tokens = 0;
+        config.preserve_markdown = false;
+        config.preserve_code_blocks = false;
         let chunker = ai_assistant::SmartChunker::new(config);
         let doc = "This is sentence one. This is sentence two. And this is sentence three.";
         let chunks = chunker.chunk(doc);
@@ -1699,15 +1694,14 @@ fn tests_chunking() -> CategoryResult {
     }));
 
     results.push(run_test("SmartChunk fields from paragraph", || {
-        let config = ai_assistant::ChunkingConfig {
-            strategy: ai_assistant::ChunkingStrategy::Paragraph,
-            target_tokens: 10,
-            min_tokens: 3,
-            max_tokens: 50,
-            overlap_tokens: 0,
-            preserve_markdown: false,
-            preserve_code_blocks: false,
-        };
+        let mut config = ai_assistant::ChunkingConfig::default();
+        config.strategy = ai_assistant::ChunkingStrategy::Paragraph;
+        config.target_tokens = 10;
+        config.min_tokens = 3;
+        config.max_tokens = 50;
+        config.overlap_tokens = 0;
+        config.preserve_markdown = false;
+        config.preserve_code_blocks = false;
         let chunker = ai_assistant::SmartChunker::new(config);
         let chunks = chunker.chunk("Hello world paragraph with enough words to fill some space.\n\nSecond paragraph with different content here.");
         if !chunks.is_empty() {
@@ -3854,10 +3848,8 @@ fn tests_request_coalescing() -> CategoryResult {
     }));
 
     results.push(run_test("RequestCoalescer process_pending", || {
-        let config = ai_assistant::CoalescingConfig {
-            coalescing_window: std::time::Duration::from_millis(0),
-            ..Default::default()
-        };
+        let mut config = ai_assistant::CoalescingConfig::default();
+        config.coalescing_window = std::time::Duration::from_millis(0);
         let coalescer = ai_assistant::RequestCoalescer::new(config);
         coalescer.submit(ai_assistant::CoalescableRequest::new("Hello", "model"));
         let results_vec =
@@ -3867,10 +3859,8 @@ fn tests_request_coalescing() -> CategoryResult {
     }));
 
     results.push(run_test("CoalescingStats", || {
-        let config = ai_assistant::CoalescingConfig {
-            coalescing_window: std::time::Duration::from_millis(0),
-            ..Default::default()
-        };
+        let mut config = ai_assistant::CoalescingConfig::default();
+        config.coalescing_window = std::time::Duration::from_millis(0);
         let coalescer = ai_assistant::RequestCoalescer::new(config);
         coalescer.submit(ai_assistant::CoalescableRequest::new("test", "m"));
         coalescer.process_pending(|_, _| Ok("ok".to_string()));
@@ -3976,6 +3966,7 @@ fn tests_access_control() -> CategoryResult {
         // Result could be Allowed or Denied depending on default rules
         match result {
             ai_assistant::AccessResult::Allowed | ai_assistant::AccessResult::Denied(_) => {}
+            _ => {}
         }
         Ok(())
     }));
@@ -4798,7 +4789,8 @@ fn tests_integration_facts_context() -> CategoryResult {
         let facts = extractor.extract_facts(text, "knowledge-base");
         assert_test!(!facts.is_empty(), &format!("should extract facts, got {}", facts.len()));
 
-        let config = ai_assistant::ContextWindowConfig { max_tokens: 4096, ..Default::default() };
+        let mut config = ai_assistant::ContextWindowConfig::default();
+        config.max_tokens = 4096;
         let mut window = ai_assistant::ContextWindow::new(config);
 
         for fact in &facts {
@@ -4863,12 +4855,10 @@ fn tests_integration_expansion_ranking() -> CategoryResult {
 
     results.push(run_test("Expand query then rank candidate responses", || {
         use std::collections::HashMap;
-        let config = ai_assistant::ExpansionConfig {
-            use_synonyms: true,
-            extract_keywords: true,
-            use_llm: false,
-            ..Default::default()
-        };
+        let mut config = ai_assistant::ExpansionConfig::default();
+        config.use_synonyms = true;
+        config.extract_keywords = true;
+        config.use_llm = false;
         let expander = ai_assistant::QueryExpander::new(config);
         let expansion = expander.expand("How to optimize database queries?");
         assert_test!(!expansion.all_keywords.is_empty(), "should extract keywords");
@@ -5123,10 +5113,8 @@ fn tests_chain_intent_template_context_budget() -> CategoryResult {
                     );
 
             // 3. Fill context window with template + user message
-            let config = ai_assistant::ContextWindowConfig {
-                max_tokens: 2048,
-                ..Default::default()
-            };
+            let mut config = ai_assistant::ContextWindowConfig::default();
+            config.max_tokens = 2048;
             let mut window = ai_assistant::ContextWindow::new(config);
             window.add_user(&template.system_prompt);
             window.add_user(user_msg);
@@ -5166,14 +5154,12 @@ fn tests_chain_chunker_entities_embed_similarity() -> CategoryResult {
         "Chunk doc, extract entities per chunk, embed, compare",
         || {
             // 1. Chunk a document
-            let chunk_config = ai_assistant::ChunkingConfig {
-                strategy: ai_assistant::ChunkingStrategy::Sentence,
-                target_tokens: 10,
-                min_tokens: 3,
-                max_tokens: 30,
-                overlap_tokens: 0,
-                ..Default::default()
-            };
+            let mut chunk_config = ai_assistant::ChunkingConfig::default();
+            chunk_config.strategy = ai_assistant::ChunkingStrategy::Sentence;
+            chunk_config.target_tokens = 10;
+            chunk_config.min_tokens = 3;
+            chunk_config.max_tokens = 30;
+            chunk_config.overlap_tokens = 0;
             let chunker = ai_assistant::SmartChunker::new(chunk_config);
             let doc = "Rust uses ownership for memory safety and zero-cost abstractions. \
                    Python uses garbage collection for automatic memory management. \
@@ -5665,23 +5651,19 @@ fn tests_chain_expansion_chunk_embed_rank() -> CategoryResult {
         use std::collections::HashMap;
 
         // 1. Expand the query
-        let expand_config = ai_assistant::ExpansionConfig {
-            use_synonyms: true,
-            extract_keywords: true,
-            use_llm: false,
-            ..Default::default()
-        };
+        let mut expand_config = ai_assistant::ExpansionConfig::default();
+        expand_config.use_synonyms = true;
+        expand_config.extract_keywords = true;
+        expand_config.use_llm = false;
         let expander = ai_assistant::QueryExpander::new(expand_config);
         let expansion = expander.expand("database query optimization techniques");
         assert_test!(!expansion.all_keywords.is_empty(), "should extract keywords");
 
         // 2. Chunk a knowledge corpus
-        let chunk_config = ai_assistant::ChunkingConfig {
-            strategy: ai_assistant::ChunkingStrategy::Sentence,
-            max_tokens: 50,
-            overlap_tokens: 0,
-            ..Default::default()
-        };
+        let mut chunk_config = ai_assistant::ChunkingConfig::default();
+        chunk_config.strategy = ai_assistant::ChunkingStrategy::Sentence;
+        chunk_config.max_tokens = 50;
+        chunk_config.overlap_tokens = 0;
         let chunker = ai_assistant::SmartChunker::new(chunk_config);
         let corpus = "Use indexes on frequently queried columns. Avoid SELECT * in production queries. \
                       Normalize your database schema to reduce redundancy. Consider denormalization for read-heavy workloads. \
@@ -5788,14 +5770,12 @@ fn tests_pipeline_rag() -> CategoryResult {
             use std::collections::HashMap;
 
             // 1. Chunk corpus into searchable pieces
-            let chunk_config = ai_assistant::ChunkingConfig {
-                strategy: ai_assistant::ChunkingStrategy::Sentence,
-                target_tokens: 10,
-                min_tokens: 3,
-                max_tokens: 25,
-                overlap_tokens: 0,
-                ..Default::default()
-            };
+            let mut chunk_config = ai_assistant::ChunkingConfig::default();
+            chunk_config.strategy = ai_assistant::ChunkingStrategy::Sentence;
+            chunk_config.target_tokens = 10;
+            chunk_config.min_tokens = 3;
+            chunk_config.max_tokens = 25;
+            chunk_config.overlap_tokens = 0;
             let chunker = ai_assistant::SmartChunker::new(chunk_config);
             let corpus = "Rust ownership prevents data races at compile time. \
                       The borrow checker ensures references are always valid. \
@@ -5826,11 +5806,12 @@ fn tests_pipeline_rag() -> CategoryResult {
             }
 
             // 3. Expand user query
-            let expander = ai_assistant::QueryExpander::new(ai_assistant::ExpansionConfig {
-                use_synonyms: true,
-                extract_keywords: true,
-                use_llm: false,
-                ..Default::default()
+            let expander = ai_assistant::QueryExpander::new({
+                let mut c = ai_assistant::ExpansionConfig::default();
+                c.use_synonyms = true;
+                c.extract_keywords = true;
+                c.use_llm = false;
+                c
             });
             let expansion = expander.expand("How does Rust prevent memory bugs?");
             assert_test!(!expansion.all_keywords.is_empty(), "should expand query");
@@ -5867,10 +5848,8 @@ fn tests_pipeline_rag() -> CategoryResult {
             assert_test!(!ranked.is_empty(), "should produce ranked results");
 
             // 6. Build context window from ranked results
-            let config = ai_assistant::ContextWindowConfig {
-                max_tokens: 2048,
-                ..Default::default()
-            };
+            let mut config = ai_assistant::ContextWindowConfig::default();
+            config.max_tokens = 2048;
             let mut window = ai_assistant::ContextWindow::new(config);
             window.add_user("How does Rust prevent memory bugs?");
             for r in &ranked {
@@ -6033,7 +6012,8 @@ fn tests_pipeline_session_lifecycle() -> CategoryResult {
         let compacted = compactor.compact(compactable);
 
         // 5. Rebuild context window from compacted messages + summary
-        let config = ai_assistant::ContextWindowConfig { max_tokens: 2048, ..Default::default() };
+        let mut config = ai_assistant::ContextWindowConfig::default();
+        config.max_tokens = 2048;
         let mut window = ai_assistant::ContextWindow::new(config);
         window.add_user(&format!("[Session Summary] {}", summary.summary));
         for msg in &compacted.messages {
@@ -6162,13 +6142,14 @@ fn tests_pipeline_knowledge_ingestion() -> CategoryResult {
         "Chunk → Facts → Memory → Embed → Version",
         || {
             // 1. Chunk a knowledge document
-            let chunker = ai_assistant::SmartChunker::new(ai_assistant::ChunkingConfig {
-                strategy: ai_assistant::ChunkingStrategy::Sentence,
-                target_tokens: 15,
-                min_tokens: 5,
-                max_tokens: 40,
-                overlap_tokens: 0,
-                ..Default::default()
+            let chunker = ai_assistant::SmartChunker::new({
+                let mut c = ai_assistant::ChunkingConfig::default();
+                c.strategy = ai_assistant::ChunkingStrategy::Sentence;
+                c.target_tokens = 15;
+                c.min_tokens = 5;
+                c.max_tokens = 40;
+                c.overlap_tokens = 0;
+                c
             });
             let document = "The API uses REST endpoints for data access. \
                         Authentication requires JWT tokens. \
@@ -6270,22 +6251,24 @@ fn tests_pipeline_query_to_response() -> CategoryResult {
             );
 
             // 2. Expand query with synonyms
-            let expander = ai_assistant::QueryExpander::new(ai_assistant::ExpansionConfig {
-                use_synonyms: true,
-                extract_keywords: true,
-                use_llm: false,
-                ..Default::default()
+            let expander = ai_assistant::QueryExpander::new({
+                let mut c = ai_assistant::ExpansionConfig::default();
+                c.use_synonyms = true;
+                c.extract_keywords = true;
+                c.use_llm = false;
+                c
             });
             let _expansion = expander.expand(query);
 
             // 3. Search corpus (simulated with chunking)
-            let chunker = ai_assistant::SmartChunker::new(ai_assistant::ChunkingConfig {
-                strategy: ai_assistant::ChunkingStrategy::Sentence,
-                target_tokens: 10,
-                min_tokens: 3,
-                max_tokens: 25,
-                overlap_tokens: 0,
-                ..Default::default()
+            let chunker = ai_assistant::SmartChunker::new({
+                let mut c = ai_assistant::ChunkingConfig::default();
+                c.strategy = ai_assistant::ChunkingStrategy::Sentence;
+                c.target_tokens = 10;
+                c.min_tokens = 3;
+                c.max_tokens = 25;
+                c.overlap_tokens = 0;
+                c
             });
             let knowledge =
                 "Use the question mark operator for error propagation in async functions. \
@@ -6768,13 +6751,11 @@ fn tests_rag_tiers() -> CategoryResult {
     }));
 
     results.push(run_test("RagDebugConfig custom values", || {
-        let config = RagDebugConfig {
-            enabled: true,
-            level: RagDebugLevel::Detailed,
-            log_to_file: true,
-            log_path: Some(std::path::PathBuf::from("./logs")),
-            ..Default::default()
-        };
+        let mut config = RagDebugConfig::default();
+        config.enabled = true;
+        config.level = RagDebugLevel::Detailed;
+        config.log_to_file = true;
+        config.log_path = Some(std::path::PathBuf::from("./logs"));
         assert_test!(config.enabled, "debug should be enabled");
         assert_eq_test!(config.level, RagDebugLevel::Detailed);
         assert_test!(config.log_to_file, "log_to_file should be true");
@@ -6798,11 +6779,10 @@ fn tests_rag_tiers() -> CategoryResult {
     }));
 
     results.push(run_test("GraphRagConfig custom entity types", || {
-        let config = GraphRagConfig {
-            max_depth: 3,
-            max_entities: 100,
-            entity_types: vec!["SHIP".into(), "MANUFACTURER".into(), "COMPONENT".into()],
-        };
+        let mut config = GraphRagConfig::default();
+        config.max_depth = 3;
+        config.max_entities = 100;
+        config.entity_types = vec!["SHIP".into(), "MANUFACTURER".into(), "COMPONENT".into()];
         assert_eq_test!(config.entity_types.len(), 3);
         assert_test!(
             config.entity_types.contains(&"SHIP".to_string()),
@@ -6964,11 +6944,10 @@ fn tests_rag_tiers() -> CategoryResult {
 
     // GraphRagRetriever tests
     results.push(run_test("GraphRagRetriever creation", || {
-        let config = GraphRagConfig {
-            max_depth: 2,
-            max_entities: 50,
-            entity_types: vec!["SHIP".into(), "MANUFACTURER".into()],
-        };
+        let mut config = GraphRagConfig::default();
+        config.max_depth = 2;
+        config.max_entities = 50;
+        config.entity_types = vec!["SHIP".into(), "MANUFACTURER".into()];
         let _retriever = GraphRagRetriever::new(config);
         Ok(())
     }));
@@ -7505,13 +7484,14 @@ fn tests_stress_empty_inputs() -> CategoryResult {
     }));
 
     results.push(run_test("Empty corpus chunking", || {
-        let chunker = ai_assistant::SmartChunker::new(ai_assistant::ChunkingConfig {
-            strategy: ai_assistant::ChunkingStrategy::Sentence,
-            target_tokens: 50,
-            min_tokens: 10,
-            max_tokens: 100,
-            overlap_tokens: 0,
-            ..Default::default()
+        let chunker = ai_assistant::SmartChunker::new({
+            let mut c = ai_assistant::ChunkingConfig::default();
+            c.strategy = ai_assistant::ChunkingStrategy::Sentence;
+            c.target_tokens = 50;
+            c.min_tokens = 10;
+            c.max_tokens = 100;
+            c.overlap_tokens = 0;
+            c
         });
         let chunks = chunker.chunk("");
         // Should not panic, may produce 0 or 1 empty chunks
@@ -7520,11 +7500,12 @@ fn tests_stress_empty_inputs() -> CategoryResult {
     }));
 
     results.push(run_test("Empty query expansion", || {
-        let expander = ai_assistant::QueryExpander::new(ai_assistant::ExpansionConfig {
-            use_synonyms: true,
-            extract_keywords: true,
-            use_llm: false,
-            ..Default::default()
+        let expander = ai_assistant::QueryExpander::new({
+            let mut c = ai_assistant::ExpansionConfig::default();
+            c.use_synonyms = true;
+            c.extract_keywords = true;
+            c.use_llm = false;
+            c
         });
         let result = expander.expand("");
         // Should not panic
@@ -7694,13 +7675,14 @@ fn tests_stress_large_inputs() -> CategoryResult {
                          It provides memory safety without garbage collection. \
                          The borrow checker ensures references are valid. "
             .repeat(500); // ~80KB
-        let chunker = ai_assistant::SmartChunker::new(ai_assistant::ChunkingConfig {
-            strategy: ai_assistant::ChunkingStrategy::Sentence,
-            target_tokens: 100,
-            min_tokens: 50,
-            max_tokens: 200,
-            overlap_tokens: 10,
-            ..Default::default()
+        let chunker = ai_assistant::SmartChunker::new({
+            let mut c = ai_assistant::ChunkingConfig::default();
+            c.strategy = ai_assistant::ChunkingStrategy::Sentence;
+            c.target_tokens = 100;
+            c.min_tokens = 50;
+            c.max_tokens = 200;
+            c.overlap_tokens = 10;
+            c
         });
         let chunks = chunker.chunk(&large_doc);
         assert_test!(
@@ -7850,10 +7832,8 @@ fn tests_stress_error_paths() -> CategoryResult {
     }));
 
     results.push(run_test("Context window overflow", || {
-        let config = ai_assistant::ContextWindowConfig {
-            max_tokens: 100,
-            ..Default::default()
-        };
+        let mut config = ai_assistant::ContextWindowConfig::default();
+        config.max_tokens = 100;
         let mut window = ai_assistant::ContextWindow::new(config);
         // Add more messages than the window can hold
         for i in 0..50 {
@@ -8036,13 +8016,14 @@ fn tests_stress_boundaries() -> CategoryResult {
     }));
 
     results.push(run_test("Chunking with min == max tokens", || {
-        let chunker = ai_assistant::SmartChunker::new(ai_assistant::ChunkingConfig {
-            strategy: ai_assistant::ChunkingStrategy::Sentence,
-            target_tokens: 20,
-            min_tokens: 20,
-            max_tokens: 20,
-            overlap_tokens: 0,
-            ..Default::default()
+        let chunker = ai_assistant::SmartChunker::new({
+            let mut c = ai_assistant::ChunkingConfig::default();
+            c.strategy = ai_assistant::ChunkingStrategy::Sentence;
+            c.target_tokens = 20;
+            c.min_tokens = 20;
+            c.max_tokens = 20;
+            c.overlap_tokens = 0;
+            c
         });
         let text = "First sentence here. Second sentence here. Third sentence.";
         let chunks = chunker.chunk(text);
@@ -8362,13 +8343,14 @@ fn tests_stress_memory() -> CategoryResult {
     results.push(run_test("Large text chunking", || {
         let large_text = "The quick brown fox jumps over the lazy dog. ".repeat(25000);
 
-        let chunker = ai_assistant::SmartChunker::new(ai_assistant::ChunkingConfig {
-            strategy: ai_assistant::ChunkingStrategy::Paragraph,
-            target_tokens: 200,
-            min_tokens: 100,
-            max_tokens: 500,
-            overlap_tokens: 20,
-            ..Default::default()
+        let chunker = ai_assistant::SmartChunker::new({
+            let mut c = ai_assistant::ChunkingConfig::default();
+            c.strategy = ai_assistant::ChunkingStrategy::Paragraph;
+            c.target_tokens = 200;
+            c.min_tokens = 100;
+            c.max_tokens = 500;
+            c.overlap_tokens = 20;
+            c
         });
 
         let chunks = chunker.chunk(&large_text);
@@ -8463,6 +8445,7 @@ fn tests_stress_regression() -> CategoryResult {
             ai_assistant::SanitizationResult::Clean { output } => output,
             ai_assistant::SanitizationResult::Sanitized { output, .. } => output,
             ai_assistant::SanitizationResult::Blocked { .. } => String::new(),
+            _ => return Err("unexpected SanitizationResult variant".to_string()),
         };
         assert_test!(output.len() <= 20, "whitespace should be handled");
 
@@ -8483,6 +8466,7 @@ fn tests_stress_regression() -> CategoryResult {
             ai_assistant::SanitizationResult::Clean { output } => output,
             ai_assistant::SanitizationResult::Sanitized { output, .. } => output,
             ai_assistant::SanitizationResult::Blocked { .. } => String::new(),
+            _ => return Err("unexpected SanitizationResult variant".to_string()),
         };
         assert_test!(output.len() <= 10000, "should handle long words");
 
@@ -8522,11 +8506,13 @@ fn tests_stress_regression() -> CategoryResult {
             ai_assistant::SanitizationResult::Clean { output } => output,
             ai_assistant::SanitizationResult::Sanitized { output, .. } => output,
             ai_assistant::SanitizationResult::Blocked { .. } => String::new(),
+            _ => return Err("unexpected SanitizationResult variant".to_string()),
         };
         let clean2 = match sanitizer.sanitize(with_controls) {
             ai_assistant::SanitizationResult::Clean { output } => output,
             ai_assistant::SanitizationResult::Sanitized { output, .. } => output,
             ai_assistant::SanitizationResult::Blocked { .. } => String::new(),
+            _ => return Err("unexpected SanitizationResult variant".to_string()),
         };
 
         assert_test!(!clean1.contains('\0'), "null bytes should be removed");
@@ -8714,13 +8700,14 @@ fn tests_stress_performance() -> CategoryResult {
     results.push(run_test("Chunking performance", || {
         use std::time::Instant;
 
-        let chunker = ai_assistant::SmartChunker::new(ai_assistant::ChunkingConfig {
-            strategy: ai_assistant::ChunkingStrategy::Sentence,
-            target_tokens: 100,
-            min_tokens: 50,
-            max_tokens: 200,
-            overlap_tokens: 10,
-            ..Default::default()
+        let chunker = ai_assistant::SmartChunker::new({
+            let mut c = ai_assistant::ChunkingConfig::default();
+            c.strategy = ai_assistant::ChunkingStrategy::Sentence;
+            c.target_tokens = 100;
+            c.min_tokens = 50;
+            c.max_tokens = 200;
+            c.overlap_tokens = 10;
+            c
         });
 
         let large_text = "This is a sentence. ".repeat(5000);
@@ -9000,13 +8987,14 @@ fn tests_stress_fuzzing() -> CategoryResult {
             let max = target + ((h >> 16) % 200) as usize + 50;
             let overlap = ((h >> 24) % (min as u64 / 2).max(1)) as usize;
 
-            let chunker = ai_assistant::SmartChunker::new(ai_assistant::ChunkingConfig {
-                strategy: ai_assistant::ChunkingStrategy::Sentence,
-                target_tokens: target,
-                min_tokens: min.min(target - 1),
-                max_tokens: max,
-                overlap_tokens: overlap,
-                ..Default::default()
+            let chunker = ai_assistant::SmartChunker::new({
+                let mut c = ai_assistant::ChunkingConfig::default();
+                c.strategy = ai_assistant::ChunkingStrategy::Sentence;
+                c.target_tokens = target;
+                c.min_tokens = min.min(target - 1);
+                c.max_tokens = max;
+                c.overlap_tokens = overlap;
+                c
             });
 
             let _ = chunker.chunk(&text);
@@ -9538,11 +9526,13 @@ fn tests_stress_chaos() -> CategoryResult {
     }));
 
     results.push(run_test("Rate limiter burst handling", || {
-        let mut limiter = ai_assistant::RateLimiter::new(ai_assistant::RateLimitConfig {
-            requests_per_minute: 100,
-            tokens_per_minute: 10000,
-            max_concurrent: 5,
-            cooldown_seconds: 30,
+        let mut limiter = ai_assistant::RateLimiter::new({
+            let mut c = ai_assistant::RateLimitConfig::default();
+            c.requests_per_minute = 100;
+            c.tokens_per_minute = 10000;
+            c.max_concurrent = 5;
+            c.cooldown_seconds = 30;
+            c
         });
 
         // Burst of requests
@@ -9857,13 +9847,12 @@ fn tests_precision() -> CategoryResult {
 
     results.push(run_test("PII detection recall >= 75%", || {
         use ai_assistant::{PiiDetector, PiiConfig, PiiType, SensitivityLevel, RedactionStrategy};
-        let config = PiiConfig {
-            detect_types: vec![PiiType::Email, PiiType::Phone, PiiType::CreditCard, PiiType::Ssn],
-            redaction: RedactionStrategy::Replace,
-            sensitivity: SensitivityLevel::High,
-            log_detections: false,
-            custom_patterns: Vec::new(),
-        };
+        let mut config = PiiConfig::default();
+        config.detect_types = vec![PiiType::Email, PiiType::Phone, PiiType::CreditCard, PiiType::Ssn];
+        config.redaction = RedactionStrategy::Replace;
+        config.sensitivity = SensitivityLevel::High;
+        config.log_detections = false;
+        config.custom_patterns = Vec::new();
         let detector = PiiDetector::new(config);
 
         let test_cases: Vec<(&str, PiiType, bool)> = vec![
@@ -9895,14 +9884,13 @@ fn tests_precision() -> CategoryResult {
 
     results.push(run_test("Injection detection accuracy", || {
         use ai_assistant::{InjectionDetector, InjectionConfig, DetectionSensitivity};
-        let config = InjectionConfig {
-            sensitivity: DetectionSensitivity::High,
-            check_patterns: true,
-            check_override_attempts: true,
-            check_role_play: true,
-            check_delimiters: true,
-            custom_patterns: Vec::new(),
-        };
+        let mut config = InjectionConfig::default();
+        config.sensitivity = DetectionSensitivity::High;
+        config.check_patterns = true;
+        config.check_override_attempts = true;
+        config.check_role_play = true;
+        config.check_delimiters = true;
+        config.custom_patterns = Vec::new();
         let detector = InjectionDetector::new(config);
 
         // Known attacks
@@ -10342,26 +10330,31 @@ fn tests_precision() -> CategoryResult {
         match manager.check_permission("alice", ResourceType::Conversation, Permission::Read, None) {
             AccessResult::Allowed => {},
             AccessResult::Denied(reason) => return Err(format!("Viewer read denied: {}", reason)),
+            _ => return Err("unexpected AccessResult variant".to_string()),
         }
         match manager.check_permission("alice", ResourceType::Conversation, Permission::Write, None) {
             AccessResult::Denied(_) => {},
             AccessResult::Allowed => return Err("Viewer should not write".to_string()),
+            _ => return Err("unexpected AccessResult variant".to_string()),
         }
 
         // Editor can read (inherited) and write
         match manager.check_permission("bob", ResourceType::Conversation, Permission::Read, None) {
             AccessResult::Allowed => {},
             AccessResult::Denied(reason) => return Err(format!("Editor read denied: {}", reason)),
+            _ => return Err("unexpected AccessResult variant".to_string()),
         }
         match manager.check_permission("bob", ResourceType::Conversation, Permission::Write, None) {
             AccessResult::Allowed => {},
             AccessResult::Denied(reason) => return Err(format!("Editor write denied: {}", reason)),
+            _ => return Err("unexpected AccessResult variant".to_string()),
         }
 
         // Unknown user should be denied
         match manager.check_permission("unknown", ResourceType::Conversation, Permission::Read, None) {
             AccessResult::Denied(_) => {},
             AccessResult::Allowed => return Err("Unknown user should be denied".to_string()),
+            _ => return Err("unexpected AccessResult variant".to_string()),
         }
 
         Ok(())
@@ -10370,9 +10363,10 @@ fn tests_precision() -> CategoryResult {
     results.push(run_test("Input sanitizer blocks dangerous patterns", || {
         use ai_assistant::{InputSanitizer, SanitizationConfig};
 
-        let sanitizer = InputSanitizer::new(SanitizationConfig {
-            block_prompt_injection: true,
-            ..SanitizationConfig::default()
+        let sanitizer = InputSanitizer::new({
+            let mut c = SanitizationConfig::default();
+            c.block_prompt_injection = true;
+            c
         });
 
         // Normal text should pass
