@@ -195,6 +195,11 @@ pub mod profiles;
 pub mod progress;
 pub mod request_queue;
 pub mod retry;
+pub mod adaptive_timeout;
+pub mod bulkhead;
+pub mod load_shedding;
+#[cfg(any(test, feature = "chaos-testing"))]
+pub mod fault_injection;
 pub mod search;
 pub mod server;
 #[cfg(feature = "server-axum")]
@@ -242,6 +247,14 @@ pub use error::{
     ProviderError, RagError, ResourceLimitError, ResultExt, SerializationError,
     ValidationError as AiValidationError,
 };
+
+pub use adaptive_timeout::{AdaptiveTimeout, AdaptiveTimeoutConfig, AdaptiveTimeoutStats, Percentile};
+pub use bulkhead::{Bulkhead, BulkheadConfig, BulkheadError, BulkheadPermit, BulkheadRegistry, BulkheadStats};
+pub use load_shedding::{LoadContext, LoadShedder, LoadSheddingConfig, SheddingDecision, SheddingStats, SheddingStrategy};
+pub use message_queue::{DeadLetterEntry, DlqStats, FailureCategory};
+
+#[cfg(any(test, feature = "chaos-testing"))]
+pub use fault_injection::{FaultInjector, FaultResult, FaultRule, FaultStats, FaultTarget, FaultType};
 
 pub use progress::{
     logging_callback, silent_callback, MultiProgressTracker, OperationHandle, Progress,

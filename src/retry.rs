@@ -512,10 +512,20 @@ impl CircuitBreaker {
     }
 }
 
-/// Combined retry executor with circuit breaker
+/// Combined retry executor with circuit breaker.
+///
+/// Optionally integrates with [`AdaptiveTimeout`](crate::adaptive_timeout::AdaptiveTimeout)
+/// for dynamic timeout adjustment and [`DeadLetterQueue`](crate::message_queue::DeadLetterQueue)
+/// for capturing permanently failed requests.
 pub struct ResilientExecutor {
     retry: RetryExecutor,
     circuit_breaker: CircuitBreaker,
+    /// Optional adaptive timeout — when set, overrides the static `attempt_timeout`
+    /// in `RetryConfig` with a dynamically calculated timeout based on observed latency.
+    pub adaptive_timeout: Option<std::sync::Arc<crate::adaptive_timeout::AdaptiveTimeout>>,
+    /// Optional dead letter queue — when set, failed requests that exhaust all retries
+    /// are automatically added to this queue with their error history.
+    pub dead_letter_queue: Option<std::sync::Arc<crate::message_queue::DeadLetterQueue>>,
 }
 
 impl ResilientExecutor {
@@ -528,7 +538,28 @@ impl ResilientExecutor {
         Self {
             retry: RetryExecutor::new(retry_config),
             circuit_breaker: CircuitBreaker::new(failure_threshold, recovery_timeout),
+            adaptive_timeout: None,
+            dead_letter_queue: None,
         }
+    }
+
+    /// Set an adaptive timeout source. When set, the dynamic timeout
+    /// is used instead of the static `attempt_timeout` in `RetryConfig`.
+    pub fn with_adaptive_timeout(
+        mut self,
+        timeout: std::sync::Arc<crate::adaptive_timeout::AdaptiveTimeout>,
+    ) -> Self {
+        self.adaptive_timeout = Some(timeout);
+        self
+    }
+
+    /// Set a dead letter queue for capturing permanently failed requests.
+    pub fn with_dead_letter_queue(
+        mut self,
+        dlq: std::sync::Arc<crate::message_queue::DeadLetterQueue>,
+    ) -> Self {
+        self.dead_letter_queue = Some(dlq);
+        self
     }
 
     /// Execute an operation with both retry and circuit breaker protection

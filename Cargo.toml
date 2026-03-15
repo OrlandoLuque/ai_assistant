@@ -225,6 +225,10 @@ devtools = []
 # Opt-in: --features diagnostic-logging
 diagnostic-logging = ["dep:env_logger"]
 
+# Chaos engineering / fault injection framework (testing only)
+# Not in 'full' — strictly opt-in: --features chaos-testing
+chaos-testing = []
+
 # Evaluation benchmark suite: standard benchmarks (HumanEval, MMLU, etc.) with real LLM calls
 # Not in 'full' by default — requires network access and LLM providers. Opt-in: --features eval-suite
 eval-suite = ["eval"]

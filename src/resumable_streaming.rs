@@ -270,6 +270,263 @@ pub fn format_sse_event(chunk: &StreamChunk) -> String {
     event
 }
 
+// ============================================================================
+// Resilient SSE Stream — Auto-reconnect with checkpoint-based resumption
+// ============================================================================
+
+/// Configuration for SSE auto-reconnection.
+#[derive(Debug, Clone)]
+pub struct SseReconnectConfig {
+    /// Maximum number of reconnection attempts before giving up.
+    pub max_attempts: u32,
+    /// Initial retry delay in milliseconds.
+    pub initial_retry_ms: u64,
+    /// Maximum retry delay in milliseconds.
+    pub max_retry_ms: u64,
+    /// Multiplier for exponential backoff.
+    pub backoff_multiplier: f64,
+    /// Whether to honor the server's `retry:` field.
+    pub respect_server_retry: bool,
+}
+
+impl Default for SseReconnectConfig {
+    fn default() -> Self {
+        Self {
+            max_attempts: 10,
+            initial_retry_ms: 1000,
+            max_retry_ms: 60_000,
+            backoff_multiplier: 2.0,
+            respect_server_retry: true,
+        }
+    }
+}
+
+impl SseReconnectConfig {
+    /// Aggressive: many attempts, shorter initial delay.
+    pub fn aggressive() -> Self {
+        Self {
+            max_attempts: 20,
+            initial_retry_ms: 500,
+            max_retry_ms: 120_000,
+            backoff_multiplier: 2.0,
+            respect_server_retry: true,
+        }
+    }
+
+    /// Quick: few attempts, short delays.
+    pub fn quick() -> Self {
+        Self {
+            max_attempts: 3,
+            initial_retry_ms: 200,
+            max_retry_ms: 5000,
+            backoff_multiplier: 2.0,
+            respect_server_retry: true,
+        }
+    }
+}
+
+/// Statistics for SSE reconnection.
+#[derive(Debug, Clone, Default)]
+pub struct SseReconnectStats {
+    /// The last event ID received before disconnect.
+    pub last_event_id: Option<u64>,
+    /// Number of reconnection attempts in current cycle.
+    pub reconnect_attempts: u32,
+    /// Total successful reconnections over the lifetime.
+    pub total_reconnects: u64,
+    /// Total chunks replayed after reconnections.
+    pub chunks_replayed: u64,
+}
+
+/// A resilient SSE stream that wraps [`ResumableStream`] with
+/// auto-reconnection and checkpoint-based resumption.
+///
+/// On disconnect, it saves the `last_event_id` (current sequence ID).
+/// On reconnection, it uses `resume_from()` to replay missed chunks.
+///
+/// # Usage Pattern
+/// ```ignore
+/// let mut sse = ResilientSseStream::new(
+///     ResumableStreamConfig::default(),
+///     SseReconnectConfig::default(),
+/// );
+///
+/// // On disconnect:
+/// sse.handle_disconnect();
+///
+/// // Reconnection loop:
+/// while sse.should_reconnect() {
+///     std::thread::sleep(sse.next_retry_delay());
+///     match try_reconnect_sse() {
+///         Ok(_) => {
+///             let missed = sse.get_resume_chunks();
+///             sse.mark_reconnected();
+///             // Re-send missed chunks to the consumer
+///         }
+///         Err(_) => { sse.mark_attempt_failed(); }
+///     }
+/// }
+/// ```
+pub struct ResilientSseStream {
+    stream: ResumableStream,
+    config: SseReconnectConfig,
+    last_event_id: Option<u64>,
+    reconnect_attempts: u32,
+    total_reconnects: u64,
+    server_retry_ms: Option<u64>,
+    chunks_replayed: u64,
+    current_retry_ms: u64,
+    gave_up: bool,
+    on_reconnect: Option<Box<dyn Fn(u64, u32) + Send + Sync>>,
+    on_chunks_lost: Option<Box<dyn Fn(u64) + Send + Sync>>,
+}
+
+impl ResilientSseStream {
+    /// Create a new resilient SSE stream.
+    pub fn new(stream_config: ResumableStreamConfig, reconnect_config: SseReconnectConfig) -> Self {
+        let initial_ms = reconnect_config.initial_retry_ms;
+        Self {
+            stream: ResumableStream::new(stream_config),
+            config: reconnect_config,
+            last_event_id: None,
+            reconnect_attempts: 0,
+            total_reconnects: 0,
+            server_retry_ms: None,
+            chunks_replayed: 0,
+            current_retry_ms: initial_ms,
+            gave_up: false,
+            on_reconnect: None,
+            on_chunks_lost: None,
+        }
+    }
+
+    /// Access the underlying resumable stream.
+    pub fn stream(&self) -> &ResumableStream {
+        &self.stream
+    }
+
+    /// Access the underlying resumable stream mutably.
+    pub fn stream_mut(&mut self) -> &mut ResumableStream {
+        &mut self.stream
+    }
+
+    /// Push a chunk to the underlying stream.
+    pub fn push(&self, text: &str) -> u64 {
+        self.stream.push(text)
+    }
+
+    /// Handle a disconnect: save current sequence as last_event_id.
+    pub fn handle_disconnect(&mut self) {
+        self.last_event_id = Some(self.stream.current_sequence_id());
+        self.reconnect_attempts = 0;
+        self.current_retry_ms = self.config.initial_retry_ms;
+        self.gave_up = false;
+    }
+
+    /// Get chunks that need to be replayed after reconnection.
+    ///
+    /// Calls `ResumableStream::resume_from(last_event_id)`.
+    /// Returns an empty vec if no last_event_id is set.
+    pub fn get_resume_chunks(&self) -> Vec<StreamChunk> {
+        match self.last_event_id {
+            Some(id) => self.stream.resume_from(id),
+            None => Vec::new(),
+        }
+    }
+
+    /// Mark a reconnection as successful.
+    pub fn mark_reconnected(&mut self) {
+        let replayed = self.get_resume_chunks().len() as u64;
+        self.chunks_replayed += replayed;
+        self.total_reconnects += 1;
+        let last_id = self.last_event_id.unwrap_or(0);
+        let attempts = self.reconnect_attempts;
+        self.reconnect_attempts = 0;
+        self.current_retry_ms = self.config.initial_retry_ms;
+
+        if let Some(ref cb) = self.on_reconnect {
+            cb(last_id, attempts);
+        }
+
+        self.last_event_id = None;
+    }
+
+    /// Mark a reconnection attempt as failed.
+    pub fn mark_attempt_failed(&mut self) {
+        self.reconnect_attempts += 1;
+
+        if self.reconnect_attempts >= self.config.max_attempts {
+            self.gave_up = true;
+            // Check if chunks were lost (replay buffer may have evicted them)
+            if let Some(ref cb) = self.on_chunks_lost {
+                let lost = self.estimate_lost_chunks();
+                if lost > 0 {
+                    cb(lost);
+                }
+            }
+        } else {
+            // Exponential backoff
+            self.current_retry_ms = ((self.current_retry_ms as f64
+                * self.config.backoff_multiplier) as u64)
+                .min(self.config.max_retry_ms);
+        }
+    }
+
+    /// Returns true if reconnection should be attempted.
+    pub fn should_reconnect(&self) -> bool {
+        !self.gave_up && self.last_event_id.is_some()
+    }
+
+    /// Calculate the delay before the next retry.
+    pub fn next_retry_delay(&self) -> Duration {
+        if self.config.respect_server_retry {
+            if let Some(server_ms) = self.server_retry_ms {
+                return Duration::from_millis(server_ms);
+            }
+        }
+        Duration::from_millis(self.current_retry_ms)
+    }
+
+    /// Set the server-indicated retry delay from SSE `retry:` field.
+    pub fn set_server_retry(&mut self, ms: u64) {
+        self.server_retry_ms = Some(ms);
+    }
+
+    /// Set callback invoked on successful reconnection.
+    /// Receives (last_event_id, attempt_count).
+    pub fn on_reconnect<F: Fn(u64, u32) + Send + Sync + 'static>(&mut self, f: F) {
+        self.on_reconnect = Some(Box::new(f));
+    }
+
+    /// Set callback invoked when chunks are estimated to be lost.
+    /// Receives the estimated count of lost chunks.
+    pub fn on_chunks_lost<F: Fn(u64) + Send + Sync + 'static>(&mut self, f: F) {
+        self.on_chunks_lost = Some(Box::new(f));
+    }
+
+    /// Get reconnection statistics.
+    pub fn stats(&self) -> SseReconnectStats {
+        SseReconnectStats {
+            last_event_id: self.last_event_id,
+            reconnect_attempts: self.reconnect_attempts,
+            total_reconnects: self.total_reconnects,
+            chunks_replayed: self.chunks_replayed,
+        }
+    }
+
+    /// Estimate chunks lost due to replay buffer eviction.
+    fn estimate_lost_chunks(&self) -> u64 {
+        if let Some(last_id) = self.last_event_id {
+            let current = self.stream.current_sequence_id();
+            let available = self.stream.resume_from(last_id).len() as u64;
+            let expected = current.saturating_sub(last_id);
+            expected.saturating_sub(available)
+        } else {
+            0
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -472,5 +729,165 @@ mod tests {
 
         let cp = stream.latest_checkpoint().unwrap();
         assert_eq!(cp.token_count, 29);
+    }
+
+    // ---- ResilientSseStream tests ----
+
+    #[test]
+    fn test_sse_reconnect_initial_state() {
+        let sse = ResilientSseStream::new(
+            ResumableStreamConfig::default(),
+            SseReconnectConfig::default(),
+        );
+        assert!(!sse.should_reconnect());
+        assert_eq!(sse.stats().total_reconnects, 0);
+    }
+
+    #[test]
+    fn test_sse_reconnect_disconnect_saves_id() {
+        let mut sse = ResilientSseStream::new(
+            ResumableStreamConfig::default(),
+            SseReconnectConfig::default(),
+        );
+        sse.push("chunk1");
+        sse.push("chunk2");
+        sse.push("chunk3");
+
+        sse.handle_disconnect();
+
+        assert_eq!(sse.stats().last_event_id, Some(3));
+        assert!(sse.should_reconnect());
+    }
+
+    #[test]
+    fn test_sse_reconnect_resume_chunks() {
+        let mut sse = ResilientSseStream::new(
+            ResumableStreamConfig::default(),
+            SseReconnectConfig::default(),
+        );
+        sse.push("A");
+        sse.push("B");
+        sse.push("C");
+
+        // Simulate disconnect after chunk 2
+        sse.last_event_id = Some(2);
+
+        let resumed = sse.get_resume_chunks();
+        assert_eq!(resumed.len(), 1);
+        assert_eq!(resumed[0].text, "C");
+    }
+
+    #[test]
+    fn test_sse_reconnect_mark_reconnected() {
+        let mut sse = ResilientSseStream::new(
+            ResumableStreamConfig::default(),
+            SseReconnectConfig::default(),
+        );
+        sse.push("data");
+        sse.handle_disconnect();
+        sse.mark_attempt_failed();
+        sse.mark_reconnected();
+
+        assert!(!sse.should_reconnect());
+        assert_eq!(sse.stats().total_reconnects, 1);
+    }
+
+    #[test]
+    fn test_sse_reconnect_max_attempts_gives_up() {
+        let mut sse = ResilientSseStream::new(
+            ResumableStreamConfig::default(),
+            SseReconnectConfig::quick(), // max 3
+        );
+        sse.push("data");
+        sse.handle_disconnect();
+
+        for _ in 0..3 {
+            sse.mark_attempt_failed();
+        }
+
+        assert!(!sse.should_reconnect());
+    }
+
+    #[test]
+    fn test_sse_reconnect_server_retry_override() {
+        let mut sse = ResilientSseStream::new(
+            ResumableStreamConfig::default(),
+            SseReconnectConfig {
+                respect_server_retry: true,
+                initial_retry_ms: 1000,
+                ..SseReconnectConfig::default()
+            },
+        );
+
+        sse.set_server_retry(3000);
+        let delay = sse.next_retry_delay();
+        assert_eq!(delay, Duration::from_millis(3000));
+    }
+
+    #[test]
+    fn test_sse_reconnect_backoff_increases() {
+        let mut sse = ResilientSseStream::new(
+            ResumableStreamConfig::default(),
+            SseReconnectConfig {
+                initial_retry_ms: 100,
+                max_retry_ms: 10_000,
+                backoff_multiplier: 2.0,
+                respect_server_retry: false,
+                ..SseReconnectConfig::default()
+            },
+        );
+
+        sse.push("data");
+        sse.handle_disconnect();
+
+        let delay1 = sse.next_retry_delay();
+        sse.mark_attempt_failed();
+        let delay2 = sse.next_retry_delay();
+        sse.mark_attempt_failed();
+        let delay3 = sse.next_retry_delay();
+
+        assert!(delay2 > delay1);
+        assert!(delay3 > delay2);
+    }
+
+    #[test]
+    fn test_sse_reconnect_stats() {
+        let mut sse = ResilientSseStream::new(
+            ResumableStreamConfig::default(),
+            SseReconnectConfig::default(),
+        );
+        sse.push("data1");
+        sse.push("data2");
+        sse.handle_disconnect();
+
+        let stats = sse.stats();
+        assert_eq!(stats.last_event_id, Some(2));
+        assert_eq!(stats.reconnect_attempts, 0);
+        assert_eq!(stats.total_reconnects, 0);
+    }
+
+    #[test]
+    fn test_sse_reconnect_config_presets() {
+        let default = SseReconnectConfig::default();
+        assert_eq!(default.max_attempts, 10);
+
+        let aggressive = SseReconnectConfig::aggressive();
+        assert_eq!(aggressive.max_attempts, 20);
+
+        let quick = SseReconnectConfig::quick();
+        assert_eq!(quick.max_attempts, 3);
+    }
+
+    #[test]
+    fn test_sse_stream_push_delegates() {
+        let sse = ResilientSseStream::new(
+            ResumableStreamConfig::default(),
+            SseReconnectConfig::default(),
+        );
+        let id1 = sse.push("hello");
+        let id2 = sse.push("world");
+        assert_eq!(id1, 1);
+        assert_eq!(id2, 2);
+        assert_eq!(sse.stream().accumulated_text(), "helloworld");
     }
 }
