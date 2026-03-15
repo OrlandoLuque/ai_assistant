@@ -41,6 +41,12 @@ pub enum ReplCommand {
     History,
     /// Show cost tracking dashboard report.
     Cost,
+    /// Run tests from the test harness.
+    Test(String),
+    /// Run benchmarks.
+    Bench(String),
+    /// Run precision tests.
+    Precision,
     /// Unrecognized command.
     Unknown(String),
 }
@@ -72,6 +78,9 @@ impl ReplCommand {
             "model" => ReplCommand::Model(arg),
             "history" => ReplCommand::History,
             "cost" => ReplCommand::Cost,
+            "test" => ReplCommand::Test(arg),
+            "bench" | "benchmark" => ReplCommand::Bench(arg),
+            "precision" => ReplCommand::Precision,
             _ => ReplCommand::Unknown(cmd.to_string()),
         })
     }
@@ -300,6 +309,9 @@ impl ReplEngine {
         help.push_str("  /save <path>        Save session to a file\n");
         help.push_str("  /load <path>        Load session from a file\n");
         help.push_str("  /cost               Show cost tracking report\n");
+        help.push_str("  /test [cat|all]     Run test harness (category or all)\n");
+        help.push_str("  /bench [name]       Run benchmarks\n");
+        help.push_str("  /precision          Run precision tests\n");
         help.push_str("\nAnything else is sent as a message to the AI.");
         help
     }

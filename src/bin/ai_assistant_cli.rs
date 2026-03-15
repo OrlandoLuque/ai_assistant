@@ -555,6 +555,9 @@ fn main() -> ExitCode {
                     println!("  /scan              Re-scan for providers (butler)");
                     #[cfg(feature = "containers")]
                     println!("  /docker <cmd>      Docker container management (/docker help)");
+                    println!("  /test [cat|all]    Run test harness (list/category/all)");
+                    println!("  /bench [name]      Run benchmarks");
+                    println!("  /precision         Run precision tests with verbose output");
                 }
                 ReplCommand::Models => {
                     if assistant.available_models.is_empty() {
@@ -677,6 +680,69 @@ fn main() -> ExitCode {
                     println!("  Input tokens:  {}", session.total_input_tokens);
                     println!("  Output tokens: {}", session.total_output_tokens);
                     println!("  Avg latency:   {:.0}ms", session.avg_response_time_ms);
+                }
+                ReplCommand::Test(arg) => {
+                    let exe_dir = std::env::current_exe()
+                        .ok()
+                        .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+                    let harness = exe_dir
+                        .map(|d| d.join("ai_test_harness"))
+                        .filter(|p| p.exists())
+                        .unwrap_or_else(|| std::path::PathBuf::from("ai_test_harness"));
+
+                    let mut cmd = std::process::Command::new(&harness);
+                    if arg.is_empty() {
+                        cmd.arg("--list");
+                    } else if arg == "all" {
+                        cmd.args(["--all", "--summary-only"]);
+                    } else {
+                        cmd.arg(format!("--category={}", arg));
+                    }
+
+                    match cmd.status() {
+                        Ok(status) => {
+                            if !status.success() {
+                                println!("Test harness exited with: {}", status);
+                            }
+                        }
+                        Err(e) => eprintln!("Failed to launch test harness: {}", e),
+                    }
+                }
+                ReplCommand::Bench(arg) => {
+                    let mut bench_cmd = std::process::Command::new("cargo");
+                    bench_cmd.args(["bench", "--bench", "core_benchmarks", "--features", "full"]);
+                    if !arg.is_empty() {
+                        bench_cmd.arg("--").arg(&arg);
+                    }
+                    match bench_cmd.status() {
+                        Ok(status) => {
+                            if !status.success() {
+                                println!("Benchmark exited with: {}", status);
+                            }
+                        }
+                        Err(e) => eprintln!("Failed to launch benchmarks: {}", e),
+                    }
+                }
+                ReplCommand::Precision => {
+                    let exe_dir = std::env::current_exe()
+                        .ok()
+                        .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+                    let harness = exe_dir
+                        .map(|d| d.join("ai_test_harness"))
+                        .filter(|p| p.exists())
+                        .unwrap_or_else(|| std::path::PathBuf::from("ai_test_harness"));
+
+                    match std::process::Command::new(&harness)
+                        .args(["--category=precision", "--verbose"])
+                        .status()
+                    {
+                        Ok(status) => {
+                            if !status.success() {
+                                println!("Precision tests exited with: {}", status);
+                            }
+                        }
+                        Err(e) => eprintln!("Failed to launch precision tests: {}", e),
+                    }
                 }
                 ReplCommand::Unknown(cmd) => {
                     println!("Unknown command: /{cmd}. Type /help for available commands.");

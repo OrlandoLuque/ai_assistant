@@ -6,7 +6,7 @@ The project has two testing layers:
 
 | Layer | Tests | Run Command |
 |-------|-------|-------------|
-| Unit tests (`#[test]`) | 6,829+ | `cargo test --lib --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite,chaos-testing"` |
+| Unit tests (`#[test]`) | 6,829 | `cargo test --lib --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite,chaos-testing"` |
 | Integration tests | 38 | `cargo test --test integration_tests --features full` |
 | Test harness (CLI) | ~436 | `cargo run --bin ai_test_harness -- --all` (sin P2P) |
 | Distributed networking tests | 115 | `cargo test --features "full,distributed-network"` |
@@ -15,7 +15,7 @@ The project has two testing layers:
 | Test harness P2P categories | 16 | `cargo run --bin ai_test_harness --features "full,p2p" -- --category=p2p_nat` |
 | Benchmarks | 42 | `cargo bench --bench core_benchmarks --features full` |
 
-**Total: 6,829+ tests** (lib tests, verified with `cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite,chaos-testing" --lib`)
+**Total: 6,829 tests** (lib tests, verified with `cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite,chaos-testing" --lib`)
 
 ## Quick Start
 
@@ -282,6 +282,89 @@ P2P code interacts with the network (STUN servers, UPnP gateways, TCP sockets). 
 | Synthetic data | Manual `PeerReputation` construction | Pure logic without I/O |
 | State assertions | `manager.start()` then `manager.stats()` | Manager lifecycle without peers |
 
+### Harness CLI Flags (V40)
+
+The test harness supports advanced CLI flags for filtering, scoring, and regression detection:
+
+```bash
+# Verbose mode: per-test details (duration, score, details)
+cargo run --bin ai_test_harness -- --all --verbose
+
+# Filter tests by name (substring match)
+cargo run --bin ai_test_harness -- --all --filter="pii"
+
+# Set per-test timeout (milliseconds)
+cargo run --bin ai_test_harness -- --all --timeout 5000
+
+# Summary-only mode (no per-category detail)
+cargo run --bin ai_test_harness -- --all --summary-only
+
+# Sort results by duration (slowest first)
+cargo run --bin ai_test_harness -- --all --sort=duration
+
+# Retry failed tests up to N times
+cargo run --bin ai_test_harness -- --all --retry-failed 3
+
+# Save baseline for regression detection
+cargo run --bin ai_test_harness -- --all --save-baseline baseline.json
+
+# Compare against a saved baseline
+cargo run --bin ai_test_harness -- --all --diff baseline.json
+
+# Custom regression threshold (default: 10%)
+cargo run --bin ai_test_harness -- --all --diff baseline.json --regression-threshold 5
+```
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--verbose` | `-v` | Per-test details (duration, score, details) |
+| `--filter=PATTERN` | | Filter tests by name substring |
+| `--timeout <ms>` | | Per-test timeout in milliseconds |
+| `--summary-only` | | Only show final summary |
+| `--sort=duration` | | Sort results by duration (slowest first) |
+| `--retry-failed <N>` | | Retry failed tests up to N times |
+| `--save-baseline <path>` | | Save report as JSON baseline |
+| `--diff <baseline.json>` | | Compare against a previous baseline |
+| `--regression-threshold <pct>` | | Score drop threshold for regression (default: 10%) |
+
+### Scored Precision Tests (V40)
+
+The harness includes 31 scored precision tests that measure numerical accuracy with minimum thresholds:
+
+```bash
+# Run all precision tests with detailed output
+cargo run --bin ai_test_harness -- --category=precision --verbose
+```
+
+| ID | Test | Threshold |
+|----|------|-----------|
+| E1 | Content moderation safe precision | >= 0.90 |
+| E2 | Content moderation harmful recall | >= 0.75 |
+| E3 | Intent classification accuracy | >= 0.70 |
+| E4 | Sentiment analysis directional accuracy | >= 0.80 |
+| E5 | Chunking content preservation scored | >= 0.95 |
+| E6 | Embedding similarity ordering | >= 0.80 |
+| E7 | Query expansion diversity | >= 0.50 |
+| E8 | PII per-type detection rate | >= 0.80 |
+| E9 | RBAC permission boundary correctness | >= 0.95 |
+| E10 | ORSet concurrent convergence | = 1.00 |
+| E11 | Token count estimation accuracy | >= 0.90 |
+| E12 | Priority queue ordering scored | = 1.00 |
+| E13 | Injection detection obfuscated | >= 0.40 |
+| E14 | Summarization key-term preservation | >= 0.60 |
+| E15 | DHT store/retrieve fidelity | = 1.00 |
+
+### REPL Test Commands (V40)
+
+The CLI REPL supports test/bench commands directly:
+
+| Command | Action |
+|---------|--------|
+| `/test` | List harness categories |
+| `/test <category>` | Run a specific harness category |
+| `/bench` or `/benchmark` | Run Criterion benchmarks |
+| `/precision` | Run scored precision tests with verbose output |
+
 ### RustRover Configuration
 
 A run configuration is available at `.idea/runConfigurations/AiTestHarness_Debug.xml` for running the harness with `--all` flag and `RUST_BACKTRACE=short`.
@@ -408,10 +491,15 @@ The harness exits with code 1 if any test fails, making it suitable for CI pipel
 | v37 (FreshContext+MCP+Memory) | 4,892+ | — | 2026-03-14 |
 | v38 (Resilience Engineering) | 5,002 | +110 | 2026-03-15 |
 | v39 (API Stability Hardening) | 6,829 | +1,827 | 2026-03-15 |
+| v40 (Testing & Debugging Infrastructure) | 6,829 | +0 | 2026-03-15 |
 
 > **Note on v37 count**: Test count reflects current `--lib` run. Some tests from v28-v36 were
 > in integration tests or feature combinations not included in the standard lib test run.
 > The project maintains 6,829 verified passing lib tests with 0 failures.
+>
+> **Note on v40 count**: V40 adds 15 scored precision tests and harness infrastructure, but
+> these run as harness runtime tests (not `#[test]`), so the lib test count remains 6,829.
+> The harness now runs 31 precision tests in addition to its ~436 functional tests.
 
 ### V38 — New Resilience Test Modules
 

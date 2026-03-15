@@ -16,8 +16,9 @@ Continúa con el desarrollo del proyecto. Lee docs/modus-operandi.md y el últim
 - **Roadmap v11–v37**: ALL COMPLETE (v35 partial — Blocks E+G1+I done, B-D-F-G2-G3-H pending)
 - **V38**: COMPLETE — Resilience Engineering (Bulkhead, Adaptive Timeouts, Load Shedding, Chaos Engineering, Enhanced DLQ, WS/SSE Auto-Reconnect)
 - **V39**: COMPLETE — API Stability Hardening (#[non_exhaustive] on 454 enums + 246 structs, Default/new() constructors, trait stability docs)
-- **Latest**: V39 — API Stability Hardening
-- **Test count**: 6,829 lib tests (0 failures)
+- **V40**: COMPLETE — Testing & Debugging Infrastructure (harness scoring, 15 precision tests, 9 CLI flags, regression detection, REPL /test /bench /precision commands)
+- **Latest**: V40 — Testing & Debugging Infrastructure
+- **Test count**: 6,829 lib tests (0 failures) + 31 harness precision tests
 - **Source files**: 319 .rs files, ~389K LOC
 - **Feature flags**: 55 (+1: chaos-testing)
 - **Status**: Experimental — compiles and passes tests, but not validated in production
@@ -77,6 +78,24 @@ cargo test --features "full,p2p" --lib -- p2p::
 
 # Quick check (lightweight features only)
 cargo test --features full --lib
+
+# --- Harness (V40 flags) ---
+
+# Run harness with verbose output
+cargo run --bin ai_test_harness -- --all --verbose
+
+# Filter harness tests by name
+cargo run --bin ai_test_harness -- --all --filter="security"
+
+# Run precision tests only
+cargo run --bin ai_test_harness -- --category=precision --verbose
+
+# Save baseline and compare
+cargo run --bin ai_test_harness -- --all --save-baseline baseline.json
+cargo run --bin ai_test_harness -- --all --diff baseline.json
+
+# Sort by duration, summary only
+cargo run --bin ai_test_harness -- --all --sort=duration --summary-only
 ```
 
 ## Build check
@@ -92,6 +111,8 @@ cargo check --features "full,autonomous,scheduler,butler,browser,distributed-age
 ## What's next
 
 - **v35 remaining blocks**: B (source renames), C (container abstraction), D (tool framework consolidation), F (naming edge cases), G2-G3 (memory extensions), H (MCP agent tools)
+- **Harness exports**: JUnit XML / TAP output for CI integration
+- **Coverage integration**: `cargo-llvm-cov` or `grcov` with harness coverage
 - **Comprehensive review**: API consistency, dead code, documentation polish
 - **GitHub publication**: repos ready, domain configured
 - **PI registration**: Spain (cultura.gob.es), WIPO PROOF, Safe Creative — PENDING
