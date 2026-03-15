@@ -5,6 +5,7 @@
 
 /// Type of change in a diff
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ChangeType {
     /// No change
     Equal,

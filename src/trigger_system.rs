@@ -16,6 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// What causes a trigger to fire.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum TriggerCondition {
     /// Fire on a cron schedule.
     Cron(CronSchedule),
@@ -480,6 +481,7 @@ fn now_millis() -> u64 {
 /// `scheduler::CronField` but with variant names aligned to the scheduler
 /// runner API.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum TsCronField {
     /// Wildcard `*` — matches any value.
     Any,
@@ -629,6 +631,7 @@ pub struct SchedulerError {
 
 /// Configuration for the scheduler runner.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct SchedulerConfig {
     pub poll_interval_ms: u64,
     pub max_concurrent: usize,

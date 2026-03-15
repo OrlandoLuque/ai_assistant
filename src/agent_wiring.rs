@@ -549,6 +549,7 @@ impl Ord for PoolTask {
 
 /// Reason why the supervisor was triggered.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum TriggerReason {
     /// Agent has been idle for too many iterations.
     StuckDetected { agent_id: String, idle_streak: usize },
@@ -576,6 +577,7 @@ impl std::fmt::Display for TriggerReason {
 
 /// Supervisor configuration.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct SupervisorConfig {
     /// Whether the supervisor is enabled.
     pub enabled: bool,

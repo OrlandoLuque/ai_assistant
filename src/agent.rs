@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 /// Agent state
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum AgentState {
     /// Agent is idle
     Idle,
@@ -98,6 +99,7 @@ impl AgentTool {
 
 /// Agent configuration
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct AgentConfig {
     /// Maximum steps before stopping
     pub max_steps: usize,
@@ -412,6 +414,7 @@ pub struct PlanStep {
 
 /// Plan step status
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum PlanStepStatus {
     Pending,
     InProgress,
@@ -555,6 +558,11 @@ impl Default for AgentExecutor {
 }
 
 /// Agent callback trait
+///
+/// # Stability
+///
+/// New methods may be added to this trait in minor versions with default
+/// implementations. Required methods will only change in major versions.
 pub trait AgentCallback: Send + Sync {
     /// Called when agent starts thinking
     fn on_thinking(&self, _agent_id: &str) {}

@@ -103,6 +103,7 @@ pub struct BanditArm {
 
 /// Strategy for selecting arms.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
 pub enum BanditStrategy {
     /// Thompson Sampling: sample from Beta posterior, pick highest
     ThompsonSampling,
@@ -397,6 +398,7 @@ impl From<QueryFeatures> for RoutingContext {
 
 /// Configuration for the bandit router.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct BanditConfig {
     /// Selection strategy
     pub strategy: BanditStrategy,
@@ -428,6 +430,7 @@ impl Default for BanditConfig {
 
 /// Visibility of arms for distributed state sharing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ArmVisibility {
     /// Share freely with all nodes (default)
     Public,
@@ -991,6 +994,7 @@ pub type NfaStateId = usize;
 
 /// Symbol that labels an NFA transition.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum NfaSymbol {
     /// Match a specific query feature domain
     Domain(String),
@@ -1530,6 +1534,7 @@ impl NfaDfaCompiler {
 
 /// The type of router at a DAG node.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum RoutingDagNodeType {
     /// A bandit router at this node
     Bandit(BanditConfig),
@@ -2183,6 +2188,7 @@ impl AdaptivePerQueryRouter {
 
 /// Strategy for combining votes from multiple sub-routers.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
 pub enum EnsembleStrategy {
     /// Simple majority: most-voted arm wins
     MajorityVote,
@@ -2610,6 +2616,7 @@ const SNAPSHOT_VERSION: u32 = 1;
 
 /// Format for serialization.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum SnapshotFormat {
     Json,
     Bincode,
@@ -3023,6 +3030,7 @@ pub struct ContextualObservation {
 /// Each variant corresponds to a numeric or boolean field in `QueryFeatures`
 /// and can be mapped to an `NfaSymbol` for NFA rule generation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum FeatureDimension {
     Complexity,
     TokenCount,
@@ -3124,6 +3132,7 @@ pub struct DomainSplit {
 
 /// Configuration for the contextual discovery system.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct DiscoveryConfig {
     /// Maximum number of observations to retain (circular buffer).
     pub max_observations: usize,
@@ -4036,6 +4045,7 @@ const PIPELINE_SNAPSHOT_VERSION: u32 = 1;
 
 /// Model tier for heuristic-based routing rules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ModelTier {
     /// High-capability model: code generation, complex reasoning, high-complexity queries.
     Premium,
@@ -4047,6 +4057,7 @@ pub enum ModelTier {
 
 /// Configuration for the closed-loop routing pipeline.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct PipelineConfig {
     /// Re-synthesize NFA after this many new outcome recordings.
     pub synthesis_interval: u64,

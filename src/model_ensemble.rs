@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 
 /// Configuration for ensemble
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct EnsembleConfig {
     /// Ensemble strategy
     pub strategy: EnsembleStrategy,
@@ -42,6 +43,7 @@ impl Default for EnsembleConfig {
 
 /// Ensemble strategies
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum EnsembleStrategy {
     /// Simple majority voting
     Voting,
@@ -423,6 +425,7 @@ impl Default for Ensemble {
 }
 
 /// Builder for ensemble configuration
+#[non_exhaustive]
 pub struct EnsembleConfigBuilder {
     config: EnsembleConfig,
 }

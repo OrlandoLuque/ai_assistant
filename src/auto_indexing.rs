@@ -26,6 +26,7 @@ use super::document_parsing::ParsedDocument;
 
 /// Strategy used to chunk document content for indexing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum IndexChunkingStrategy {
     /// Split by paragraph boundaries (double newlines).
     Paragraph,
@@ -45,6 +46,7 @@ impl Default for IndexChunkingStrategy {
 
 /// Position of a chunk within its source document.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ChunkPosition {
     /// The first chunk in the document.
     First,
@@ -157,6 +159,7 @@ impl AutoIndexingResult {
 
 /// Configuration for the auto-indexer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct AutoIndexConfig {
     /// The chunking strategy to use.
     pub chunking_strategy: IndexChunkingStrategy,

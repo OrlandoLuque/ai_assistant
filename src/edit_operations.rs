@@ -153,6 +153,7 @@ impl TextRange {
 
 /// Type of edit operation
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum EditKind {
     /// Insert text at position
     Insert,
@@ -264,6 +265,7 @@ impl Edit {
 
 /// Error during edit operation
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum EditError {
     /// Edit position is out of bounds
     OutOfBounds { offset: usize, text_len: usize },

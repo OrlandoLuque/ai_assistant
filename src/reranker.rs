@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 /// Configuration for reranking operations.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct RerankerConfig {
     /// Maximum number of documents to return.
     pub top_k: usize,

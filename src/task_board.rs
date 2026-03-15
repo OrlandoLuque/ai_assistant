@@ -103,6 +103,7 @@ impl TaskBoardListener for CollectingBoardListener {
 
 /// Events emitted by the task board.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum BoardEvent {
     TaskChanged {
         step_id: String,
@@ -158,6 +159,7 @@ impl Default for TaskExecutionState {
 
 /// Commands that can be issued to the task board.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum BoardCommand {
     AddTask {
         title: String,

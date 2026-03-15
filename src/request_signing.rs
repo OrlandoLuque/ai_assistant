@@ -165,6 +165,7 @@ pub(crate) mod sha256 {
 
 /// Signature algorithm
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SignatureAlgorithm {
     HmacSha256,
     HmacSha512,
@@ -304,6 +305,7 @@ impl RequestVerifier {
 
 /// Signature errors
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SignatureError {
     Invalid,
     Expired,

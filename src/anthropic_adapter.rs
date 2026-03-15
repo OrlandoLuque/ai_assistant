@@ -210,6 +210,7 @@ pub struct AnthropicErrorDetail {
 
 /// Anthropic client configuration
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct AnthropicConfig {
     pub api_key: String,
     pub base_url: String,
@@ -355,6 +356,7 @@ struct DeltaContent {
 
 /// Anthropic adapter error
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum AnthropicAdapterError {
     Network(String),
     Serialization(String),

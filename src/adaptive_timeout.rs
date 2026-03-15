@@ -19,6 +19,7 @@ use std::time::Duration;
 
 /// Which latency percentile to use for timeout calculation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Percentile {
     /// 50th percentile (median).
     P50,
@@ -45,6 +46,7 @@ impl Percentile {
 
 /// Configuration for [`AdaptiveTimeout`].
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct AdaptiveTimeoutConfig {
     /// Minimum timeout (floor). The adaptive timeout will never go below this.
     pub min_timeout: Duration,

@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 /// OAuth 2.1 grant type for MCP authentication
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum McpOAuthGrantType {
     AuthorizationCode,
     ClientCredentials,
@@ -20,6 +21,7 @@ pub struct McpOAuthScope {
 
 /// OAuth 2.1 configuration for MCP servers
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct McpOAuthConfig {
     pub client_id: String,
     pub client_secret: Option<String>,
@@ -28,6 +30,21 @@ pub struct McpOAuthConfig {
     pub scopes: Vec<McpOAuthScope>,
     pub redirect_uri: String,
     pub pkce_enabled: bool,
+}
+
+impl McpOAuthConfig {
+    /// Create a new MCP OAuth config with the given client credentials.
+    pub fn new(client_id: impl Into<String>, client_secret: impl Into<String>) -> Self {
+        Self {
+            client_id: client_id.into(),
+            client_secret: Some(client_secret.into()),
+            authorization_endpoint: String::new(),
+            token_endpoint: String::new(),
+            scopes: Vec::new(),
+            redirect_uri: String::new(),
+            pkce_enabled: false,
+        }
+    }
 }
 
 /// OAuth 2.1 token response

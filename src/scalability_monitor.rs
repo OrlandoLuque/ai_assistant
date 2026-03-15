@@ -33,6 +33,7 @@ use std::time::Instant;
 
 /// Identifies a monitored subsystem with potential scalability limits.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum Subsystem {
     /// In-memory vector DB (HashMap-based, optimal < 10K vectors).
     VectorDbInMemory,
@@ -85,6 +86,7 @@ impl fmt::Display for Subsystem {
 
 /// Severity level for scalability warnings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum WarningSeverity {
     /// 60-79% of optimal limit — informational.
     Info,
@@ -110,6 +112,7 @@ impl fmt::Display for WarningSeverity {
 
 /// An actionable recommendation for addressing a scalability issue.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ScalabilityAction {
     /// Switch to a different backend.
     SwitchBackend {

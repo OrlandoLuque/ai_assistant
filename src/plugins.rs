@@ -34,6 +34,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
 /// Plugin trait that all plugins must implement
+///
+/// # Stability
+///
+/// New methods may be added to this trait in minor versions with default
+/// implementations. Required methods will only change in major versions.
 pub trait Plugin: Send + Sync {
     /// Get plugin name
     fn name(&self) -> &str;
@@ -102,6 +107,7 @@ pub trait Plugin: Send + Sync {
 
 /// Plugin capabilities
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum PluginCapability {
     /// Can provide AI responses
     Provider,

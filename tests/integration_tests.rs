@@ -140,10 +140,10 @@ mod multi_agent_integration_tests {
         orchestrator.register_agent(Agent::new("agent2", "Agent 2", AgentRole::Analyst));
 
         // Agent 1 stores research data
-        let entry1 = AgentMemoryEntry::new(
+        let entry1 = MemoryEntry::new(
             "research_data",
             "Important research findings about AI",
-            AgentMemoryType::Result,
+            MemoryType::Result,
             "agent1",
         )
         .share_with("agent2");
@@ -300,10 +300,10 @@ mod multi_agent_integration_tests {
         let mut memory = SharedMemory::new();
 
         // Agent creates temporary data with TTL
-        let temp_entry = AgentMemoryEntry::new(
+        let temp_entry = MemoryEntry::new(
             "temp_cache",
             "Cached computation result",
-            AgentMemoryType::Temporary,
+            MemoryType::Temporary,
             "compute_agent",
         )
         .with_ttl(std::time::Duration::from_secs(3600))
@@ -312,10 +312,10 @@ mod multi_agent_integration_tests {
         let temp_id = memory.store(temp_entry);
 
         // Store permanent result
-        let result_entry = AgentMemoryEntry::new(
+        let result_entry = MemoryEntry::new(
             "final_result",
             "The final computed result",
-            AgentMemoryType::Result,
+            MemoryType::Result,
             "compute_agent",
         )
         .with_metadata("computation_time", "150ms")
@@ -421,10 +421,10 @@ mod chaos_engineering_tests {
                     let key = format!("key_{}_{}", thread_id, i);
 
                     // Store
-                    let entry = AgentMemoryEntry::new(
+                    let entry = MemoryEntry::new(
                         &key,
                         &format!("value_{}_{}", thread_id, i),
-                        AgentMemoryType::Fact,
+                        MemoryType::Fact,
                         &agent,
                     );
                     let id = mem.store(entry);
@@ -548,10 +548,10 @@ mod chaos_engineering_tests {
 
         // Create entries with very short TTL
         for i in 0..50 {
-            let entry = AgentMemoryEntry::new(
+            let entry = MemoryEntry::new(
                 &format!("expiring_{}", i),
                 &format!("value_{}", i),
-                AgentMemoryType::Temporary,
+                MemoryType::Temporary,
                 "agent",
             )
             .with_ttl(Duration::from_millis(1));
@@ -561,10 +561,10 @@ mod chaos_engineering_tests {
 
         // Create some permanent entries
         for i in 0..10 {
-            let entry = AgentMemoryEntry::new(
+            let entry = MemoryEntry::new(
                 &format!("permanent_{}", i),
                 &format!("value_{}", i),
-                AgentMemoryType::Fact,
+                MemoryType::Fact,
                 "agent",
             );
             memory.store(entry);
@@ -687,13 +687,13 @@ mod chaos_engineering_tests {
 
         for i in 0..500 {
             let keyword = keywords[i % keywords.len()];
-            let entry = AgentMemoryEntry::new(
+            let entry = MemoryEntry::new(
                 &format!("entry_{}", i),
                 &format!(
                     "This entry is about {} programming language number {}",
                     keyword, i
                 ),
-                AgentMemoryType::Fact,
+                MemoryType::Fact,
                 "agent",
             );
             memory.store(entry);
@@ -824,10 +824,10 @@ mod chaos_engineering_tests {
 
         for i in 0..1000 {
             // Memory operations
-            let entry = AgentMemoryEntry::new(
+            let entry = MemoryEntry::new(
                 &format!("burst_key_{}", i),
                 &format!("burst_value_{}", i),
-                AgentMemoryType::Fact,
+                MemoryType::Fact,
                 "burst_agent",
             );
             let id = memory.store(entry);

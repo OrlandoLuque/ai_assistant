@@ -6,6 +6,7 @@ use std::collections::HashMap;
 
 /// Verification result
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum VerificationStatus {
     /// Fact is verified true
     Verified,
@@ -64,6 +65,7 @@ impl FactSource {
 
 /// Fact verification configuration
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct VerificationConfig {
     /// Minimum confidence for verification
     pub min_confidence: f64,

@@ -37,6 +37,7 @@ pub struct UserPreferences {
 
 /// Response style preference
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
 pub enum ResponseStyle {
     #[default]
     Normal,
@@ -288,6 +289,7 @@ mod encrypted {
 
 /// Type of journal entry.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
 pub enum JournalEntryType {
     /// A regular chat message (user, assistant, or system).
     Message,

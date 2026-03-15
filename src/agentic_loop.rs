@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 /// Agent configuration
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct LoopConfig {
     /// Maximum number of iterations before stopping
     pub max_iterations: usize,
@@ -61,6 +62,7 @@ pub struct LoopState {
 
 /// Agent execution status
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum LoopStatus {
     Thinking,
     CallingTool,
@@ -81,6 +83,7 @@ pub struct LoopMessage {
 
 /// Role in agent conversation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum LoopRole {
     System,
     User,

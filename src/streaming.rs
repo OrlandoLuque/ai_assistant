@@ -34,6 +34,7 @@ use std::time::{Duration, Instant};
 
 /// Configuration for streaming behavior
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct StreamingConfig {
     /// Maximum buffer size in bytes before applying backpressure
     pub buffer_size: usize,
@@ -311,6 +312,7 @@ impl std::fmt::Debug for StreamBuffer {
 
 /// Errors during streaming
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum StreamError {
     /// Buffer is full
     BufferFull,

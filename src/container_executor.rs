@@ -49,6 +49,7 @@ use tokio::runtime::Runtime;
 
 /// Network mode for container isolation.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum NetworkMode {
     /// Full network isolation (default for sandboxed execution).
     None,
@@ -85,6 +86,7 @@ impl std::fmt::Display for NetworkMode {
 
 /// Status of a managed container.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum ContainerStatus {
     /// Container has been created but not started.
     Created,
@@ -140,6 +142,7 @@ impl Default for ContainerCleanupPolicy {
 
 /// Configuration for the container execution engine.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ContainerConfig {
     /// Docker daemon host URI (None = local defaults).
     pub docker_host: Option<String>,
@@ -280,6 +283,7 @@ impl ExecResult {
 
 /// Errors from container operations.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ContainerError {
     /// Docker daemon is not reachable.
     DockerNotAvailable(String),

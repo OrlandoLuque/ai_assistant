@@ -14,6 +14,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// A question an agent wants to ask the user.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum UserQuery {
     /// Free-text question.
     FreeText { question: String },
@@ -73,6 +74,7 @@ impl UserQuery {
 
 /// The user's response to a query.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum UserResponse {
     /// Free text response.
     Text(String),
@@ -113,6 +115,7 @@ impl UserResponse {
 
 /// Notification severity level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum NotifyLevel {
     Info,
     Warning,

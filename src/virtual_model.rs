@@ -89,6 +89,7 @@ pub struct PublishedModel {
 
 /// Result of resolving a model name from the registry.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum ModelResolution {
     /// Physical model — use as-is.
     Physical {

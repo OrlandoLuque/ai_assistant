@@ -31,19 +31,17 @@ fn main() {
     // ------------------------------------------------------------------
     println!("--- 1. PII Detection & Redaction ---\n");
 
-    let config = PiiConfig {
-        detect_types: vec![
-            PiiType::Email,
-            PiiType::Phone,
-            PiiType::Ssn,
-            PiiType::CreditCard,
-            PiiType::IpAddress,
-        ],
-        redaction: RedactionStrategy::Replace,
-        sensitivity: SensitivityLevel::Medium,
-        log_detections: true,
-        custom_patterns: Vec::new(),
-    };
+    let mut config = PiiConfig::default();
+    config.detect_types = vec![
+        PiiType::Email,
+        PiiType::Phone,
+        PiiType::Ssn,
+        PiiType::CreditCard,
+        PiiType::IpAddress,
+    ];
+    config.redaction = RedactionStrategy::Replace;
+    config.sensitivity = SensitivityLevel::Medium;
+    config.log_detections = true;
     let detector = PiiDetector::new(config);
 
     let text = "Contact John at john.doe@acme.com or call 555-123-4567. \
@@ -68,18 +66,16 @@ fn main() {
     // ------------------------------------------------------------------
     println!("--- 2. Content Moderation ---\n");
 
-    let mod_config = ModerationConfig {
-        categories: vec![
-            ModerationCategory::Violence,
-            ModerationCategory::Harassment,
-            ModerationCategory::Spam,
-        ],
-        action: ModerationAction::Flag,
-        threshold: 0.6,
-        blocked_terms: vec!["forbidden_word".to_string()],
-        allowed_terms: Vec::new(),
-        fuzzy_matching: true,
-    };
+    let mut mod_config = ModerationConfig::default();
+    mod_config.categories = vec![
+        ModerationCategory::Violence,
+        ModerationCategory::Harassment,
+        ModerationCategory::Spam,
+    ];
+    mod_config.action = ModerationAction::Flag;
+    mod_config.threshold = 0.6;
+    mod_config.blocked_terms = vec!["forbidden_word".to_string()];
+    mod_config.fuzzy_matching = true;
     let moderator = ContentModerator::new(mod_config);
     let mut stats = ModerationStats::default();
 
@@ -111,10 +107,8 @@ fn main() {
     // ------------------------------------------------------------------
     println!("--- 3. Prompt Injection Detection ---\n");
 
-    let inj_config = InjectionConfig {
-        sensitivity: DetectionSensitivity::High,
-        ..Default::default()
-    };
+    let mut inj_config = InjectionConfig::default();
+    inj_config.sensitivity = DetectionSensitivity::High;
     let inj_detector = InjectionDetector::new(inj_config);
 
     let inputs = [
@@ -143,13 +137,11 @@ fn main() {
     // ------------------------------------------------------------------
     println!("--- 4. Input Sanitization ---\n");
 
-    let san_config = SanitizationConfig {
-        max_input_length: 80,
-        strip_control_chars: true,
-        normalize_unicode: true,
-        block_prompt_injection: true,
-        ..Default::default()
-    };
+    let mut san_config = SanitizationConfig::default();
+    san_config.max_input_length = 80;
+    san_config.strip_control_chars = true;
+    san_config.normalize_unicode = true;
+    san_config.block_prompt_injection = true;
     let sanitizer = InputSanitizer::new(san_config);
 
     let test_inputs = [
@@ -171,12 +163,11 @@ fn main() {
     // ------------------------------------------------------------------
     println!("--- 5. Rate Limiting ---\n");
 
-    let rl_config = RateLimitConfig {
-        requests_per_minute: 3,
-        tokens_per_minute: 500,
-        max_concurrent: 1,
-        cooldown_seconds: 10,
-    };
+    let mut rl_config = RateLimitConfig::default();
+    rl_config.requests_per_minute = 3;
+    rl_config.tokens_per_minute = 500;
+    rl_config.max_concurrent = 1;
+    rl_config.cooldown_seconds = 10;
     let mut limiter = RateLimiter::new(rl_config);
 
     for i in 1..=5 {
@@ -251,12 +242,10 @@ fn main() {
     // ------------------------------------------------------------------
     println!("--- 7. Audit Logging ---\n");
 
-    let audit_config = AuditConfig {
-        enabled: true,
-        max_events: 100,
-        log_message_content: false,
-        event_filter: Vec::new(),
-    };
+    let mut audit_config = AuditConfig::default();
+    audit_config.enabled = true;
+    audit_config.max_events = 100;
+    audit_config.log_message_content = false;
     let mut logger = AuditLogger::new(audit_config);
 
     logger.log(

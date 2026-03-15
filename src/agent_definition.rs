@@ -148,6 +148,7 @@ fn default_true() -> bool {
 
 /// Severity of a validation finding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum WarningSeverity {
     /// Informational note, not a problem.
     Info,
@@ -591,6 +592,7 @@ pub struct DeploymentNetworking {
 
 /// DNS resolution policy for deployed agents.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum DnsPolicy {
     /// Use the host's DNS settings.
     Default,

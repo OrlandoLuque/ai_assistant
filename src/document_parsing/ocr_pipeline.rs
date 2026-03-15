@@ -65,6 +65,7 @@ impl OcrBackend for TemplateOcrBackend {
 
 /// Configuration for an external Tesseract OCR process.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct TesseractConfig {
     /// Path to the `tesseract` binary.
     pub binary_path: String,
@@ -135,6 +136,7 @@ impl OcrBackend for TesseractOcrBackend {
 
 /// Configuration for the multi-backend [`OcrPipeline`].
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct OcrPipelineConfig {
     /// Minimum acceptable confidence for a result to be considered valid.
     pub min_confidence: f32,

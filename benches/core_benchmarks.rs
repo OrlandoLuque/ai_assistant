@@ -63,13 +63,12 @@ fn bench_intent_classification(c: &mut Criterion) {
 }
 
 fn bench_conversation_compaction(c: &mut Criterion) {
-    let config = ai_assistant::ConvCompactionConfig {
-        max_messages: 50,
-        target_messages: 20,
-        preserve_recent: 10,
-        preserve_first: 2,
-        min_importance: 0.8,
-    };
+    let mut config = ai_assistant::ConvCompactionConfig::default();
+    config.max_messages = 50;
+    config.target_messages = 20;
+    config.preserve_recent = 10;
+    config.preserve_first = 2;
+    config.min_importance = 0.8;
     let compactor = ConversationCompactor::new(config);
 
     c.bench_function("conversation_compaction_100_msgs", |b| {
@@ -297,13 +296,11 @@ fn bench_intent_classify_single(c: &mut Criterion) {
 
 fn bench_context_window_trim(c: &mut Criterion) {
     // Small window that forces eviction
-    let config = ContextWindowConfig {
-        max_tokens: 200,
-        response_reserve: 50,
-        min_messages: 2,
-        preserve_system: true,
-        ..ContextWindowConfig::default()
-    };
+    let mut config = ContextWindowConfig::default();
+    config.max_tokens = 200;
+    config.response_reserve = 50;
+    config.min_messages = 2;
+    config.preserve_system = true;
 
     c.bench_function("context_window_trim_50_msgs", |b| {
         b.iter(|| {
@@ -409,13 +406,11 @@ fn bench_cosine_similarity_multi_dim(c: &mut Criterion) {
 }
 
 fn bench_hnsw_vector_search(c: &mut Criterion) {
-    let config = HnswConfig {
-        m: 16,
-        m_max: 32,
-        ef_construction: 100,
-        ef_search: 50,
-        ..HnswConfig::default()
-    };
+    let mut config = HnswConfig::default();
+    config.m = 16;
+    config.m_max = 32;
+    config.ef_construction = 100;
+    config.ef_search = 50;
     let mut index = HnswIndex::new(config);
 
     // Insert 1000 128-dim vectors
@@ -521,13 +516,12 @@ fn bench_pii_detection(c: &mut Criterion) {
 }
 
 fn bench_embedding_train_and_embed(c: &mut Criterion) {
-    let config = EmbeddingConfig {
-        dimensions: 128,
-        min_word_freq: 1,
-        max_vocab_size: 5000,
-        use_subwords: false,
-        ngram_range: (1, 2),
-    };
+    let mut config = EmbeddingConfig::default();
+    config.dimensions = 128;
+    config.min_word_freq = 1;
+    config.max_vocab_size = 5000;
+    config.use_subwords = false;
+    config.ngram_range = (1, 2);
     let mut embedder = LocalEmbedder::new(config);
 
     let docs = vec![
@@ -578,13 +572,12 @@ fn bench_json_schema_validation(c: &mut Criterion) {
 }
 
 fn bench_embedding_batch(c: &mut Criterion) {
-    let config = EmbeddingConfig {
-        dimensions: 128,
-        min_word_freq: 1,
-        max_vocab_size: 5000,
-        use_subwords: false,
-        ngram_range: (1, 2),
-    };
+    let mut config = EmbeddingConfig::default();
+    config.dimensions = 128;
+    config.min_word_freq = 1;
+    config.max_vocab_size = 5000;
+    config.use_subwords = false;
+    config.ngram_range = (1, 2);
     let mut embedder = LocalEmbedder::new(config);
 
     let docs = vec![
@@ -678,11 +671,10 @@ fn bench_reranker_score(c: &mut Criterion) {
     let reranker = NeuralCrossEncoderReranker::default_scorer();
     let pipeline = RerankerPipeline::new()
         .add_stage(Box::new(reranker));
-    let config = RerankerConfig {
-        top_k: 5,
-        diversity_lambda: 0.5,
-        min_score: 0.0,
-    };
+    let mut config = RerankerConfig::default();
+    config.top_k = 5;
+    config.diversity_lambda = 0.5;
+    config.min_score = 0.0;
 
     let docs: Vec<ScoredDocument> = vec![
         ScoredDocument::new("Rust ownership system prevents memory leaks at compile time", 0.9, 0),
@@ -878,12 +870,10 @@ fn bench_attack_detection(c: &mut Criterion) {
 }
 
 fn bench_vector_db_search_euclidean(c: &mut Criterion) {
-    let config = VectorDbConfig {
-        dimensions: 128,
-        collection_name: "bench_vectors".to_string(),
-        distance_metric: DistanceMetric::Euclidean,
-        ..Default::default()
-    };
+    let mut config = VectorDbConfig::default();
+    config.dimensions = 128;
+    config.collection_name = "bench_vectors".to_string();
+    config.distance_metric = DistanceMetric::Euclidean;
     let mut db = InMemoryVectorDb::new(config);
 
     // Insert 1000 vectors
@@ -939,13 +929,11 @@ fn bench_hnsw_build_1k(c: &mut Criterion) {
 
     c.bench_function("hnsw_build_1k_128d", |b| {
         b.iter(|| {
-            let config = HnswConfig {
-                m: 16,
-                m_max: 32,
-                ef_construction: 100,
-                ef_search: 50,
-                ..HnswConfig::default()
-            };
+            let mut config = HnswConfig::default();
+            config.m = 16;
+            config.m_max = 32;
+            config.ef_construction = 100;
+            config.ef_search = 50;
             let mut index = HnswIndex::new(config);
             for (i, vec) in vectors.iter().enumerate() {
                 index.insert(

@@ -17,6 +17,7 @@ use std::time::SystemTime;
 
 /// Parsed REPL command from user input.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ReplCommand {
     /// Show help text listing all available commands.
     Help,
@@ -82,6 +83,7 @@ impl ReplCommand {
 
 /// Action to take after processing user input.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ReplAction {
     /// User wants to send this message to the AI.
     SendMessage(String),
@@ -99,6 +101,7 @@ pub enum ReplAction {
 
 /// Errors that can occur during REPL operations.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ReplError {
     /// An I/O error occurred.
     IoError(io::Error),
@@ -145,6 +148,7 @@ impl From<serde_json::Error> for ReplError {
 
 /// Configuration for the REPL engine.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ReplConfig {
     /// The prompt string displayed before user input (e.g., "> ").
     pub prompt_string: String,

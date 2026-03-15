@@ -51,6 +51,7 @@ pub struct PageContent {
 
 /// Errors that can occur during browser operations.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum BrowserError {
     /// Chrome binary not found on the system.
     ChromeNotFound,

@@ -23,6 +23,7 @@ mod inner {
     // ========================================================================
 
     /// How a grammar element is repeated.
+    #[non_exhaustive]
     #[derive(Debug, Clone, PartialEq)]
     pub enum RepeatKind {
         /// Zero or more repetitions (`*`).
@@ -41,6 +42,7 @@ mod inner {
     }
 
     /// A single element in a grammar alternative.
+    #[non_exhaustive]
     #[derive(Debug, Clone, PartialEq)]
     pub enum GrammarElement {
         /// Exact string literal match, e.g. `"true"`.
@@ -856,6 +858,7 @@ mod inner {
     // ========================================================================
 
     /// Format of grammar output for different providers.
+    #[non_exhaustive]
     #[derive(Debug, Clone, PartialEq)]
     pub enum ProviderGrammarFormat {
         /// GBNF format (Ollama / llama.cpp).
@@ -1448,6 +1451,7 @@ mod inner {
     // ========================================================================
 
     /// Outcome of feeding a token to the streaming validator.
+    #[non_exhaustive]
     #[derive(Debug, Clone, PartialEq)]
     pub enum ValidationState {
         /// The accumulated output so far is valid according to the schema.
@@ -1469,6 +1473,7 @@ mod inner {
     }
 
     /// Configuration for the streaming validator.
+    #[non_exhaustive]
     #[derive(Debug, Clone)]
     pub struct StreamingValidationConfig {
         /// Maximum number of recovery attempts before giving up.

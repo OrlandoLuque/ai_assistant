@@ -8,6 +8,7 @@ pub type PostMessageHook = Box<dyn Fn(&str, &str) -> HookResult + Send + Sync>;
 
 /// Result from a hook
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum HookResult {
     /// Continue processing
     Continue,
@@ -144,6 +145,7 @@ impl HookManager {
 
 /// Result from running a chain of hooks
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum HookChainResult {
     /// No modifications made
     Unchanged,

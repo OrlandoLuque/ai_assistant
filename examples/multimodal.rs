@@ -14,13 +14,11 @@ fn main() {
     println!("=== Multi-Modal RAG Pipeline Demo ===\n");
 
     // 1. Build a pipeline with custom config
-    let config = MultiModalConfig {
-        text_weight: 0.7,
-        image_weight: 0.3,
-        top_k: 5,
-        min_score: 0.05,
-        ..Default::default()
-    };
+    let mut config = MultiModalConfig::default();
+    config.text_weight = 0.7;
+    config.image_weight = 0.3;
+    config.top_k = 5;
+    config.min_score = 0.05;
     let mut pipeline = MultiModalPipeline::new(config);
 
     // 2. Add text chunks

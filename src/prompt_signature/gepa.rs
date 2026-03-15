@@ -12,6 +12,7 @@ use super::types::{
 
 /// Configuration for the GEPA multi-objective genetic optimizer.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct GEPAConfig {
     /// Population size per generation
     pub population_size: usize,

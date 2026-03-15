@@ -10,6 +10,7 @@ use std::collections::HashMap;
 
 /// Sentiment of a message or conversation
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum Sentiment {
     VeryPositive,
     Positive,
@@ -446,6 +447,7 @@ impl SentimentAnalyzer {
 
 /// Sentiment trend over conversation
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum SentimentTrend {
     Improving,
     Stable,
@@ -820,6 +822,7 @@ impl TopicDetector {
 
 /// Configuration for auto-summarization
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct SummaryConfig {
     /// Enable automatic summarization
     pub enabled: bool,
@@ -1026,6 +1029,7 @@ impl SessionSummarizer {
 
 /// Emotion category for emoticons and emoji
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum EmojiCategory {
     Happy,
     Sad,

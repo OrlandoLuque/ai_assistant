@@ -538,6 +538,7 @@ impl BudgetManager {
 
 /// Budget check status
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum BudgetStatus {
     /// Within budget
     Ok,

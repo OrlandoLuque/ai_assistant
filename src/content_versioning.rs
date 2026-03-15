@@ -17,6 +17,7 @@ use uuid::Uuid;
 
 /// The type of change detected between two content versions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ChangeType {
     /// A line was added in the new version.
     Added,
@@ -162,6 +163,7 @@ impl VersionDiff {
 
 /// Configuration for the content versioning store.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct VersioningConfig {
     /// Maximum number of versions to keep per content ID.
     pub max_versions: usize,

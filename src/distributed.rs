@@ -272,6 +272,7 @@ impl DhtValue {
 
 /// DHT configuration
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct DhtConfig {
     /// Number of nodes per k-bucket
     pub k: usize,
@@ -748,6 +749,7 @@ impl<K: Clone + Eq + Hash, V: Clone> Default for LWWMap<K, V> {
 
 /// Status of a MapReduce job
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum JobStatus {
     Pending,
     Mapping,
@@ -837,6 +839,7 @@ pub type CombineFn = Arc<dyn Fn(&str, Vec<Vec<u8>>) -> Vec<u8> + Send + Sync>;
 
 /// Configuration for a MapReduce job
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct MapReduceConfig {
     /// Number of mapper workers
     pub num_mappers: usize,
@@ -1346,6 +1349,7 @@ impl Default for DistributedCoordinator {
 /// MapReduce task distribution, cluster management, and discovery.
 #[cfg(feature = "distributed-network")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum NodeMessage {
     // --- Heartbeat ---
     /// Ping request with sender identity and timestamp.

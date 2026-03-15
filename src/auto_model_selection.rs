@@ -15,6 +15,7 @@ use std::time::Duration;
 
 /// Configuration for automatic model selection
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct AutoSelectConfig {
     /// Available models
     pub models: Vec<ModelProfile>,
@@ -91,6 +92,7 @@ pub struct ModelCapabilities {
 
 /// Types of tasks
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum TaskType {
     /// Code generation
     Coding,
@@ -529,6 +531,7 @@ pub struct ModelStats {
 
 /// Builder for selector configuration
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct AutoSelectConfigBuilder {
     config: AutoSelectConfig,
 }
@@ -693,6 +696,7 @@ impl Default for ModelCostRegistry {
 
 /// Strategy for ordering fallback models
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum FallbackStrategy {
     /// Use models in the order they were added
     Sequential,
@@ -1051,6 +1055,7 @@ impl SmartSelector {
 
 /// Task types for routing decisions.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum PipelineTaskType {
     Chat,
     Summarization,
@@ -1190,6 +1195,7 @@ impl PipelineRouter {
 
 /// A prompt segment that can be marked as static (cacheable) or dynamic.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum PromptSegment {
     Static { content: String, cache_key: String },
     Dynamic { content: String },

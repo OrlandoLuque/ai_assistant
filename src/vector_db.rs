@@ -97,6 +97,7 @@ pub fn string_id_to_u64(id: &str) -> u64 {
 
 /// Configuration for vector database
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct VectorDbConfig {
     /// Vector dimensions
     pub dimensions: usize,
@@ -127,6 +128,7 @@ impl Default for VectorDbConfig {
 
 /// Distance metric for similarity calculation
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum DistanceMetric {
     /// Cosine similarity (1 - cosine_distance)
     Cosine,
@@ -211,6 +213,7 @@ pub struct MetadataFilter {
 
 /// Filter operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum FilterOperation {
     /// Exact match
     Equals(serde_json::Value),
@@ -259,6 +262,11 @@ impl MetadataFilter {
 }
 
 /// Trait for vector database implementations
+///
+/// # Stability
+///
+/// New methods may be added to this trait in minor versions with default
+/// implementations. Required methods will only change in major versions.
 pub trait VectorDb: Send + Sync {
     /// Insert a vector with metadata
     fn insert(&mut self, id: &str, vector: Vec<f32>, metadata: serde_json::Value) -> AiResult<()>;
@@ -866,6 +874,7 @@ pub struct VectorDbBuilder {
 
 /// Available backends
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub enum VectorDbBackend {
     /// In-memory storage (Tier 0)
     #[default]

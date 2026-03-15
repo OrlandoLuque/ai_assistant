@@ -17,6 +17,7 @@ use aes_gcm::{
 
 /// Encryption algorithm
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum EncryptionAlgorithm {
     Aes256Gcm,
     ChaCha20Poly1305,
@@ -318,6 +319,7 @@ impl Default for ContentEncryptor {
 
 /// Encryption errors
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum EncryptionError {
     NoActiveKey,
     KeyNotFound,

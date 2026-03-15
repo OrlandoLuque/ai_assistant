@@ -1422,6 +1422,7 @@ impl Default for ProviderRegistry {
 
 /// Configuration for a provider within the resilient registry.
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct ProviderConfig {
     /// Human-readable provider name (e.g. "openai-primary")
     pub name: String,
@@ -1480,6 +1481,7 @@ impl ProviderConfig {
 
 /// Health status of a provider within the resilient registry.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ProviderHealthStatus {
     /// Provider is responding normally
     Healthy,
@@ -1605,6 +1607,7 @@ enum CircuitStateKind {
 
 /// Error returned by [`ResilientProviderRegistry::generate_with_fallback`].
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ResilientError {
     /// All providers in the chain failed.
     AllProvidersFailed {
@@ -1640,6 +1643,7 @@ impl std::error::Error for ResilientError {}
 // ---------------------------------------------------------------------------
 
 /// Configuration for the lightweight connection-pool handle.
+#[non_exhaustive]
 pub struct PoolHandleConfig {
     /// Per-request timeout in seconds
     pub timeout_secs: u64,

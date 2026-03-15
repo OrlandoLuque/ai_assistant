@@ -9,6 +9,7 @@ use crate::request_signing::sha256;
 
 /// Webhook event types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum WebhookEvent {
     MessageReceived,
     MessageSent,
@@ -22,6 +23,7 @@ pub enum WebhookEvent {
 
 /// Webhook configuration
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct WebhookConfig {
     pub url: String,
     pub events: Vec<WebhookEvent>,

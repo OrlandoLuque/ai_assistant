@@ -29,6 +29,7 @@ use crate::distributed::PNCounter;
 
 /// Configuration for the 2-layer distributed rate limiter.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct DistributedRateLimitConfig {
     /// Local per-IP rate limit (requests per window).
     pub local_limit: u64,

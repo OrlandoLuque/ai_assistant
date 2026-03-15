@@ -95,6 +95,7 @@ use crate::rag_pipeline::{GraphCallback, GraphRelation, RetrievedChunk};
 
 /// Configuration for the Knowledge Graph system
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct KnowledgeGraphConfig {
     /// Maximum depth for graph traversal (default: 2)
     pub max_traversal_depth: usize,
@@ -174,6 +175,7 @@ pub struct Entity {
 /// Types of entities recognized by the system
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum EntityType {
     Organization,
     Product,
@@ -1865,6 +1867,7 @@ impl Default for KnowledgeGraphBuilder {
 
 /// WHERE clause operators for graph queries.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum WhereClause {
     /// Exact equality: field = 'value'
     Eq(String, String),
@@ -1884,6 +1887,7 @@ pub enum WhereClause {
 
 /// A match pattern for graph query building.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum MatchPattern {
     /// Match a node (entity) with optional type label and alias.
     Node {

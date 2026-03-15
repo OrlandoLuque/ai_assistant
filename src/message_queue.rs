@@ -122,6 +122,7 @@ impl Default for MemoryQueue {
 
 /// Queue errors
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum QueueError {
     Full,
     Empty,
@@ -247,6 +248,7 @@ where
 
 /// Category of failure that caused a message to be dead-lettered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum FailureCategory {
     /// Request timed out.
     Timeout,

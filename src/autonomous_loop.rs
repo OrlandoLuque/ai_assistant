@@ -21,6 +21,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Current state of the autonomous agent.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum AgentState {
     /// Not running.
     Idle,
@@ -44,6 +45,7 @@ pub enum AgentState {
 
 /// Outcome of a single iteration of the loop.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum IterationOutcome {
     /// Continue to the next iteration.
     Continue,
@@ -92,6 +94,7 @@ pub struct AgentResult {
 // ============================================================================
 
 /// Configuration for cost tracking during agent execution.
+#[non_exhaustive]
 pub struct CostConfig {
     /// Default cost per tool call in USD.
     pub default_cost_per_call: f64,
@@ -133,6 +136,7 @@ impl Default for CostConfig {
 // ============================================================================
 
 /// Configuration for an autonomous agent.
+#[non_exhaustive]
 pub struct AutonomousAgentConfig {
     /// Name of the agent.
     pub name: String,
@@ -142,6 +146,17 @@ pub struct AutonomousAgentConfig {
     pub system_prompt: String,
     /// Cost tracking configuration.
     pub cost_config: CostConfig,
+}
+
+impl Default for AutonomousAgentConfig {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            max_iterations: 0,
+            system_prompt: String::new(),
+            cost_config: CostConfig::default(),
+        }
+    }
 }
 
 // ============================================================================

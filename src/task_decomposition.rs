@@ -18,6 +18,7 @@ pub struct TaskNode {
 
 /// Decomposition status
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum DecompositionStatus {
     NotStarted,
     InProgress,
@@ -90,6 +91,7 @@ impl TaskNode {
 
 /// Decomposition strategy
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum DecompositionStrategy {
     /// Break down by steps
     Sequential,

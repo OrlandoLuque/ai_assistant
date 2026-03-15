@@ -40,6 +40,7 @@ use std::time::{Duration, Instant};
 
 /// Configuration for batch processing
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct BatchConfig {
     /// Maximum concurrent requests
     pub max_concurrent: usize,

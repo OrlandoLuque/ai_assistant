@@ -14,6 +14,7 @@ use std::collections::HashMap;
 
 /// Validation configuration
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ValidationConfig {
     /// Enable strict mode (fail on any issue)
     pub strict: bool,
@@ -47,6 +48,7 @@ impl Default for ValidationConfig {
 
 /// Expected output formats
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum OutputFormat {
     /// Plain text
     PlainText,
@@ -85,6 +87,7 @@ pub struct ValidationIssue {
 
 /// Severity levels for validation issues
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum IssueSeverity {
     /// Informational only
     Info,
@@ -98,6 +101,7 @@ pub enum IssueSeverity {
 
 /// Types of validation issues
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum IssueType {
     /// Output too long
     TooLong,
@@ -572,6 +576,7 @@ fn value_type(value: &serde_json::Value) -> &'static str {
 }
 
 /// Builder for validation configuration
+#[non_exhaustive]
 pub struct ValidationConfigBuilder {
     config: ValidationConfig,
 }

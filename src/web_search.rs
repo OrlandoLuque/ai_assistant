@@ -49,6 +49,7 @@ fn extract_domain(url: &str) -> String {
 
 /// Search configuration
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct SearchConfig {
     /// Maximum results to return
     pub max_results: usize,
@@ -79,6 +80,7 @@ impl Default for SearchConfig {
 
 /// Safe search level
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SafeSearch {
     Off,
     Moderate,
@@ -87,6 +89,7 @@ pub enum SafeSearch {
 
 /// Time range filter
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum TimeRange {
     Day,
     Week,
@@ -96,6 +99,11 @@ pub enum TimeRange {
 }
 
 /// Search provider trait
+///
+/// # Stability
+///
+/// New methods may be added to this trait in minor versions with default
+/// implementations. Required methods will only change in major versions.
 pub trait SearchProvider: Send + Sync {
     fn search(&self, query: &str, config: &SearchConfig) -> Result<Vec<SearchResult>, SearchError>;
     fn name(&self) -> &str;
@@ -1134,6 +1142,7 @@ impl Default for WebCrawler {
 
 /// Search error
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum SearchError {
     Network(String),
     Parse(String),

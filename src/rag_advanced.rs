@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 /// Strategy for splitting documents into chunks
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ChunkingStrategy {
     /// Fixed size chunks (character count)
     FixedSize,
@@ -33,6 +34,7 @@ impl Default for ChunkingStrategy {
 
 /// Configuration for intelligent chunking
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ChunkingConfig {
     /// Chunking strategy
     pub strategy: ChunkingStrategy,
@@ -806,6 +808,7 @@ impl ChunkDeduplicator {
 
 /// Configuration for re-ranking
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct RerankConfig {
     /// Weight for BM25/keyword score
     pub keyword_weight: f32,

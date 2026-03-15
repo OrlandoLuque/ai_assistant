@@ -10,6 +10,7 @@ use super::types::{EvalMetric, OptimizationResult, Signature, TrainingExample};
 
 /// Cooling schedule for simulated annealing in the SIMBA optimizer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum CoolingSchedule {
     /// Linear cooling: temperature decreases linearly from `initial_temp` to `min_temp`.
     Linear { initial_temp: f64, min_temp: f64 },
@@ -50,6 +51,7 @@ impl CoolingSchedule {
 
 /// Strategy for mutating prompt instructions in the SIMBA optimizer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum MutationStrategy {
     /// Randomly perturb instruction text with given strength (0.0..1.0).
     RandomPerturbation { strength: f64 },
@@ -66,6 +68,7 @@ pub enum MutationStrategy {
 
 /// Configuration for the SIMBA optimizer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct SimbaConfig {
     /// Number of prompt variants in the population.
     pub population_size: usize,

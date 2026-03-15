@@ -21,6 +21,7 @@ use crate::load_shedding::{LoadContext, LoadShedder, SheddingDecision};
 /// Higher-priority requests are dequeued before lower-priority ones
 /// within the same insertion order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum RequestPriority {
     /// Background tasks: indexing, summarization, cache warming
     Low = 0,

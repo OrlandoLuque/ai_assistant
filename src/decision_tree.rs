@@ -16,6 +16,7 @@ use std::sync::mpsc::Sender;
 
 /// Operators used for evaluating conditions against context variables.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
 pub enum ConditionOperator {
     Equals,
     NotEquals,
@@ -194,6 +195,7 @@ pub struct DecisionBranch {
 
 /// The type and associated data for a decision tree node.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum DecisionNodeType {
     /// Evaluate branches in order; first match wins, else use default.
     Condition {
@@ -1220,6 +1222,7 @@ fn escape_mermaid(s: &str) -> String {
 
 /// Events emitted during async tree execution.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum TreeEvent {
     /// A node was entered during traversal.
     NodeEntered { node_id: String },
@@ -1258,6 +1261,7 @@ pub enum TreeEvent {
 
 /// State of the tree executor.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum ExecutorState {
     /// Ready to start or continue execution.
     Ready,

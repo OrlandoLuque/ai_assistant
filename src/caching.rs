@@ -54,6 +54,7 @@ impl CachedResponse {
 
 /// Cache configuration
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct CacheConfig {
     /// Maximum number of entries
     pub max_entries: usize,

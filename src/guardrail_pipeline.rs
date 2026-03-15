@@ -31,6 +31,7 @@ use crate::pii_detection::PiiDetector;
 
 /// Stage where a guard runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum GuardStage {
     /// Before sending input to the model.
     PreSend,
@@ -42,6 +43,7 @@ pub enum GuardStage {
 
 /// Action to take when a guard triggers.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum GuardAction {
     /// Content is acceptable.
     Pass,
@@ -65,6 +67,11 @@ pub struct GuardCheckResult {
 }
 
 /// Unified guard trait. All guardrail components implement this.
+///
+/// # Stability
+///
+/// New methods may be added to this trait in minor versions with default
+/// implementations. Required methods will only change in major versions.
 pub trait Guard: Send + Sync {
     /// A short, unique name for this guard.
     fn name(&self) -> &str;
@@ -582,6 +589,7 @@ impl Guard for AttackGuard {
 
 /// Action for streaming guard evaluation.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum StreamGuardAction {
     /// Chunk is acceptable.
     Pass,
@@ -607,6 +615,7 @@ pub trait StreamingGuard: Send + Sync {
 
 /// Configuration for the streaming guardrail pipeline.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct StreamingGuardrailConfig {
     /// Minimum number of whitespace-delimited tokens before the first evaluation.
     pub min_buffer_size: usize,
@@ -987,6 +996,7 @@ pub struct PolicyStatement {
 
 /// Priority level for a policy statement, used to determine violation severity.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum PolicyPriority {
     Low,
     Medium,
@@ -996,6 +1006,7 @@ pub enum PolicyPriority {
 
 /// Scope of a policy — controls which outputs are checked.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum PolicyScope {
     /// Check all model outputs regardless of context.
     AllOutputs,
@@ -1417,6 +1428,7 @@ impl Guard for NaturalLanguageGuard {
 
 /// Action to take when PII is detected in output.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum PiiAction {
     /// Block the response entirely.
     Block,
@@ -1426,6 +1438,7 @@ pub enum PiiAction {
 
 /// Configuration for the output PII guard.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct OutputPiiConfig {
     pub action: PiiAction,
     pub check_emails: bool,
@@ -1892,6 +1905,7 @@ impl Guard for OutputPiiGuard {
 
 /// Configuration for the output toxicity guard.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct OutputToxicityConfig {
     pub severity_threshold: f64,
 }

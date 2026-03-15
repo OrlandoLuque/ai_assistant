@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 /// Engagement event types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum EngagementEvent {
     MessageSent,
     MessageReceived,

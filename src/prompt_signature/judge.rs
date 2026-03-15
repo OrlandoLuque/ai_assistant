@@ -97,6 +97,7 @@ pub struct CriterionScore {
 
 /// Configuration for an LLM-as-judge evaluator.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct JudgeConfig {
     /// The rubric to use for evaluation.
     pub rubric: JudgeRubric,
@@ -117,6 +118,16 @@ pub struct JudgeExample {
     pub expected_score: f64,
     /// The expected reasoning.
     pub reasoning: String,
+}
+
+impl Default for JudgeConfig {
+    fn default() -> Self {
+        Self {
+            rubric: JudgeRubric::new(String::new()),
+            few_shot_examples: Vec::new(),
+            temperature: 0.0,
+        }
+    }
 }
 
 /// An evaluation metric that uses an LLM-as-judge scoring function.

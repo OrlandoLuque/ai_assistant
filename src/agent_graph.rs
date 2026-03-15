@@ -13,6 +13,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// The semantic type of an edge connecting two agents in a graph.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum EdgeType {
     DataFlow,
     Control,
@@ -46,6 +47,7 @@ impl std::fmt::Display for EdgeType {
 
 /// Execution status of a single trace step.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum StepStatus {
     Running,
     Completed,
@@ -71,6 +73,7 @@ impl std::fmt::Display for StepStatus {
 
 /// Errors that can occur during agent graph construction or analysis.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum GraphError {
     CycleDetected,
     NodeNotFound(String),

@@ -7,6 +7,7 @@ use std::time::Instant;
 
 /// Agent status
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum AgentStatus {
     Idle,
     Working,
@@ -18,6 +19,7 @@ pub enum AgentStatus {
 
 /// Agent role
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum AgentRole {
     Coordinator,
     Researcher,
@@ -79,6 +81,7 @@ pub struct AgentMessage {
 
 /// Message types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum MessageType {
     Request,
     Response,
@@ -122,6 +125,7 @@ pub struct AgentTask {
 
 /// Task status
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum TaskStatus {
     Pending,
     InProgress,
@@ -158,6 +162,7 @@ impl AgentTask {
 
 /// Orchestration strategy
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum OrchestrationStrategy {
     Sequential,
     Parallel,
@@ -503,6 +508,7 @@ pub struct OrchestrationStatus {
 
 /// Orchestration errors
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum OrchestrationError {
     AgentNotFound,
     TaskNotFound,
@@ -1247,6 +1253,7 @@ impl Default for CollaborationSession {
 
 /// Pre-built multi-agent conversation patterns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ConversationPattern {
     /// Each agent picks a task from a shared queue. First-come first-served.
     Swarm,
@@ -1264,6 +1271,7 @@ pub enum ConversationPattern {
 
 /// Termination conditions for conversation patterns.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum TerminationCondition {
     /// Stop after a fixed number of rounds.
     MaxRounds(usize),
@@ -1277,6 +1285,7 @@ pub enum TerminationCondition {
 
 /// Configuration for a conversation pattern execution.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct PatternConfig {
     /// Maximum number of rounds before termination.
     pub max_rounds: usize,
@@ -1778,6 +1787,7 @@ impl PatternRunner {
 
 /// Policy for how much context to transfer during a handoff.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ContextTransferPolicy {
     /// Transfer entire conversation history.
     Full,

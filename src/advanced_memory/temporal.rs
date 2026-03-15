@@ -7,6 +7,7 @@ use super::helpers::keyword_overlap;
 
 /// The type of temporal relationship between two episodes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum TemporalEdgeType {
     /// Episode A happened before episode B.
     Before,
@@ -38,6 +39,7 @@ pub struct TemporalGraph {
 
 /// Specifies a temporal query type.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum TemporalQueryType {
     /// What caused this episode?
     WhatCaused,

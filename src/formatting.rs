@@ -76,6 +76,7 @@ pub struct ParsedTable {
 
 /// Table column alignment
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum TableAlignment {
     Left,
     Center,
@@ -113,6 +114,7 @@ pub struct ResponseParser {
 
 /// Parser configuration
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ParserConfig {
     /// Extract code blocks
     pub extract_code: bool,

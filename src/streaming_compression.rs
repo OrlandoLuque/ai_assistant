@@ -32,6 +32,7 @@ use std::io::{Read, Write};
 
 /// Compression algorithm
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum Algorithm {
     /// No compression
     None,
@@ -64,6 +65,7 @@ impl Algorithm {
 
 /// Compression level
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Level {
     /// No compression (fastest)
     None,
@@ -97,6 +99,7 @@ impl Default for Level {
 
 /// Compression configuration
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct CompressionConfig {
     /// Compression algorithm
     pub algorithm: Algorithm,
@@ -339,6 +342,7 @@ impl CompressionStats {
 
 /// Compression errors
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum CompressionError {
     /// Decompression failed
     DecompressionFailed(String),

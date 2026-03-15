@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 /// Configuration for input sanitization
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct SanitizationConfig {
     /// Maximum input length (characters)
     pub max_input_length: usize,
@@ -140,6 +141,7 @@ impl InputSanitizer {
 
 /// Result of input sanitization
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum SanitizationResult {
     /// Input was already clean
     Clean { output: String },
@@ -178,6 +180,7 @@ impl SanitizationResult {
 
 /// Warning from sanitization process
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum SanitizationWarning {
     Truncated {
         original_length: usize,

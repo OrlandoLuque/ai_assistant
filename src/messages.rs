@@ -60,6 +60,7 @@ impl ChatMessage {
 
 /// Response variants from AI generation
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum AiResponse {
     /// A streaming chunk of text
     Chunk(String),

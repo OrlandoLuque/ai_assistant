@@ -26,6 +26,7 @@ use std::time::{Duration, Instant};
 
 /// Eviction policy for bounded collections
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum EvictionPolicy {
     /// Least Recently Used - evict items accessed longest ago
     Lru,
@@ -444,6 +445,7 @@ pub struct ComponentMemory {
 
 /// Memory pressure level
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub enum MemoryPressure {
     /// Normal memory usage
     Normal,

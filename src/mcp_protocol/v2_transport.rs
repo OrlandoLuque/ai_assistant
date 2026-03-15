@@ -11,6 +11,7 @@ use super::types::*;
 
 /// Transport mode for MCP v2: StdIO, SSE (legacy), or Streamable HTTP (v2 default).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum TransportMode {
     /// Standard I/O (stdin/stdout).
     #[serde(rename = "std_io")]

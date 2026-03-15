@@ -23,6 +23,7 @@ use std::sync::Arc;
 ///
 /// Named `EvalAgentConfig` to avoid collision with `AgentConfig` in agentic_loop.rs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct EvalAgentConfig {
     /// Human-readable name for this configuration (used as identifier in reports)
     pub name: String,
@@ -283,6 +284,7 @@ impl EvalAgentConfig {
 /// Each dimension defines a set of candidate values to test. The search engine
 /// sweeps through each dimension one at a time (coordinate descent).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum SearchDimension {
     /// Which model to use for a specific subtask
     SubtaskModel {
@@ -508,6 +510,7 @@ impl std::fmt::Debug for MultiModelGenerator {
 /// plus the full `BenchmarkRunResult` for pipeline integration with
 /// `ComparisonMatrix`, `SubtaskAnalyzer`, and `ReportBuilder`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ConfigMeasurement {
     /// The configuration that was measured
     pub config: EvalAgentConfig,

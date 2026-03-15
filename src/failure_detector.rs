@@ -235,6 +235,7 @@ impl PhiAccrualDetector {
 
 /// Status of a monitored node.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum NodeStatus {
     /// Node is responding normally.
     Alive,
@@ -259,6 +260,7 @@ impl NodeStatus {
 
 /// Configuration for the heartbeat manager.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct HeartbeatConfig {
     /// How often to send heartbeats.
     pub interval: Duration,

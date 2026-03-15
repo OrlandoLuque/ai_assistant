@@ -432,6 +432,7 @@ impl FunctionRegistry {
 /// Tool choice configuration for the API
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
+#[non_exhaustive]
 pub enum ToolChoice {
     /// Let the model decide
     Auto,

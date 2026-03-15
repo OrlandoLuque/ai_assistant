@@ -126,6 +126,7 @@ pub fn default_principles() -> Vec<ConstitutionalPrinciple> {
 
 /// Constitutional AI configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ConstitutionalConfig {
     /// Principles to enforce
     pub principles: Vec<ConstitutionalPrinciple>,
@@ -363,6 +364,7 @@ pub struct PrincipleViolation {
 
 /// Bias dimension
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum BiasDimension {
     Gender,
     Race,
@@ -395,6 +397,7 @@ impl BiasDimension {
 
 /// Bias detection configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct BiasConfig {
     /// Dimensions to check
     pub dimensions: Vec<BiasDimension>,
@@ -620,6 +623,7 @@ pub struct BiasOccurrence {
 
 /// Toxicity category
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ToxicityCategory {
     Profanity,
     Insult,
@@ -648,6 +652,7 @@ impl ToxicityCategory {
 
 /// Toxicity detector configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ToxicityConfig {
     /// Categories to check
     pub categories: Vec<ToxicityCategory>,
@@ -853,6 +858,7 @@ pub struct ToxicityResult {
 
 /// Red-team attack type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum AttackType {
     /// Prompt injection
     PromptInjection,

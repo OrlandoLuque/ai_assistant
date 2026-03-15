@@ -7,6 +7,7 @@ use std::collections::HashMap;
 
 /// Anonymization strategy
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum AnonymizationStrategy {
     Redact,
     Hash,
@@ -17,6 +18,7 @@ pub enum AnonymizationStrategy {
 
 /// Data type for anonymization
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum DataType {
     Email,
     Phone,

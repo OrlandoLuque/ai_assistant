@@ -34,6 +34,7 @@ use std::time::{Duration, Instant};
 
 /// Connection state
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ConnectionState {
     /// Not connected
     Disconnected,
@@ -63,6 +64,7 @@ impl ConnectionState {
 
 /// Keepalive configuration
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct KeepaliveConfig {
     /// Heartbeat interval
     pub heartbeat_interval: Duration,
@@ -182,6 +184,7 @@ pub struct HeartbeatResult {
 
 /// Keepalive event
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum KeepaliveEvent {
     /// Connection established
     Connected { provider: String },

@@ -39,6 +39,7 @@ pub struct DistributedTask {
 
 /// Status of a distributed task.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum TaskDistributionStatus {
     Queued,
     Assigned,
@@ -64,6 +65,7 @@ pub struct MapReduceAgentJob {
 
 /// Status of a map-reduce agent job.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum MapReduceStatus {
     Pending,
     Mapping,

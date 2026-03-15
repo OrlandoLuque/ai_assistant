@@ -166,6 +166,7 @@ impl<'de> Deserialize<'de> for SecureString {
 
 /// Error type for credential resolution failures.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum CredentialError {
     /// The requested key was not found in any source.
     NotFound {

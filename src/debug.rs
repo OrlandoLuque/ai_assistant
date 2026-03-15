@@ -10,6 +10,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Debug verbosity level
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum DebugLevel {
     /// No debug output
     Off = 0,
@@ -126,6 +127,7 @@ impl DebugEntry {
 
 /// Debug configuration
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct DebugConfig {
     /// Global debug level
     pub level: DebugLevel,

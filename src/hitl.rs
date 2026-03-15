@@ -44,6 +44,7 @@ fn now_secs() -> u64 {
 
 /// Impact level of a tool invocation, from benign to potentially destructive.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ImpactLevel {
     Low,
     Medium,
@@ -120,6 +121,7 @@ impl ApprovalRequest {
 
 /// The decision made by a human (or automated gate) for an approval request.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ApprovalDecision {
     /// The request is approved as-is.
     Approve,
@@ -395,6 +397,7 @@ impl ConfidenceEstimator for MinimumEstimator {
 
 /// A condition that triggers an escalation action.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum EscalationTrigger {
     /// Fires when the confidence score drops below the given threshold.
     ConfidenceBelow(f64),
@@ -410,6 +413,7 @@ pub enum EscalationTrigger {
 
 /// Action to take when an escalation trigger fires.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum EscalationAction {
     /// Continue execution without intervention.
     Continue,
@@ -533,6 +537,7 @@ impl EscalationEvaluator {
 
 /// The kind of correction a human can apply to an agent's execution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum CorrectionType {
     /// Replace the agent's output entirely.
     ReplaceOutput { new_output: String },
@@ -660,6 +665,7 @@ impl CorrectionHistory {
 
 /// A condition that determines whether a policy rule applies to a given request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum PolicyCondition {
     /// Matches when the tool name equals the given string exactly.
     ToolNameMatch(String),
@@ -701,6 +707,7 @@ impl PolicyCondition {
 
 /// The action to take when a policy rule matches.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum PolicyAction {
     /// Automatically approve the request.
     AutoApprove,

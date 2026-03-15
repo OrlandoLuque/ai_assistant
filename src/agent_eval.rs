@@ -15,6 +15,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// The kind of action an agent performed in a single step.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum StepActionType {
     ToolCall,
     LlmQuery,
@@ -185,6 +186,7 @@ pub struct AgentMetrics {
 
 /// Configuration for the trajectory analyzer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct AnalyzerConfig {
     pub include_failed_steps: bool,
     pub cost_weight: f64,

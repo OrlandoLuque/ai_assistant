@@ -14,6 +14,7 @@ use crate::vector_db::{
 
 /// HNSW index configuration.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct HnswConfig {
     /// Maximum number of connections per node at layer 0 (default: 16).
     pub m: usize,

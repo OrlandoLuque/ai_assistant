@@ -45,6 +45,7 @@ pub struct ChatMessage {
 
 /// Configuration for chat hooks.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ChatConfig {
     /// API endpoint URL.
     pub api_url: String,
@@ -109,6 +110,7 @@ impl ChatConfig {
 
 /// Agent state machine states.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum AgentState {
     /// Agent is idle, no task running.
     Idle,
@@ -140,6 +142,7 @@ pub struct ToolCallInfo {
 
 /// Configuration for agent hooks.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct AgentConfig {
     /// Underlying chat configuration.
     pub chat_config: ChatConfig,

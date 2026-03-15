@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 /// Telemetry configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct TelemetryConfig {
     pub enabled: bool,
     pub collect_latency: bool,

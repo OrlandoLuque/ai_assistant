@@ -6,6 +6,7 @@ use std::collections::HashSet;
 
 /// Suggestion type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SuggestionType {
     FollowUp,
     Clarification,
@@ -242,6 +243,7 @@ fn is_common_word(word: &str) -> bool {
 
 /// Context-aware suggestion config
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct SuggestionConfig {
     pub max_suggestions: usize,
     pub include_follow_up: bool,

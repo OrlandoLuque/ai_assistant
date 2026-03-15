@@ -15,6 +15,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Represents the current status of a chat interaction.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ChatStatus {
     Idle,
     Thinking,
@@ -74,6 +75,7 @@ impl UsageInfo {
 
 /// Events emitted during a streaming chat interaction.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum ChatStreamEvent {
     MessageStart { id: String, role: String },
     MessageDelta { id: String, content_chunk: String },

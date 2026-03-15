@@ -530,6 +530,7 @@ where
 
 /// Configuration for async retry
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct AsyncRetryConfig {
     /// Maximum number of attempts
     pub max_attempts: usize,

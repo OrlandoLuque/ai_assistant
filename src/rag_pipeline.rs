@@ -201,6 +201,7 @@ pub struct RagPipelineStats {
 
 /// Errors that can occur during pipeline execution
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum RagPipelineError {
     /// No retrieval sources available
     NoSources,
@@ -343,6 +344,7 @@ pub struct GraphRelation {
 
 /// Additional pipeline configuration beyond RagTierConfig
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct RagPipelineConfig {
     /// Base RAG configuration
     pub rag_config: RagTierConfig,

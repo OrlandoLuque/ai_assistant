@@ -8,6 +8,7 @@ use std::collections::HashMap;
 
 /// Supported image formats identifiable by magic bytes.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ImageFormat {
     Jpeg,
     Png,
@@ -43,6 +44,7 @@ pub struct ExtractedImage {
 }
 
 /// Configuration for image extraction behaviour.
+#[non_exhaustive]
 pub struct ImageExtractionConfig {
     /// Minimum image size in bytes; smaller blobs are skipped.
     pub min_size_bytes: usize,

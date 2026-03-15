@@ -102,6 +102,7 @@ impl AgentSkill {
 /// Task status in the A2A lifecycle:
 /// Submitted -> Working -> (InputRequired ->) Completed | Failed | Canceled
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum A2ATaskStatus {
     Submitted,
     Working,
@@ -244,6 +245,7 @@ pub struct A2AMessage {
 
 /// Who sent the message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum MessageRole {
     User,
     Agent,
@@ -251,6 +253,7 @@ pub enum MessageRole {
 
 /// A typed part of an A2A message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum A2APart {
     Text(TextPart),
     File(FilePart),
@@ -438,10 +441,22 @@ pub struct PushNotification {
 
 /// Configuration for push notification delivery.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct PushNotificationConfig {
     pub callback_url: String,
     pub events: Vec<A2ATaskStatus>,
     pub auth_token: Option<String>,
+}
+
+impl PushNotificationConfig {
+    /// Create a new push notification config with the given callback URL.
+    pub fn new(url: impl Into<String>) -> Self {
+        Self {
+            callback_url: url.into(),
+            events: Vec::new(),
+            auth_token: None,
+        }
+    }
 }
 
 // =============================================================================
@@ -1244,6 +1259,7 @@ pub struct AcpMessage {
 
 /// A content part within an ACP message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum AcpContentPart {
     Text(String),
     Data { mime_type: String, data: String },

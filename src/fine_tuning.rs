@@ -13,6 +13,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Training data format
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum TrainingFormat {
     /// OpenAI chat format (messages array)
     OpenAIChat,
@@ -410,6 +411,7 @@ pub struct ValidationError {
 
 /// Dataset error types
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum DatasetError {
     FormatMismatch {
         expected: TrainingFormat,
@@ -500,6 +502,7 @@ impl Hyperparameters {
 
 /// Fine-tuning job status
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum FineTuneStatus {
     Validating,
     Queued,
@@ -787,6 +790,7 @@ impl CreateFineTuneRequest {
 
 /// Fine-tune API error
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum FineTuneApiError {
     NetworkError(String),
     ParseError(String),
@@ -930,6 +934,7 @@ impl DatasetConverter {
 
 /// LoRA adapter configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct LoraConfig {
     /// Rank of the low-rank matrices
     pub rank: u32,
@@ -947,6 +952,7 @@ pub struct LoraConfig {
 
 /// LoRA bias configuration
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum LoraBias {
     None,
     All,
@@ -961,6 +967,7 @@ impl Default for LoraBias {
 
 /// LoRA task type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum LoraTaskType {
     CausalLM,
     Seq2Seq,

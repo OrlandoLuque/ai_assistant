@@ -36,14 +36,13 @@ fn main() {
 
     // 2. BackpressureStream with producer/consumer in separate threads
     println!("\n=== BackpressureStream (threaded) ===");
-    let config = StreamingConfig {
-        buffer_size: 1024,
-        high_water_mark: 768,
-        low_water_mark: 256,
-        backpressure_timeout: Duration::from_secs(5),
-        chunk_size: 64,
-        auto_chunk: true,
-    };
+    let mut config = StreamingConfig::default();
+    config.buffer_size = 1024;
+    config.high_water_mark = 768;
+    config.low_water_mark = 256;
+    config.backpressure_timeout = Duration::from_secs(5);
+    config.chunk_size = 64;
+    config.auto_chunk = true;
 
     let stream = BackpressureStream::<String>::new(config);
     let producer = stream.producer();

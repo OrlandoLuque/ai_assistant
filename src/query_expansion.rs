@@ -14,6 +14,7 @@ use std::collections::{HashMap, HashSet};
 
 /// Configuration for query expansion
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ExpansionConfig {
     /// Maximum expanded queries to generate
     pub max_expansions: usize,
@@ -57,6 +58,7 @@ pub struct ExpandedQuery {
 
 /// Source of query expansion
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum ExpansionSource {
     /// Original query
     Original,
@@ -441,6 +443,7 @@ pub struct ScoredResult<T> {
 }
 
 /// Builder for expansion configuration
+#[non_exhaustive]
 pub struct ExpansionConfigBuilder {
     config: ExpansionConfig,
 }

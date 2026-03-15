@@ -29,6 +29,7 @@ use std::time::Duration;
 
 /// Configuration for a [`Bulkhead`] instance.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct BulkheadConfig {
     /// Human-readable name for this bulkhead (used in stats and error messages).
     pub name: String,
@@ -120,6 +121,7 @@ impl BulkheadState {
 
 /// Errors returned by bulkhead operations.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum BulkheadError {
     /// The bulkhead has reached its concurrency limit (non-blocking rejection).
     Full,

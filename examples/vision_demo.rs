@@ -29,6 +29,7 @@ fn main() {
     match &url_image.data {
         ImageData::Url(u) => println!("    source     : URL({})", u),
         ImageData::Base64(_) => println!("    source     : Base64"),
+        _ => println!("    source     : other"),
     }
 
     // From raw bytes (simulated JPEG header)

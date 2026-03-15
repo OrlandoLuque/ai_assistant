@@ -4,6 +4,7 @@
 
 /// Extraction configuration
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ExtractionConfig {
     /// Maximum length of extracted answer
     pub max_answer_length: usize,
@@ -45,6 +46,7 @@ pub struct ExtractedAnswer {
 
 /// Type of answer
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum AnswerType {
     /// Direct factual answer
     Factual,

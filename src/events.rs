@@ -16,6 +16,7 @@ use std::time::Instant;
 
 /// All events emitted by AiAssistant during its lifecycle.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum AiEvent {
     // --- Response lifecycle ---
     /// User message was sent to the model
@@ -398,6 +399,7 @@ pub struct LoggingHandler {
 
 /// Log level for the LoggingHandler.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum LogLevel {
     /// Log all events
     Debug,

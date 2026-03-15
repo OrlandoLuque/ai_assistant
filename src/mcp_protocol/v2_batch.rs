@@ -63,6 +63,7 @@ impl JsonRpcResponse {
 
 /// Configuration for a batch of JSON-RPC requests.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct BatchConfig {
     pub max_batch_size: usize,
     pub parallel_execution: bool,

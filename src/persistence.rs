@@ -25,6 +25,7 @@ pub fn secure_db_file_permissions(db_path: &Path) {
 
 /// Configuration for automatic backups
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct BackupConfig {
     /// Enable automatic backups
     pub enabled: bool,
@@ -297,6 +298,7 @@ impl BackupManager {
 
 /// Configuration for database compaction
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct CompactionConfig {
     /// Enable automatic compaction
     pub enabled: bool,
@@ -472,6 +474,7 @@ pub struct DatabaseStats {
 
 /// Configuration for session migration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct MigrationConfig {
     /// Minimum messages to migrate a session
     pub min_messages: usize,
@@ -668,6 +671,7 @@ impl FullExport {
 
 /// Configuration for persistent cache
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct PersistentCacheConfig {
     /// Maximum entries to keep in cache
     pub max_entries: usize,

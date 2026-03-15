@@ -20,6 +20,7 @@ pub struct RegenerationFeedback {
 
 /// Types of issues with responses
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RegenerationIssue {
     /// Too long
     TooLong,
@@ -41,6 +42,7 @@ pub enum RegenerationIssue {
 
 /// Response style preferences
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ResponseStyle {
     Formal,
     Casual,
@@ -52,6 +54,7 @@ pub enum ResponseStyle {
 
 /// Length preference
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum LengthPreference {
     VeryShort,
     Short,

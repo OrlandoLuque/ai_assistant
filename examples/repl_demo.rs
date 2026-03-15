@@ -12,12 +12,11 @@ fn main() {
     println!("=== REPL Engine Demo ===\n");
 
     // 1. Create a REPL engine with custom config
-    let config = ReplConfig {
-        prompt_string: "ai> ".to_string(),
-        max_history: 100,
-        show_metrics: true,
-        show_timestamps: true,
-    };
+    let mut config = ReplConfig::default();
+    config.prompt_string = "ai> ".to_string();
+    config.max_history = 100;
+    config.show_metrics = true;
+    config.show_timestamps = true;
     let mut engine = ReplEngine::new(config);
     println!("Created REPL engine (prompt: {:?})\n", engine.config().prompt_string);
 

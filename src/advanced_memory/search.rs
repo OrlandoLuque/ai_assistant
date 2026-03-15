@@ -46,6 +46,7 @@ pub struct MemorySearchResult {
 
 /// A reason why a memory matched a search query.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum MatchReason {
     /// Matched via keyword overlap.
     KeywordMatch { keyword: String, count: usize },
@@ -59,6 +60,7 @@ pub enum MatchReason {
 
 /// The type of memory store a search result originated from.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum MemorySourceType {
     /// From the episodic memory store.
     Episodic,

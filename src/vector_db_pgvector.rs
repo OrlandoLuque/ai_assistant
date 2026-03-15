@@ -20,6 +20,7 @@ use crate::vector_db::{BackendInfo, MetadataFilter, StoredVector, VectorDb, Vect
 
 /// Configuration for pgvector connection.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct PgVectorConfig {
     /// PostgreSQL connection string (e.g., "host=localhost dbname=vectors user=postgres")
     pub connection_string: String,

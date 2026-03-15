@@ -6,6 +6,7 @@ use std::collections::HashMap;
 /// The kind of reference a completion request targets.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type")]
+#[non_exhaustive]
 pub enum CompletionRefType {
     #[serde(rename = "resource_uri")]
     ResourceUri(String),

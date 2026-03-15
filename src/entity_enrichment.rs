@@ -77,6 +77,7 @@ pub struct EnrichedEntity {
 
 /// Strategy for merging attributes when combining entities or enrichments.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
 pub enum MergeStrategy {
     /// Keep attributes from the first/original entity only.
     KeepFirst,
@@ -109,6 +110,7 @@ pub struct DuplicateMatch {
 
 /// Reason why two entities were considered duplicates.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
 pub enum DuplicateReason {
     /// Exact string match after normalization.
     ExactMatch,
@@ -145,6 +147,7 @@ pub struct EnrichmentSource {
 
 /// Configuration for the entity enrichment system.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct EnrichmentConfig {
     /// List of enrichment sources to query.
     pub sources: Vec<EnrichmentSource>,

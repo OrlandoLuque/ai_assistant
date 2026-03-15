@@ -42,6 +42,7 @@ pub struct ToolParameter {
 
 /// Parameter types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ParameterType {
     String,
     Integer,

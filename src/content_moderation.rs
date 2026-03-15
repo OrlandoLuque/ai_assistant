@@ -15,6 +15,7 @@ use std::collections::{HashMap, HashSet};
 
 /// Configuration for content moderation
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ModerationConfig {
     /// Categories to moderate
     pub categories: Vec<ModerationCategory>,
@@ -51,6 +52,7 @@ impl Default for ModerationConfig {
 
 /// Categories of content to moderate
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ModerationCategory {
     /// Hate speech
     Hate,
@@ -103,6 +105,7 @@ impl ModerationCategory {
 
 /// Actions to take on moderation violation
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum ModerationAction {
     /// Just flag the content
     Flag,
@@ -497,6 +500,7 @@ impl ModerationStats {
 }
 
 /// Builder for moderation configuration
+#[non_exhaustive]
 pub struct ModerationConfigBuilder {
     config: ModerationConfig,
 }

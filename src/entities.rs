@@ -13,6 +13,7 @@ use std::collections::HashMap;
 
 /// Types of entities that can be extracted
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum EntityType {
     /// Person name
     Person,
@@ -116,6 +117,7 @@ impl Entity {
 
 /// Configuration for entity extraction
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct EntityExtractorConfig {
     /// Minimum confidence to keep an entity
     pub min_confidence: f32,
@@ -814,6 +816,7 @@ impl Fact {
 
 /// Types of facts that can be tracked
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum FactType {
     /// User preference (likes/dislikes)
     Preference,
@@ -833,6 +836,7 @@ pub enum FactType {
 
 /// Configuration for fact extraction
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct FactExtractorConfig {
     /// Minimum confidence to keep a fact
     pub min_confidence: f32,

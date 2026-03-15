@@ -397,6 +397,7 @@ impl RagFeatures {
 /// Predefined RAG tiers with increasing sophistication and cost
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum RagTier {
     /// No RAG - only uses conversation context
     Disabled,
@@ -911,6 +912,7 @@ impl RagTier {
 
 /// Requirements that must be met for certain RAG features
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum RagRequirement {
     /// Needs an embedding model (local or API)
     EmbeddingModel,
@@ -1014,6 +1016,7 @@ impl RagRequirement {
 
 /// Main RAG configuration combining tier selection with custom features
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct RagTierConfig {
     /// Selected tier (use Custom for manual feature selection)
     pub tier: RagTier,
@@ -1513,6 +1516,7 @@ pub struct TierSelectionHints {
 
 /// User preference for speed vs quality tradeoff
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum UserPreference {
     /// Prefer fast responses
     Speed,
@@ -1527,6 +1531,7 @@ pub enum UserPreference {
 
 /// Estimated query complexity
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum QueryComplexity {
     /// Simple keyword lookup
     Simple,

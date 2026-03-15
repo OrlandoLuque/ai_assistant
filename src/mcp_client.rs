@@ -21,6 +21,7 @@ use crate::error::McpClientError;
 
 /// Authentication configuration for connecting to a remote MCP server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum McpClientAuth {
     /// No authentication required.
     None,
@@ -59,6 +60,7 @@ impl Default for ClientInfo {
 
 /// Configuration for a remote MCP client connection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct McpClientConfig {
     /// The base URL of the remote MCP server (e.g. "http://localhost:3000/mcp").
     pub url: String,
@@ -157,6 +159,7 @@ pub struct ToolCallResult {
 
 /// A single content block inside a tool call result.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ToolResultContent {
     Text { text: String },
     Image { data: String, mime_type: String },

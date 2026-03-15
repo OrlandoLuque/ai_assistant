@@ -51,6 +51,7 @@ impl From<String> for DagNodeId {
 
 /// Execution status of a single DAG node.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum DagNodeStatus {
     Pending,
     Ready,
@@ -129,6 +130,7 @@ impl DagNode {
 
 /// Condition that must hold on the source node before the edge activates.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum EdgeCondition {
     /// The edge is always active once the source node finishes (any terminal status).
     Always,
@@ -184,6 +186,7 @@ impl DagEdge {
 
 /// Errors that can occur during DAG construction, validation, or execution.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum DagError {
     CycleDetected,
     NodeNotFound(String),

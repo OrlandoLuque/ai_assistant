@@ -927,6 +927,7 @@ mod inner {
     // ========================================================================
 
     /// Backend type for durable execution persistence.
+    #[non_exhaustive]
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
     pub enum DurableBackend {
         /// In-memory storage (testing / lightweight).
@@ -936,6 +937,7 @@ mod inner {
     }
 
     /// Policy controlling which checkpoints are retained after save.
+    #[non_exhaustive]
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
     pub enum RetentionPolicy {
         /// Keep every checkpoint forever.
@@ -949,6 +951,7 @@ mod inner {
     }
 
     /// Configuration for durable workflow execution.
+    #[non_exhaustive]
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct DurableConfig {
         /// Which backend to persist to.

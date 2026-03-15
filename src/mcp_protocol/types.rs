@@ -11,6 +11,7 @@ pub const MCP_VERSION_PREVIOUS: &str = "2024-11-05";
 /// MCP message types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum McpMessageType {
     Initialize,
     Initialized,
@@ -344,6 +345,7 @@ pub struct AudioContent {
 /// MCP Content types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
+#[non_exhaustive]
 pub enum McpContent {
     #[serde(rename = "text")]
     Text { text: String },

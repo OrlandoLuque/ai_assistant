@@ -130,6 +130,7 @@ pub trait EmbeddingGenerate {
 
 /// Configuration for query expansion
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct QueryExpanderConfig {
     /// Maximum number of expanded queries to generate
     pub max_expansions: usize,
@@ -267,6 +268,7 @@ impl Default for AdvancedQueryExpander {
 
 /// Configuration for multi-query decomposition
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct MultiQueryConfig {
     /// Maximum sub-queries to generate
     pub max_sub_queries: usize,
@@ -404,6 +406,7 @@ impl Default for MultiQueryDecomposer {
 
 /// Configuration for HyDE
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct HydeConfig {
     /// Target length for hypothetical document (tokens)
     pub target_length: usize,
@@ -514,6 +517,7 @@ impl Default for HydeGenerator {
 
 /// Configuration for LLM reranking
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct LlmRerankerConfig {
     /// Maximum chunks to include in prompt
     pub max_chunks: usize,
@@ -698,6 +702,7 @@ impl CrossEncoderReranker {
 
 /// Configuration for RRF
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct RrfConfig {
     /// RRF constant k (default: 60)
     pub k: f32,
@@ -790,6 +795,7 @@ impl Default for RrfFusion {
 
 /// Configuration for contextual compression
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct CompressionConfig {
     /// Target tokens per compressed chunk
     pub target_tokens: usize,
@@ -904,6 +910,7 @@ pub struct SelfReflectionResult {
 
 /// Actions suggested by self-reflection
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum SelfReflectionAction {
     UseAsIs,
     RefineQuery,
@@ -913,6 +920,7 @@ pub enum SelfReflectionAction {
 
 /// Configuration for self-RAG evaluation
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct SelfRagConfig {
     /// Confidence threshold to trigger action
     pub confidence_threshold: f32,
@@ -1023,6 +1031,7 @@ pub struct CragResult {
 
 /// Actions from CRAG evaluation
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum CragAction {
     /// Retrieved documents are good, use them
     Correct,
@@ -1034,6 +1043,7 @@ pub enum CragAction {
 
 /// Configuration for CRAG
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct CragConfig {
     /// Threshold for "correct" classification
     pub correct_threshold: f32,
@@ -1133,6 +1143,7 @@ impl Default for CragEvaluator {
 
 /// Available retrieval strategies
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RetrievalStrategy {
     KeywordOnly,
     SemanticOnly,
@@ -1145,6 +1156,7 @@ pub enum RetrievalStrategy {
 
 /// Configuration for adaptive strategy
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct AdaptiveStrategyConfig {
     /// Whether to use LLM for strategy selection
     pub use_llm: bool,
@@ -1298,6 +1310,7 @@ pub struct Relationship {
 
 /// Configuration for Graph RAG
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct GraphRagConfig {
     /// Maximum traversal depth
     pub max_depth: usize,
@@ -1403,6 +1416,7 @@ pub struct RaptorNode {
 
 /// Configuration for RAPTOR
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct RaptorConfig {
     /// Maximum levels in the hierarchy
     pub max_levels: usize,
@@ -1477,6 +1491,7 @@ fn truncate(s: &str, max_len: usize) -> String {
 
 /// Similarity metric for diversity computation
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum DiversityMetric {
     /// TF-IDF cosine similarity
     Cosine,
@@ -1488,6 +1503,7 @@ pub enum DiversityMetric {
 
 /// Configuration for Maximal Marginal Relevance (MMR) reranking
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct MmrConfig {
     /// Tradeoff between relevance and diversity (0=max diversity, 1=pure relevance)
     pub lambda: f64,
@@ -1740,6 +1756,7 @@ impl DiversityRetriever {
 
 /// Query complexity classification for routing
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum RouterQueryComplexity {
     Simple,
     Factual,
@@ -1762,6 +1779,7 @@ impl std::fmt::Display for RouterQueryComplexity {
 
 /// Configuration for the hierarchical RAG router
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct RouterConfig {
     /// Default retriever to use when no mapping matches
     pub default_retriever: String,
@@ -1769,6 +1787,16 @@ pub struct RouterConfig {
     pub complexity_mapping: HashMap<String, String>,
     /// Fallback retriever when confidence is low
     pub fallback_retriever: Option<String>,
+}
+
+impl Default for RouterConfig {
+    fn default() -> Self {
+        Self {
+            default_retriever: String::new(),
+            complexity_mapping: HashMap::new(),
+            fallback_retriever: None,
+        }
+    }
 }
 
 /// A routing decision made by the hierarchical router

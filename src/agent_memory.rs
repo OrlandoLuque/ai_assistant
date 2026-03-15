@@ -8,6 +8,7 @@ use std::time::Instant;
 
 /// Memory entry type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum MemoryType {
     Fact,
     Context,
@@ -318,6 +319,7 @@ pub struct MemoryStats {
 
 /// Memory errors
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum MemoryError {
     NotFound,
     AccessDenied,

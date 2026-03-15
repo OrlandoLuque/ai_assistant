@@ -181,12 +181,10 @@ fn main() {
     // ------------------------------------------------------------------
     println!("\n--- 5. Resumable Streaming ---\n");
 
-    let config = ResumableStreamConfig {
-        checkpoint_interval: 3,
-        max_checkpoints: 10,
-        max_replay_buffer: 100,
-        ..ResumableStreamConfig::default()
-    };
+    let mut config = ResumableStreamConfig::default();
+    config.checkpoint_interval = 3;
+    config.max_checkpoints = 10;
+    config.max_replay_buffer = 100;
     let stream = ResumableStream::new(config);
 
     // Simulate streaming chunks

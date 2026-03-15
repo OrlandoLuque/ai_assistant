@@ -153,6 +153,7 @@ impl ParsedRobotsTxt {
 
 /// Change frequency hint for a sitemap entry.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
 pub enum ChangeFrequency {
     Always,
     Hourly,
@@ -209,6 +210,7 @@ pub struct ParsedSitemap {
 
 /// Configuration for crawl policy behavior.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct CrawlPolicyConfig {
     /// User-agent string to identify this crawler.
     pub user_agent: String,

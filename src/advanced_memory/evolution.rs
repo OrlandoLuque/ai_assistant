@@ -17,6 +17,7 @@ pub struct ProcedureFeedback {
 
 /// The outcome of a procedure execution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum FeedbackOutcome {
     /// The procedure succeeded.
     Success,
@@ -28,6 +29,7 @@ pub enum FeedbackOutcome {
 
 /// Configuration for procedure evolution.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct EvolutionConfig {
     /// How much confidence increases on success (default: 0.1).
     pub success_boost: f64,

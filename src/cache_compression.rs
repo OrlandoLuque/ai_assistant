@@ -30,6 +30,7 @@ use std::io::{Read, Write};
 
 /// Compression algorithms available
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum CompressionAlgorithm {
     /// No compression
     None,
@@ -53,6 +54,7 @@ impl Default for CompressionAlgorithm {
 
 /// Compression level
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub enum CompressionLevel {
     /// Fastest compression
     Fast,
@@ -235,6 +237,7 @@ fn select_algorithm(data: &[u8]) -> CompressionAlgorithm {
 
 /// Compression error types
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum CompressionError {
     /// Compression failed
     CompressionFailed(String),

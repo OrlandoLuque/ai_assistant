@@ -14,6 +14,7 @@ use regex::Regex;
 
 /// Configuration for injection detection
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct InjectionConfig {
     /// Sensitivity level
     pub sensitivity: DetectionSensitivity,
@@ -44,6 +45,7 @@ impl Default for InjectionConfig {
 
 /// Detection sensitivity levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum DetectionSensitivity {
     /// Low - only obvious attacks
     Low,
@@ -70,6 +72,7 @@ pub struct CustomPattern {
 
 /// Types of injection attacks
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum InjectionType {
     /// Direct instruction override
     InstructionOverride,
@@ -141,6 +144,7 @@ pub struct InjectionResult {
 
 /// Risk levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RiskLevel {
     /// No risk detected
     None,
@@ -172,6 +176,7 @@ impl RiskLevel {
 
 /// Recommendations based on detection
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Recommendation {
     /// Safe to proceed
     Allow,
@@ -460,6 +465,7 @@ impl Default for InjectionDetector {
 }
 
 /// Builder for injection configuration
+#[non_exhaustive]
 pub struct InjectionConfigBuilder {
     config: InjectionConfig,
 }

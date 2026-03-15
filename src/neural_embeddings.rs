@@ -20,6 +20,7 @@ pub type SparseEmbedding = HashMap<u32, f32>;
 
 /// Pooling strategy for token embeddings
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum PoolingStrategy {
     /// Average all token embeddings
     Mean,
@@ -41,6 +42,7 @@ impl Default for PoolingStrategy {
 
 /// Dense embedding model configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct DenseEmbeddingConfig {
     /// Model identifier or path
     pub model_id: String,
@@ -433,6 +435,7 @@ fn f16_bits_to_f32(bits: u16) -> f32 {
 
 /// Sparse embedding configuration (SPLADE-style)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct SparseEmbeddingConfig {
     /// Vocabulary size
     pub vocab_size: u32,
@@ -598,6 +601,7 @@ pub struct HybridEmbedding {
 
 /// Embedding quantization for storage efficiency
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum QuantizationType {
     /// Full precision (f32)
     Float32,
@@ -613,6 +617,7 @@ pub enum QuantizationType {
 
 /// Quantized embedding
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum QuantizedEmbedding {
     Float32(Vec<f32>),
     Float16(Vec<u16>),
@@ -742,6 +747,7 @@ impl QuantizedEmbedding {
 
 /// Dimensionality reduction methods
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum DimensionalityReduction {
     /// Random projection (preserves distances approximately)
     RandomProjection {
@@ -1013,6 +1019,7 @@ pub struct RankedDocument {
 
 /// Embedding error types
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum EmbeddingError {
     ApiError(String),
     ParseError(String),

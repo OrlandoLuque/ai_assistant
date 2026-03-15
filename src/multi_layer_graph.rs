@@ -26,6 +26,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Identifies which layer a piece of data comes from
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum GraphLayer {
     /// Primary knowledge from verified sources (knowledge packs)
     Knowledge,
@@ -65,6 +66,7 @@ impl GraphLayer {
 
 /// Confidence level of data
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ConfidenceLevel {
     /// Verified data from official sources
     Verified,
@@ -93,6 +95,7 @@ impl ConfidenceLevel {
 
 /// Type of user belief
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum BeliefType {
     /// User preference ("I prefer X")
     Preference,
@@ -184,6 +187,7 @@ pub struct ContradictionSource {
 
 /// How a contradiction was resolved
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ContradictionResolution {
     /// Primary (knowledge) source is trustworthy
     PrimaryTrustworthy,
@@ -1154,6 +1158,7 @@ pub struct MultiLayerGraphStats {
 
 /// Configuration for a specific graph layer (7.1)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct LayerConfig {
     /// Priority override for the layer (higher = more trusted)
     pub priority: u8,
@@ -1163,6 +1168,17 @@ pub struct LayerConfig {
     pub conflict_policy: ConflictPolicy,
     /// Maximum number of entities allowed in this layer
     pub max_entities: Option<usize>,
+}
+
+impl Default for LayerConfig {
+    fn default() -> Self {
+        Self {
+            priority: 0,
+            sync_policy: SyncPolicy::Shared,
+            conflict_policy: ConflictPolicy::LastWriteWins,
+            max_entities: None,
+        }
+    }
 }
 
 impl LayerConfig {
@@ -1179,6 +1195,7 @@ impl LayerConfig {
 
 /// Sync policy for a layer in multi-agent contexts (8.5)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum SyncPolicy {
     /// All agents can read and write
     Shared,
@@ -1190,6 +1207,7 @@ pub enum SyncPolicy {
 
 /// How to resolve intra-layer entity conflicts (7.6)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ConflictPolicy {
     /// Most recently written entity wins
     LastWriteWins,
@@ -1313,6 +1331,7 @@ impl GraphDiff {
 
 /// Merge strategy for combining diffs (7.7)
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum MergeStrategy {
     /// Keep our version on conflict
     Ours,

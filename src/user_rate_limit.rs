@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 /// User rate limit configuration
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct UserRateLimitConfig {
     pub requests_per_minute: u32,
     pub requests_per_hour: u32,

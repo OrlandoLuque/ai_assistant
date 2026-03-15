@@ -3,6 +3,7 @@
 
 /// Configuration for automatic memory persistence.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct AutoPersistenceConfig {
     /// Base directory for persistence files.
     pub base_dir: std::path::PathBuf,

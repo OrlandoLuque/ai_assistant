@@ -20,6 +20,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Configuration for the agent devtools subsystem.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct DevToolsConfig {
     /// Whether the execution recorder should capture events.
     pub enable_recording: bool,
@@ -48,6 +49,7 @@ impl Default for DevToolsConfig {
 
 /// A condition that, when matched against a [`DebugEvent`], triggers the debugger.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum Breakpoint {
     /// Triggers immediately before a tool call with the given name.
     BeforeToolCall { tool_name: String },
@@ -139,6 +141,7 @@ impl DebugEvent {
 
 /// Categories of debug events emitted during an agent run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum DebugEventType {
     ToolCallStart,
     ToolCallEnd,

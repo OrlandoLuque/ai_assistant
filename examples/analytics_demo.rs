@@ -28,13 +28,12 @@ fn main() {
     // ------------------------------------------------------------------
     println!("--- 1. Conversation Analytics ---\n");
 
-    let config = AnalyticsConfig {
-        detailed_tracking: true,
-        track_patterns: true,
-        track_quality: true,
-        max_events: 5000,
-        aggregation_interval: Duration::from_secs(3600),
-    };
+    let mut config = AnalyticsConfig::default();
+    config.detailed_tracking = true;
+    config.track_patterns = true;
+    config.track_quality = true;
+    config.max_events = 5000;
+    config.aggregation_interval = Duration::from_secs(3600);
     let mut analytics = ConversationAnalytics::new(config);
 
     // Simulate two conversation sessions

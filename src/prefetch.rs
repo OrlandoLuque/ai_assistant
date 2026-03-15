@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 
 /// Configuration for prefetching
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct PrefetchConfig {
     /// Maximum number of items to prefetch
     pub max_prefetch_items: usize,
@@ -499,6 +500,7 @@ impl Default for ContextPredictor {
 }
 
 /// Builder for prefetch configuration
+#[non_exhaustive]
 pub struct PrefetchConfigBuilder {
     config: PrefetchConfig,
 }

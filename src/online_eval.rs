@@ -124,12 +124,24 @@ pub trait FeedbackHook: Send + Sync {
 /// Defines when an alert should fire for a specific hook.
 #[cfg(feature = "eval")]
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct AlertConfig {
     pub hook_name: String,
     /// Alert if score falls below this value.
     pub threshold: f64,
     /// Number of consecutive low scores before firing.
     pub consecutive_failures: usize,
+}
+
+#[cfg(feature = "eval")]
+impl Default for AlertConfig {
+    fn default() -> Self {
+        Self {
+            hook_name: String::new(),
+            threshold: 0.0,
+            consecutive_failures: 0,
+        }
+    }
 }
 
 #[cfg(feature = "eval")]
@@ -162,6 +174,7 @@ pub struct AlertEvent {
 /// Controls how many evaluations are actually run.
 #[cfg(feature = "eval")]
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct EvalSamplingConfig {
     /// Fraction of requests to evaluate (0.0 - 1.0).
     pub sample_rate: f64,

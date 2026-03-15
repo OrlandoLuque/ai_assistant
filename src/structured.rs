@@ -10,6 +10,7 @@ use std::collections::HashMap;
 /// JSON Schema types
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[non_exhaustive]
 pub enum SchemaType {
     String,
     Number,
@@ -865,6 +866,7 @@ impl SchemaBuilder {
 
 /// Strategy for enforcing structured output based on provider capabilities.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum StructuredOutputStrategy {
     /// Use OpenAI's native response_format with json_schema
     OpenAiNative,
@@ -876,6 +878,7 @@ pub enum StructuredOutputStrategy {
 
 /// Errors that can occur during structured output enforcement.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum StructuredOutputError {
     /// The LLM generation call itself failed.
     GenerationFailed(String),
@@ -1247,6 +1250,7 @@ impl StructuredRequest {
 
 /// Configuration for the structured output enforcement loop
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct EnforcementConfig {
     /// Maximum number of retry attempts
     pub max_retries: u32,

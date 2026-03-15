@@ -7,6 +7,7 @@ use std::collections::HashMap;
 
 /// WebSocket message types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum WsOpcode {
     Continuation = 0x0,
     Text = 0x1,
@@ -156,6 +157,7 @@ fn rand_mask() -> [u8; 4] {
 
 /// WebSocket close codes
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum WsCloseCode {
     Normal = 1000,
     GoingAway = 1001,
@@ -175,6 +177,7 @@ pub enum WsCloseCode {
 /// WebSocket message for AI streaming
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
+#[non_exhaustive]
 pub enum WsAiMessage {
     #[serde(rename = "chat")]
     Chat {
@@ -231,6 +234,7 @@ pub struct WsUsage {
 
 /// WebSocket connection state
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum WsState {
     Connecting,
     Open,
@@ -403,6 +407,7 @@ impl Default for WsStreamHandler {
 
 /// WebSocket errors
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum WsError {
     ConnectionFailed(String),
     ParseError(String),
@@ -681,6 +686,7 @@ impl Default for BidirectionalStream {
 
 /// Configuration for WebSocket auto-reconnection.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct WsReconnectConfig {
     /// Maximum number of reconnection attempts before giving up.
     pub max_attempts: u32,
@@ -732,6 +738,7 @@ impl WsReconnectConfig {
 
 /// Current state of the reconnecting WebSocket stream.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum WsConnectionState {
     /// Connected and operational.
     Connected,
