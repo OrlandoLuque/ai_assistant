@@ -675,6 +675,281 @@ impl Default for BidirectionalStream {
     }
 }
 
+// ============================================================================
+// Resilient WebSocket Stream — Auto-reconnect with exponential backoff
+// ============================================================================
+
+/// Configuration for WebSocket auto-reconnection.
+#[derive(Debug, Clone)]
+pub struct WsReconnectConfig {
+    /// Maximum number of reconnection attempts before giving up.
+    pub max_attempts: u32,
+    /// Initial backoff delay after first disconnect.
+    pub initial_backoff: Duration,
+    /// Maximum backoff delay (cap).
+    pub max_backoff: Duration,
+    /// Multiplier for exponential backoff.
+    pub backoff_multiplier: f64,
+    /// Whether to add random jitter to backoff delays.
+    pub jitter: bool,
+}
+
+impl Default for WsReconnectConfig {
+    fn default() -> Self {
+        Self {
+            max_attempts: 10,
+            initial_backoff: Duration::from_secs(1),
+            max_backoff: Duration::from_secs(60),
+            backoff_multiplier: 2.0,
+            jitter: true,
+        }
+    }
+}
+
+impl WsReconnectConfig {
+    /// Aggressive: many attempts, shorter max backoff.
+    pub fn aggressive() -> Self {
+        Self {
+            max_attempts: 20,
+            initial_backoff: Duration::from_millis(500),
+            max_backoff: Duration::from_secs(120),
+            backoff_multiplier: 2.0,
+            jitter: true,
+        }
+    }
+
+    /// Quick: few attempts, short delays.
+    pub fn quick() -> Self {
+        Self {
+            max_attempts: 3,
+            initial_backoff: Duration::from_millis(200),
+            max_backoff: Duration::from_secs(5),
+            backoff_multiplier: 2.0,
+            jitter: true,
+        }
+    }
+}
+
+/// Current state of the reconnecting WebSocket stream.
+#[derive(Debug, Clone)]
+pub enum WsConnectionState {
+    /// Connected and operational.
+    Connected,
+    /// Attempting to reconnect.
+    Reconnecting {
+        /// Current attempt number (1-based).
+        attempt: u32,
+    },
+    /// Disconnected with reason.
+    Disconnected {
+        /// Reason for disconnect.
+        reason: String,
+    },
+    /// Gave up after exhausting all reconnection attempts.
+    GaveUp {
+        /// Total attempts made.
+        attempts: u32,
+    },
+}
+
+impl WsConnectionState {
+    /// Returns a human-readable state name.
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Connected => "Connected",
+            Self::Reconnecting { .. } => "Reconnecting",
+            Self::Disconnected { .. } => "Disconnected",
+            Self::GaveUp { .. } => "GaveUp",
+        }
+    }
+}
+
+/// Statistics for WebSocket reconnection.
+#[derive(Debug, Clone)]
+pub struct WsReconnectStats {
+    /// Current state name.
+    pub state: String,
+    /// Number of reconnection attempts in current cycle.
+    pub reconnect_attempts: u32,
+    /// Total successful reconnections over the lifetime of this stream.
+    pub total_reconnects: u64,
+    /// Current backoff delay.
+    pub current_backoff: Duration,
+}
+
+/// A WebSocket stream wrapper with automatic reconnection state management.
+///
+/// This is a **state machine** that the caller drives. The caller is responsible
+/// for the actual TCP/TLS reconnection — this struct manages the backoff timing,
+/// attempt counting, and state transitions.
+///
+/// # Usage Pattern
+/// ```ignore
+/// let mut ws = ResilientWsStream::new(WsReconnectConfig::default());
+///
+/// // On disconnect:
+/// ws.handle_disconnect("connection reset");
+///
+/// // Reconnection loop:
+/// while ws.should_reconnect() {
+///     std::thread::sleep(ws.next_attempt_delay());
+///     match try_connect() {
+///         Ok(_) => { ws.mark_reconnected(); break; }
+///         Err(_) => { ws.mark_attempt_failed(); }
+///     }
+/// }
+/// ```
+pub struct ResilientWsStream {
+    config: WsReconnectConfig,
+    state: WsConnectionState,
+    reconnect_attempts: u32,
+    total_reconnects: u64,
+    last_disconnect: Option<Instant>,
+    current_backoff: Duration,
+    on_reconnect: Option<Box<dyn Fn(u32) + Send + Sync>>,
+    on_disconnect: Option<Box<dyn Fn(&str) + Send + Sync>>,
+    on_give_up: Option<Box<dyn Fn(u32) + Send + Sync>>,
+}
+
+impl ResilientWsStream {
+    /// Create a new resilient WebSocket stream with the given config.
+    pub fn new(config: WsReconnectConfig) -> Self {
+        let initial_backoff = config.initial_backoff;
+        Self {
+            config,
+            state: WsConnectionState::Connected,
+            reconnect_attempts: 0,
+            total_reconnects: 0,
+            last_disconnect: None,
+            current_backoff: initial_backoff,
+            on_reconnect: None,
+            on_disconnect: None,
+            on_give_up: None,
+        }
+    }
+
+    /// Set callback invoked on successful reconnection. Receives attempt count.
+    pub fn on_reconnect<F: Fn(u32) + Send + Sync + 'static>(&mut self, f: F) {
+        self.on_reconnect = Some(Box::new(f));
+    }
+
+    /// Set callback invoked on disconnect. Receives reason string.
+    pub fn on_disconnect<F: Fn(&str) + Send + Sync + 'static>(&mut self, f: F) {
+        self.on_disconnect = Some(Box::new(f));
+    }
+
+    /// Set callback invoked when reconnection gives up. Receives total attempts.
+    pub fn on_give_up<F: Fn(u32) + Send + Sync + 'static>(&mut self, f: F) {
+        self.on_give_up = Some(Box::new(f));
+    }
+
+    /// Handle a disconnection event. Transitions to Reconnecting state.
+    pub fn handle_disconnect(&mut self, reason: &str) {
+        self.last_disconnect = Some(Instant::now());
+        self.reconnect_attempts = 0;
+        self.current_backoff = self.config.initial_backoff;
+        self.state = WsConnectionState::Disconnected {
+            reason: reason.to_string(),
+        };
+
+        if let Some(ref cb) = self.on_disconnect {
+            cb(reason);
+        }
+    }
+
+    /// Returns true if reconnection should be attempted.
+    pub fn should_reconnect(&self) -> bool {
+        match &self.state {
+            WsConnectionState::Disconnected { .. } => true,
+            WsConnectionState::Reconnecting { attempt } => {
+                *attempt < self.config.max_attempts
+            }
+            _ => false,
+        }
+    }
+
+    /// Calculate the delay before the next reconnection attempt.
+    pub fn next_attempt_delay(&self) -> Duration {
+        let mut delay = self.current_backoff;
+
+        // Cap at max
+        if delay > self.config.max_backoff {
+            delay = self.config.max_backoff;
+        }
+
+        // Add jitter (simple: vary by ±25% using a timestamp-based signal)
+        if self.config.jitter {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .subsec_nanos();
+            let jitter_factor = (nanos as f64 / u32::MAX as f64) * 0.5 - 0.25; // -0.25 to +0.25
+            let jitter_ms = (delay.as_millis() as f64 * jitter_factor) as i64;
+            let adjusted_ms = (delay.as_millis() as i64 + jitter_ms).max(1) as u64;
+            delay = Duration::from_millis(adjusted_ms);
+        }
+
+        delay
+    }
+
+    /// Mark a reconnection attempt as successful.
+    pub fn mark_reconnected(&mut self) {
+        let attempts = self.reconnect_attempts;
+        self.total_reconnects += 1;
+        self.reconnect_attempts = 0;
+        self.current_backoff = self.config.initial_backoff;
+        self.state = WsConnectionState::Connected;
+
+        if let Some(ref cb) = self.on_reconnect {
+            cb(attempts);
+        }
+    }
+
+    /// Mark a reconnection attempt as failed.
+    pub fn mark_attempt_failed(&mut self) {
+        self.reconnect_attempts += 1;
+
+        if self.reconnect_attempts >= self.config.max_attempts {
+            let attempts = self.reconnect_attempts;
+            self.state = WsConnectionState::GaveUp { attempts };
+            if let Some(ref cb) = self.on_give_up {
+                cb(attempts);
+            }
+        } else {
+            self.state = WsConnectionState::Reconnecting {
+                attempt: self.reconnect_attempts,
+            };
+            // Exponential backoff
+            let new_backoff_ms =
+                (self.current_backoff.as_millis() as f64 * self.config.backoff_multiplier) as u64;
+            self.current_backoff =
+                Duration::from_millis(new_backoff_ms).min(self.config.max_backoff);
+        }
+    }
+
+    /// Get the current connection state.
+    pub fn state(&self) -> &WsConnectionState {
+        &self.state
+    }
+
+    /// Get reconnection statistics.
+    pub fn stats(&self) -> WsReconnectStats {
+        WsReconnectStats {
+            state: self.state.name().to_string(),
+            reconnect_attempts: self.reconnect_attempts,
+            total_reconnects: self.total_reconnects,
+            current_backoff: self.current_backoff,
+        }
+    }
+
+    /// Total number of successful reconnections over this stream's lifetime.
+    pub fn total_reconnects(&self) -> u64 {
+        self.total_reconnects
+    }
+}
+
+use std::time::{Duration, Instant};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -794,5 +1069,168 @@ mod tests {
         assert!(key
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '='));
+    }
+
+    // ---- ResilientWsStream tests ----
+
+    #[test]
+    fn test_ws_reconnect_initial_state() {
+        let ws = ResilientWsStream::new(WsReconnectConfig::default());
+        assert_eq!(ws.state().name(), "Connected");
+        assert_eq!(ws.total_reconnects(), 0);
+        assert!(!ws.should_reconnect());
+    }
+
+    #[test]
+    fn test_ws_reconnect_disconnect_transitions() {
+        let mut ws = ResilientWsStream::new(WsReconnectConfig::default());
+        ws.handle_disconnect("connection reset");
+        assert_eq!(ws.state().name(), "Disconnected");
+        assert!(ws.should_reconnect());
+    }
+
+    #[test]
+    fn test_ws_reconnect_mark_reconnected() {
+        let mut ws = ResilientWsStream::new(WsReconnectConfig::default());
+        ws.handle_disconnect("reset");
+        ws.mark_attempt_failed();
+        ws.mark_attempt_failed();
+        ws.mark_reconnected();
+
+        assert_eq!(ws.state().name(), "Connected");
+        assert_eq!(ws.total_reconnects(), 1);
+        assert!(!ws.should_reconnect());
+    }
+
+    #[test]
+    fn test_ws_reconnect_max_attempts_gives_up() {
+        let mut ws = ResilientWsStream::new(WsReconnectConfig::quick()); // max 3
+        ws.handle_disconnect("reset");
+
+        for _ in 0..3 {
+            ws.mark_attempt_failed();
+        }
+
+        assert_eq!(ws.state().name(), "GaveUp");
+        assert!(!ws.should_reconnect());
+    }
+
+    #[test]
+    fn test_ws_reconnect_backoff_increases() {
+        let mut ws = ResilientWsStream::new(WsReconnectConfig {
+            max_attempts: 10,
+            initial_backoff: Duration::from_millis(100),
+            max_backoff: Duration::from_secs(10),
+            backoff_multiplier: 2.0,
+            jitter: false,
+        });
+
+        ws.handle_disconnect("reset");
+
+        let delay1 = ws.next_attempt_delay();
+        ws.mark_attempt_failed();
+        let delay2 = ws.next_attempt_delay();
+        ws.mark_attempt_failed();
+        let delay3 = ws.next_attempt_delay();
+
+        // Each delay should be approximately 2x the previous
+        assert!(delay2 > delay1);
+        assert!(delay3 > delay2);
+    }
+
+    #[test]
+    fn test_ws_reconnect_backoff_capped() {
+        let mut ws = ResilientWsStream::new(WsReconnectConfig {
+            max_attempts: 20,
+            initial_backoff: Duration::from_secs(1),
+            max_backoff: Duration::from_secs(5),
+            backoff_multiplier: 10.0,
+            jitter: false,
+        });
+
+        ws.handle_disconnect("reset");
+        for _ in 0..10 {
+            ws.mark_attempt_failed();
+        }
+
+        let delay = ws.next_attempt_delay();
+        assert!(delay <= Duration::from_secs(5));
+    }
+
+    #[test]
+    fn test_ws_reconnect_stats() {
+        let mut ws = ResilientWsStream::new(WsReconnectConfig::default());
+        ws.handle_disconnect("reset");
+        ws.mark_attempt_failed();
+        ws.mark_reconnected();
+
+        let stats = ws.stats();
+        assert_eq!(stats.state, "Connected");
+        assert_eq!(stats.total_reconnects, 1);
+    }
+
+    #[test]
+    fn test_ws_reconnect_callback_invoked() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        let reconnect_count = Arc::new(AtomicU32::new(0));
+        let disconnect_count = Arc::new(AtomicU32::new(0));
+        let give_up_count = Arc::new(AtomicU32::new(0));
+
+        let rc = reconnect_count.clone();
+        let dc = disconnect_count.clone();
+        let gc = give_up_count.clone();
+
+        let mut ws = ResilientWsStream::new(WsReconnectConfig::quick());
+        ws.on_reconnect(move |_| { rc.fetch_add(1, Ordering::Relaxed); });
+        ws.on_disconnect(move |_| { dc.fetch_add(1, Ordering::Relaxed); });
+        ws.on_give_up(move |_| { gc.fetch_add(1, Ordering::Relaxed); });
+
+        ws.handle_disconnect("reset");
+        assert_eq!(disconnect_count.load(Ordering::Relaxed), 1);
+
+        ws.mark_reconnected();
+        assert_eq!(reconnect_count.load(Ordering::Relaxed), 1);
+
+        ws.handle_disconnect("reset again");
+        for _ in 0..3 {
+            ws.mark_attempt_failed();
+        }
+        assert_eq!(give_up_count.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn test_ws_reconnect_config_presets() {
+        let default = WsReconnectConfig::default();
+        assert_eq!(default.max_attempts, 10);
+
+        let aggressive = WsReconnectConfig::aggressive();
+        assert_eq!(aggressive.max_attempts, 20);
+
+        let quick = WsReconnectConfig::quick();
+        assert_eq!(quick.max_attempts, 3);
+    }
+
+    #[test]
+    fn test_ws_reconnect_jitter_varies() {
+        let ws = ResilientWsStream::new(WsReconnectConfig {
+            jitter: true,
+            initial_backoff: Duration::from_secs(1),
+            ..WsReconnectConfig::default()
+        });
+
+        // With jitter, delays should be around 1s but not exactly 1s
+        let delay = ws.next_attempt_delay();
+        assert!(delay >= Duration::from_millis(750));
+        assert!(delay <= Duration::from_millis(1250));
+    }
+
+    #[test]
+    fn test_ws_connection_state_name() {
+        assert_eq!(WsConnectionState::Connected.name(), "Connected");
+        assert_eq!(WsConnectionState::Reconnecting { attempt: 1 }.name(), "Reconnecting");
+        assert_eq!(WsConnectionState::Disconnected { reason: "x".into() }.name(), "Disconnected");
+        assert_eq!(WsConnectionState::GaveUp { attempts: 5 }.name(), "GaveUp");
     }
 }

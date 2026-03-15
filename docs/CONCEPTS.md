@@ -3918,3 +3918,45 @@ Each `ButlerRecommendation` includes: `category` (OptimizationCategory), `priori
 **Why 512 tokens for memory?** Memory entries are typically short (facts, preferences, entity attributes). 512 tokens can hold ~20–30 facts, which is sufficient for session context without significantly reducing RAG budget.
 
 **Related concepts**: [171. FreshContext Mode](#171-freshcontext-mode-stateless-by-choice-context-composition), [19. Memory and Decay](#19-memory-and-decay-remembering-what-matters), [95. Advanced Memory](#95-advanced-memory)
+
+---
+
+## 175. Dead Letter Queue: Capturing What Can't Be Delivered
+
+When a message exhausts all retry attempts — whether due to persistent timeouts, rate limiting, or invalid requests — it enters the **dead letter queue** (DLQ). Rather than silently discarding these failures, the DLQ preserves them with rich metadata: the failure category, attempt count, error history, and timestamps. This enables **selective replay** — for instance, retrying all rate-limited requests once the provider recovers, or inspecting timeout patterns to diagnose systemic issues. The DLQ acts as the safety net at the bottom of the retry stack: everything the system couldn't deliver eventually lands here for human review or automated recovery.
+
+---
+
+## 176. Bulkhead Pattern: Compartmentalized Resilience
+
+Named after the watertight compartments in a ship's hull, the **bulkhead pattern** prevents a failure in one subsystem from flooding the entire application. Each workload type (chat, streaming, embeddings, background tasks) is allocated its own semaphore with a maximum concurrency limit. If the streaming subsystem saturates its 5-slot bulkhead, chat requests still flow through their independent 10-slot bulkhead unimpeded. The RAII `BulkheadPermit` automatically releases the slot when dropped — even during panics — ensuring resources are never permanently leaked. Combined with circuit breakers and retry, bulkheads provide the **resource isolation** layer in the resilience stack.
+
+---
+
+## 177. Chaos Engineering: Confidence Through Controlled Failure
+
+Pioneered by Netflix, chaos engineering answers the question: *"Would our system survive this failure?"* by deliberately injecting faults in controlled conditions. The `FaultInjector` supports several fault types — artificial latency, simulated errors, connection resets, rate limiting, partial responses, and corrupt responses — each targeted at specific providers or request patterns with configurable probability. A **deterministic seed** mode enables reproducible tests: given the same seed, the same sequence of faults fires every time, making chaos tests as reliable as unit tests. This shifts resilience from "we hope it works" to "we've proven it works."
+
+---
+
+## 178. Auto-Reconnection: Self-Healing Connections
+
+Long-lived connections (WebSocket, SSE) inevitably break — network blips, server restarts, load balancer rotations. Auto-reconnection transforms a binary alive/dead state into a **state machine**: Connected → Disconnected → Reconnecting → Connected (or GaveUp after exhausting attempts). Each attempt uses **exponential backoff with jitter** to avoid thundering herd problems when many clients reconnect simultaneously. For SSE streams, `Last-Event-ID` enables **checkpoint-based resumption**: the client tells the server the last event it received, and the server replays everything since. This means transient disconnects are invisible to the end user.
+
+---
+
+## 179. Adaptive Timeouts: Learning from Production Latency
+
+Static timeouts are a lose-lose: too short and you abort valid slow requests, too long and you waste resources waiting for dead connections. **Adaptive timeouts** solve this by observing actual response latencies in a lock-free ring buffer and computing percentiles (P50, P95, P99). The timeout is set to `percentile × multiplier` — for example, 2× the observed P95 — clamped between a minimum and maximum bound. As the system's latency profile changes (during peak load, after a deployment, when a provider degrades), the timeout automatically adjusts. Three presets — conservative (3× P99), responsive (2× P95), and aggressive (1.5× P95) — cover most operational needs.
+
+---
+
+## 180. Load Shedding: Graceful Degradation Under Pressure
+
+When system resources are saturated, accepting every request means degrading the experience for *all* users. **Load shedding** deliberately rejects or delays a fraction of requests to preserve quality of service for the remainder. The shedding decision combines multiple signals — CPU utilization, memory pressure, queue depth, and P95 latency — with request priority. Four strategies are available: **PriorityBased** (shed Low first, throttle Normal), **Probabilistic** (random shedding proportional to overload severity), **OldestFirst** (shed stale requests), and **Adaptive** (combines all signals with priority weighting). High-priority requests can be **protected** from shedding entirely. A cooldown period prevents oscillation between shedding and accepting.
+
+---
+
+## 181. The Resilience Stack: How Patterns Compose
+
+Individual resilience patterns are powerful, but their real strength emerges in composition. A request flows through the stack like this: (1) **Load shedding** evaluates system health and may reject the request before it consumes resources; (2) the **bulkhead** checks whether the workload compartment has capacity; (3) the **circuit breaker** verifies the target provider isn't in a failure state; (4) the **retry executor** attempts the operation with exponential backoff; (5) if the operation succeeds, **adaptive timeout** records the latency; (6) if all retries fail, the request enters the **dead letter queue** for later replay. Meanwhile, **auto-reconnection** ensures the underlying connections heal themselves, and **chaos testing** proves the entire stack works under fire. Each layer handles a different failure mode: load shedding handles capacity, bulkheads handle isolation, circuit breakers handle provider health, retries handle transient errors, and the DLQ handles permanent failures.

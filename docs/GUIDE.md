@@ -8693,3 +8693,295 @@ safe_diag_trace!("[provider] system_prompt: {}", prompt); // PII-redacted
 | `[memory]` | search, build_context, process_message, remember_fact |
 | `[memory-context]` | Memory context building (query, result size) |
 | `[provider]` | Model, message count, system prompt, response size |
+
+---
+
+## 148. Dead Letter Queue (Enhanced)
+
+### What
+The enhanced DLQ captures permanently failed messages with rich metadata: failure category, attempt count, error history, and timestamps.
+
+### Why
+Messages that exhaust all retries shouldn't vanish silently. The DLQ enables post-mortem analysis and selective replay.
+
+### How
+```rust
+use ai_assistant::message_queue::{DeadLetterQueue, FailureCategory, QueueMessage};
+
+let dlq = DeadLetterQueue::new(1000);
+
+// Basic add (backward-compatible)
+dlq.add(QueueMessage::new("hello"), "timeout".to_string());
+
+// Detailed add with metadata
+dlq.add_detailed(
+    QueueMessage::new("hello"),
+    "provider timeout after 3 attempts".to_string(),
+    FailureCategory::Timeout,
+    3,
+    vec!["attempt 1: timeout".into(), "attempt 2: timeout".into()],
+);
+
+// Selective replay
+let timeouts = dlq.replay_by_category(FailureCategory::Timeout);
+
+// Inspect without consuming
+let entries = dlq.peek_all();
+
+// Statistics
+let stats = dlq.stats();
+println!("Total: {}, Timeouts: {}", stats.total,
+    stats.by_category.get(&FailureCategory::Timeout).unwrap_or(&0));
+```
+
+### Best Practices
+- Set `max_size` to prevent unbounded memory growth
+- Use `drain_older_than_ms()` for periodic cleanup
+- Connect to `ResilientExecutor` via `with_dead_letter_queue()` for automatic capture
+
+---
+
+## 149. Bulkhead Isolation
+
+### What
+Semaphore-based resource isolation that prevents one saturated workload from starving others.
+
+### Why
+Without isolation, a flood of embedding requests could exhaust thread capacity, blocking chat responses entirely.
+
+### How
+```rust
+use ai_assistant::bulkhead::{Bulkhead, BulkheadConfig, BulkheadRegistry};
+use std::time::Duration;
+
+// Individual bulkhead
+let bh = Bulkhead::new(BulkheadConfig::for_chat());
+let permit = bh.try_acquire().expect("should succeed");
+// permit auto-releases on drop
+
+// Registry for multiple workloads
+let mut registry = BulkheadRegistry::new();
+registry.register("chat", BulkheadConfig::for_chat());
+registry.register("streaming", BulkheadConfig::for_streaming());
+registry.register("embeddings", BulkheadConfig::for_embeddings());
+
+let permit = registry.try_acquire("chat").unwrap();
+let stats = registry.all_stats();
+```
+
+### Configuration
+| Preset | max_concurrent | max_wait |
+|--------|---------------|----------|
+| `for_chat()` | 10 | 5s |
+| `for_streaming()` | 5 | 30s |
+| `for_embeddings()` | 20 | 2s |
+| `for_background()` | 3 | 60s |
+
+### Best Practices
+- Use `try_acquire()` for non-blocking rejection
+- Use `acquire_timeout()` when some waiting is acceptable
+- Monitor `utilization_percent` in stats to tune limits
+
+---
+
+## 150. Chaos Testing / Fault Injection
+
+### What
+A framework for injecting controlled failures to test system resilience. Gated behind `chaos-testing` feature.
+
+### Why
+Confidence in resilience comes from proving the system handles failures, not hoping it does.
+
+### How
+```rust
+// Only available with feature = "chaos-testing" or in #[cfg(test)]
+use ai_assistant::fault_injection::{FaultInjector, FaultRule, FaultTarget, FaultType};
+use std::time::Duration;
+
+let mut injector = FaultInjector::with_seed(42); // deterministic
+
+injector.add_rule(FaultRule::timeout(
+    "ollama_timeout", FaultTarget::Named("ollama".into()), 0.3,
+));
+injector.add_rule(FaultRule::latency(
+    "slow_openai", FaultTarget::Named("openai".into()),
+    Duration::from_millis(500), Duration::from_secs(2), 0.5,
+));
+
+let result = injector.check("ollama", "hello");
+if result.injected {
+    println!("Fault injected: {:?}", result.fault_type);
+}
+```
+
+### Best Practices
+- Use `with_seed()` for reproducible test failures
+- Gate with `#[cfg(test)]` in tests — never enable in production
+- Use `max_injections` to limit fault frequency
+
+---
+
+## 151. WebSocket Auto-Reconnect
+
+### What
+State machine for automatic WebSocket reconnection with exponential backoff.
+
+### Why
+WebSocket connections break due to network blips, server restarts, or load balancer rotations. Auto-reconnect makes these transparent to the application.
+
+### How
+```rust
+use ai_assistant::websocket_streaming::{ResilientWsStream, WsReconnectConfig};
+
+let mut ws = ResilientWsStream::new(WsReconnectConfig::default());
+
+ws.on_disconnect(|reason| println!("Disconnected: {}", reason));
+ws.on_reconnect(|attempts| println!("Reconnected after {} attempts", attempts));
+ws.on_give_up(|attempts| println!("Gave up after {} attempts", attempts));
+
+// On disconnect:
+ws.handle_disconnect("connection reset");
+
+// Reconnection loop (caller drives):
+while ws.should_reconnect() {
+    std::thread::sleep(ws.next_attempt_delay());
+    // try_connect() is your TCP/TLS reconnection logic
+    // if success: ws.mark_reconnected();
+    // if failure: ws.mark_attempt_failed();
+}
+```
+
+### Configuration
+| Preset | max_attempts | initial_backoff | max_backoff |
+|--------|-------------|----------------|-------------|
+| `default()` | 10 | 1s | 60s |
+| `aggressive()` | 20 | 500ms | 120s |
+| `quick()` | 3 | 200ms | 5s |
+
+---
+
+## 152. SSE Auto-Reconnect
+
+### What
+Checkpoint-based SSE reconnection using `Last-Event-ID` for gapless resumption.
+
+### Why
+SSE streams carry sequential data. On reconnect, the client needs to know exactly which events were missed.
+
+### How
+```rust
+use ai_assistant::resumable_streaming::{
+    ResilientSseStream, SseReconnectConfig, ResumableStreamConfig,
+};
+
+let mut sse = ResilientSseStream::new(
+    ResumableStreamConfig::default(),
+    SseReconnectConfig::default(),
+);
+
+// Push chunks during normal operation
+sse.push("Hello ");
+sse.push("world!");
+
+// On disconnect
+sse.handle_disconnect();
+
+// On reconnect: get missed chunks
+let missed = sse.get_resume_chunks();
+sse.mark_reconnected();
+```
+
+### Best Practices
+- The server should support `Last-Event-ID` for replay
+- Use `set_server_retry(ms)` to honor server `retry:` field
+- Monitor `chunks_replayed` in stats to track recovery quality
+
+---
+
+## 153. Adaptive Timeouts
+
+### What
+Dynamic timeout calculation based on observed latency percentiles.
+
+### Why
+Static timeouts are either too short (abort valid requests) or too long (waste resources on dead connections).
+
+### How
+```rust
+use ai_assistant::adaptive_timeout::{AdaptiveTimeout, AdaptiveTimeoutConfig, Percentile};
+use std::time::Duration;
+
+let at = AdaptiveTimeout::new(AdaptiveTimeoutConfig::responsive());
+
+// Record observed latencies
+at.record(Duration::from_millis(100));
+at.record(Duration::from_millis(150));
+at.record(Duration::from_millis(200));
+
+// Get current adaptive timeout
+let timeout = at.current_timeout();
+println!("Current timeout: {}ms", timeout.as_millis());
+
+// Integrate with ResilientExecutor
+use ai_assistant::retry::ResilientExecutor;
+use std::sync::Arc;
+let executor = ResilientExecutor::new(Default::default(), 3, Duration::from_secs(30))
+    .with_adaptive_timeout(Arc::new(at));
+```
+
+### Configuration
+| Preset | multiplier | percentile | min | max |
+|--------|-----------|-----------|-----|-----|
+| `conservative()` | 3.0x | P99 | 1s | 120s |
+| `responsive()` | 2.0x | P95 | 500ms | 60s |
+| `aggressive()` | 1.5x | P95 | 200ms | 30s |
+
+---
+
+## 154. Load Shedding
+
+### What
+Intelligent request rejection based on system load signals combined with request priority.
+
+### Why
+Under overload, accepting everything degrades service for all users. Shedding preserves quality for the majority.
+
+### How
+```rust
+use ai_assistant::load_shedding::{LoadShedder, LoadSheddingConfig, LoadContext, SheddingDecision};
+use ai_assistant::request_queue::RequestPriority;
+use std::time::Duration;
+
+let shedder = LoadShedder::new(LoadSheddingConfig::conservative());
+
+let context = LoadContext {
+    cpu_load: 0.92,
+    memory_load: 0.85,
+    queue_depth: 600,
+    priority: RequestPriority::Normal,
+    request_age: Duration::from_millis(500),
+    p95_latency: Some(Duration::from_secs(35)),
+};
+
+let decision = shedder.evaluate(&context);
+shedder.record_decision(&decision);
+
+match decision {
+    SheddingDecision::Accept => { /* process normally */ }
+    SheddingDecision::Shed { reason } => { /* reject with reason */ }
+    SheddingDecision::Throttle { delay } => { std::thread::sleep(delay); }
+}
+```
+
+### Strategies
+| Strategy | Behavior |
+|----------|----------|
+| `PriorityBased` | Shed Low, throttle Normal, accept High |
+| `Probabilistic` | Random shedding proportional to overload severity |
+| `OldestFirst` | Shed requests waiting longer than 2x latency threshold |
+| `Adaptive` | Combine priority, overload count, and age |
+
+### Best Practices
+- Always enable `priority_protection` to protect system commands
+- Use `cooldown` to prevent oscillation
+- Monitor `shed_rate()` to detect capacity issues

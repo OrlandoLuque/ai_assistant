@@ -406,7 +406,22 @@ The harness exits with code 1 if any test fails, making it suitable for CI pipel
 | v28+butler-advisor | 6,417 | +16 | 2026-03-04 |
 | v36 (GUI Pro) | 7,066 | +649 | 2026-03-14 |
 | v37 (FreshContext+MCP+Memory) | 4,892+ | — | 2026-03-14 |
+| v38 (Resilience Engineering) | 4,995 | +103 | 2026-03-15 |
 
 > **Note on v37 count**: Test count reflects current `--lib` run. Some tests from v28-v36 were
 > in integration tests or feature combinations not included in the standard lib test run.
-> The project maintains 4,892+ verified passing lib tests with 0 failures.
+> The project maintains 4,995 verified passing lib tests with 0 failures.
+
+### V38 — New Resilience Test Modules
+
+| Module | File | Tests | Feature |
+|--------|------|-------|---------|
+| Bulkhead pattern | `src/bulkhead.rs` | ~18 | always |
+| Adaptive timeout | `src/adaptive_timeout.rs` | ~15 | always |
+| Load shedding | `src/load_shedding.rs` | ~15 | always |
+| Fault injection | `src/fault_injection.rs` | ~20 | `chaos-testing` |
+| Dead letter queue (enhanced) | `src/message_queue.rs` | ~12 | always |
+| WebSocket auto-reconnect | `src/websocket_streaming.rs` | ~12 | always |
+| SSE auto-reconnect | `src/resumable_streaming.rs` | ~10 | always |
+
+Run chaos-testing tests: `cargo test --features "full,chaos-testing" --lib -- fault_injection`

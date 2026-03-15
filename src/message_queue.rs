@@ -2,9 +2,9 @@
 //!
 //! Queue-based processing for AI requests.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Queue message
 #[derive(Debug, Clone)]
@@ -241,44 +241,240 @@ where
     }
 }
 
-/// Dead letter queue for failed messages
+// ============================================================================
+// Dead Letter Queue — Enhanced
+// ============================================================================
+
+/// Category of failure that caused a message to be dead-lettered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FailureCategory {
+    /// Request timed out.
+    Timeout,
+    /// Rate limit was exceeded.
+    RateLimited,
+    /// Provider was unavailable.
+    ProviderUnavailable,
+    /// Request was invalid (non-retryable).
+    InvalidRequest,
+    /// Unknown or uncategorized failure.
+    Unknown,
+}
+
+impl std::fmt::Display for FailureCategory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Timeout => write!(f, "Timeout"),
+            Self::RateLimited => write!(f, "RateLimited"),
+            Self::ProviderUnavailable => write!(f, "ProviderUnavailable"),
+            Self::InvalidRequest => write!(f, "InvalidRequest"),
+            Self::Unknown => write!(f, "Unknown"),
+        }
+    }
+}
+
+/// A message in the dead letter queue with rich failure metadata.
+#[derive(Debug, Clone)]
+pub struct DeadLetterEntry {
+    /// The original message that failed.
+    pub message: QueueMessage,
+    /// Human-readable failure reason.
+    pub reason: String,
+    /// Categorized failure type.
+    pub failure_category: FailureCategory,
+    /// Number of delivery attempts before dead-lettering.
+    pub attempt_count: u32,
+    /// Timestamp (ms since epoch) of first failure.
+    pub first_failed_at_ms: u64,
+    /// Timestamp (ms since epoch) of last failure.
+    pub last_failed_at_ms: u64,
+    /// Most recent error messages (capped at 5).
+    pub error_history: Vec<String>,
+}
+
+/// Aggregated statistics for the dead letter queue.
+#[derive(Debug, Clone, Default)]
+pub struct DlqStats {
+    /// Total entries in the queue.
+    pub total: usize,
+    /// Count of entries per failure category.
+    pub by_category: HashMap<FailureCategory, usize>,
+    /// Age in milliseconds of the oldest entry (None if empty).
+    pub oldest_age_ms: Option<u64>,
+}
+
+/// Dead letter queue for failed messages.
+///
+/// Stores messages that have exhausted their retry budget with
+/// rich metadata for debugging and selective replay.
 pub struct DeadLetterQueue {
-    messages: Mutex<Vec<(QueueMessage, String)>>,
+    entries: Mutex<Vec<DeadLetterEntry>>,
     max_size: usize,
 }
 
 impl DeadLetterQueue {
+    /// Create a new DLQ with the given maximum capacity.
     pub fn new(max_size: usize) -> Self {
         Self {
-            messages: Mutex::new(Vec::new()),
+            entries: Mutex::new(Vec::new()),
             max_size,
         }
     }
 
+    /// Add a message with a simple reason string (backward-compatible).
     pub fn add(&self, message: QueueMessage, reason: String) {
-        let mut messages = self.messages.lock().unwrap_or_else(|e| e.into_inner());
-        if messages.len() >= self.max_size {
-            messages.remove(0);
+        let now_ms = current_time_ms();
+        let entry = DeadLetterEntry {
+            message,
+            reason,
+            failure_category: FailureCategory::Unknown,
+            attempt_count: 1,
+            first_failed_at_ms: now_ms,
+            last_failed_at_ms: now_ms,
+            error_history: Vec::new(),
+        };
+        let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
+        if entries.len() >= self.max_size {
+            entries.remove(0);
         }
-        messages.push((message, reason));
+        entries.push(entry);
     }
 
+    /// Add a message with detailed failure information.
+    pub fn add_detailed(
+        &self,
+        message: QueueMessage,
+        reason: String,
+        category: FailureCategory,
+        attempt_count: u32,
+        errors: Vec<String>,
+    ) {
+        let now_ms = current_time_ms();
+        let error_history = if errors.len() > 5 {
+            errors[errors.len() - 5..].to_vec()
+        } else {
+            errors
+        };
+        let entry = DeadLetterEntry {
+            message,
+            reason,
+            failure_category: category,
+            attempt_count,
+            first_failed_at_ms: now_ms,
+            last_failed_at_ms: now_ms,
+            error_history,
+        };
+        let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
+        if entries.len() >= self.max_size {
+            entries.remove(0);
+        }
+        entries.push(entry);
+    }
+
+    /// Pop the most recently added entry (backward-compatible with old `pop()`).
     pub fn pop(&self) -> Option<(QueueMessage, String)> {
-        self.messages
+        let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
+        entries.pop().map(|e| (e.message, e.reason))
+    }
+
+    /// Pop the oldest entry for replay/reprocessing.
+    pub fn replay_one(&self) -> Option<DeadLetterEntry> {
+        let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
+        if entries.is_empty() {
+            None
+        } else {
+            Some(entries.remove(0))
+        }
+    }
+
+    /// Remove and return all entries matching the given failure category.
+    pub fn replay_by_category(&self, category: FailureCategory) -> Vec<DeadLetterEntry> {
+        let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
+        let mut matched = Vec::new();
+        let mut remaining = Vec::new();
+
+        for entry in entries.drain(..) {
+            if entry.failure_category == category {
+                matched.push(entry);
+            } else {
+                remaining.push(entry);
+            }
+        }
+
+        *entries = remaining;
+        matched
+    }
+
+    /// Remove and return entries older than the given age in milliseconds.
+    pub fn drain_older_than_ms(&self, age_ms: u64) -> Vec<DeadLetterEntry> {
+        let now_ms = current_time_ms();
+        let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
+        let mut drained = Vec::new();
+        let mut remaining = Vec::new();
+
+        for entry in entries.drain(..) {
+            if now_ms.saturating_sub(entry.first_failed_at_ms) >= age_ms {
+                drained.push(entry);
+            } else {
+                remaining.push(entry);
+            }
+        }
+
+        *entries = remaining;
+        drained
+    }
+
+    /// Peek at all entries without consuming them.
+    pub fn peek_all(&self) -> Vec<DeadLetterEntry> {
+        self.entries
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .pop()
+            .clone()
     }
 
+    /// Get aggregated statistics.
+    pub fn stats(&self) -> DlqStats {
+        let entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
+        let now_ms = current_time_ms();
+
+        let mut by_category: HashMap<FailureCategory, usize> = HashMap::new();
+        let mut oldest_age_ms = None;
+
+        for entry in entries.iter() {
+            *by_category.entry(entry.failure_category).or_insert(0) += 1;
+            let age = now_ms.saturating_sub(entry.first_failed_at_ms);
+            match oldest_age_ms {
+                None => oldest_age_ms = Some(age),
+                Some(current) if age > current => oldest_age_ms = Some(age),
+                _ => {}
+            }
+        }
+
+        DlqStats {
+            total: entries.len(),
+            by_category,
+            oldest_age_ms,
+        }
+    }
+
+    /// Number of entries currently in the queue.
     pub fn len(&self) -> usize {
-        self.messages
+        self.entries
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .len()
     }
 
+    /// Returns true if the queue has no entries.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// Remove all entries from the queue.
+    pub fn clear(&self) {
+        self.entries
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
     }
 }
 
@@ -286,6 +482,14 @@ impl Default for DeadLetterQueue {
     fn default() -> Self {
         Self::new(1000)
     }
+}
+
+/// Get current time in milliseconds since UNIX epoch.
+fn current_time_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 #[cfg(test)]
@@ -423,6 +627,179 @@ mod tests {
         let (msg, reason) = dlq.pop().unwrap();
         assert_eq!(msg.payload, "fail3");
         assert_eq!(reason, "crash");
+    }
+
+    #[test]
+    fn test_dlq_add_detailed() {
+        let dlq = DeadLetterQueue::new(100);
+        dlq.add_detailed(
+            QueueMessage::new("msg1"),
+            "timeout after 3 attempts".to_string(),
+            FailureCategory::Timeout,
+            3,
+            vec!["err1".to_string(), "err2".to_string(), "err3".to_string()],
+        );
+        assert_eq!(dlq.len(), 1);
+
+        let entry = dlq.replay_one().unwrap();
+        assert_eq!(entry.message.payload, "msg1");
+        assert_eq!(entry.failure_category, FailureCategory::Timeout);
+        assert_eq!(entry.attempt_count, 3);
+        assert_eq!(entry.error_history.len(), 3);
+    }
+
+    #[test]
+    fn test_dlq_error_history_capped() {
+        let dlq = DeadLetterQueue::new(100);
+        let errors: Vec<String> = (0..10).map(|i| format!("error_{}", i)).collect();
+        dlq.add_detailed(
+            QueueMessage::new("msg"),
+            "many errors".to_string(),
+            FailureCategory::Unknown,
+            10,
+            errors,
+        );
+
+        let entry = dlq.replay_one().unwrap();
+        assert_eq!(entry.error_history.len(), 5);
+        assert_eq!(entry.error_history[0], "error_5");
+        assert_eq!(entry.error_history[4], "error_9");
+    }
+
+    #[test]
+    fn test_dlq_replay_one_fifo() {
+        let dlq = DeadLetterQueue::new(100);
+        dlq.add(QueueMessage::new("first"), "r1".to_string());
+        dlq.add(QueueMessage::new("second"), "r2".to_string());
+        dlq.add(QueueMessage::new("third"), "r3".to_string());
+
+        // replay_one returns oldest first (FIFO)
+        let entry = dlq.replay_one().unwrap();
+        assert_eq!(entry.message.payload, "first");
+        assert_eq!(dlq.len(), 2);
+    }
+
+    #[test]
+    fn test_dlq_replay_by_category() {
+        let dlq = DeadLetterQueue::new(100);
+        dlq.add_detailed(
+            QueueMessage::new("t1"),
+            "timeout".to_string(),
+            FailureCategory::Timeout,
+            1,
+            vec![],
+        );
+        dlq.add_detailed(
+            QueueMessage::new("r1"),
+            "rate limited".to_string(),
+            FailureCategory::RateLimited,
+            1,
+            vec![],
+        );
+        dlq.add_detailed(
+            QueueMessage::new("t2"),
+            "timeout again".to_string(),
+            FailureCategory::Timeout,
+            2,
+            vec![],
+        );
+
+        let timeouts = dlq.replay_by_category(FailureCategory::Timeout);
+        assert_eq!(timeouts.len(), 2);
+        assert_eq!(timeouts[0].message.payload, "t1");
+        assert_eq!(timeouts[1].message.payload, "t2");
+        // Only rate limited entry remains
+        assert_eq!(dlq.len(), 1);
+    }
+
+    #[test]
+    fn test_dlq_peek_all() {
+        let dlq = DeadLetterQueue::new(100);
+        dlq.add(QueueMessage::new("a"), "reason_a".to_string());
+        dlq.add(QueueMessage::new("b"), "reason_b".to_string());
+
+        let peeked = dlq.peek_all();
+        assert_eq!(peeked.len(), 2);
+        // peek doesn't consume
+        assert_eq!(dlq.len(), 2);
+    }
+
+    #[test]
+    fn test_dlq_clear() {
+        let dlq = DeadLetterQueue::new(100);
+        dlq.add(QueueMessage::new("a"), "r".to_string());
+        dlq.add(QueueMessage::new("b"), "r".to_string());
+        assert_eq!(dlq.len(), 2);
+
+        dlq.clear();
+        assert!(dlq.is_empty());
+    }
+
+    #[test]
+    fn test_dlq_stats() {
+        let dlq = DeadLetterQueue::new(100);
+        dlq.add_detailed(
+            QueueMessage::new("t1"),
+            "timeout".to_string(),
+            FailureCategory::Timeout,
+            1,
+            vec![],
+        );
+        dlq.add_detailed(
+            QueueMessage::new("t2"),
+            "timeout".to_string(),
+            FailureCategory::Timeout,
+            2,
+            vec![],
+        );
+        dlq.add_detailed(
+            QueueMessage::new("r1"),
+            "rate".to_string(),
+            FailureCategory::RateLimited,
+            1,
+            vec![],
+        );
+
+        let stats = dlq.stats();
+        assert_eq!(stats.total, 3);
+        assert_eq!(*stats.by_category.get(&FailureCategory::Timeout).unwrap_or(&0), 2);
+        assert_eq!(*stats.by_category.get(&FailureCategory::RateLimited).unwrap_or(&0), 1);
+        assert!(stats.oldest_age_ms.is_some());
+    }
+
+    #[test]
+    fn test_dlq_backward_compat_add() {
+        // Ensure the old add() method still works and creates Unknown category
+        let dlq = DeadLetterQueue::new(100);
+        dlq.add(QueueMessage::new("old_style"), "old reason".to_string());
+
+        let entries = dlq.peek_all();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].failure_category, FailureCategory::Unknown);
+        assert_eq!(entries[0].attempt_count, 1);
+    }
+
+    #[test]
+    fn test_dlq_max_size_eviction_detailed() {
+        let dlq = DeadLetterQueue::new(2);
+        dlq.add_detailed(QueueMessage::new("m1"), "r1".to_string(), FailureCategory::Timeout, 1, vec![]);
+        dlq.add_detailed(QueueMessage::new("m2"), "r2".to_string(), FailureCategory::RateLimited, 1, vec![]);
+        dlq.add_detailed(QueueMessage::new("m3"), "r3".to_string(), FailureCategory::Unknown, 1, vec![]);
+        assert_eq!(dlq.len(), 2);
+
+        // m1 was evicted (oldest), m2 and m3 remain
+        let entries = dlq.peek_all();
+        assert_eq!(entries[0].message.payload, "m2");
+        assert_eq!(entries[1].message.payload, "m3");
+    }
+
+    #[test]
+    fn test_dlq_failure_category_display() {
+        assert_eq!(FailureCategory::Timeout.to_string(), "Timeout");
+        assert_eq!(FailureCategory::RateLimited.to_string(), "RateLimited");
+        assert_eq!(FailureCategory::ProviderUnavailable.to_string(), "ProviderUnavailable");
+        assert_eq!(FailureCategory::InvalidRequest.to_string(), "InvalidRequest");
+        assert_eq!(FailureCategory::Unknown.to_string(), "Unknown");
     }
 
     #[test]
