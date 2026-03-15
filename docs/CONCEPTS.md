@@ -3960,3 +3960,42 @@ When system resources are saturated, accepting every request means degrading the
 ## 181. The Resilience Stack: How Patterns Compose
 
 Individual resilience patterns are powerful, but their real strength emerges in composition. A request flows through the stack like this: (1) **Load shedding** evaluates system health and may reject the request before it consumes resources; (2) the **bulkhead** checks whether the workload compartment has capacity; (3) the **circuit breaker** verifies the target provider isn't in a failure state; (4) the **retry executor** attempts the operation with exponential backoff; (5) if the operation succeeds, **adaptive timeout** records the latency; (6) if all retries fail, the request enters the **dead letter queue** for later replay. Meanwhile, **auto-reconnection** ensures the underlying connections heal themselves, and **chaos testing** proves the entire stack works under fire. Each layer handles a different failure mode: load shedding handles capacity, bulkheads handle isolation, circuit breakers handle provider health, retries handle transient errors, and the DLQ handles permanent failures.
+
+---
+
+## 182. API Stability with #[non_exhaustive]
+
+Public APIs face a fundamental tension: libraries need to evolve, but changes can break downstream code. Rust's `#[non_exhaustive]` attribute resolves this by marking types as intentionally incomplete. ai_assistant applies this attribute to **454 enums** and **246 structs** across the entire public surface, making every type safe to extend without a semver major bump.
+
+**For enums**, `#[non_exhaustive]` forces clients to include a wildcard arm (`_ => {}`) in every `match` expression. When the library adds a new variant in a minor release, existing client code compiles without changes because the wildcard catches the new variant.
+
+**For structs**, the attribute prevents clients from constructing values using struct literal syntax. Instead, clients use `Default::default()` and then set individual fields, or use a constructor like `::new()`. This allows the library to add new fields with sensible defaults in minor releases.
+
+**For traits**, new methods always ship with default implementations, so existing trait implementors continue to compile. This combination means the library can grow its API surface freely while maintaining backward compatibility within a major version.
+
+---
+
+## 183. Testing Infrastructure: Harness, Precision & Regression
+
+V40 overhauls the test harness with **9 new CLI flags**, **scored precision tests**, and a **regression detection** workflow. The goal is to move beyond pass/fail testing toward quantitative measurement of output quality.
+
+- **CLI flags**: `--verbose`, `--filter=PATTERN`, `--timeout`, `--summary-only`, `--sort=duration`, `--retry-failed` for fine-grained control over test execution.
+- **Scored precision tests**: `run_test_scored()` returns a numeric score (0.0-1.0) with a threshold. 15 new scored tests (E1-E15) cover NLP, RAG, security, and algorithmic correctness. Total: 31 scored precision tests.
+- **Regression detection**: `--save-baseline` creates JSON snapshots, `--diff` compares against previous baselines with color-coded output and configurable `--regression-threshold`.
+- **REPL integration**: `/test`, `/bench`, `/precision` commands in the CLI for inline testing.
+
+---
+
+## 184. Graph Quality Testing: Validating Structural and Semantic Properties
+
+**How do you know a knowledge graph is correct?** Inserting entities and relations is easy — the hard part is verifying the emergent structural properties: Are connected components identified correctly? Does PageRank converge? Are shortest paths actually shortest? Do contradiction detectors fire when values conflict across layers?
+
+**Graph quality testing** validates three layers of graph infrastructure:
+
+- **Structural quality** (KnowledgeGraph): PageRank convergence, connected component detection, shortest path optimality, degree centrality, orphan detection, graph density. Tests verify mathematical invariants — PageRank sums to 1.0 in graphs without dangling nodes, cycle graphs produce uniform ranks, star hubs receive the highest rank.
+
+- **Semantic quality** (MultiLayerGraph): Cross-layer inference, contradiction detection, unified view completeness, cluster cohesion. Four graph layers (Knowledge, Internet, User, Session) must compose correctly — entities mentioned in a session and found on the internet should be linked, conflicting attribute values must trigger contradictions, and unified views must include entities from all layers.
+
+- **Pipeline quality** (AgentGraph): Topological sort correctness (Kahn's algorithm), cycle detection, critical path analysis, bottleneck identification. A 5-agent linear pipeline (Ingest → Parse → Analyze → Summarize → Output) must sort correctly and identify the slowest stage as the bottleneck.
+
+**Scored precision tests** quantify each property with a numeric score (0.0–1.0) against a threshold. All 8 graph precision tests achieve perfect 1.00 scores, validating that the graph algorithms produce correct results across diverse topologies.

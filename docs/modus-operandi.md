@@ -17,8 +17,9 @@ Continúa con el desarrollo del proyecto. Lee docs/modus-operandi.md y el últim
 - **V38**: COMPLETE — Resilience Engineering (Bulkhead, Adaptive Timeouts, Load Shedding, Chaos Engineering, Enhanced DLQ, WS/SSE Auto-Reconnect)
 - **V39**: COMPLETE — API Stability Hardening (#[non_exhaustive] on 454 enums + 246 structs, Default/new() constructors, trait stability docs)
 - **V40**: COMPLETE — Testing & Debugging Infrastructure (harness scoring, 15 precision tests, 9 CLI flags, regression detection, REPL /test /bench /precision commands)
-- **Latest**: V40 — Testing & Debugging Infrastructure
-- **Test count**: 6,829 lib tests (0 failures) + 31 harness precision tests
+- **V41**: COMPLETE — Graph Quality Testing (21 KG structural + 16 multi-layer + 10 agent graph + 8 precision = 55 tests across 3 new categories)
+- **Latest**: V41 — Graph Quality Testing
+- **Test count**: 6,829 lib tests (0 failures) + 39 harness precision tests
 - **Source files**: 319 .rs files, ~389K LOC
 - **Feature flags**: 55 (+1: chaos-testing)
 - **Status**: Experimental — compiles and passes tests, but not validated in production
@@ -96,6 +97,11 @@ cargo run --bin ai_test_harness -- --all --diff baseline.json
 
 # Sort by duration, summary only
 cargo run --bin ai_test_harness -- --all --sort=duration --summary-only
+
+# V41: Graph quality categories
+cargo run --bin ai_test_harness --features full -- --category=graph_quality --verbose
+cargo run --bin ai_test_harness --features full -- --category=multi_layer_graph --verbose
+cargo run --bin ai_test_harness --features full -- --category=agent_graph_quality --verbose
 ```
 
 ## Build check
@@ -149,7 +155,7 @@ cargo check --features "full,autonomous,scheduler,butler,browser,distributed-age
 | `src/advanced_routing.rs` | Bandit algorithms, NFA/DFA routing |
 | `src/distributed_network.rs` | QUIC/TLS 1.3, node security, anti-entropy |
 | `Cargo.toml` | Feature flags + dependencies |
-| `docs/IMPROVEMENTS_V35.md` | Current roadmap (source of truth) |
+| `docs/IMPROVEMENTS_V41.md` | Latest roadmap — Graph Quality Testing |
 | `README.md` | Project overview for GitHub |
 
 ## Repository structure

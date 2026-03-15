@@ -8985,3 +8985,46 @@ match decision {
 - Always enable `priority_protection` to protect system commands
 - Use `cooldown` to prevent oscillation
 - Monitor `shed_rate()` to detect capacity issues
+
+---
+
+## 155. Graph Quality Testing
+
+### What
+Testing infrastructure for validating the structural and semantic properties of the three graph modules: KnowledgeGraph (PageRank, BFS, clustering), MultiLayerGraph (contradictions, cross-layer inference), and AgentGraph (topological sort, critical path).
+
+### Why
+Graph algorithms produce emergent properties that are difficult to verify by inspection. PageRank convergence, connected component correctness, and cross-layer inference accuracy must be validated against known topologies with predictable results.
+
+### How
+
+Run graph quality tests via the harness:
+
+```bash
+# KnowledgeGraph structural quality (21 tests, needs rag feature)
+cargo run --bin ai_test_harness --features full -- --category=graph_quality --verbose
+
+# MultiLayerGraph semantic quality (16 tests)
+cargo run --bin ai_test_harness --features full -- --category=multi_layer_graph --verbose
+
+# AgentGraph pipeline quality (10 tests)
+cargo run --bin ai_test_harness --features full -- --category=agent_graph_quality --verbose
+
+# Scored precision tests for graph algorithms
+cargo run --bin ai_test_harness --features full -- --category=precision --filter=PageRank --verbose
+```
+
+### Test Coverage
+
+| Category | Tests | Key Algorithms |
+|----------|-------|----------------|
+| `graph_quality` | 21 | PageRank, shortest_path, connected_components, degree_centrality, all_paths |
+| `multi_layer_graph` | 16 | Contradiction detection, cross-layer inference, clustering, diff/merge |
+| `agent_graph_quality` | 10 | Topological sort (Kahn's), critical path, bottleneck detection |
+| Precision (graph) | 8 | Scored tests for all above with numeric thresholds |
+
+### Key Findings
+- PageRank does not normalize to 1.0 with dangling nodes (nodes with no outgoing edges)
+- Contradiction IDs are timestamp-based and may collide within the same second
+- `agent_utilization` divides by wall-clock trace duration, not by sum of individual durations
+- `connected_components` treats the graph as undirected via Union-Find

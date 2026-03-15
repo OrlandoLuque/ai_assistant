@@ -497,9 +497,10 @@ The harness exits with code 1 if any test fails, making it suitable for CI pipel
 > in integration tests or feature combinations not included in the standard lib test run.
 > The project maintains 6,829 verified passing lib tests with 0 failures.
 >
-> **Note on v40 count**: V40 adds 15 scored precision tests and harness infrastructure, but
-> these run as harness runtime tests (not `#[test]`), so the lib test count remains 6,829.
-> The harness now runs 31 precision tests in addition to its ~436 functional tests.
+> **Note on v40-v41 count**: V40 adds 15 scored precision tests and harness infrastructure.
+> V41 adds 47 functional + 8 precision tests across 3 new graph quality categories.
+> These run as harness runtime tests (not `#[test]`), so the lib test count remains 6,829.
+> The harness now runs 39 precision tests in addition to its ~483 functional tests.
 
 ### V38 — New Resilience Test Modules
 
@@ -514,3 +515,29 @@ The harness exits with code 1 if any test fails, making it suitable for CI pipel
 | SSE auto-reconnect | `src/resumable_streaming.rs` | ~10 | always |
 
 Run chaos-testing tests: `cargo test --features "full,chaos-testing" --lib -- fault_injection`
+
+### V41 — Graph Quality Test Categories
+
+| Category | Tests | Feature | Content |
+|----------|-------|---------|---------|
+| `graph_quality` | 21 | `rag` | KnowledgeGraph structural quality (PageRank, shortest path, components, degree centrality, all_paths, orphan detection, density) |
+| `multi_layer_graph` | 16 | always | MultiLayerGraph quality (CRUD, contradictions, cross-layer inference, clustering, diff/merge, unified view) |
+| `agent_graph_quality` | 10 | always | AgentGraph quality (topological sort, cycle detection, DOT/Mermaid/JSON export, critical path, bottlenecks, utilization) |
+
+**Precision tests** (8 new scored tests):
+- PageRank convergence precision (>= 0.90)
+- Connected components accuracy (>= 1.00)
+- Shortest path optimality (>= 0.90)
+- MultiLayer contradiction rate (>= 0.80)
+- Cross-layer inference recall (>= 0.80)
+- Unified view completeness (>= 0.90)
+- Topological sort correctness (>= 1.00)
+- Cluster cohesion accuracy (>= 0.80)
+
+Run graph quality tests:
+```bash
+cargo run --bin ai_test_harness --features full -- --category=graph_quality --verbose
+cargo run --bin ai_test_harness --features full -- --category=multi_layer_graph --verbose
+cargo run --bin ai_test_harness --features full -- --category=agent_graph_quality --verbose
+cargo run --bin ai_test_harness --features full -- --category=precision --filter=PageRank --verbose
+```
