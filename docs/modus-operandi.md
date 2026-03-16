@@ -18,7 +18,8 @@ Continúa con el desarrollo del proyecto. Lee docs/modus-operandi.md y el últim
 - **V39**: COMPLETE — API Stability Hardening (#[non_exhaustive] on 454 enums + 246 structs, Default/new() constructors, trait stability docs)
 - **V40**: COMPLETE — Testing & Debugging Infrastructure (harness scoring, 15 precision tests, 9 CLI flags, regression detection, REPL /test /bench /precision commands)
 - **V41**: COMPLETE — Graph Quality Testing (21 KG structural + 16 multi-layer + 10 agent graph + 8 precision = 55 tests across 3 new categories)
-- **Latest**: V41 — Graph Quality Testing
+- **V42**: IN PROGRESS — Consolidation & Production Readiness (thinking analysis of 6,730 blocks across 40+ sessions, 17/36 items verified already resolved, SmartChunker bounds + MockHttpServer fixes done, 22 items pending)
+- **Latest**: V42 — Consolidation & Production Readiness
 - **Test count**: 6,829 lib tests (0 failures) + 39 harness precision tests
 - **Source files**: 319 .rs files, ~389K LOC
 - **Feature flags**: 55 (+1: chaos-testing)
@@ -155,7 +156,7 @@ cargo check --features "full,autonomous,scheduler,butler,browser,distributed-age
 | `src/advanced_routing.rs` | Bandit algorithms, NFA/DFA routing |
 | `src/distributed_network.rs` | QUIC/TLS 1.3, node security, anti-entropy |
 | `Cargo.toml` | Feature flags + dependencies |
-| `docs/IMPROVEMENTS_V41.md` | Latest roadmap — Graph Quality Testing |
+| `docs/IMPROVEMENTS_V42.md` | Latest roadmap — Consolidation & Production Readiness |
 | `README.md` | Project overview for GitHub |
 
 ## Repository structure

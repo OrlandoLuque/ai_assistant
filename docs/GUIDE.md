@@ -9028,3 +9028,25 @@ cargo run --bin ai_test_harness --features full -- --category=precision --filter
 - Contradiction IDs are timestamp-based and may collide within the same second
 - `agent_utilization` divides by wall-clock trace duration, not by sum of individual durations
 - `connected_components` treats the graph as undirected via Union-Find
+
+---
+
+## 156. V42 — Consolidation & Production Readiness
+
+### What
+Systematic audit of 6,730 internal reasoning traces across 40+ development sessions to identify latent bugs, incomplete features, and architectural concerns.
+
+### Key Finding
+17 of 36 identified issues were already resolved in intermediate sessions. All cryptographic implementations verified as real (HMAC-SHA256, HKDF, AES-256-GCM). All behavioral stubs verified as properly implemented.
+
+### Completed Fixes
+- `ChunkingConfig::validated()`: prevents overflow in `target_tokens * 4`, enforces `min < target < max` and `overlap < target`
+- `MockHttpServer`: AtomicBool readiness signal + polling in `last_request()` fixes race conditions in 2 flaky tests
+
+### Remaining Work
+- Minimal build (`--no-default-features`): 66 feature-gate errors across 6 files
+- Agent roles → behavior wiring (system prompts, tool access per role)
+- Native tool call parsing (OpenAI `tool_calls`, Anthropic `tool_use`)
+- OAuth test coverage (`v2_oauth.rs`: 580 LOC, 0 tests)
+- Security audit checklist (inputs, credentials, sandbox, KPKG)
+- Code quality: 142 `panic!()`, ~300 Debug derives, doc comments
