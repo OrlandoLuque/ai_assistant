@@ -278,13 +278,18 @@ impl MockHttpServer {
 
         let responses = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let ready = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
         let resp_clone = responses.clone();
         let req_clone = requests.clone();
+        let ready_clone = ready.clone();
 
         let handle = std::thread::spawn(move || {
             // Set non-blocking with short timeout so the thread can exit
             listener.set_nonblocking(false).ok();
+
+            // Signal that the server thread is ready to accept connections
+            ready_clone.store(true, std::sync::atomic::Ordering::Release);
 
             // Accept connections in a loop
             for stream in listener.incoming() {
@@ -355,6 +360,11 @@ impl MockHttpServer {
             }
         });
 
+        // Wait for server thread to be ready before returning
+        while !ready.load(std::sync::atomic::Ordering::Acquire) {
+            std::thread::yield_now();
+        }
+
         Self {
             addr,
             responses,
@@ -386,8 +396,16 @@ impl MockHttpServer {
         ));
     }
 
-    /// Get the last received request (method, path, body)
+    /// Get the last received request (method, path, body).
+    /// Polls briefly to allow the server thread to process in-flight requests.
     pub fn last_request(&self) -> Option<(String, String, String)> {
+        for _ in 0..50 {
+            let result = self.requests.lock().unwrap().last().cloned();
+            if result.is_some() {
+                return result;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
         self.requests.lock().unwrap().last().cloned()
     }
 

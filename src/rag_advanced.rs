@@ -99,10 +99,38 @@ pub struct SmartChunker {
     embedding_fn: Option<EmbeddingFn>,
 }
 
+impl ChunkingConfig {
+    /// Validate and clamp configuration values to safe ranges.
+    /// Prevents overflow in `target_tokens * 4` and ensures logical consistency.
+    pub fn validated(mut self) -> Self {
+        // Prevent overflow: target_tokens * 4 must fit in usize
+        const MAX_TOKENS: usize = usize::MAX / 8;
+        self.target_tokens = self.target_tokens.min(MAX_TOKENS);
+        self.max_tokens = self.max_tokens.min(MAX_TOKENS);
+        self.min_tokens = self.min_tokens.min(MAX_TOKENS);
+        self.overlap_tokens = self.overlap_tokens.min(MAX_TOKENS);
+
+        // Logical consistency
+        if self.min_tokens > self.max_tokens {
+            self.min_tokens = self.max_tokens;
+        }
+        if self.target_tokens > self.max_tokens {
+            self.target_tokens = self.max_tokens;
+        }
+        if self.target_tokens < self.min_tokens {
+            self.target_tokens = self.min_tokens;
+        }
+        if self.overlap_tokens >= self.target_tokens {
+            self.overlap_tokens = self.target_tokens / 4;
+        }
+        self
+    }
+}
+
 impl SmartChunker {
     pub fn new(config: ChunkingConfig) -> Self {
         Self {
-            config,
+            config: config.validated(),
             embedding_fn: None,
         }
     }
