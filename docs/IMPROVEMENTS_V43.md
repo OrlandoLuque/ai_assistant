@@ -86,13 +86,33 @@ anterior ("la opción 3", "esa lista", "lo que dijiste antes") sin perder el hil
 - Context overflow graceful
 - FreshContext vs Conversation mode comparison
 
-### Fase 6: Documentación
+### Fase D: Fallbacks Secundarios — Verificados como YA EXISTENTES
 
-- CONCEPTS.md: concepto 186 (FreshContext Total Integration)
-- concepts.html: concepto 186
-- GUIDE.md: sección 157
+| Item | Estado |
+|------|--------|
+| D.5 Cost estimation: modelo desconocido | YA EXISTE — `get_pricing()` fallback a `default_pricing` |
+| D.7 Memory eviction: max_memories excedido | YA EXISTE — `cleanup()` con `effective_importance * decay`, evicta los de menor score |
+| D.1 Provider ALL fail: cached response | PARCIAL — `FallbackChain` ya existe, no cached response pero error detallado |
+| D.2 Embedding: provider down → TF-IDF local | YA EXISTE — `LocalEmbedder` siempre disponible como fallback |
+| D.6 Auto-model: modelo no disponible | YA EXISTE — `default_model` como fallback |
+
+### Fase G: Documentación — HECHO
+
+- CONCEPTS.md: conceptos 186 (FreshContext Total Integration), 187 (Fallback Chains)
+- concepts.html: conceptos 186, 187 (count → 187)
+- GUIDE.md: sección 157 (V43 completa)
 - developer_guide.html: sección V43
-- TESTING.md: nuevos tests
+- TESTING.md: categoría fallback_resilience (18 tests)
+- modus-operandi.md: estado actualizado
+
+### Pendiente para siguiente sesión
+
+| Item | Descripción |
+|------|-------------|
+| **Fase A** | Unified SQLite persistence (tablas nuevas, write-through, schema migration) |
+| **Fase F** | Tests de conversación real con Ollama (8 tests scored) |
+| **D.3** | Streaming: buffer overflow → evict a disco |
+| **D.4** | Session load: corrupción → intentar formato alternativo |
 
 ---
 
