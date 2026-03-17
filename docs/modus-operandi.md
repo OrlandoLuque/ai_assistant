@@ -20,8 +20,9 @@ Continúa con el desarrollo del proyecto. Lee docs/modus-operandi.md y el últim
 - **V41**: COMPLETE — Graph Quality Testing (21 KG structural + 16 multi-layer + 10 agent graph + 8 precision = 55 tests across 3 new categories)
 - **V42**: IN PROGRESS — Consolidation & Production Readiness (thinking analysis of 6,730 blocks across 40+ sessions, 17/36 items verified already resolved, SmartChunker bounds + MockHttpServer fixes done, 22 items pending)
 - **V43**: COMPLETE — FreshContext Total Integration + Fallback Chains (KG in core, overflow truncation, ReferenceResolver bilingüe EN+ES, auto-list tracking, guardrail catch_unwind, SQLite WAL mode, 18 fallback tests, UnifiedDb persistence + schema versioning + write-through sessions + memory store, DiskSpillBuffer, session recovery, 8 conversation quality scored tests)
-- **Latest**: V43 — FreshContext Total Integration + Fallback Chains (COMPLETE)
-- **Test count**: 6,854 lib tests (0 failures) + 39 harness precision + 18 fallback resilience + 8 conversation quality scored tests
+- **V44**: COMPLETE — Procedural Memory Integration (ProceduralStore wired into conversation pipeline, WORKFLOW GUIDELINES injection, outcome tracking, CRUD API, 10 tests)
+- **Latest**: V44 — Procedural Memory Integration (COMPLETE)
+- **Test count**: 6,864 lib tests (0 failures) + 39 harness precision + 18 fallback resilience + 8 conversation quality scored tests
 - **Source files**: 320 .rs files, ~390K LOC
 - **Feature flags**: 55 (+1: chaos-testing)
 - **Status**: Experimental — compiles and passes tests, but not validated in production
@@ -203,7 +204,8 @@ cargo check --features "full,autonomous,scheduler,butler,browser,distributed-age
 | `src/distributed_network.rs` | QUIC/TLS 1.3, node security, anti-entropy |
 | `Cargo.toml` | Feature flags + dependencies |
 | `src/unified_persistence.rs` | UnifiedDb, SqliteSessionStore, SqliteMemoryStore |
-| `docs/IMPROVEMENTS_V43.md` | Latest roadmap — FreshContext + Fallback Chains |
+| `docs/IMPROVEMENTS_V43.md` | V43 — FreshContext + Fallback Chains |
+| `docs/IMPROVEMENTS_V44.md` | Latest roadmap — Procedural Memory Integration |
 | `README.md` | Project overview for GitHub |
 
 ## Repository structure

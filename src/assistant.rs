@@ -7305,4 +7305,119 @@ ws ::= " "*"#;
         let s2 = format!("{}", w2);
         assert!(s2.contains("200"), "Should include token count: {}", s2);
     }
+
+    // ================================================================
+    // Procedural memory tests
+    // ================================================================
+
+    #[cfg(feature = "advanced-memory")]
+    fn make_test_procedure(id: &str, name: &str, condition: &str, steps: Vec<&str>, confidence: f64) -> crate::advanced_memory::Procedure {
+        crate::advanced_memory::Procedure {
+            id: id.to_string(),
+            name: name.to_string(),
+            condition: condition.to_string(),
+            steps: steps.into_iter().map(|s| s.to_string()).collect(),
+            success_count: (confidence * 10.0) as usize,
+            failure_count: ((1.0 - confidence) * 10.0) as usize,
+            confidence,
+            created_from: Vec::new(),
+            tags: Vec::new(),
+        }
+    }
+
+    #[cfg(feature = "advanced-memory")]
+    #[test]
+    fn test_assistant_procedural_crud() {
+        let mut ai = AiAssistant::new();
+
+        // Not enabled yet
+        assert!(!ai.has_procedural_memory());
+        assert!(ai.list_procedures().is_empty());
+
+        // Enable
+        ai.enable_procedural_memory(50);
+        assert!(ai.has_procedural_memory());
+
+        // Add
+        ai.add_procedure(make_test_procedure("p1", "Deploy", "deploy rust app", vec!["test", "build", "deploy"], 0.9));
+        ai.add_procedure(make_test_procedure("p2", "Review", "code review checklist", vec!["compile", "test", "docs"], 0.85));
+        assert_eq!(ai.list_procedures().len(), 2);
+
+        // Find
+        let found = ai.find_procedures("deploy rust application");
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].id, "p1");
+
+        // Remove
+        let removed = ai.remove_procedure("p1");
+        assert!(removed.is_some());
+        assert_eq!(ai.list_procedures().len(), 1);
+
+        // Store access
+        assert!(ai.procedural_store().is_some());
+        assert_eq!(ai.procedural_store().unwrap().len(), 1);
+
+        // Disable
+        ai.disable_procedural_memory();
+        assert!(!ai.has_procedural_memory());
+        assert!(ai.list_procedures().is_empty());
+    }
+
+    #[cfg(feature = "advanced-memory")]
+    #[test]
+    fn test_assistant_procedural_persistence() {
+        let mut ai = AiAssistant::new();
+        ai.enable_procedural_memory(50);
+        ai.add_procedure(make_test_procedure("p1", "Deploy", "deploy rust app", vec!["test", "build"], 0.9));
+        ai.add_procedure(make_test_procedure("p2", "Review", "code review", vec!["compile", "lint"], 0.85));
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("procedures.json");
+
+        // Save
+        ai.save_procedures(&path).expect("save");
+        assert!(path.exists());
+
+        // Load into a new assistant
+        let mut ai2 = AiAssistant::new();
+        ai2.load_procedures(&path, 50).expect("load");
+        assert!(ai2.has_procedural_memory());
+        assert_eq!(ai2.list_procedures().len(), 2);
+    }
+
+    #[cfg(feature = "advanced-memory")]
+    #[test]
+    fn test_assistant_procedural_context_formatting() {
+        let mut ai = AiAssistant::new();
+        ai.enable_procedural_memory(50);
+        ai.add_procedure(make_test_procedure(
+            "p1", "Deploy Pipeline", "deploy rust application",
+            vec!["Run cargo test", "Build release binary", "Deploy to server"], 0.92,
+        ));
+
+        let ctx = ai.build_procedural_context("deploy rust application now", 5, 500);
+        assert!(ctx.contains("--- WORKFLOW GUIDELINES ---"));
+        assert!(ctx.contains("Deploy Pipeline"));
+        assert!(ctx.contains("confidence: 92%"));
+        assert!(ctx.contains("1. Run cargo test"));
+        assert!(ctx.contains("2. Build release binary"));
+        assert!(ctx.contains("--- END WORKFLOW GUIDELINES ---"));
+
+        // Should have recorded active procedure IDs
+        assert_eq!(ai.active_procedure_ids.len(), 1);
+        assert_eq!(ai.active_procedure_ids[0], "p1");
+    }
+
+    #[cfg(feature = "advanced-memory")]
+    #[test]
+    fn test_assistant_procedural_context_no_match() {
+        let mut ai = AiAssistant::new();
+        ai.enable_procedural_memory(50);
+        ai.add_procedure(make_test_procedure("p1", "Deploy", "deploy rust app", vec!["step"], 0.9));
+
+        // Query that doesn't match
+        let ctx = ai.build_procedural_context("tell me about quantum physics", 5, 500);
+        assert!(ctx.is_empty());
+        assert!(ai.active_procedure_ids.is_empty());
+    }
 }
