@@ -797,6 +797,9 @@ impl KnowledgeGraphStore {
     /// Open or create a knowledge graph database
     pub fn open(path: impl AsRef<Path>, config: KnowledgeGraphConfig) -> Result<Self> {
         let conn = Connection::open(path)?;
+        // Enable WAL mode for concurrent access and busy timeout for lock contention
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
         let store = Self {
             conn: Mutex::new(conn),
             config,

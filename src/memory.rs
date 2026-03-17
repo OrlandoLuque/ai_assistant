@@ -741,7 +741,35 @@ impl ReferenceResolver {
     }
 
     /// Try to resolve a user reference like "the second one", "option 3",
-    /// "the list about X" against tracked lists.
+    /// "the list about X" against tracked lists, with optional fallback search.
+    ///
+    /// The `fallback_search` callback is invoked when tracked lists don't resolve
+    /// the reference. It receives the user message and should return relevant
+    /// context from conversation archive, memory store, or RAG.
+    pub fn resolve_reference_with_fallback(
+        &self,
+        user_message: &str,
+        fallback_search: impl FnOnce(&str) -> Option<String>,
+    ) -> Option<String> {
+        // Try tracked lists first
+        if let Some(resolved) = self.resolve_reference(user_message) {
+            return Some(resolved);
+        }
+
+        // Quick check: does the message contain reference patterns?
+        let msg_lower = user_message.to_lowercase();
+        if !Self::has_reference_pattern(&msg_lower) {
+            return None;
+        }
+
+        // Fallback: delegate to external search (conversation archive, memory, RAG)
+        fallback_search(user_message).map(|ctx| {
+            format!("[Reference resolved via search: {}]", ctx)
+        })
+    }
+
+    /// Try to resolve a user reference like "the second one", "option 3",
+    /// "the list about X" against tracked lists only.
     /// Returns the resolved context string, or None if no match.
     pub fn resolve_reference(&self, user_message: &str) -> Option<String> {
         let msg_lower = user_message.to_lowercase();

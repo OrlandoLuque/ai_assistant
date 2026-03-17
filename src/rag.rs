@@ -339,6 +339,9 @@ impl RagDb {
         }
 
         let conn = rusqlite::Connection::open(db_path)?;
+        // Enable WAL mode for concurrent read access and busy timeout for lock contention
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
         let db = Self {
             conn,
             embedder: None,
@@ -356,6 +359,9 @@ impl RagDb {
         }
 
         let conn = rusqlite::Connection::open(db_path)?;
+        // Enable WAL mode for concurrent read access and busy timeout for lock contention
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
 
         let embedder = if hybrid_config.semantic_enabled {
             Some(crate::embeddings::LocalEmbedder::new(

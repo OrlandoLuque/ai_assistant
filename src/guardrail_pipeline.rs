@@ -175,7 +175,16 @@ impl GuardrailPipeline {
                 continue;
             }
 
-            let result = guard.check(text);
+            // Catch panics in guards to prevent a single broken guard from crashing the pipeline
+            let result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                guard.check(text)
+            })) {
+                Ok(r) => r,
+                Err(_) => {
+                    log::error!("[guardrails] Guard '{}' panicked, skipping", guard.name());
+                    continue;
+                }
+            };
 
             // Record violation if logging is enabled and score meets threshold.
             if self.log_violations && result.score >= self.block_threshold {
