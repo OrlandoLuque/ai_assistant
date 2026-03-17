@@ -432,6 +432,19 @@ pub struct AiAssistant {
 
     /// Turn counter for tracking conversation position (used by list tracking).
     turn_counter: usize,
+
+    /// Procedural memory store for workflow procedures, checklists, and methodologies.
+    /// When populated, matching procedures are automatically injected into the system prompt.
+    #[cfg(feature = "advanced-memory")]
+    procedural_store: Option<crate::advanced_memory::ProceduralStore>,
+
+    /// Procedure evolver for confidence tracking via outcome feedback.
+    #[cfg(feature = "advanced-memory")]
+    procedure_evolver: Option<crate::advanced_memory::ProcedureEvolver>,
+
+    /// IDs of procedures that were injected in the current turn (for outcome tracking).
+    #[cfg(feature = "advanced-memory")]
+    active_procedure_ids: Vec<String>,
 }
 
 impl Default for AiAssistant {
@@ -621,6 +634,13 @@ impl AiAssistant {
 
             reference_resolver: crate::memory::ReferenceResolver::new(),
             turn_counter: 0,
+
+            #[cfg(feature = "advanced-memory")]
+            procedural_store: None,
+            #[cfg(feature = "advanced-memory")]
+            procedure_evolver: None,
+            #[cfg(feature = "advanced-memory")]
+            active_procedure_ids: Vec::new(),
         }
     }
 
@@ -1081,6 +1101,176 @@ impl AiAssistant {
         }
     }
 
+    // === Procedural Memory Integration ===
+
+    /// Enable procedural memory with the given capacity.
+    ///
+    /// Once enabled, matching procedures are automatically injected into the
+    /// system prompt as `--- WORKFLOW GUIDELINES ---` when their condition
+    /// keywords match the user's message.
+    #[cfg(feature = "advanced-memory")]
+    pub fn enable_procedural_memory(&mut self, max_procedures: usize) {
+        self.procedural_store = Some(crate::advanced_memory::ProceduralStore::new(max_procedures));
+        self.procedure_evolver = Some(crate::advanced_memory::ProcedureEvolver::new(
+            crate::advanced_memory::EvolutionConfig::default(),
+        ));
+    }
+
+    /// Disable procedural memory and discard all procedures.
+    #[cfg(feature = "advanced-memory")]
+    pub fn disable_procedural_memory(&mut self) {
+        self.procedural_store = None;
+        self.procedure_evolver = None;
+        self.active_procedure_ids.clear();
+    }
+
+    /// Whether procedural memory is enabled.
+    #[cfg(feature = "advanced-memory")]
+    pub fn has_procedural_memory(&self) -> bool {
+        self.procedural_store.is_some()
+    }
+
+    /// Add a procedure to the procedural store.
+    #[cfg(feature = "advanced-memory")]
+    pub fn add_procedure(&mut self, procedure: crate::advanced_memory::Procedure) {
+        if let Some(ref mut store) = self.procedural_store {
+            store.add(procedure);
+        }
+    }
+
+    /// List all procedures (read-only slice).
+    #[cfg(feature = "advanced-memory")]
+    pub fn list_procedures(&self) -> &[crate::advanced_memory::Procedure] {
+        match &self.procedural_store {
+            Some(store) => store.all(),
+            None => &[],
+        }
+    }
+
+    /// Remove a procedure by ID. Returns the removed procedure if found.
+    #[cfg(feature = "advanced-memory")]
+    pub fn remove_procedure(&mut self, id: &str) -> Option<crate::advanced_memory::Procedure> {
+        if let Some(ref mut store) = self.procedural_store {
+            store.remove(id)
+        } else {
+            None
+        }
+    }
+
+    /// Find procedures matching a query string.
+    #[cfg(feature = "advanced-memory")]
+    pub fn find_procedures(&self, query: &str) -> Vec<&crate::advanced_memory::Procedure> {
+        match &self.procedural_store {
+            Some(store) => store.find_relevant(query, 0.3, 0.1, 5),
+            None => Vec::new(),
+        }
+    }
+
+    /// Record explicit outcome feedback for a procedure.
+    #[cfg(feature = "advanced-memory")]
+    pub fn record_procedure_outcome(
+        &mut self,
+        procedure_id: &str,
+        success: bool,
+    ) -> Result<(), crate::error::AiError> {
+        if let Some(ref mut store) = self.procedural_store {
+            store.update_outcome(procedure_id, success)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Save the procedural store to a file. Returns error if not enabled.
+    #[cfg(feature = "advanced-memory")]
+    pub fn save_procedures(&self, path: &std::path::Path) -> Result<(), String> {
+        match &self.procedural_store {
+            Some(store) => store.save_to_file(path).map(|_| ()),
+            None => Err("Procedural memory not enabled".to_string()),
+        }
+    }
+
+    /// Load procedures from a file. Enables procedural memory if not already enabled.
+    #[cfg(feature = "advanced-memory")]
+    pub fn load_procedures(
+        &mut self,
+        path: &std::path::Path,
+        max_procedures: usize,
+    ) -> Result<(), String> {
+        let store =
+            crate::advanced_memory::ProceduralStore::load_from_file(path, max_procedures)?;
+        self.procedural_store = Some(store);
+        if self.procedure_evolver.is_none() {
+            self.procedure_evolver = Some(crate::advanced_memory::ProcedureEvolver::new(
+                crate::advanced_memory::EvolutionConfig::default(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Access the procedural store (read-only).
+    #[cfg(feature = "advanced-memory")]
+    pub fn procedural_store(&self) -> Option<&crate::advanced_memory::ProceduralStore> {
+        self.procedural_store.as_ref()
+    }
+
+    /// Build a `--- WORKFLOW GUIDELINES ---` section from procedures matching the
+    /// user message. Returns an empty string if no procedures match or if
+    /// procedural memory is disabled.
+    #[cfg(feature = "advanced-memory")]
+    fn build_procedural_context(
+        &mut self,
+        user_message: &str,
+        max_procedures: usize,
+        max_tokens: usize,
+    ) -> String {
+        let store = match &self.procedural_store {
+            Some(s) => s,
+            None => return String::new(),
+        };
+
+        let matches = store.find_relevant(user_message, 0.3, 0.1, max_procedures);
+        if matches.is_empty() {
+            return String::new();
+        }
+
+        let mut result = String::from(
+            "--- WORKFLOW GUIDELINES ---\n\
+             The following workflow procedures are relevant. Follow these steps where applicable.\n",
+        );
+
+        let mut token_count = crate::context::estimate_tokens(&result);
+        let mut used_ids = Vec::new();
+
+        for proc in &matches {
+            // Format this procedure
+            let mut section = format!(
+                "\n## {} (confidence: {:.0}%)\n",
+                proc.name,
+                proc.confidence * 100.0
+            );
+            for (i, step) in proc.steps.iter().enumerate() {
+                section.push_str(&format!("{}. {}\n", i + 1, step));
+            }
+
+            let section_tokens = crate::context::estimate_tokens(&section);
+            if token_count + section_tokens > max_tokens {
+                break;
+            }
+
+            result.push_str(&section);
+            token_count += section_tokens;
+            used_ids.push(proc.id.clone());
+        }
+
+        if used_ids.is_empty() {
+            return String::new();
+        }
+
+        result.push_str("--- END WORKFLOW GUIDELINES ---");
+        self.active_procedure_ids = used_ids;
+        result
+    }
+
     // === FreshContext Advisor ===
 
     /// Report the health and effectiveness of the current FreshContext configuration.
@@ -1279,6 +1469,14 @@ impl AiAssistant {
                     augmented.push_str(&memory_ctx);
                 }
             }
+            #[cfg(feature = "advanced-memory")]
+            {
+                let proc_ctx = self.build_procedural_context(&user_message, 5, 500);
+                if !proc_ctx.is_empty() {
+                    augmented.push_str("\n\n");
+                    augmented.push_str(&proc_ctx);
+                }
+            }
             if let Some(ref refs) = resolved_refs {
                 augmented.push_str("\n\n--- RESOLVED REFERENCES ---\n");
                 augmented.push_str(refs);
@@ -1412,19 +1610,32 @@ impl AiAssistant {
         let (tx, rx) = mpsc::channel();
         self.rx_response = Some(rx);
 
-        // In FreshContext mode, augment knowledge context with memory
+        // In FreshContext mode, augment knowledge context with memory + procedures
         let effective_knowledge: String;
-        let knowledge_ref = if self.context_mode == ContextMode::FreshContext {
-            let query = self.conversation.last().map(|m| m.content.clone()).unwrap_or_default();
-            let memory_ctx = self.build_memory_context(&query, 512);
-            if memory_ctx.is_empty() {
+        let knowledge_ref = {
+            let mut augmented = knowledge_context.to_string();
+            if self.context_mode == ContextMode::FreshContext {
+                let query = self.conversation.last().map(|m| m.content.clone()).unwrap_or_default();
+                let memory_ctx = self.build_memory_context(&query, 512);
+                if !memory_ctx.is_empty() {
+                    augmented.push_str("\n\n--- MEMORY CONTEXT ---\n");
+                    augmented.push_str(&memory_ctx);
+                }
+            }
+            #[cfg(feature = "advanced-memory")]
+            {
+                let proc_ctx = self.build_procedural_context(&user_message, 5, 500);
+                if !proc_ctx.is_empty() {
+                    augmented.push_str("\n\n");
+                    augmented.push_str(&proc_ctx);
+                }
+            }
+            if augmented == knowledge_context {
                 knowledge_context
             } else {
-                effective_knowledge = format!("{}\n\n--- MEMORY CONTEXT ---\n{}", knowledge_context, memory_ctx);
+                effective_knowledge = augmented;
                 &effective_knowledge
             }
-        } else {
-            knowledge_context
         };
 
         let system_prompt = build_system_prompt_with_notes(
@@ -1471,19 +1682,32 @@ impl AiAssistant {
         );
         self.conversation.push(ChatMessage::user(&user_message));
 
-        // In FreshContext mode, augment knowledge context with memory
+        // In FreshContext mode, augment knowledge context with memory + procedures
         let effective_knowledge: String;
-        let knowledge_ref = if self.context_mode == ContextMode::FreshContext {
-            let query = self.conversation.last().map(|m| m.content.clone()).unwrap_or_default();
-            let memory_ctx = self.build_memory_context(&query, 512);
-            if memory_ctx.is_empty() {
+        let knowledge_ref = {
+            let mut augmented = knowledge_context.to_string();
+            if self.context_mode == ContextMode::FreshContext {
+                let query = self.conversation.last().map(|m| m.content.clone()).unwrap_or_default();
+                let memory_ctx = self.build_memory_context(&query, 512);
+                if !memory_ctx.is_empty() {
+                    augmented.push_str("\n\n--- MEMORY CONTEXT ---\n");
+                    augmented.push_str(&memory_ctx);
+                }
+            }
+            #[cfg(feature = "advanced-memory")]
+            {
+                let proc_ctx = self.build_procedural_context(&user_message, 5, 500);
+                if !proc_ctx.is_empty() {
+                    augmented.push_str("\n\n");
+                    augmented.push_str(&proc_ctx);
+                }
+            }
+            if augmented == knowledge_context {
                 knowledge_context
             } else {
-                effective_knowledge = format!("{}\n\n--- MEMORY CONTEXT ---\n{}", knowledge_context, memory_ctx);
+                effective_knowledge = augmented;
                 &effective_knowledge
             }
-        } else {
-            knowledge_context
         };
 
         let system_prompt = build_system_prompt(
@@ -1579,19 +1803,32 @@ impl AiAssistant {
         let cancel_token = CancellationToken::new();
         self.cancel_token = Some(cancel_token.clone());
 
-        // In FreshContext mode, augment knowledge context with memory
+        // In FreshContext mode, augment knowledge context with memory + procedures
         let effective_knowledge: String;
-        let knowledge_ref = if self.context_mode == ContextMode::FreshContext {
-            let query = self.conversation.last().map(|m| m.content.clone()).unwrap_or_default();
-            let memory_ctx = self.build_memory_context(&query, 512);
-            if memory_ctx.is_empty() {
+        let knowledge_ref = {
+            let mut augmented = knowledge_context.to_string();
+            if self.context_mode == ContextMode::FreshContext {
+                let query = self.conversation.last().map(|m| m.content.clone()).unwrap_or_default();
+                let memory_ctx = self.build_memory_context(&query, 512);
+                if !memory_ctx.is_empty() {
+                    augmented.push_str("\n\n--- MEMORY CONTEXT ---\n");
+                    augmented.push_str(&memory_ctx);
+                }
+            }
+            #[cfg(feature = "advanced-memory")]
+            {
+                let proc_ctx = self.build_procedural_context(&user_message, 5, 500);
+                if !proc_ctx.is_empty() {
+                    augmented.push_str("\n\n");
+                    augmented.push_str(&proc_ctx);
+                }
+            }
+            if augmented == knowledge_context {
                 knowledge_context
             } else {
-                effective_knowledge = format!("{}\n\n--- MEMORY CONTEXT ---\n{}", knowledge_context, memory_ctx);
+                effective_knowledge = augmented;
                 &effective_knowledge
             }
-        } else {
-            knowledge_context
         };
 
         let config = self.config.clone();
@@ -1699,19 +1936,32 @@ impl AiAssistant {
         let cancel_token = CancellationToken::new();
         self.cancel_token = Some(cancel_token.clone());
 
-        // In FreshContext mode, augment knowledge context with memory
+        // In FreshContext mode, augment knowledge context with memory + procedures
         let effective_knowledge: String;
-        let knowledge_ref = if self.context_mode == ContextMode::FreshContext {
-            let query = self.conversation.last().map(|m| m.content.clone()).unwrap_or_default();
-            let memory_ctx = self.build_memory_context(&query, 512);
-            if memory_ctx.is_empty() {
+        let knowledge_ref = {
+            let mut augmented = knowledge_context.to_string();
+            if self.context_mode == ContextMode::FreshContext {
+                let query = self.conversation.last().map(|m| m.content.clone()).unwrap_or_default();
+                let memory_ctx = self.build_memory_context(&query, 512);
+                if !memory_ctx.is_empty() {
+                    augmented.push_str("\n\n--- MEMORY CONTEXT ---\n");
+                    augmented.push_str(&memory_ctx);
+                }
+            }
+            #[cfg(feature = "advanced-memory")]
+            {
+                let proc_ctx = self.build_procedural_context(&user_message, 5, 500);
+                if !proc_ctx.is_empty() {
+                    augmented.push_str("\n\n");
+                    augmented.push_str(&proc_ctx);
+                }
+            }
+            if augmented == knowledge_context {
                 knowledge_context
             } else {
-                effective_knowledge = format!("{}\n\n--- MEMORY CONTEXT ---\n{}", knowledge_context, memory_ctx);
+                effective_knowledge = augmented;
                 &effective_knowledge
             }
-        } else {
-            knowledge_context
         };
 
         let system_prompt = build_system_prompt_with_notes(
@@ -1826,6 +2076,35 @@ impl AiAssistant {
                                     mm.process_message(&user_msg);
                                 }
                                 mm.process_message(&msg);
+                            }
+
+                            // Track outcomes for active procedures
+                            #[cfg(feature = "advanced-memory")]
+                            if !self.active_procedure_ids.is_empty() {
+                                let success = self.current_response.len() > 20;
+                                if let Some(ref mut store) = self.procedural_store {
+                                    for pid in &self.active_procedure_ids {
+                                        let _ = store.update_outcome(pid, success);
+                                    }
+                                }
+                                if let Some(ref mut evolver) = self.procedure_evolver {
+                                    for pid in &self.active_procedure_ids {
+                                        let ctx = self.conversation.last()
+                                            .map(|m| m.content.chars().take(200).collect::<String>())
+                                            .unwrap_or_default();
+                                        evolver.record_feedback(crate::advanced_memory::ProcedureFeedback {
+                                            procedure_id: pid.clone(),
+                                            outcome: if success {
+                                                crate::advanced_memory::FeedbackOutcome::Success
+                                            } else {
+                                                crate::advanced_memory::FeedbackOutcome::Failure
+                                            },
+                                            context: ctx,
+                                            timestamp: chrono::Utc::now(),
+                                        });
+                                    }
+                                }
+                                self.active_procedure_ids.clear();
                             }
 
                             // Auto-track lists in LLM response for reference resolution
