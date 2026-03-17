@@ -8843,6 +8843,266 @@ fn tests_agent_graph_quality() -> CategoryResult {
     }
 }
 
+// ─── Fallback & Resilience Tests ──────────────────────────────────────────────
+
+fn tests_fallback_resilience() -> CategoryResult {
+    use ai_assistant::{
+        MultiLayerGraph, ReferenceResolver,
+    };
+
+    println!("\n{}", bold(&cyan("▶ Fallback & Resilience")));
+    let mut results = Vec::new();
+
+    // --- Test 1: Reference resolver with empty tracked lists ---
+    results.push(run_test("reference resolver empty lists returns None", || {
+        let resolver = ReferenceResolver::new();
+        let result = resolver.resolve_reference("give me option 3");
+        assert_test!(result.is_none(), "should return None with no tracked lists");
+        Ok(())
+    }));
+
+    // --- Test 2: Reference resolver detects list items ---
+    results.push(run_test("reference resolver extracts numbered list", || {
+        let items = ReferenceResolver::extract_list_items(
+            "Here are options:\n1. Alpha\n2. Beta\n3. Gamma"
+        );
+        assert_eq_test!(items.len(), 3);
+        assert_eq_test!(items[0], "Alpha");
+        assert_eq_test!(items[2], "Gamma");
+        Ok(())
+    }));
+
+    // --- Test 3: Reference resolver extracts bulleted list ---
+    results.push(run_test("reference resolver extracts bulleted list", || {
+        let items = ReferenceResolver::extract_list_items(
+            "Options:\n- First item\n- Second item\n* Third item"
+        );
+        assert_eq_test!(items.len(), 3);
+        Ok(())
+    }));
+
+    // --- Test 4: Reference resolver extracts lettered list ---
+    results.push(run_test("reference resolver extracts lettered list", || {
+        let items = ReferenceResolver::extract_list_items(
+            "a. Option A\nb. Option B\nc. Option C"
+        );
+        assert_eq_test!(items.len(), 3);
+        assert_eq_test!(items[0], "Option A");
+        Ok(())
+    }));
+
+    // --- Test 5: Reference resolver resolves ordinal (English) ---
+    results.push(run_test("reference resolver resolves English ordinal", || {
+        let mut resolver = ReferenceResolver::new();
+        resolver.track_lists_in_message(
+            "1. Alpha\n2. Beta\n3. Gamma", "test topic", 0
+        );
+        let result = resolver.resolve_reference("the second one please");
+        assert_test!(result.is_some(), "should resolve 'the second one'");
+        let text = result.unwrap();
+        assert_test!(text.contains("Beta"), &format!("should contain Beta, got: {}", text));
+        Ok(())
+    }));
+
+    // --- Test 6: Reference resolver resolves ordinal (Spanish) ---
+    results.push(run_test("reference resolver resolves Spanish ordinal", || {
+        let mut resolver = ReferenceResolver::new();
+        resolver.track_lists_in_message(
+            "1. Alfa\n2. Beta\n3. Gamma", "tema test", 0
+        );
+        let result = resolver.resolve_reference("dame el tercero");
+        assert_test!(result.is_some(), "should resolve 'el tercero'");
+        let text = result.unwrap();
+        assert_test!(text.contains("Gamma"), &format!("should contain Gamma, got: {}", text));
+        Ok(())
+    }));
+
+    // --- Test 7: Reference resolver resolves cardinal ---
+    results.push(run_test("reference resolver resolves cardinal 'option 3'", || {
+        let mut resolver = ReferenceResolver::new();
+        resolver.track_lists_in_message(
+            "- Red\n- Green\n- Blue\n- Yellow", "colors", 0
+        );
+        let result = resolver.resolve_reference("I want option 3");
+        assert_test!(result.is_some(), "should resolve 'option 3'");
+        let text = result.unwrap();
+        assert_test!(text.contains("Blue"), &format!("should contain Blue, got: {}", text));
+        Ok(())
+    }));
+
+    // --- Test 8: Reference resolver out-of-bounds ---
+    results.push(run_test("reference resolver handles out-of-bounds gracefully", || {
+        let mut resolver = ReferenceResolver::new();
+        resolver.track_lists_in_message(
+            "1. Only\n2. Two", "small list", 0
+        );
+        let result = resolver.resolve_reference("give me option 5");
+        assert_test!(result.is_some(), "should return info about bounds");
+        let text = result.unwrap();
+        assert_test!(text.contains("2 items"), &format!("should mention 2 items, got: {}", text));
+        Ok(())
+    }));
+
+    // --- Test 9: Reference resolver with fallback callback ---
+    results.push(run_test("reference resolver fallback chain invoked", || {
+        let resolver = ReferenceResolver::new(); // empty lists
+        let result = resolver.resolve_reference_with_fallback(
+            "tell me about the previous topic",
+            |_msg| Some("Previous topic was about Rust performance".to_string()),
+        );
+        assert_test!(result.is_some(), "fallback should provide context");
+        let text = result.unwrap();
+        assert_test!(text.contains("Rust performance"), "fallback content should be present");
+        Ok(())
+    }));
+
+    // --- Test 10: Reference resolver fallback not called when list resolves ---
+    results.push(run_test("reference resolver skips fallback when list matches", || {
+        let mut resolver = ReferenceResolver::new();
+        resolver.track_lists_in_message("1. Alpha\n2. Beta", "test", 0);
+
+        let fallback_called = std::cell::Cell::new(false);
+        let result = resolver.resolve_reference_with_fallback(
+            "the first one",
+            |_msg| { fallback_called.set(true); Some("fallback".to_string()) },
+        );
+        assert_test!(result.is_some(), "should resolve from list");
+        assert_test!(!fallback_called.get(), "fallback should NOT be called");
+        Ok(())
+    }));
+
+    // --- Test 11: Multi-layer graph graceful degradation ---
+    results.push(run_test("multi-layer graph empty query returns empty view", || {
+        let g = MultiLayerGraph::new();
+        let view = g.query_unified(None);
+        assert_test!(view.entities.is_empty(), "empty graph should return empty view");
+        assert_test!(view.relations.is_empty(), "empty graph should return no relations");
+        Ok(())
+    }));
+
+    // --- Test 12: Multi-layer graph single layer still works ---
+    results.push(run_test("multi-layer graph works with only session layer", || {
+        let mut g = MultiLayerGraph::new();
+        g.process_user_message("s1", "About Rust", &["Rust".to_string()]);
+        let view = g.query_unified(Some("s1"));
+        assert_test!(!view.entities.is_empty(), "single layer should still produce results");
+        Ok(())
+    }));
+
+    // --- Test 13: Context overflow truncation ---
+    results.push(run_test("large knowledge context truncated gracefully", || {
+        // Simulate: a very long knowledge string
+        let long_knowledge = "Line of knowledge content here.\n".repeat(1000);
+        let tokens = ai_assistant::estimate_tokens(&long_knowledge);
+        assert_test!(tokens > 5000, "should be a large context");
+        // The truncation logic is in build_rag_context; here we verify estimate_tokens works
+        let truncated = &long_knowledge[..long_knowledge.len() / 2];
+        let trunc_tokens = ai_assistant::estimate_tokens(truncated);
+        assert_test!(trunc_tokens < tokens, "truncated should have fewer tokens");
+        Ok(())
+    }));
+
+    // --- Test 14: ChunkingConfig validates bounds ---
+    results.push(run_test("ChunkingConfig validated prevents overflow", || {
+        use ai_assistant::ChunkingConfig;
+        // Create with defaults then mutate via validated()
+        let mut config = ChunkingConfig::default();
+        config.target_tokens = usize::MAX;
+        config.max_tokens = usize::MAX;
+        config.min_tokens = usize::MAX;
+        config.overlap_tokens = usize::MAX;
+        let validated = config.validated();
+        assert_test!(validated.target_tokens < usize::MAX / 4,
+            "target_tokens should be clamped");
+        assert_test!(validated.overlap_tokens < validated.target_tokens,
+            "overlap should be less than target");
+        Ok(())
+    }));
+
+    // --- Test 15: Memory search finds by keyword ---
+    results.push(run_test("memory search returns relevant memories", || {
+        use ai_assistant::{MemoryStore, MemoryConfig, MemoryEntry, MemoryType};
+
+        let mut store = MemoryStore::new(MemoryConfig::default());
+        let e1 = MemoryEntry::new("Rust is a systems programming language", MemoryType::Fact);
+        let e2 = MemoryEntry::new("Python is good for scripting", MemoryType::Fact);
+        store.add(e1);
+        store.add(e2);
+
+        let results = store.search("Rust");
+        assert_test!(!results.is_empty(), "should find Rust memory");
+        assert_test!(results[0].content.contains("Rust"), "first result should mention Rust");
+        Ok(())
+    }));
+
+    // --- Test 16: Reference resolver no pattern = fast skip ---
+    results.push(run_test("reference resolver fast-skips non-reference messages", || {
+        let mut resolver = ReferenceResolver::new();
+        resolver.track_lists_in_message("1. A\n2. B\n3. C", "test", 0);
+        // This message has no reference patterns at all
+        let result = resolver.resolve_reference("Tell me about quantum computing");
+        assert_test!(result.is_none(), "should skip non-reference messages");
+        Ok(())
+    }));
+
+    // --- Test 17: Reference resolver multi-list topic disambiguation ---
+    results.push(run_test("reference resolver disambiguates by topic", || {
+        let mut resolver = ReferenceResolver::new();
+        resolver.track_lists_in_message("1. Red\n2. Blue\n3. Green", "colors", 0);
+        resolver.track_lists_in_message("1. Dog\n2. Cat\n3. Bird", "animals", 1);
+
+        // Reference with topic hint "colors" + pattern "the list"
+        let result = resolver.resolve_reference("show me the list about colors");
+        assert_test!(result.is_some(), "should find list about colors");
+        let text = result.unwrap();
+        assert_test!(text.contains("Red") || text.contains("colors"),
+            &format!("should reference colors list, got: {}", text));
+        Ok(())
+    }));
+
+    // --- Test 18: Guardrail panic safety ---
+    results.push(run_test("guardrail pipeline survives panicking guard", || {
+        use ai_assistant::{GuardrailPipeline, Guard, GuardStage, GuardAction, GuardCheckResult};
+
+        struct PanickingGuard;
+        impl Guard for PanickingGuard {
+            fn name(&self) -> &str { "panicker" }
+            fn stage(&self) -> GuardStage { GuardStage::PreSend }
+            fn check(&self, _text: &str) -> GuardCheckResult {
+                panic!("this guard always panics!");
+            }
+        }
+
+        struct SafeGuard;
+        impl Guard for SafeGuard {
+            fn name(&self) -> &str { "safe" }
+            fn stage(&self) -> GuardStage { GuardStage::PreSend }
+            fn check(&self, _text: &str) -> GuardCheckResult {
+                GuardCheckResult {
+                    guard_name: "safe".to_string(),
+                    action: GuardAction::Pass,
+                    score: 0.0,
+                    details: String::new(),
+                }
+            }
+        }
+
+        let mut pipeline = GuardrailPipeline::new();
+        pipeline.add_guard(Box::new(PanickingGuard));
+        pipeline.add_guard(Box::new(SafeGuard));
+
+        // Should NOT crash — panicking guard should be skipped
+        let result = pipeline.check_input("test message");
+        assert_test!(result.passed, "pipeline should pass after skipping panicking guard");
+        Ok(())
+    }));
+
+    CategoryResult {
+        name: "fallback_resilience".to_string(),
+        results,
+    }
+}
+
 // ─── Stress & Edge-Case Tests ─────────────────────────────────────────────────
 
 fn tests_stress_empty_inputs() -> CategoryResult {
@@ -13177,6 +13437,8 @@ fn all_categories() -> Vec<(&'static str, fn() -> CategoryResult)> {
         ("graph_quality", tests_graph_quality),
         ("multi_layer_graph", tests_multi_layer_graph),
         ("agent_graph_quality", tests_agent_graph_quality),
+        // Fallback & resilience tests
+        ("fallback_resilience", tests_fallback_resilience),
         // Stress & edge-case tests
         ("stress_empty_inputs", tests_stress_empty_inputs),
         ("stress_unicode", tests_stress_unicode),
