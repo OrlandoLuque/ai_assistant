@@ -426,6 +426,12 @@ pub struct AiAssistant {
     #[cfg(feature = "multi-agent")]
     /// Multi-layer knowledge graph for entity storage and cross-layer reasoning.
     pub graph: Option<crate::multi_layer_graph::MultiLayerGraph>,
+
+    /// Reference resolver for tracking lists and resolving back-references in conversation.
+    pub reference_resolver: crate::memory::ReferenceResolver,
+
+    /// Turn counter for tracking conversation position (used by list tracking).
+    turn_counter: usize,
 }
 
 impl Default for AiAssistant {
@@ -612,6 +618,9 @@ impl AiAssistant {
 
             #[cfg(feature = "multi-agent")]
             graph: None,
+
+            reference_resolver: crate::memory::ReferenceResolver::new(),
+            turn_counter: 0,
         }
     }
 
@@ -1239,6 +1248,7 @@ impl AiAssistant {
             self.context_mode, self.conversation.len(), knowledge_context.len()
         );
         self.conversation.push(ChatMessage::user(&user_message));
+        self.turn_counter += 1;
         let conversation = match self.context_mode {
             ContextMode::Conversation => {
                 self.maybe_compact_conversation();
@@ -1254,19 +1264,31 @@ impl AiAssistant {
         let (tx, rx) = mpsc::channel();
         self.rx_response = Some(rx);
 
-        // In FreshContext mode, augment knowledge context with memory
+        // Resolve back-references ("option 3", "the second one", "esa lista")
+        let resolved_refs = self.reference_resolver.resolve_reference(&user_message);
+
+        // Augment knowledge context with memory + resolved references
         let effective_knowledge: String;
-        let knowledge_ref = if self.context_mode == ContextMode::FreshContext {
-            let query = self.conversation.last().map(|m| m.content.clone()).unwrap_or_default();
-            let memory_ctx = self.build_memory_context(&query, 512);
-            if memory_ctx.is_empty() {
+        let knowledge_ref = {
+            let mut augmented = knowledge_context.to_string();
+            if self.context_mode == ContextMode::FreshContext {
+                let query = self.conversation.last().map(|m| m.content.clone()).unwrap_or_default();
+                let memory_ctx = self.build_memory_context(&query, 512);
+                if !memory_ctx.is_empty() {
+                    augmented.push_str("\n\n--- MEMORY CONTEXT ---\n");
+                    augmented.push_str(&memory_ctx);
+                }
+            }
+            if let Some(ref refs) = resolved_refs {
+                augmented.push_str("\n\n--- RESOLVED REFERENCES ---\n");
+                augmented.push_str(refs);
+            }
+            if augmented == knowledge_context {
                 knowledge_context
             } else {
-                effective_knowledge = format!("{}\n\n--- MEMORY CONTEXT ---\n{}", knowledge_context, memory_ctx);
+                effective_knowledge = augmented;
                 &effective_knowledge
             }
-        } else {
-            knowledge_context
         };
 
         let config = self.config.clone();
@@ -1805,6 +1827,18 @@ impl AiAssistant {
                                 }
                                 mm.process_message(&msg);
                             }
+
+                            // Auto-track lists in LLM response for reference resolution
+                            let topic = self.conversation.iter().rev()
+                                .find(|m| m.role == "user")
+                                .map(|m| {
+                                    let words: Vec<&str> = m.content.split_whitespace().take(8).collect();
+                                    words.join(" ")
+                                })
+                                .unwrap_or_default();
+                            self.reference_resolver.track_lists_in_message(
+                                &self.current_response, &topic, self.turn_counter
+                            );
 
                             self.event_bus
                                 .emit(crate::events::AiEvent::ResponseComplete {
