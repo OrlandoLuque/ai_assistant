@@ -541,3 +541,13 @@ cargo run --bin ai_test_harness --features full -- --category=multi_layer_graph 
 cargo run --bin ai_test_harness --features full -- --category=agent_graph_quality --verbose
 cargo run --bin ai_test_harness --features full -- --category=precision --filter=PageRank --verbose
 ```
+
+### V42 — Consolidation Fixes
+
+| Fix | Description |
+|-----|-------------|
+| `ChunkingConfig::validated()` | Prevents overflow in `target_tokens * 4`, enforces min < target < max, overlap < target |
+| `MockHttpServer` readiness | AtomicBool startup signal + 500ms polling in `last_request()` |
+| Flaky test fixes | `test_mock_server_post_streaming` and `test_otlp_exporter_flush_with_mock` — race condition resolved |
+
+**Pending**: Minimal build (`--no-default-features`) has 66 feature-gate errors across 6 files.

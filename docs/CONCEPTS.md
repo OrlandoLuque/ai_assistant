@@ -3999,3 +3999,20 @@ V40 overhauls the test harness with **9 new CLI flags**, **scored precision test
 - **Pipeline quality** (AgentGraph): Topological sort correctness (Kahn's algorithm), cycle detection, critical path analysis, bottleneck identification. A 5-agent linear pipeline (Ingest → Parse → Analyze → Summarize → Output) must sort correctly and identify the slowest stage as the bottleneck.
 
 **Scored precision tests** quantify each property with a numeric score (0.0–1.0) against a threshold. All 8 graph precision tests achieve perfect 1.00 scores, validating that the graph algorithms produce correct results across diverse topologies.
+
+---
+
+## 185. Consolidation Audit: Mining Development Traces for Latent Issues
+
+In a large codebase built iteratively over dozens of sessions, some observations get lost — a bug noticed during one task but not relevant to it, a design concern raised mentally but never verbalized, an idea considered and deferred. Over time, these latent observations accumulate as invisible technical debt.
+
+**Consolidation auditing** systematically recovers this lost knowledge by analyzing the full reasoning traces (thinking blocks) from every development session. The V42 audit analyzed **6,730 thinking blocks** across **40+ sessions** and **12 projects**, extracting:
+
+- **Bugs observed but not fixed**: memory allocation overflow in SmartChunker, race conditions in MockHttpServer, serialization bugs with bincode
+- **Features implemented but not wired**: BPE token counter exists but hot paths use `len()/3.5`, cost estimator exists but autonomous loop used hardcoded values
+- **Stubs that silently degrade**: implementations that appear functional but produce incorrect results
+- **Cross-project patterns**: capabilities built from scratch in multiple projects that should be library-level abstractions
+
+The critical insight: **verification before action**. Of 36 issues identified, 17 had already been silently fixed in intermediate sessions. Without verification, the audit would have produced a plan full of already-solved problems. The pattern is: mine → classify → verify → plan → implement.
+
+This approach is only possible because the development tool (Claude Code) preserves full reasoning traces. Traditional development tools lose this signal entirely — a developer's mental observations during code review, debugging, or implementation vanish when they close the editor.
