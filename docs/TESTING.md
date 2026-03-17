@@ -551,3 +551,14 @@ cargo run --bin ai_test_harness --features full -- --category=precision --filter
 | Flaky test fixes | `test_mock_server_post_streaming` and `test_otlp_exporter_flush_with_mock` — race condition resolved |
 
 **Pending**: Minimal build (`--no-default-features`) has 66 feature-gate errors across 6 files.
+
+### V43 — Fallback & Resilience Tests
+
+| Category | Tests | Content |
+|----------|-------|---------|
+| `fallback_resilience` | 18 | Reference resolver (extraction, ordinals EN+ES, cardinals, out-of-bounds, fallback chain, fast-skip, disambiguation), guardrail panic safety, graph degradation, ChunkingConfig validation, memory search, context truncation |
+
+Run fallback tests:
+```bash
+cargo run --bin ai_test_harness --features full -- --category=fallback_resilience --verbose
+```

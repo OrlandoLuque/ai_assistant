@@ -4016,3 +4016,29 @@ In a large codebase built iteratively over dozens of sessions, some observations
 The critical insight: **verification before action**. Of 36 issues identified, 17 had already been silently fixed in intermediate sessions. Without verification, the audit would have produced a plan full of already-solved problems. The pattern is: mine → classify → verify → plan → implement.
 
 This approach is only possible because the development tool (Claude Code) preserves full reasoning traces. Traditional development tools lose this signal entirely — a developer's mental observations during code review, debugging, or implementation vanish when they close the editor.
+
+---
+
+## 186. FreshContext Total Integration: Leveraging Every Knowledge Source
+
+FreshContext mode frees up the context window by sending only the latest message to the LLM — but the freed tokens are only valuable if they're filled with the right knowledge. V43 connects every available knowledge source into the FreshContext pipeline:
+
+- **Knowledge Graph in core**: The multi-layer graph (Session, Internet, User, Knowledge) was previously queried only in the GUI layer. Now `build_rag_context()` automatically queries the unified view, extracts matching entities with confidence scores, and injects entity-relation context alongside RAG chunks.
+- **Context overflow truncation**: When knowledge context exceeds the token budget, chunks are truncated proportionally at line boundaries rather than crashing or silently overflowing.
+- **Reference resolver**: A bilingual (English+Spanish) system that detects when the user refers to previous content ("option 3", "the second one", "esa lista") and resolves it against tracked lists, conversation archive, or memory store.
+- **Auto-list tracking**: Every LLM response is scanned for numbered, bulleted, or lettered lists. Detected lists are stored with topic context for future reference resolution.
+
+The result: FreshContext mode now assembles prompts from RAG + Graph + Memory + Resolved References, producing richer context than Conversation mode despite using zero conversation history tokens.
+
+---
+
+## 187. Fallback Chains: Defense in Depth for Every Subsystem
+
+When a subsystem fails, the system should degrade gracefully rather than crash or return empty results. V43 adds systematic fallback chains:
+
+- **Guardrail pipeline**: Individual guards that panic are caught and skipped via `catch_unwind`, so one broken guard doesn't crash the entire safety pipeline.
+- **SQLite databases**: RAG and Knowledge Graph databases now enable WAL mode for concurrent read access and set a 5-second `busy_timeout` for lock contention, preventing instant failures under load.
+- **Reference resolution**: When tracked lists don't resolve a reference, the resolver escalates to a callback chain — conversation archive semantic search, memory store, then RAG knowledge chunks — before returning None.
+- **Context composition**: When all knowledge sources (RAG, Graph, Memory) return empty in FreshContext mode, the system can gracefully degrade rather than sending a context-free prompt.
+
+The principle: every path that can fail should have at least one fallback, and the fallback should be documented and tested.

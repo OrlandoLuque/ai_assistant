@@ -9050,3 +9050,30 @@ Systematic audit of 6,730 internal reasoning traces across 40+ development sessi
 - OAuth test coverage (`v2_oauth.rs`: 580 LOC, 0 tests)
 - Security audit checklist (inputs, credentials, sandbox, KPKG)
 - Code quality: 142 `panic!()`, ~300 Debug derives, doc comments
+
+---
+
+## 157. V43 — FreshContext Total Integration & Fallback Chains
+
+### What
+Connects all knowledge sources into FreshContext and adds systematic fallback chains across all subsystems.
+
+### FreshContext Integration
+- Knowledge Graph unified view query moved from GUI to core `build_rag_context()`
+- Context overflow truncation at line boundaries when knowledge > budget
+- Bilingual reference resolver (EN+ES): ordinals, cardinals, topic disambiguation
+- Auto-list tracking in LLM responses (numbered, bulleted, lettered)
+- Reference resolver integrated into `send_message()` with `--- RESOLVED REFERENCES ---` injection
+
+### Fallback Chains
+- Guardrails: `catch_unwind` on each guard, skip on panic
+- SQLite (RAG + Knowledge Graph): WAL mode + 5s `busy_timeout`
+- Reference resolution: TrackedLists -> conversation archive -> memory -> RAG -> None
+- Reference resolver with fallback callback: `resolve_reference_with_fallback()`
+
+### Testing
+18 tests in `fallback_resilience` category covering all fallback paths.
+
+```bash
+cargo run --bin ai_test_harness --features full -- --category=fallback_resilience --verbose
+```
