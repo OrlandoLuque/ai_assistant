@@ -548,6 +548,150 @@ impl ChatSession {
     }
 }
 
+// ============================================================================
+// Session recovery from corruption (D.4)
+// ============================================================================
+
+/// Result of a session recovery attempt.
+#[derive(Debug, Clone, Default)]
+pub struct RecoveryResult {
+    /// The recovered store (may be partial or empty).
+    pub store: ChatSessionStore,
+    /// Whether recovery was successful (at least some data recovered).
+    pub recovered: bool,
+    /// Which format was used for recovery.
+    pub format_used: Option<String>,
+    /// Warnings encountered during recovery.
+    pub warnings: Vec<String>,
+}
+
+/// Attempt to recover a corrupted session file by trying multiple formats.
+///
+/// Recovery strategy:
+/// 1. Try the normal `load_from_file` (auto-detection: binary or JSON).
+/// 2. Try explicit JSON parse.
+/// 3. Try line-by-line JSON recovery (extract any valid session objects).
+/// 4. Try as JSONL journal format (each line is a message).
+/// 5. If all fail, return an empty store with warnings.
+pub fn recover_session(path: &Path) -> RecoveryResult {
+    let mut result = RecoveryResult::default();
+
+    if !path.exists() {
+        result.warnings.push(format!("File not found: {}", path.display()));
+        return result;
+    }
+
+    // Strategy 1: Normal load (handles binary + JSON auto-detection)
+    match ChatSessionStore::load_from_file(path) {
+        Ok(store) if !store.sessions.is_empty() => {
+            result.store = store;
+            result.recovered = true;
+            result.format_used = Some("auto-detect".to_string());
+            return result;
+        }
+        Ok(_) => {
+            result.warnings.push("Normal load succeeded but returned empty store".to_string());
+        }
+        Err(e) => {
+            result.warnings.push(format!("Normal load failed: {}", e));
+        }
+    }
+
+    // Strategy 2: Explicit JSON parse
+    if let Ok(content) = std::fs::read_to_string(path) {
+        if let Ok(store) = serde_json::from_str::<ChatSessionStore>(&content) {
+            if !store.sessions.is_empty() {
+                result.store = store;
+                result.recovered = true;
+                result.format_used = Some("explicit-json".to_string());
+                return result;
+            }
+        }
+
+        // Strategy 3: Line-by-line JSON recovery (partial recovery)
+        let mut recovered_sessions = Vec::new();
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+
+            // Try to parse each line as a ChatSession
+            if let Ok(session) = serde_json::from_str::<ChatSession>(line) {
+                recovered_sessions.push(session);
+            }
+            // Try to parse as a full store
+            else if let Ok(store) = serde_json::from_str::<ChatSessionStore>(line) {
+                for s in store.sessions {
+                    recovered_sessions.push(s);
+                }
+            }
+        }
+
+        if !recovered_sessions.is_empty() {
+            result.store.sessions = recovered_sessions;
+            result.recovered = true;
+            result.format_used = Some("line-by-line-json".to_string());
+            return result;
+        }
+
+        // Strategy 4: Try as JSONL journal (each line is a JournalEntry → messages)
+        let mut messages = Vec::new();
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            if let Ok(entry) = serde_json::from_str::<JournalEntry>(line) {
+                if let Some(msg) = entry.to_chat_message() {
+                    messages.push(msg);
+                }
+            }
+        }
+
+        if !messages.is_empty() {
+            let mut session = ChatSession::new("Recovered session");
+            session.messages = messages;
+            result.store.sessions.push(session);
+            result.recovered = true;
+            result.format_used = Some("jsonl-journal".to_string());
+            result.warnings.push(
+                "Recovered from journal format — session metadata may be incomplete".to_string(),
+            );
+            return result;
+        }
+
+        result.warnings.push("Text file but no parseable session data found".to_string());
+    } else {
+        result.warnings.push("File is not valid UTF-8 text".to_string());
+
+        // Strategy 5: Try binary decompression + JSON
+        if let Ok(bytes) = std::fs::read(path) {
+            // Try gzip decompress → JSON
+            if let Ok(decompressed) = decompress_and_parse(&bytes) {
+                result.store = decompressed;
+                result.recovered = true;
+                result.format_used = Some("binary-decompress".to_string());
+                return result;
+            }
+            result.warnings.push("Binary decompression also failed".to_string());
+        }
+    }
+
+    result.warnings.push("All recovery strategies exhausted — returning empty store".to_string());
+    result
+}
+
+/// Try to decompress gzipped data and parse as JSON.
+fn decompress_and_parse(bytes: &[u8]) -> Result<ChatSessionStore> {
+    use std::io::Read;
+    let mut decoder = flate2::read::GzDecoder::new(bytes);
+    let mut decompressed = Vec::new();
+    decoder.read_to_end(&mut decompressed)?;
+    let store: ChatSessionStore = serde_json::from_slice(&decompressed)?;
+    Ok(store)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -877,5 +1021,96 @@ mod tests {
         let path = Path::new("/tmp/nonexistent_encrypted_session_12345.bin");
         let store = ChatSessionStore::load_encrypted(path, &key).unwrap();
         assert!(store.sessions.is_empty());
+    }
+
+    // ================================================================
+    // Session recovery tests (D.4)
+    // ================================================================
+
+    #[test]
+    fn test_recovery_valid_json_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("valid_sessions.json");
+
+        // Write valid JSON
+        let mut store = ChatSessionStore::new();
+        let mut s = ChatSession::new("Valid");
+        s.messages.push(ChatMessage::user("Hello"));
+        store.save_session(s);
+        store.save_to_json(&path).unwrap();
+
+        let result = recover_session(&path);
+        assert!(result.recovered);
+        assert_eq!(result.store.sessions.len(), 1);
+        assert_eq!(result.format_used.as_deref(), Some("auto-detect"));
+    }
+
+    #[test]
+    fn test_recovery_corrupted_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("corrupted.json");
+
+        // Write partially corrupted JSON — valid session JSON on one line
+        let session = ChatSession::new("Rescued");
+        let session_json = serde_json::to_string(&session).unwrap();
+        std::fs::write(&path, format!("GARBAGE\n{}\nMORE GARBAGE", session_json)).unwrap();
+
+        let result = recover_session(&path);
+        assert!(result.recovered);
+        assert_eq!(result.store.sessions.len(), 1);
+        assert_eq!(result.format_used.as_deref(), Some("line-by-line-json"));
+    }
+
+    #[test]
+    fn test_recovery_journal_format() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("journal.jsonl");
+
+        // Write JSONL journal entries
+        let entry1 = JournalEntry::from_message(&ChatMessage::user("Hello from journal"));
+        let entry2 = JournalEntry::from_message(&ChatMessage::assistant("Reply"));
+        let content = format!(
+            "{}\n{}\n",
+            serde_json::to_string(&entry1).unwrap(),
+            serde_json::to_string(&entry2).unwrap()
+        );
+        std::fs::write(&path, content).unwrap();
+
+        let result = recover_session(&path);
+        assert!(result.recovered);
+        assert_eq!(result.store.sessions.len(), 1);
+        assert_eq!(result.store.sessions[0].messages.len(), 2);
+        assert_eq!(result.format_used.as_deref(), Some("jsonl-journal"));
+    }
+
+    #[test]
+    fn test_recovery_nonexistent_file() {
+        let result = recover_session(Path::new("/nonexistent/path/sessions.json"));
+        assert!(!result.recovered);
+        assert!(result.store.sessions.is_empty());
+        assert!(!result.warnings.is_empty());
+    }
+
+    #[test]
+    fn test_recovery_completely_corrupted() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("total_garbage.bin");
+        std::fs::write(&path, "This is not JSON or binary at all!!!").unwrap();
+
+        let result = recover_session(&path);
+        assert!(!result.recovered);
+        assert!(result.store.sessions.is_empty());
+        assert!(result.warnings.len() >= 2); // Multiple strategies tried
+    }
+
+    #[test]
+    fn test_recovery_empty_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("empty.json");
+        std::fs::write(&path, "").unwrap();
+
+        let result = recover_session(&path);
+        // Empty file — normal load returns error, text strategies find nothing
+        assert!(!result.recovered);
     }
 }

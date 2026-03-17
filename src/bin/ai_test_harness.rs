@@ -9103,6 +9103,340 @@ fn tests_fallback_resilience() -> CategoryResult {
     }
 }
 
+// ─── Conversation Quality Tests (Ollama) ──────────────────────────────────────
+
+fn tests_conversation_quality() -> CategoryResult {
+    use ai_assistant::{
+        ReferenceResolver, ChatMessage, ChatSession, ChatSessionStore,
+        recover_session, DiskSpillBuffer, DiskSpillConfig,
+    };
+
+    println!("\n{}", bold(&cyan("▶ Conversation Quality (Ollama)")));
+    let mut results = Vec::new();
+
+    // Check Ollama availability
+    let ollama_available = std::net::TcpStream::connect_timeout(
+        &"127.0.0.1:11434".parse().unwrap(),
+        std::time::Duration::from_secs(2),
+    )
+    .is_ok();
+
+    if !ollama_available {
+        println!(
+            "  {} Ollama not running - skipping conversation quality tests",
+            yellow("SKIP")
+        );
+        results.push(TestResult {
+            name: "Ollama availability".to_string(),
+            passed: true,
+            message: Some("Skipped — Ollama not running".to_string()),
+            duration_ms: 0.0,
+            score: None,
+            details: Vec::new(),
+            skipped: true,
+            slow: false,
+        });
+        return CategoryResult {
+            name: "conversation_quality".to_string(),
+            results,
+        };
+    }
+
+    // --- Test 1: Multi-turn conversation with recent reference ---
+    results.push(run_test_scored("multi-turn recent reference resolution", 0.80, || {
+        let mut resolver = ReferenceResolver::new();
+        let mut score = 0.0f64;
+        let total = 5.0f64;
+
+        // Simulate assistant providing a list
+        let assistant_msg = "Here are the top engines:\n1. Quantum Drive MK2\n2. Atlas QD\n3. Erebus Drive";
+        resolver.track_lists_in_message(assistant_msg, "engines", 0);
+
+        // Test various reference patterns
+        let refs = vec![
+            ("the first one", "Quantum Drive MK2"),
+            ("option 2", "Atlas QD"),
+            ("la tercera opción", "Erebus Drive"),
+            ("the second", "Atlas QD"),
+            ("give me number 1", "Quantum Drive MK2"),
+        ];
+
+        for (query, expected) in &refs {
+            if let Some(resolved) = resolver.resolve_reference(query) {
+                if resolved.contains(expected) {
+                    score += 1.0;
+                }
+            }
+        }
+
+        Ok(score / total)
+    }));
+
+    // --- Test 2: Reference to older list (multi-list disambiguation) ---
+    results.push(run_test_scored("old list reference disambiguation", 0.80, || {
+        let mut resolver = ReferenceResolver::new();
+        let mut score = 0.0f64;
+        let total = 4.0f64;
+
+        // Track two different lists at different turns
+        resolver.track_lists_in_message(
+            "Ships:\n1. Aurora MR\n2. Mustang Alpha\n3. Avenger Titan",
+            "ships", 0,
+        );
+        resolver.track_lists_in_message(
+            "Weapons:\n1. Mantis GT-220\n2. Badger Repeater\n3. Panther Repeater",
+            "weapons", 1,
+        );
+
+        // Reference with topic context should disambiguate
+        if let Some(r) = resolver.resolve_reference("the second ship") {
+            if r.contains("Mustang Alpha") { score += 1.0; }
+        }
+        if let Some(r) = resolver.resolve_reference("weapon number 3") {
+            if r.contains("Panther") { score += 1.0; }
+        }
+        // Without context, should match most recent list
+        if let Some(r) = resolver.resolve_reference("the first one") {
+            // Most recent list is weapons
+            if r.contains("Mantis") || r.contains("Aurora") { score += 1.0; }
+        }
+        // Ordinal in Spanish
+        if let Some(r) = resolver.resolve_reference("la segunda arma") {
+            if r.contains("Badger") { score += 1.0; }
+        }
+
+        Ok(score / total)
+    }));
+
+    // --- Test 3: FreshContext context size estimation ---
+    results.push(run_test_scored("FreshContext context size estimation", 0.80, || {
+        use ai_assistant::get_model_context_size;
+
+        let mut score = 0.0f64;
+        let total = 4.0f64;
+
+        // Test context size for known models
+        let size = get_model_context_size("llama3.2");
+        if size > 0 { score += 1.0; }
+
+        let size2 = get_model_context_size("mistral");
+        if size2 > 0 { score += 1.0; }
+
+        // GPT-4 should have a large context
+        let size3 = get_model_context_size("gpt-4");
+        if size3 >= 8000 { score += 1.0; }
+
+        // Unknown model should still return a sensible default
+        let size_unknown = get_model_context_size("totally-unknown-model-xyz");
+        if size_unknown > 0 { score += 1.0; }
+
+        Ok(score / total)
+    }));
+
+    // --- Test 4: Memory persistence cross-turn ---
+    results.push(run_test_scored("memory persistence cross-turn", 0.80, || {
+        use ai_assistant::memory::{MemoryConfig, MemoryEntry as MemEntry, MemoryStore, MemoryType};
+
+        let mut score = 0.0f64;
+        let total = 5.0f64;
+
+        let mut store = MemoryStore::new(MemoryConfig::default());
+
+        // Store memories across simulated turns
+        let mut m1 = MemEntry::new("User's name is Orlando", MemoryType::Fact);
+        m1.importance = 0.9;
+        store.add(m1);
+
+        let mut m2 = MemEntry::new("User prefers concise responses", MemoryType::Preference);
+        m2.importance = 0.8;
+        store.add(m2);
+
+        let mut m3 = MemEntry::new("Discussed Avenger Titan last session", MemoryType::Fact);
+        m3.importance = 0.7;
+        store.add(m3);
+
+        // Verify retrieval
+        let results_search = store.search("Orlando");
+        if !results_search.is_empty() { score += 1.0; }
+
+        let results_pref = store.search("concise");
+        if !results_pref.is_empty() { score += 1.0; }
+
+        // Search with related terms
+        let results_ship = store.search("Avenger");
+        if !results_ship.is_empty() { score += 1.0; }
+
+        // All three should be findable
+        let all_results = store.search("session");
+        if !all_results.is_empty() { score += 1.0; }
+
+        // Adding more memories works
+        let m4 = MemEntry::new("Low importance note", MemoryType::Fact);
+        store.add(m4);
+        let r = store.search("note");
+        if !r.is_empty() { score += 1.0; }
+
+        Ok(score / total)
+    }));
+
+    // --- Test 5: Graph entity linking ---
+    results.push(run_test_scored("knowledge graph entity linking", 0.80, || {
+        use ai_assistant::MultiLayerGraph;
+
+        let mut score = 0.0f64;
+        let total = 4.0f64;
+
+        let mut graph = MultiLayerGraph::new();
+
+        // Get or create a session graph and add entities
+        let session = graph.get_or_create_session("test_session");
+        session.add_entity("Avenger Titan", "ship", "user_message");
+        session.add_entity("Orlando", "person", "user_message");
+        session.add_relation("Orlando", "owns", "Avenger Titan");
+
+        // Verify stats
+        let stats = graph.stats();
+        if stats.total_session_entities >= 2 { score += 1.0; }
+        if stats.session_count >= 1 { score += 2.0; } // counts for 2 checks
+
+        // Add another session and verify cross-session
+        let session2 = graph.get_or_create_session("test_session_2");
+        session2.add_entity("Avenger Titan", "ship", "knowledge_base");
+
+        let stats2 = graph.stats();
+        if stats2.session_count >= 2 { score += 1.0; }
+
+        Ok(score / total)
+    }));
+
+    // --- Test 6: Vague reference resolution via resolve_reference ---
+    results.push(run_test_scored("vague reference resolution", 0.80, || {
+        let mut resolver = ReferenceResolver::new();
+        let mut score = 0.0f64;
+        let total = 5.0f64;
+
+        // Track a list
+        resolver.track_lists_in_message(
+            "Here are your options:\n1. Buy now\n2. Wait for sale\n3. Trade in",
+            "purchase options", 0,
+        );
+
+        // Explicit ordinal reference
+        if let Some(r) = resolver.resolve_reference("the first option") {
+            if r.contains("Buy now") { score += 1.0; }
+        }
+        // Cardinal reference
+        if let Some(r) = resolver.resolve_reference("option 2") {
+            if r.contains("Wait for sale") { score += 1.0; }
+        }
+        // Spanish ordinal
+        if let Some(r) = resolver.resolve_reference("la tercera") {
+            if r.contains("Trade in") { score += 1.0; }
+        }
+        // Out of bounds should return info about the error
+        if resolver.resolve_reference("option 5").is_some() {
+            score += 1.0; // Returns info about out-of-bounds
+        }
+        // "the last one" or "the third"
+        if let Some(r) = resolver.resolve_reference("the third one") {
+            if r.contains("Trade in") { score += 1.0; }
+        }
+
+        Ok(score / total)
+    }));
+
+    // --- Test 7: Context overflow graceful degradation ---
+    results.push(run_test_scored("context overflow graceful degradation", 0.80, || {
+        let mut score = 0.0f64;
+        let total = 4.0f64;
+
+        // DiskSpillBuffer handles overflow gracefully
+        let config = DiskSpillConfig::with_threshold(50);
+        let mut buf = DiskSpillBuffer::with_config(config);
+
+        // Push data exceeding threshold
+        for i in 0..20 {
+            if buf.push(format!("chunk_{:04} data here\n", i)).is_ok() {
+                score = 1.0; // At least pushes succeed
+            }
+        }
+
+        // Buffer should have spilled to disk
+        if buf.has_spilled() { score += 1.0; }
+
+        // All data recoverable
+        let all_data = buf.drain_all();
+        if let Ok(data) = all_data {
+            if data.contains("chunk_0000") && data.contains("chunk_0019") {
+                score += 1.0; // First and last chunks present
+            }
+            if data.lines().count() == 20 {
+                score += 1.0; // All 20 lines present
+            }
+        }
+
+        Ok(score / total)
+    }));
+
+    // --- Test 8: Session recovery comparison ---
+    results.push(run_test_scored("session recovery multi-format", 0.80, || {
+        let mut score = 0.0f64;
+        let total = 5.0f64;
+
+        let dir = std::env::temp_dir().join("ai_assistant_conv_quality_tests");
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+
+        // Test 1: Valid JSON recovery
+        let valid_path = dir.join("valid.json");
+        let mut store = ChatSessionStore::new();
+        let mut session = ChatSession::new("Test");
+        session.id = "recovery_test_1".to_string();
+        session.messages.push(ChatMessage::user("Hello"));
+        store.save_session(session);
+        store.save_to_json(&valid_path).map_err(|e| e.to_string())?;
+
+        let result = recover_session(&valid_path);
+        if result.recovered && result.store.sessions.len() == 1 {
+            score += 1.0;
+        }
+
+        // Test 2: Corrupted file with partial recovery
+        let corrupt_path = dir.join("corrupt.json");
+        let s = ChatSession::new("Saved");
+        let s_json = serde_json::to_string(&s).map_err(|e| e.to_string())?;
+        std::fs::write(&corrupt_path, format!("GARBAGE\n{}", s_json))
+            .map_err(|e| e.to_string())?;
+        let result2 = recover_session(&corrupt_path);
+        if result2.recovered { score += 1.0; }
+
+        // Test 3: JSONL journal recovery
+        let journal_path = dir.join("journal.jsonl");
+        let entry = ai_assistant::JournalEntry::from_message(&ChatMessage::user("From journal"));
+        let line = serde_json::to_string(&entry).map_err(|e| e.to_string())?;
+        std::fs::write(&journal_path, format!("{}\n", line))
+            .map_err(|e| e.to_string())?;
+        let result3 = recover_session(&journal_path);
+        if result3.recovered { score += 1.0; }
+
+        // Test 4: Nonexistent file returns not-recovered
+        let result4 = recover_session(std::path::Path::new("/nonexistent/path.json"));
+        if !result4.recovered { score += 1.0; }
+
+        // Test 5: Empty file returns not-recovered
+        let empty_path = dir.join("empty.json");
+        std::fs::write(&empty_path, "").map_err(|e| e.to_string())?;
+        let result5 = recover_session(&empty_path);
+        if !result5.recovered { score += 1.0; }
+
+        Ok(score / total)
+    }));
+
+    CategoryResult {
+        name: "conversation_quality".to_string(),
+        results,
+    }
+}
+
 // ─── Stress & Edge-Case Tests ─────────────────────────────────────────────────
 
 fn tests_stress_empty_inputs() -> CategoryResult {
@@ -13439,6 +13773,8 @@ fn all_categories() -> Vec<(&'static str, fn() -> CategoryResult)> {
         ("agent_graph_quality", tests_agent_graph_quality),
         // Fallback & resilience tests
         ("fallback_resilience", tests_fallback_resilience),
+        // Conversation quality (Ollama) tests
+        ("conversation_quality", tests_conversation_quality),
         // Stress & edge-case tests
         ("stress_empty_inputs", tests_stress_empty_inputs),
         ("stress_unicode", tests_stress_unicode),

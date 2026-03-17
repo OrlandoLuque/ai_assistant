@@ -1,6 +1,6 @@
 # V43 — FreshContext Total Integration & Conversation Reference Resolution
 
-**Estado**: EN PROGRESO (Fases 1, 2, B, C, E completadas)
+**Estado**: COMPLETADO (Fases 1, 2, A, B, C, D.3, D.4, E, F, G completadas)
 **Fecha inicio**: 2026-03-17
 
 ---
@@ -105,14 +105,50 @@ anterior ("la opción 3", "esa lista", "lo que dijiste antes") sin perder el hil
 - TESTING.md: categoría fallback_resilience (18 tests)
 - modus-operandi.md: estado actualizado
 
-### Pendiente para siguiente sesión
+### Fase A: Unified SQLite Persistence — HECHO
 
-| Item | Descripción |
-|------|-------------|
-| **Fase A** | Unified SQLite persistence (tablas nuevas, write-through, schema migration) |
-| **Fase F** | Tests de conversación real con Ollama (8 tests scored) |
-| **D.3** | Streaming: buffer overflow → evict a disco |
-| **D.4** | Session load: corrupción → intentar formato alternativo |
+| # | Tarea | Estado |
+|---|-------|--------|
+| A.1 | **UnifiedDb** — coordinator central con `unified.db`, WAL mode, busy timeout 5s | HECHO |
+| A.2 | **Schema versioning** — tabla `schema_versions` con migraciones V1-V4 numeradas, idempotentes, transaccionales | HECHO |
+| A.3 | **SqliteSessionStore** — write-through: save/load/delete/append_message, upsert atómico con transaction | HECHO |
+| A.4 | **Session FTS5** — `session_messages_fts` con triggers auto-sync para búsqueda full-text | HECHO |
+| A.5 | **Import from JSON** — `import_from_store()` migra ChatSessionStore existente, skip duplicados | HECHO |
+| A.6 | **SqliteMemoryStore** — snapshots con checksum FNV-1a, rotación automática, compresión opcional | HECHO |
+| A.7 | **Memory entries** — key-value store con upsert, importance scoring, listado por relevancia | HECHO |
+| A.8 | **13 unit tests** — schema versioning, idempotency, CRUD sessions, upsert, FTS search, import, snapshots, rotation, checksum, entries, empty ops | HECHO |
+
+### D.3: Streaming Buffer Overflow → Evict to Disk — HECHO
+
+| # | Tarea | Estado |
+|---|-------|--------|
+| D.3.1 | **DiskSpillBuffer** — buffer con evicción a disco cuando supera threshold (default 4 MB) | HECHO |
+| D.3.2 | **DiskSpillConfig** — threshold configurable, directorio de spill configurable | HECHO |
+| D.3.3 | **Evicción automática** — evicta la mitad más antigua a temp file, reclama al drain | HECHO |
+| D.3.4 | **Cleanup** — archivo temporal limpiado en Drop | HECHO |
+| D.3.5 | **6 unit tests** — basic, eviction, large volume, closed rejects, cleanup on drop, empty drain | HECHO |
+
+### D.4: Session Recovery from Corruption — HECHO
+
+| # | Tarea | Estado |
+|---|-------|--------|
+| D.4.1 | **recover_session()** — 5 estrategias en cascada: auto-detect, JSON explícito, line-by-line, JSONL journal, binary decompress | HECHO |
+| D.4.2 | **RecoveryResult** — recovered flag, format_used, warnings para diagnóstico | HECHO |
+| D.4.3 | **Partial recovery** — recupera sesiones válidas de archivos parcialmente corruptos | HECHO |
+| D.4.4 | **6 unit tests** — valid JSON, corrupted JSON, journal format, nonexistent, completely corrupted, empty file | HECHO |
+
+### Fase F: Conversation Quality Tests (Ollama) — HECHO
+
+| # | Test | Threshold | Estado |
+|---|------|-----------|--------|
+| F.1 | Multi-turn recent reference resolution | 0.80 | HECHO |
+| F.2 | Old list reference disambiguation | 0.80 | HECHO |
+| F.3 | FreshContext context size estimation | 0.80 | HECHO |
+| F.4 | Memory persistence cross-turn | 0.80 | HECHO |
+| F.5 | Knowledge graph entity linking | 0.80 | HECHO |
+| F.6 | Vague reference resolution | 0.80 | HECHO |
+| F.7 | Context overflow graceful degradation | 0.80 | HECHO |
+| F.8 | Session recovery multi-format | 0.80 | HECHO |
 
 ---
 

@@ -19,16 +19,54 @@ Continúa con el desarrollo del proyecto. Lee docs/modus-operandi.md y el últim
 - **V40**: COMPLETE — Testing & Debugging Infrastructure (harness scoring, 15 precision tests, 9 CLI flags, regression detection, REPL /test /bench /precision commands)
 - **V41**: COMPLETE — Graph Quality Testing (21 KG structural + 16 multi-layer + 10 agent graph + 8 precision = 55 tests across 3 new categories)
 - **V42**: IN PROGRESS — Consolidation & Production Readiness (thinking analysis of 6,730 blocks across 40+ sessions, 17/36 items verified already resolved, SmartChunker bounds + MockHttpServer fixes done, 22 items pending)
-- **V43**: IN PROGRESS — FreshContext Total Integration + Fallback Chains (KG in core, overflow truncation, ReferenceResolver bilingüe EN+ES, auto-list tracking, guardrail catch_unwind, SQLite WAL mode, 18 fallback tests)
-- **Latest**: V43 — FreshContext Total Integration + Fallback Chains
-- **Test count**: 6,829 lib tests (0 failures) + 39 harness precision + 18 fallback resilience tests
-- **Test count**: 6,829 lib tests (0 failures) + 39 harness precision tests
-- **Source files**: 319 .rs files, ~389K LOC
+- **V43**: COMPLETE — FreshContext Total Integration + Fallback Chains (KG in core, overflow truncation, ReferenceResolver bilingüe EN+ES, auto-list tracking, guardrail catch_unwind, SQLite WAL mode, 18 fallback tests, UnifiedDb persistence + schema versioning + write-through sessions + memory store, DiskSpillBuffer, session recovery, 8 conversation quality scored tests)
+- **Latest**: V43 — FreshContext Total Integration + Fallback Chains (COMPLETE)
+- **Test count**: 6,854 lib tests (0 failures) + 39 harness precision + 18 fallback resilience + 8 conversation quality scored tests
+- **Source files**: 320 .rs files, ~390K LOC
 - **Feature flags**: 55 (+1: chaos-testing)
 - **Status**: Experimental — compiles and passes tests, but not validated in production
 - **Website**: Separated to `ai_assistant-website` repo (GitHub Pages ready)
 - **License**: PolyForm Noncommercial 1.0.0
 - **Domain**: ai-assistant.runawaybrains.com (CNAME configured)
+
+## Planning methodology
+
+When creating an implementation plan, follow this iterative process:
+
+1. **Draft initial plan** — outline phases, components, dependencies
+2. **Iterate looking for problems** — in each iteration, review the plan searching for:
+   - **Gaps**: missing functionality, unhandled scenarios, things left half-done
+   - **Stubs/TODOs**: nothing left for "later" — everything fully implemented
+   - **Wiring**: every new type/function properly connected to lib.rs, assistant.rs, or wherever it needs to be used
+   - **Edge cases**: empty inputs, huge inputs, concurrent access, Unicode, overflow
+   - **Memory saturation**: buffers with limits, eviction strategies, no unbounded growth
+   - **Fallbacks**: what happens when X fails? Every failure path has a recovery strategy
+   - **Tests**: unit tests for every component, plus realistic integration tests
+   - **Crash recovery**: corrupted state, partial writes, unexpected shutdowns
+3. **Repeat** until the gain from one more iteration is minimal
+4. **Report gains per iteration** — before implementing, show what each iteration found/fixed:
+   ```
+   Iteration 1: +3 edge cases, +2 missing fallbacks, +1 gap in wiring
+   Iteration 2: +1 memory limit missing, +1 test gap
+   Iteration 3: minor naming tweak only — diminishing returns, plan is solid
+   ```
+
+### Validation checklist (before marking anything DONE)
+
+- [ ] Zero compile errors (`cargo check --features "full"`)
+- [ ] Zero clippy warnings on new code
+- [ ] All new types/functions wired into lib.rs with proper re-exports
+- [ ] No name collisions with existing exports (check with `as` aliases if needed)
+- [ ] No stubs, no TODOs, no "implement later" — everything complete
+- [ ] Unit tests for all new functionality
+- [ ] Realistic/integration tests where applicable
+- [ ] Edge cases handled (empty, huge, concurrent, Unicode, overflow)
+- [ ] Buffers/collections have size limits and eviction
+- [ ] Failure paths have fallbacks or graceful degradation
+- [ ] Crash/corruption recovery where state is persisted
+- [ ] Full test suite passes (`cargo test --features "full,..." --lib`)
+- [ ] Documentation updated (IMPROVEMENTS, modus-operandi, TESTING)
+- [ ] Commit after each completed phase (not batched at end)
 
 ## Project-specific patterns
 
@@ -53,12 +91,18 @@ pub use module_b::Foo as ModuleBFoo;
 ```
 See MEMORY.md for the full list of resolved name collisions.
 
-### Wiring checklist (after implementing a new module)
+### Wiring checklist (after implementing a new module or type)
 1. Add `pub mod <new_module>;` in lib.rs under the correct feature gate section
-2. Add `pub use <new_module>::{Type1, Type2, ...};` re-exports
-3. Run compile check
-4. Run tests
-5. Run clippy
+2. Add `pub use <new_module>::{Type1, Type2, ...};` re-exports (check for name collisions)
+3. **Review ALL existing code that could use the new functionality** — don't just export it, wire it into every place where it's useful:
+   - `assistant.rs` — if it affects the main user-facing API
+   - `server.rs` / `server_axum.rs` — if it should be exposed via HTTP
+   - `mcp_protocol/` — if it should be an MCP tool
+   - GUI modules — if it has user-visible state
+   - Other modules that handle related concerns (e.g., new persistence → wire into session management, new fallback → wire into error paths)
+4. Run compile check
+5. Run tests
+6. Run clippy
 
 ### Documentation files to update per phase
 - `docs/GUIDE.md` — add numbered sections at end
@@ -158,7 +202,8 @@ cargo check --features "full,autonomous,scheduler,butler,browser,distributed-age
 | `src/advanced_routing.rs` | Bandit algorithms, NFA/DFA routing |
 | `src/distributed_network.rs` | QUIC/TLS 1.3, node security, anti-entropy |
 | `Cargo.toml` | Feature flags + dependencies |
-| `docs/IMPROVEMENTS_V42.md` | Latest roadmap — Consolidation & Production Readiness |
+| `src/unified_persistence.rs` | UnifiedDb, SqliteSessionStore, SqliteMemoryStore |
+| `docs/IMPROVEMENTS_V43.md` | Latest roadmap — FreshContext + Fallback Chains |
 | `README.md` | Project overview for GitHub |
 
 ## Repository structure

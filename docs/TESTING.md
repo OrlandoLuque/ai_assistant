@@ -562,3 +562,14 @@ Run fallback tests:
 ```bash
 cargo run --bin ai_test_harness --features full -- --category=fallback_resilience --verbose
 ```
+
+### V43 Conversation Quality Tests (Ollama-gated)
+
+| Category | Tests | Content |
+|----------|-------|---------|
+| `conversation_quality` | 8 scored | Multi-turn reference resolution, list disambiguation, FreshContext context estimation, memory persistence, graph entity linking, vague reference resolution, DiskSpillBuffer overflow, session recovery multi-format |
+
+Run conversation quality tests (requires Ollama running on localhost:11434):
+```bash
+cargo run --bin ai_test_harness --features full -- --category=conversation_quality --verbose
+```

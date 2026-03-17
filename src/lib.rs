@@ -238,8 +238,8 @@ pub use providers::{
     AuditEntry as ProviderAuditEntry, AuditSummary, AuditedProvider,
 };
 pub use session::{
-    ChatSession, ChatSessionStore, JournalEntry, JournalEntryType, JournalSession, ResponseStyle,
-    UserPreferences,
+    ChatSession, ChatSessionStore, JournalEntry, JournalEntryType, JournalSession, RecoveryResult,
+    ResponseStyle, UserPreferences, recover_session,
 };
 
 pub use error::{
@@ -343,8 +343,8 @@ pub use diff::{
 };
 
 pub use streaming::{
-    BackpressureStream, Chunker, RateLimitedStream, StreamBuffer, StreamConsumer, StreamError,
-    StreamMetrics, StreamProducer, StreamingConfig,
+    BackpressureStream, Chunker, DiskSpillBuffer, DiskSpillConfig, RateLimitedStream, StreamBuffer,
+    StreamConsumer, StreamError, StreamMetrics, StreamProducer, StreamingConfig,
 };
 
 pub use connection_pool::{
@@ -1345,6 +1345,8 @@ pub mod rag_methods;
 pub mod rag_pipeline;
 #[cfg(feature = "rag")]
 pub mod rag_tiers;
+#[cfg(feature = "rag")]
+pub mod unified_persistence;
 
 #[cfg(feature = "rag")]
 pub use rag::{
@@ -1358,6 +1360,13 @@ pub use assistant::{DocumentInfo, DocumentStats, IndexingProgress, IndexingResul
 
 #[cfg(feature = "rag")]
 pub use persistence::{CacheEntry, PersistentCache};
+
+#[cfg(feature = "rag")]
+pub use unified_persistence::{
+    ImportReport, MemoryEntry as UnifiedMemoryEntry, MemorySnapshot, MigrationReport,
+    SchemaVersion, SessionSummary as UnifiedSessionSummary, SnapshotSummary, SqliteMemoryStore,
+    SqliteSessionStore, UnifiedDb,
+};
 
 #[cfg(feature = "rag")]
 pub use rag_advanced::{

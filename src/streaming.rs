@@ -613,6 +613,248 @@ impl RateLimitedStream {
     }
 }
 
+// ============================================================================
+// DiskSpillBuffer — evict to disk when memory threshold exceeded
+// ============================================================================
+
+/// Configuration for disk-spill behavior.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct DiskSpillConfig {
+    /// Maximum bytes to keep in memory before spilling to disk.
+    pub memory_threshold: usize,
+    /// Directory for spill files (defaults to system temp dir).
+    pub spill_dir: Option<std::path::PathBuf>,
+}
+
+impl Default for DiskSpillConfig {
+    fn default() -> Self {
+        Self {
+            memory_threshold: 4 * 1024 * 1024, // 4 MB
+            spill_dir: None,
+        }
+    }
+}
+
+impl DiskSpillConfig {
+    /// Create a config with a custom memory threshold.
+    pub fn with_threshold(memory_threshold: usize) -> Self {
+        Self {
+            memory_threshold,
+            ..Default::default()
+        }
+    }
+}
+
+/// A buffer that spills oldest chunks to a temporary file when the in-memory
+/// size exceeds a configurable threshold.
+///
+/// Chunks are accumulated in memory. When `push()` would exceed the threshold,
+/// the oldest chunks are evicted to a temp file on disk. `drain_all()` returns
+/// the complete contents (disk + memory) in order.
+pub struct DiskSpillBuffer {
+    /// In-memory chunks (newest data).
+    chunks: Vec<String>,
+    /// Current in-memory size in bytes.
+    memory_bytes: usize,
+    /// Configuration.
+    config: DiskSpillConfig,
+    /// Temp file for spilled data (created lazily).
+    spill_file: Option<std::fs::File>,
+    /// Path of the spill file (for cleanup).
+    spill_path: Option<std::path::PathBuf>,
+    /// Number of bytes written to disk.
+    disk_bytes: usize,
+    /// Number of chunks spilled to disk.
+    disk_chunks: usize,
+    /// Whether the buffer has been closed.
+    closed: bool,
+}
+
+impl std::fmt::Debug for DiskSpillBuffer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DiskSpillBuffer")
+            .field("memory_bytes", &self.memory_bytes)
+            .field("disk_bytes", &self.disk_bytes)
+            .field("memory_chunks", &self.chunks.len())
+            .field("disk_chunks", &self.disk_chunks)
+            .field("closed", &self.closed)
+            .finish()
+    }
+}
+
+impl DiskSpillBuffer {
+    /// Create a new disk-spill buffer with default config (4 MB threshold).
+    pub fn new() -> Self {
+        Self::with_config(DiskSpillConfig::default())
+    }
+
+    /// Create with a custom config.
+    pub fn with_config(config: DiskSpillConfig) -> Self {
+        Self {
+            chunks: Vec::new(),
+            memory_bytes: 0,
+            config,
+            spill_file: None,
+            spill_path: None,
+            disk_bytes: 0,
+            disk_chunks: 0,
+            closed: false,
+        }
+    }
+
+    /// Push a chunk into the buffer.
+    ///
+    /// If the in-memory size would exceed the threshold, the oldest half of
+    /// the in-memory chunks are evicted to a temp file on disk.
+    pub fn push(&mut self, chunk: String) -> Result<(), StreamError> {
+        if self.closed {
+            return Err(StreamError::Closed);
+        }
+
+        let chunk_len = chunk.len();
+
+        // Check if adding this chunk would exceed the threshold
+        if self.memory_bytes + chunk_len > self.config.memory_threshold && !self.chunks.is_empty() {
+            self.evict_to_disk()?;
+        }
+
+        self.memory_bytes += chunk_len;
+        self.chunks.push(chunk);
+        Ok(())
+    }
+
+    /// Return the total size (memory + disk) in bytes.
+    pub fn total_bytes(&self) -> usize {
+        self.memory_bytes + self.disk_bytes
+    }
+
+    /// Return the in-memory size in bytes.
+    pub fn memory_bytes(&self) -> usize {
+        self.memory_bytes
+    }
+
+    /// Return the on-disk size in bytes.
+    pub fn disk_bytes(&self) -> usize {
+        self.disk_bytes
+    }
+
+    /// Return the total chunk count (memory + disk).
+    pub fn total_chunks(&self) -> usize {
+        self.chunks.len() + self.disk_chunks
+    }
+
+    /// Whether any data has been spilled to disk.
+    pub fn has_spilled(&self) -> bool {
+        self.disk_bytes > 0
+    }
+
+    /// Close the buffer (no more pushes allowed).
+    pub fn close(&mut self) {
+        self.closed = true;
+    }
+
+    /// Drain all data (disk + memory) in order, consuming the buffer contents.
+    ///
+    /// Reads spilled data back from disk first, then appends in-memory chunks.
+    pub fn drain_all(&mut self) -> Result<String, StreamError> {
+        let mut result = String::with_capacity(self.total_bytes());
+
+        // Read disk data first (oldest)
+        if let Some(ref path) = self.spill_path {
+            if path.exists() {
+                let disk_data = std::fs::read_to_string(path).map_err(|_| StreamError::Cancelled)?;
+                result.push_str(&disk_data);
+            }
+        }
+
+        // Append in-memory data (newest)
+        for chunk in self.chunks.drain(..) {
+            result.push_str(&chunk);
+        }
+
+        self.memory_bytes = 0;
+        self.disk_bytes = 0;
+        self.disk_chunks = 0;
+
+        // Clean up spill file
+        self.cleanup_spill_file();
+
+        Ok(result)
+    }
+
+    /// Evict the oldest half of in-memory chunks to disk.
+    fn evict_to_disk(&mut self) -> Result<(), StreamError> {
+        use std::io::Write;
+
+        // Create spill file lazily
+        if self.spill_file.is_none() {
+            let dir = self
+                .config
+                .spill_dir
+                .clone()
+                .unwrap_or_else(std::env::temp_dir);
+            let _ = std::fs::create_dir_all(&dir);
+            let unique_id = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos();
+            let path = dir.join(format!("stream_spill_{}_{}.tmp", std::process::id(), unique_id));
+            let file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .map_err(|_| StreamError::Cancelled)?;
+            self.spill_path = Some(path);
+            self.spill_file = Some(file);
+        }
+
+        // Evict the oldest half
+        let evict_count = self.chunks.len() / 2;
+        if evict_count == 0 {
+            return Ok(());
+        }
+
+        let evicted: Vec<String> = self.chunks.drain(..evict_count).collect();
+        let file = self.spill_file.as_mut().ok_or(StreamError::Cancelled)?;
+
+        let mut evicted_bytes = 0usize;
+        for chunk in &evicted {
+            file.write_all(chunk.as_bytes())
+                .map_err(|_| StreamError::Cancelled)?;
+            evicted_bytes += chunk.len();
+        }
+        file.flush().map_err(|_| StreamError::Cancelled)?;
+
+        self.memory_bytes -= evicted_bytes;
+        self.disk_bytes += evicted_bytes;
+        self.disk_chunks += evicted.len();
+
+        Ok(())
+    }
+
+    /// Remove the spill file from disk.
+    fn cleanup_spill_file(&mut self) {
+        if let Some(ref path) = self.spill_path {
+            let _ = std::fs::remove_file(path);
+        }
+        self.spill_file = None;
+        self.spill_path = None;
+    }
+}
+
+impl Default for DiskSpillBuffer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for DiskSpillBuffer {
+    fn drop(&mut self) {
+        self.cleanup_spill_file();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -827,5 +1069,97 @@ mod tests {
         assert_eq!(StreamError::Closed.to_string(), "Stream is closed");
         assert_eq!(StreamError::Timeout.to_string(), "Stream operation timed out");
         assert_eq!(StreamError::Cancelled.to_string(), "Stream was cancelled");
+    }
+
+    // ================================================================
+    // DiskSpillBuffer tests
+    // ================================================================
+
+    #[test]
+    fn test_disk_spill_buffer_basic() {
+        let mut buf = DiskSpillBuffer::new();
+        buf.push("Hello ".to_string()).unwrap();
+        buf.push("World".to_string()).unwrap();
+
+        assert_eq!(buf.total_chunks(), 2);
+        assert_eq!(buf.total_bytes(), 11);
+        assert!(!buf.has_spilled());
+
+        let result = buf.drain_all().unwrap();
+        assert_eq!(result, "Hello World");
+    }
+
+    #[test]
+    fn test_disk_spill_eviction() {
+        // Very small threshold to force spilling
+        let config = DiskSpillConfig::with_threshold(20);
+        let mut buf = DiskSpillBuffer::with_config(config);
+
+        // Push 30 bytes (exceeds 20-byte threshold)
+        buf.push("AAAAAAAAAA".to_string()).unwrap(); // 10 bytes
+        buf.push("BBBBBBBBBB".to_string()).unwrap(); // 10 bytes — at 20, next push spills
+        buf.push("CCCCCCCCCC".to_string()).unwrap(); // triggers eviction of oldest half
+
+        assert!(buf.has_spilled());
+        assert!(buf.disk_bytes() > 0);
+
+        // All data should be recoverable in order
+        let result = buf.drain_all().unwrap();
+        assert_eq!(result, "AAAAAAAAAABBBBBBBBBBCCCCCCCCCC");
+    }
+
+    #[test]
+    fn test_disk_spill_large_volume() {
+        let config = DiskSpillConfig::with_threshold(100);
+        let mut buf = DiskSpillBuffer::with_config(config);
+
+        // Push 50 chunks of 10 bytes each (500 bytes total, will spill multiple times)
+        for i in 0..50 {
+            buf.push(format!("{:010}", i)).unwrap();
+        }
+
+        assert!(buf.has_spilled());
+        assert_eq!(buf.total_chunks(), 50);
+
+        let result = buf.drain_all().unwrap();
+        assert_eq!(result.len(), 500);
+        // Verify first and last chunks are present and in order
+        assert!(result.starts_with("0000000000"));
+        assert!(result.ends_with("0000000049"));
+    }
+
+    #[test]
+    fn test_disk_spill_closed_rejects_push() {
+        let mut buf = DiskSpillBuffer::new();
+        buf.push("data".to_string()).unwrap();
+        buf.close();
+        assert_eq!(buf.push("more".to_string()), Err(StreamError::Closed));
+    }
+
+    #[test]
+    fn test_disk_spill_cleanup_on_drop() {
+        let spill_path;
+        {
+            let config = DiskSpillConfig::with_threshold(10);
+            let mut buf = DiskSpillBuffer::with_config(config);
+            buf.push("AAAAAAAAAA".to_string()).unwrap();
+            buf.push("BBBBBBBBBB".to_string()).unwrap(); // triggers spill
+            buf.push("CCCCCCCCCC".to_string()).unwrap();
+            spill_path = buf.spill_path.clone();
+            assert!(spill_path.is_some());
+            // buf drops here
+        }
+        // Temp file should be cleaned up
+        if let Some(path) = spill_path {
+            assert!(!path.exists(), "Spill file should be removed on drop");
+        }
+    }
+
+    #[test]
+    fn test_disk_spill_empty_drain() {
+        let mut buf = DiskSpillBuffer::new();
+        let result = buf.drain_all().unwrap();
+        assert!(result.is_empty());
+        assert_eq!(buf.total_bytes(), 0);
     }
 }
