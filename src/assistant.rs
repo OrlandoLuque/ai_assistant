@@ -2878,6 +2878,66 @@ impl AiAssistant {
                 knowledge_context = build_knowledge_context(&chunks);
             }
 
+            // Knowledge Graph context enrichment
+            if let Some(ref graph) = self.graph {
+                let session_id = self
+                    .current_session
+                    .as_ref()
+                    .map(|s| s.id.as_str());
+
+                // Extract entity names from the query for graph lookup
+                let query_words: Vec<String> = query
+                    .split_whitespace()
+                    .filter(|w| w.len() > 2)
+                    .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase())
+                    .filter(|w| !w.is_empty())
+                    .collect();
+
+                // Query unified view for matching entities
+                let unified = graph.query_unified(session_id);
+                let matching: Vec<&crate::multi_layer_graph::UnifiedEntity> = unified
+                    .entities
+                    .iter()
+                    .filter(|e| {
+                        let name_lower = e.name.to_lowercase();
+                        query_words.iter().any(|w| name_lower.contains(w))
+                    })
+                    .collect();
+
+                if !matching.is_empty() {
+                    knowledge_context.push_str("\n\n--- GRAPH CONTEXT ---\n");
+                    for entity in matching.iter().take(10) {
+                        knowledge_context.push_str(&format!(
+                            "- {} ({}): confidence {:.0}%",
+                            entity.name, entity.entity_type, entity.confidence * 100.0
+                        ));
+                        for (key, val) in &entity.merged_attributes {
+                            knowledge_context.push_str(&format!(", {}={}", key, val));
+                        }
+                        knowledge_context.push('\n');
+                    }
+
+                    // Add relevant relations
+                    let matching_names: Vec<&str> = matching.iter().map(|e| e.name.as_str()).collect();
+                    for rel in &unified.relations {
+                        if matching_names.contains(&rel.source.as_str())
+                            || matching_names.contains(&rel.target.as_str())
+                        {
+                            knowledge_context.push_str(&format!(
+                                "- {} --[{}]--> {}\n",
+                                rel.source, rel.relation_type, rel.target
+                            ));
+                        }
+                    }
+                    knowledge_context.push_str("--- END GRAPH ---\n");
+                    crate::diag_debug!(
+                        "[rag-context] graph enrichment: {} entities, {} relations",
+                        matching.len(),
+                        unified.relations.len()
+                    );
+                }
+            }
+
             // Conversation RAG
             if self.rag_config.conversation_rag_enabled {
                 let session_id = self
@@ -2912,6 +2972,24 @@ impl AiAssistant {
                         }
                     }
                 }
+            }
+        }
+
+        // Context overflow truncation: if knowledge exceeds budget, trim to fit
+        let knowledge_tokens = crate::estimate_tokens(&knowledge_context);
+        if knowledge_tokens > effective_max_knowledge_tokens && effective_max_knowledge_tokens > 0 {
+            let ratio = effective_max_knowledge_tokens as f64 / knowledge_tokens as f64;
+            let target_chars = (knowledge_context.len() as f64 * ratio * 0.95) as usize;
+            if target_chars < knowledge_context.len() {
+                // Truncate at a clean line boundary
+                let truncated = &knowledge_context[..target_chars];
+                let last_newline = truncated.rfind('\n').unwrap_or(target_chars);
+                knowledge_context.truncate(last_newline);
+                knowledge_context.push_str("\n[... truncated to fit context window ...]\n");
+                crate::diag_debug!(
+                    "[rag-context] overflow truncation: {} -> {} tokens",
+                    knowledge_tokens, crate::estimate_tokens(&knowledge_context)
+                );
             }
         }
 

@@ -1605,7 +1605,8 @@ pub use conversation_control::{
 };
 
 pub use memory::{
-    MemoryConfig, MemoryEntry, MemoryManager, MemoryStats, MemoryStore, MemoryType, WorkingMemory,
+    MemoryConfig, MemoryEntry, MemoryManager, MemoryStats, MemoryStore, MemoryType,
+    ReferenceResolver, TrackedList, WorkingMemory,
 };
 
 pub use routing::{

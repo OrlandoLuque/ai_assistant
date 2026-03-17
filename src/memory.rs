@@ -638,6 +638,228 @@ impl Default for MemoryManager {
     }
 }
 
+// =============================================================================
+// LIST TRACKING & REFERENCE RESOLUTION
+// =============================================================================
+
+/// A tracked list from LLM or user output, stored for later reference resolution.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct TrackedList {
+    /// Items in the list
+    pub items: Vec<String>,
+    /// The topic/context the list was about
+    pub topic: String,
+    /// Timestamp when the list was generated
+    pub timestamp: DateTime<Utc>,
+    /// Which message produced this list (0-based turn index)
+    pub turn_index: usize,
+}
+
+/// Tracks lists and resolves back-references to previous conversation content.
+#[derive(Debug, Default)]
+pub struct ReferenceResolver {
+    /// All tracked lists from the conversation, most recent first
+    pub tracked_lists: Vec<TrackedList>,
+    /// Maximum lists to retain
+    pub max_lists: usize,
+}
+
+impl ReferenceResolver {
+    pub fn new() -> Self {
+        Self {
+            tracked_lists: Vec::new(),
+            max_lists: 50,
+        }
+    }
+
+    /// Scan a message for numbered/bulleted lists and track them.
+    pub fn track_lists_in_message(&mut self, message: &str, topic: &str, turn_index: usize) {
+        let items = Self::extract_list_items(message);
+        if items.len() >= 2 {
+            self.tracked_lists.insert(0, TrackedList {
+                items,
+                topic: topic.to_string(),
+                timestamp: Utc::now(),
+                turn_index,
+            });
+            if self.tracked_lists.len() > self.max_lists {
+                self.tracked_lists.truncate(self.max_lists);
+            }
+        }
+    }
+
+    /// Extract list items from a message. Supports:
+    /// - Numbered: "1. item", "1) item", "1- item"
+    /// - Bulleted: "- item", "* item", "+ item"
+    /// - Lettered: "a. item", "a) item"
+    pub fn extract_list_items(text: &str) -> Vec<String> {
+        let mut items = Vec::new();
+        for line in text.lines() {
+            let trimmed = line.trim();
+            // Numbered: "1. ", "1) ", "1- ", "12. " etc.
+            if let Some(rest) = trimmed.strip_prefix(|c: char| c.is_ascii_digit()) {
+                let rest = rest.trim_start_matches(|c: char| c.is_ascii_digit());
+                if let Some(content) = rest.strip_prefix(". ")
+                    .or_else(|| rest.strip_prefix(") "))
+                    .or_else(|| rest.strip_prefix("- "))
+                {
+                    let content = content.trim();
+                    if !content.is_empty() {
+                        items.push(content.to_string());
+                    }
+                    continue;
+                }
+            }
+            // Bulleted: "- ", "* ", "+ "
+            if let Some(content) = trimmed.strip_prefix("- ")
+                .or_else(|| trimmed.strip_prefix("* "))
+                .or_else(|| trimmed.strip_prefix("+ "))
+            {
+                let content = content.trim();
+                if !content.is_empty() {
+                    items.push(content.to_string());
+                }
+                continue;
+            }
+            // Lettered: "a. ", "a) ", "b. ", "b) "
+            if trimmed.len() >= 3 {
+                let first = trimmed.as_bytes()[0];
+                if first.is_ascii_lowercase() {
+                    if let Some(content) = trimmed[1..].strip_prefix(". ")
+                        .or_else(|| trimmed[1..].strip_prefix(") "))
+                    {
+                        let content = content.trim();
+                        if !content.is_empty() {
+                            items.push(content.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        items
+    }
+
+    /// Try to resolve a user reference like "the second one", "option 3",
+    /// "the list about X" against tracked lists.
+    /// Returns the resolved context string, or None if no match.
+    pub fn resolve_reference(&self, user_message: &str) -> Option<String> {
+        let msg_lower = user_message.to_lowercase();
+
+        // Quick check: does the message contain reference patterns?
+        let has_reference = Self::has_reference_pattern(&msg_lower);
+        if !has_reference {
+            return None;
+        }
+
+        // Try to extract a numeric reference (ordinal or cardinal)
+        let index = Self::extract_item_index(&msg_lower);
+
+        // Try to find which list the user is referring to
+        let target_list = if self.tracked_lists.is_empty() {
+            return None;
+        } else if self.tracked_lists.len() == 1 || index.is_some() {
+            // If there's only one list, or we have an index, use the most recent
+            &self.tracked_lists[0]
+        } else {
+            // Try to match by topic keywords
+            let best = self.tracked_lists.iter()
+                .max_by_key(|list| {
+                    let topic_lower = list.topic.to_lowercase();
+                    msg_lower.split_whitespace()
+                        .filter(|w| w.len() > 2 && topic_lower.contains(w))
+                        .count()
+                });
+            best.unwrap_or(&self.tracked_lists[0])
+        };
+
+        if let Some(idx) = index {
+            // Specific item reference
+            if idx < target_list.items.len() {
+                Some(format!(
+                    "[Reference resolved: item {} from list about '{}': {}]",
+                    idx + 1, target_list.topic, target_list.items[idx]
+                ))
+            } else {
+                Some(format!(
+                    "[Reference: the list about '{}' has {} items, but item {} was requested]",
+                    target_list.topic, target_list.items.len(), idx + 1
+                ))
+            }
+        } else {
+            // General list reference
+            let items_str: String = target_list.items.iter()
+                .enumerate()
+                .map(|(i, item)| format!("{}. {}", i + 1, item))
+                .collect::<Vec<_>>()
+                .join("\n");
+            Some(format!(
+                "[Reference resolved: list about '{}' ({} items):\n{}]",
+                target_list.topic, target_list.items.len(), items_str
+            ))
+        }
+    }
+
+    /// Check if a message contains reference patterns.
+    fn has_reference_pattern(msg: &str) -> bool {
+        let patterns = [
+            "the first", "the second", "the third", "the fourth", "the fifth",
+            "el primer", "el segundo", "el tercer", "el cuarto", "el quinto",
+            "la primer", "la segund", "la tercer", "la cuart", "la quint",
+            "option ", "opción ", "opcion ",
+            "item ", "punto ", "element",
+            "number ", "número ", "numero ",
+            "that list", "the list", "esa lista", "la lista",
+            "lo anterior", "the previous", "lo de antes",
+            "which one", "cuál", "cual",
+        ];
+        patterns.iter().any(|p| msg.contains(p))
+    }
+
+    /// Extract a 0-based item index from ordinal/cardinal references.
+    fn extract_item_index(msg: &str) -> Option<usize> {
+        // Ordinals (English + Spanish)
+        let ordinals = [
+            ("first", 0), ("primer", 0), ("1st", 0),
+            ("second", 1), ("segund", 1), ("2nd", 1),
+            ("third", 2), ("tercer", 2), ("3rd", 3),
+            ("fourth", 3), ("cuart", 3), ("4th", 3),
+            ("fifth", 4), ("quint", 4), ("5th", 4),
+            ("sixth", 5), ("sext", 5),
+            ("seventh", 6), ("séptim", 6), ("septim", 6),
+            ("eighth", 7), ("octav", 7),
+            ("ninth", 8), ("noven", 8),
+            ("tenth", 9), ("décim", 9), ("decim", 9),
+        ];
+
+        for (word, idx) in &ordinals {
+            if msg.contains(word) {
+                return Some(*idx);
+            }
+        }
+
+        // Cardinal with context: "option 3", "punto 5", "number 2"
+        let cardinal_prefixes = [
+            "option ", "opción ", "opcion ", "item ", "punto ",
+            "number ", "número ", "numero ", "element ", "elemento ",
+        ];
+        for prefix in &cardinal_prefixes {
+            if let Some(pos) = msg.find(prefix) {
+                let after = &msg[pos + prefix.len()..];
+                if let Some(num) = after.split_whitespace().next() {
+                    if let Ok(n) = num.trim_matches(|c: char| !c.is_ascii_digit()).parse::<usize>() {
+                        if n > 0 {
+                            return Some(n - 1); // 0-based
+                        }
+                    }
+                }
+            }
+        }
+
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
