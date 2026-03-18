@@ -4042,3 +4042,48 @@ When a subsystem fails, the system should degrade gracefully rather than crash o
 - **Context composition**: When all knowledge sources (RAG, Graph, Memory) return empty in FreshContext mode, the system can gracefully degrade rather than sending a context-free prompt.
 
 The principle: every path that can fail should have at least one fallback, and the fallback should be documented and tested.
+
+## 188. Procedural Memory: Teaching the AI Your Workflow
+
+Procedural memory is the AI equivalent of "muscle memory" — learned routines that the system applies automatically without being told each time. In `ai_assistant`, the `ProceduralStore` holds workflow procedures: named sequences of steps triggered by keyword conditions.
+
+**How it works:**
+
+1. The user (or the system via consolidation) registers a `Procedure` with a name, trigger condition (keywords), and ordered steps.
+2. When a message arrives, `find_relevant()` checks the message against all procedure conditions, using a minimum keyword match ratio (30%) and confidence threshold to avoid false positives.
+3. Matching procedures are formatted as `--- WORKFLOW GUIDELINES ---` and injected into the system prompt, so the LLM follows them naturally.
+4. After the response, outcome tracking automatically updates each procedure's confidence score — procedures that consistently lead to good results gain confidence, while those that don't are gradually retired via `ProcedureEvolver`.
+
+**Why this matters:** Instead of repeating instructions every time ("always run tests before committing", "use the review checklist"), the user teaches the assistant once. The assistant internalizes the workflow and applies it whenever relevant context appears. Over time, confidence-based evolution prunes procedures that don't work and reinforces those that do — a self-improving behavioral loop.
+
+## 189. Unified SQLite Persistence: One Database, Versioned Schema
+
+Rather than scattering data across JSON files, gzipped snapshots, and ad-hoc formats, `UnifiedDb` consolidates session storage and memory snapshots into a single WAL-mode SQLite database with proper schema versioning.
+
+**Key ideas:**
+
+- **Schema version table** tracks every migration that has been applied, with numbered migrations (V1, V2, …) that run exactly once inside transactions.
+- **Write-through sessions** (`SqliteSessionStore`): every `save_session` or `append_message` is immediately persisted — no "save on exit" that can lose data on crash.
+- **FTS5 search** on session messages enables fast full-text search across all conversation history.
+- **Memory snapshots** with FNV-1a checksums and automatic rotation replace the old file-based compressed JSON approach.
+- **Import from JSON** allows seamless migration from the legacy `ChatSessionStore` format.
+
+The result: a single `unified.db` file that is crash-safe (WAL mode), searchable (FTS5), versioned (migrations), and space-efficient.
+
+## 190. Disk Spill Buffers: Graceful Overflow for Streaming
+
+When a streaming buffer accumulates more data than fits comfortably in memory, the `DiskSpillBuffer` evicts the oldest half of in-memory chunks to a temporary file on disk. This prevents out-of-memory conditions during long streaming responses while keeping recent data in fast memory.
+
+**The mechanism:** Push data into memory → when threshold exceeded, flush oldest chunks to a temp file → on `drain_all()`, read disk data first (oldest) then memory data (newest) → clean up temp file on Drop. The user never sees the spill — the API is the same whether data fit in memory or overflowed.
+
+## 191. Session Recovery: Cascading Format Detection
+
+When a session file is corrupted — truncated write, encoding error, format mismatch — `recover_session()` tries five strategies in cascade:
+
+1. Normal auto-detection (binary + JSON)
+2. Explicit JSON parse
+3. Line-by-line JSON recovery (extract valid objects from mixed content)
+4. JSONL journal format (each line is a message entry)
+5. Binary decompression + JSON
+
+Each strategy that fails adds a warning to the `RecoveryResult`. If any strategy succeeds, even partially, the recovered data is returned with a `format_used` indicator. This means a file that was written as JSON but got garbage prepended can still be recovered by the line-by-line strategy.

@@ -9077,3 +9077,43 @@ Connects all knowledge sources into FreshContext and adds systematic fallback ch
 ```bash
 cargo run --bin ai_test_harness --features full -- --category=fallback_resilience --verbose
 ```
+
+## 158. V44 — Procedural Memory Integration
+
+### What
+Wires the existing `ProceduralStore` into the conversation pipeline so workflow procedures are automatically injected into the system prompt and outcomes are tracked.
+
+### Procedural Memory
+- `ProceduralStore.find_relevant()` — keyword match with min ratio (30%), min confidence (0.1), max results
+- `build_procedural_context()` — formats matching procedures as `--- WORKFLOW GUIDELINES ---` with token budget (500)
+- Injected in all 5 `send_message*` variants after memory context, before resolved references
+- Outcome tracking in `poll_response` updates confidence via `ProcedureEvolver`
+
+### CRUD API
+```rust
+let mut ai = AiAssistant::new();
+ai.enable_procedural_memory(50);
+
+ai.add_procedure(Procedure {
+    id: "deploy".to_string(),
+    name: "Deploy Rust App".to_string(),
+    condition: "deploy rust production".to_string(),
+    steps: vec!["cargo test".into(), "cargo build --release".into(), "deploy".into()],
+    confidence: 0.9,
+    ..Default::default() // success_count, failure_count, created_from, tags
+});
+
+// Matching procedures auto-injected when user says "deploy the rust app"
+let found = ai.find_procedures("deploy rust application");
+
+// Persistence
+ai.save_procedures(Path::new("procedures.json")).unwrap();
+ai.load_procedures(Path::new("procedures.json"), 50).unwrap();
+```
+
+### Testing
+10 unit tests covering CRUD, persistence, context formatting, find_relevant filtering.
+
+```bash
+cargo test --features "full,autonomous,scheduler" --lib procedural
+```
