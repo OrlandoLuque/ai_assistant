@@ -4087,3 +4087,25 @@ When a session file is corrupted — truncated write, encoding error, format mis
 5. Binary decompression + JSON
 
 Each strategy that fails adds a warning to the `RecoveryResult`. If any strategy succeeds, even partially, the recovered data is returned with a `format_used` indicator. This means a file that was written as JSON but got garbage prepended can still be recovered by the line-by-line strategy.
+
+## 192. Multi-User Isolation: What's Private, Shared, and Replicated
+
+In a multi-user environment, data falls into three scopes:
+
+- **Private** (per-user): Conversations, memories (episodic, procedural, entity), session preferences, working memory, user notes. Each user should have their own `AiAssistant` instance — this is the natural isolation boundary. Private data is NEVER shared between users or replicated via P2P.
+
+- **Shared** (per-deployment): Knowledge base (RAG chunks and sources), knowledge graph, guardrail configurations, conversation templates, model catalog. All users within one application see the same shared data. This makes sense because knowledge is curated globally — you don't want each user to re-index the same documents.
+
+- **Replicated** (P2P/cluster): Rate limit counters (PNCounter CRDT), active node membership (ORSet CRDT), cluster configuration (LWWMap CRDT). This is infrastructure data that all nodes need to agree on. The critical safety rule: **never replicate personal data via CRDTs** — only infrastructure and configuration.
+
+The `UserScope` enum and `classify_data_scope()` function formalize this classification, helping developers understand what's safe to share and what must be kept isolated.
+
+## 193. Procedure Import/Export: Shareable Workflow Libraries
+
+Workflow procedures can be exported as versioned JSON files (`ProcedureExport` with version, timestamp, source label) and imported into any instance. Import supports three modes:
+
+- **Merge + skip duplicates** (default): Add new procedures, keep existing ones untouched
+- **Merge + replace**: Add new, overwrite existing by ID
+- **Replace all**: Clear the store and import fresh
+
+Optional confidence reset prevents stale confidence scores from a different environment from polluting local statistics. Six builtin default procedures (code review, pre-commit, deploy, bug investigation, documentation, testing) can be loaded via `load_defaults()` — they skip silently if a procedure with the same ID already exists, so user customizations are preserved.

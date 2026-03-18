@@ -595,6 +595,105 @@ impl<'a> SqliteSessionStore<'a> {
         )?;
         Ok(count as usize)
     }
+
+    /// List sessions for a specific user, sorted by last update.
+    pub fn list_sessions_for_user(&self, user_id: &str) -> Result<Vec<SessionSummary>> {
+        let mut stmt = self.db.conn.prepare(
+            "SELECT s.id, s.name, s.created_at, s.updated_at,
+                    (SELECT COUNT(*) FROM session_messages m WHERE m.session_id = s.id)
+             FROM sessions s WHERE s.user_id = ?1 ORDER BY s.updated_at DESC",
+        )?;
+
+        let summaries = stmt
+            .query_map(rusqlite::params![user_id], |row| {
+                Ok(SessionSummary {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    created_at: row.get(2)?,
+                    updated_at: row.get(3)?,
+                    message_count: row.get(4)?,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(summaries)
+    }
+
+    /// Search messages for a specific user using FTS5.
+    pub fn search_messages_for_user(
+        &self,
+        user_id: &str,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<MessageSearchResult>> {
+        let mut stmt = self.db.conn.prepare(
+            "SELECT m.session_id, m.role, m.content, m.timestamp, rank
+             FROM session_messages_fts fts
+             JOIN session_messages m ON m.id = fts.rowid
+             JOIN sessions s ON s.id = m.session_id
+             WHERE session_messages_fts MATCH ?1 AND s.user_id = ?2
+             ORDER BY rank
+             LIMIT ?3",
+        )?;
+
+        let results = stmt
+            .query_map(rusqlite::params![query, user_id, limit as i64], |row| {
+                Ok(MessageSearchResult {
+                    session_id: row.get(0)?,
+                    role: row.get(1)?,
+                    content: row.get(2)?,
+                    timestamp: row.get(3)?,
+                    rank: row.get(4)?,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(results)
+    }
+}
+
+// ============================================================================
+// Data scope classification for multi-user isolation
+// ============================================================================
+
+/// Classifies what scope a data type belongs to in a multi-user environment.
+///
+/// - **Private**: per-user, per-instance — never shared across users or replicated via P2P.
+/// - **Shared**: global within the application — all users see the same data.
+/// - **Replicated**: distributed across P2P nodes via CRDTs — infrastructure only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum UserScope {
+    /// Per-user data. Conversations, memories, procedures, session preferences.
+    /// Scoped by AiAssistant instance — each user should have their own instance.
+    Private,
+    /// Shared data. Knowledge base (RAG chunks), knowledge graph, model catalog.
+    /// All users see the same data within one application deployment.
+    Shared,
+    /// Replicated via P2P CRDTs. Rate limits, active nodes, cluster config.
+    /// Infrastructure-only — NEVER replicate personal data.
+    Replicated,
+}
+
+/// Return the scope classification for common data types.
+///
+/// This helps developers understand what's safe to share and what must be isolated.
+pub fn classify_data_scope(data_type: &str) -> UserScope {
+    match data_type {
+        "conversation" | "messages" | "session" | "preferences"
+        | "memory" | "episodic" | "procedural" | "entity_memory"
+        | "working_memory" | "user_notes" | "session_notes" => UserScope::Private,
+
+        "knowledge_chunks" | "knowledge_sources" | "knowledge_graph"
+        | "model_catalog" | "guardrails" | "templates" => UserScope::Shared,
+
+        "rate_limits" | "active_nodes" | "cluster_config"
+        | "crdt_counters" | "crdt_sets" | "crdt_registers" => UserScope::Replicated,
+
+        _ => UserScope::Private, // Default to private for safety
+    }
 }
 
 /// Summary of a session (metadata only).
@@ -1380,5 +1479,61 @@ mod tests {
         assert!(mem.load_latest("any").expect("load").is_none());
         assert!(mem.list_snapshots("any").expect("list").is_empty());
         assert!(mem.get_entry("any", "key").expect("get").is_none());
+    }
+
+    #[test]
+    fn test_user_scope_classification() {
+        assert_eq!(classify_data_scope("conversation"), UserScope::Private);
+        assert_eq!(classify_data_scope("messages"), UserScope::Private);
+        assert_eq!(classify_data_scope("procedural"), UserScope::Private);
+        assert_eq!(classify_data_scope("memory"), UserScope::Private);
+
+        assert_eq!(classify_data_scope("knowledge_chunks"), UserScope::Shared);
+        assert_eq!(classify_data_scope("knowledge_graph"), UserScope::Shared);
+        assert_eq!(classify_data_scope("templates"), UserScope::Shared);
+
+        assert_eq!(classify_data_scope("rate_limits"), UserScope::Replicated);
+        assert_eq!(classify_data_scope("active_nodes"), UserScope::Replicated);
+
+        // Unknown defaults to Private (safe)
+        assert_eq!(classify_data_scope("unknown_type"), UserScope::Private);
+    }
+
+    #[test]
+    fn test_sqlite_sessions_user_filtering() {
+        let (db, _tmp) = temp_db();
+        let store = SqliteSessionStore::new(&db);
+
+        // Create sessions for two different users (set user_id via SQL)
+        let mut s1 = ChatSession::new("Alice session");
+        s1.id = "alice_1".to_string();
+        s1.messages.push(ChatMessage::user("Hello from Alice"));
+        store.save_session(&s1).expect("save s1");
+        db.conn.execute(
+            "UPDATE sessions SET user_id = 'alice' WHERE id = 'alice_1'",
+            [],
+        ).expect("set user");
+
+        let mut s2 = ChatSession::new("Bob session");
+        s2.id = "bob_1".to_string();
+        s2.messages.push(ChatMessage::user("Hello from Bob"));
+        store.save_session(&s2).expect("save s2");
+        db.conn.execute(
+            "UPDATE sessions SET user_id = 'bob' WHERE id = 'bob_1'",
+            [],
+        ).expect("set user");
+
+        // Filter by user
+        let alice_sessions = store.list_sessions_for_user("alice").expect("alice");
+        assert_eq!(alice_sessions.len(), 1);
+        assert_eq!(alice_sessions[0].id, "alice_1");
+
+        let bob_sessions = store.list_sessions_for_user("bob").expect("bob");
+        assert_eq!(bob_sessions.len(), 1);
+        assert_eq!(bob_sessions[0].id, "bob_1");
+
+        // Unknown user returns empty
+        let unknown = store.list_sessions_for_user("charlie").expect("charlie");
+        assert!(unknown.is_empty());
     }
 }

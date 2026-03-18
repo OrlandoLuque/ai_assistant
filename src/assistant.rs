@@ -1213,6 +1213,67 @@ impl AiAssistant {
         self.procedural_store.as_ref()
     }
 
+    /// Load default builtin procedures (skip any whose ID already exists).
+    #[cfg(feature = "advanced-memory")]
+    pub fn load_default_procedures(&mut self) {
+        if self.procedural_store.is_none() {
+            self.enable_procedural_memory(50);
+        }
+        if let Some(ref mut store) = self.procedural_store {
+            store.load_defaults();
+        }
+    }
+
+    /// Create a versioned export of all procedures.
+    #[cfg(feature = "advanced-memory")]
+    pub fn export_procedures(&self) -> crate::advanced_memory::ProcedureExport {
+        match &self.procedural_store {
+            Some(store) => store.export("user"),
+            None => crate::advanced_memory::ProcedureExport::default(),
+        }
+    }
+
+    /// Export procedures to a JSON file.
+    #[cfg(feature = "advanced-memory")]
+    pub fn export_procedures_to_file(&self, path: &std::path::Path) -> Result<(), String> {
+        match &self.procedural_store {
+            Some(store) => store.export_to_file(path, "user"),
+            None => Err("Procedural memory not enabled".to_string()),
+        }
+    }
+
+    /// Import procedures from a versioned export.
+    #[cfg(feature = "advanced-memory")]
+    pub fn import_procedures(
+        &mut self,
+        export: &crate::advanced_memory::ProcedureExport,
+        options: &crate::advanced_memory::ProcedureImportOptions,
+    ) -> crate::advanced_memory::ProcedureImportResult {
+        if self.procedural_store.is_none() {
+            self.enable_procedural_memory(50);
+        }
+        match self.procedural_store.as_mut() {
+            Some(store) => store.import(export, options),
+            None => crate::advanced_memory::ProcedureImportResult::default(),
+        }
+    }
+
+    /// Import procedures from a JSON file.
+    #[cfg(feature = "advanced-memory")]
+    pub fn import_procedures_from_file(
+        &mut self,
+        path: &std::path::Path,
+        options: &crate::advanced_memory::ProcedureImportOptions,
+    ) -> Result<crate::advanced_memory::ProcedureImportResult, String> {
+        if self.procedural_store.is_none() {
+            self.enable_procedural_memory(50);
+        }
+        match self.procedural_store.as_mut() {
+            Some(store) => store.import_from_file(path, options),
+            None => Err("Procedural memory not enabled".to_string()),
+        }
+    }
+
     /// Build a `--- WORKFLOW GUIDELINES ---` section from procedures matching the
     /// user message. Returns an empty string if no procedures match or if
     /// procedural memory is disabled.

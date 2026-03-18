@@ -1365,7 +1365,7 @@ pub use persistence::{CacheEntry, PersistentCache};
 pub use unified_persistence::{
     ImportReport, MemoryEntry as UnifiedMemoryEntry, MemorySnapshot, MigrationReport,
     SchemaVersion, SessionSummary as UnifiedSessionSummary, SnapshotSummary, SqliteMemoryStore,
-    SqliteSessionStore, UnifiedDb,
+    SqliteSessionStore, UnifiedDb, UserScope, classify_data_scope,
 };
 
 #[cfg(feature = "rag")]
@@ -2065,7 +2065,8 @@ pub use advanced_memory::{
     Episode, EpisodicStore, EvolutionConfig, EvolutionReport, EvolutionStatistics,
     FactExtractor as MemoryFactExtractor, FactStore as MemoryFactStore, FeedbackOutcome,
     LlmFactExtractor, MemoryConsolidator, PatternFactExtractor, Procedure, ProceduralStore,
-    ProcedureEvolver, ProcedureFeedback, SemanticFact, TemporalEdge, TemporalEdgeType,
+    ProcedureCategory, ProcedureEvolver, ProcedureExport, ProcedureFeedback,
+    ProcedureImportOptions, ProcedureImportResult, SemanticFact, TemporalEdge, TemporalEdgeType,
     TemporalGraph, TemporalQuery, TemporalQueryType,
     cosine_similarity as memory_cosine_similarity, new_episode,
     AutoPersistenceConfig,
