@@ -9117,3 +9117,67 @@ ai.load_procedures(Path::new("procedures.json"), 50).unwrap();
 ```bash
 cargo test --features "full,autonomous,scheduler" --lib procedural
 ```
+
+## 160. V47 — Distributed Log Correlation
+
+### What
+Unified tracing and log correlation across distributed nodes. When work is distributed to multiple nodes, a shared trace context propagates through the entire operation, and all node logs are collected, merged, and presented in a single time-sorted view.
+
+### TraceContext Propagation
+Every distributed operation gets a unique `trace_id` (UUID). When the originating node sends work to remote nodes, it includes a `TraceContext` containing the `trace_id` and the originating `node_id`. Remote nodes use this context to tag all their log entries, ensuring every log line can be traced back to the original operation.
+
+### DistributedLogEntry Format
+Each log entry contains:
+- `trace_id` — shared across all nodes for one operation
+- `node_id` — which node produced this entry
+- `span_id` — sub-operation identifier within the node
+- `timestamp` — when the entry was created
+- `level` — Trace, Debug, Info, Warn, or Error
+- `operation` — human-readable description of what happened
+- `metadata` — optional key-value pairs for structured data
+
+### LogCollector
+The `LogCollector` buffers log entries from all nodes and provides:
+- `add_entry()` — add a local log entry
+- `merge_remote_logs()` — incorporate logs returned by remote nodes
+- `get_unified_view()` — returns all entries for a trace, sorted by timestamp
+- `export_json()` / `export_text()` / `export_csv()` — export in multiple formats
+- Automatic retention and eviction based on configuration limits
+
+### Configuration
+```rust
+use ai_assistant::{LogCollector, LogCorrelationConfig, LogLevel};
+
+let config = LogCorrelationConfig {
+    min_level: LogLevel::Info,         // Collect Info and above
+    share_logs: true,                   // Allow remote nodes to return logs
+    retention_secs: 3600,               // Keep logs for 1 hour
+    max_entries_per_trace: 10_000,      // Bound memory per trace
+};
+
+let mut collector = LogCollector::new(config);
+
+// Add local entries
+collector.add_entry(trace_id, "node-A", "span-1", LogLevel::Info, "Starting task distribution");
+
+// Merge logs received from remote nodes
+collector.merge_remote_logs(trace_id, remote_node_logs);
+
+// Get unified, time-sorted view
+let unified = collector.get_unified_view(trace_id);
+for entry in &unified {
+    println!("[{}] {} @ {}: {}", entry.level, entry.node_id, entry.timestamp, entry.operation);
+}
+
+// Export
+let json = collector.export_json(trace_id);
+let text = collector.export_text(trace_id);
+let csv = collector.export_csv(trace_id);
+```
+
+### Testing
+13 unit tests covering TraceContext propagation, LogCollector buffer/merge, DistributedLogEntry formatting, export formats (JSON/Text/CSV), configuration limits, retention, and level filtering.
+
+```bash
+cargo test --features "full,distributed-agents" --lib distributed_log
+```

@@ -6,7 +6,7 @@ The project has two testing layers:
 
 | Layer | Tests | Run Command |
 |-------|-------|-------------|
-| Unit tests (`#[test]`) | 6,864 | `cargo test --lib --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite,chaos-testing"` |
+| Unit tests (`#[test]`) | 6,887 | `cargo test --lib --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite,chaos-testing"` |
 | Integration tests | 38 | `cargo test --test integration_tests --features full` |
 | Test harness (CLI) | ~436 | `cargo run --bin ai_test_harness -- --all` (sin P2P) |
 | Distributed networking tests | 115 | `cargo test --features "full,distributed-network"` |
@@ -15,7 +15,7 @@ The project has two testing layers:
 | Test harness P2P categories | 16 | `cargo run --bin ai_test_harness --features "full,p2p" -- --category=p2p_nat` |
 | Benchmarks | 42 | `cargo bench --bench core_benchmarks --features full` |
 
-**Total: 6,864 tests** (lib tests, verified with `cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite,chaos-testing" --lib`)
+**Total: 6,887 tests** (lib tests, verified with `cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite,chaos-testing" --lib`)
 
 ## Quick Start
 
@@ -492,14 +492,15 @@ The harness exits with code 1 if any test fails, making it suitable for CI pipel
 | v38 (Resilience Engineering) | 5,002 | +110 | 2026-03-15 |
 | v39 (API Stability Hardening) | 6,864 | +1,827 | 2026-03-15 |
 | v40 (Testing & Debugging Infrastructure) | 6,864 | +0 | 2026-03-15 |
+| v47 (Distributed Log Correlation) | 6,887 | +23 | 2026-03-20 |
 
 > **Note on v37 count**: Test count reflects current `--lib` run. Some tests from v28-v36 were
 > in integration tests or feature combinations not included in the standard lib test run.
-> The project maintains 6,864 verified passing lib tests with 0 failures.
+> The project maintains 6,887 verified passing lib tests with 0 failures.
 >
 > **Note on v40-v41 count**: V40 adds 15 scored precision tests and harness infrastructure.
 > V41 adds 47 functional + 8 precision tests across 3 new graph quality categories.
-> These run as harness runtime tests (not `#[test]`), so the lib test count remains 6,864.
+> These run as harness runtime tests (not `#[test]`), so the lib test count remains 6,887.
 > The harness now runs 39 precision tests in addition to its ~483 functional tests.
 
 ### V38 — New Resilience Test Modules

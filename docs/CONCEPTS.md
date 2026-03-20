@@ -4109,3 +4109,13 @@ Workflow procedures can be exported as versioned JSON files (`ProcedureExport` w
 - **Replace all**: Clear the store and import fresh
 
 Optional confidence reset prevents stale confidence scores from a different environment from polluting local statistics. Six builtin default procedures (code review, pre-commit, deploy, bug investigation, documentation, testing) can be loaded via `load_defaults()` — they skip silently if a procedure with the same ID already exists, so user customizations are preserved.
+
+## 194. Distributed Log Correlation: Concept Overview
+
+When multiple nodes collaborate on a task, logs are scattered across machines. Without correlation, debugging distributed workflows requires manually cross-referencing timestamps and node identifiers — a tedious and error-prone process. Distributed Log Correlation solves this by propagating a shared `trace_id` through all participating nodes and merging their logs into a single, time-sorted view.
+
+## 195. Distributed Log Correlation: Unified Tracing Across Nodes
+
+When node A distributes work to nodes B and C, a `TraceContext` carries a shared `trace_id` that identifies the entire distributed operation. Each node logs using `DistributedLogEntry`, which combines the `trace_id` with a `node_id` (which node produced the log), a `span_id` (which sub-operation within that node), a `level` (Trace/Debug/Info/Warn/Error), and an `operation` description. Remote nodes return their logs alongside their task responses. The originating node then merges all logs via `LogCollector` into a unified, time-sorted view that spans every node involved in the operation.
+
+Configuration is flexible: operators can set the minimum log level to collect (e.g., only Warn+Error in production), whether remote nodes should share their logs at all, retention duration for completed traces, and maximum entries per trace to bound memory usage. Export formats include JSON (machine-readable), Text (human-readable), and CSV (spreadsheet/analysis).

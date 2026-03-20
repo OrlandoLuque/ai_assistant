@@ -22,8 +22,9 @@ Continúa con el desarrollo del proyecto. Lee docs/modus-operandi.md y el últim
 - **V43**: COMPLETE — FreshContext Total Integration + Fallback Chains (KG in core, overflow truncation, ReferenceResolver bilingüe EN+ES, auto-list tracking, guardrail catch_unwind, SQLite WAL mode, 18 fallback tests, UnifiedDb persistence + schema versioning + write-through sessions + memory store, DiskSpillBuffer, session recovery, 8 conversation quality scored tests)
 - **V44**: COMPLETE — Procedural Memory Integration (ProceduralStore wired into conversation pipeline, WORKFLOW GUIDELINES injection, outcome tracking, CRUD API, 10 tests)
 - **V45**: COMPLETE — Procedure Import/Export/Defaults + Multi-User Isolation (6 builtin procedures, versioned ProcedureExport, merge/replace import, UserScope classification, per-user session filtering, concepts 192-193)
-- **Latest**: V45 — Procedure Import/Export/Defaults + Multi-User Isolation (COMPLETE)
-- **Test count**: 6,874 lib tests (0 failures) + 39 harness precision + 18 fallback resilience + 8 conversation quality scored tests
+- **V47**: COMPLETE — Distributed Log Correlation (TraceContext propagation, LogCollector buffer+merge, DistributedLogEntry, export JSON/Text/CSV, concepts 194-195, 13 tests)
+- **Latest**: V47 — Distributed Log Correlation (COMPLETE)
+- **Test count**: 6,887 lib tests (0 failures) + 39 harness precision + 18 fallback resilience + 8 conversation quality scored tests
 - **Source files**: 320 .rs files, ~390K LOC
 - **Feature flags**: 55 (+1: chaos-testing)
 - **Status**: Experimental — compiles and passes tests, but not validated in production
@@ -214,5 +215,6 @@ cargo check --features "full,autonomous,scheduler,butler,browser,distributed-age
 
 | Repo | Content |
 |------|---------|
-| `ai_assistant` (this) | Rust crate source code + dev docs |
+| `ai_assistant` (this) | Rust crate source code + dev docs (full project, PolyForm Noncommercial) |
+| `ai_assistant_core` | **Separate crate** published on crates.io as "anzuelo" — lightweight LLM client (MIT/Apache-2.0). Path: `_varios/_dev/ai_assistant_core` |
 | `ai_assistant-website` | Landing page + interactive HTML docs (GitHub Pages) |
