@@ -16,6 +16,9 @@ pub struct CachedResponse {
     /// When the entry was created
     #[serde(skip)]
     pub created_at: Option<Instant>,
+    /// Last time this entry was accessed (for LRU eviction).
+    #[serde(skip)]
+    pub last_used: Option<Instant>,
     /// Time-to-live
     #[serde(skip)]
     pub ttl: Duration,
@@ -49,6 +52,7 @@ impl CachedResponse {
     /// Record a cache hit
     pub fn record_hit(&mut self) {
         self.hit_count += 1;
+        self.last_used = Some(Instant::now());
     }
 }
 
@@ -206,9 +210,11 @@ impl ResponseCache {
             .copied()
             .unwrap_or(self.config.default_ttl);
 
+        let now = Instant::now();
         let entry = CachedResponse {
             content: response.to_string(),
-            created_at: Some(Instant::now()),
+            created_at: Some(now),
+            last_used: Some(now),
             ttl,
             hit_count: 0,
             model: model.to_string(),
@@ -270,14 +276,19 @@ impl ResponseCache {
         self.last_cleanup = Instant::now();
     }
 
-    /// Evict the oldest entry
+    /// Evict the least recently used entry (LRU).
     fn evict_oldest(&mut self) {
-        if let Some((&oldest_fp, _)) = self
+        if let Some((&lru_fp, _)) = self
             .entries
             .iter()
-            .min_by_key(|(_, e)| e.created_at.map(|t| t.elapsed()).unwrap_or(Duration::MAX))
+            .min_by_key(|(_, e)| {
+                e.last_used
+                    .or(e.created_at)
+                    .map(|t| t.elapsed())
+                    .unwrap_or(Duration::MAX)
+            })
         {
-            self.entries.remove(&oldest_fp);
+            self.entries.remove(&lru_fp);
             self.stats.evicted += 1;
         }
     }

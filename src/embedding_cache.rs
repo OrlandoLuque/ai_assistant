@@ -15,6 +15,8 @@ use std::time::{Duration, Instant};
 pub struct EmbeddingCacheConfig {
     /// Maximum number of entries
     pub max_entries: usize,
+    /// Maximum total memory in bytes for cached embeddings (0 = unlimited).
+    pub max_memory_bytes: usize,
     /// Time-to-live for entries
     pub ttl: Duration,
     /// Enable LRU eviction
@@ -29,6 +31,7 @@ impl Default for EmbeddingCacheConfig {
     fn default() -> Self {
         Self {
             max_entries: 10000,
+            max_memory_bytes: 500 * 1024 * 1024, // 500 MB
             ttl: Duration::from_secs(3600 * 24), // 24 hours
             enable_lru: true,
             persist: false,
@@ -161,9 +164,14 @@ impl EmbeddingCache {
     pub fn set(&mut self, text: &str, model: &str, embedding: Vec<f32>) {
         let key = Self::compute_key(text, model);
 
-        // Check if we need to evict
-        if self.entries.len() >= self.config.max_entries {
-            self.evict_one();
+        // Check if we need to evict (by entry count or memory)
+        while self.entries.len() >= self.config.max_entries
+            || (self.config.max_memory_bytes > 0
+                && self.stats.memory_bytes > self.config.max_memory_bytes)
+        {
+            if !self.evict_one() {
+                break;
+            }
         }
 
         let entry = CacheEntry::new(embedding, model.to_string());
@@ -178,20 +186,18 @@ impl EmbeddingCache {
         );
     }
 
-    /// Evict one entry based on LRU
-    fn evict_one(&mut self) {
+    /// Evict one entry based on LRU. Returns true if an entry was evicted.
+    fn evict_one(&mut self) -> bool {
         if self.entries.is_empty() {
-            return;
+            return false;
         }
 
         let key_to_remove = if self.config.enable_lru {
-            // Find least recently used
             self.entries
                 .iter()
                 .min_by_key(|(_, entry)| entry.last_accessed)
                 .map(|(k, _)| *k)
         } else {
-            // Remove first entry
             self.entries.keys().next().copied()
         };
 
@@ -202,8 +208,10 @@ impl EmbeddingCache {
                     .memory_bytes
                     .saturating_sub(entry.embedding.len() * std::mem::size_of::<f32>());
                 self.stats.evictions += 1;
+                return true;
             }
         }
+        false
     }
 
     /// Clear all entries
