@@ -233,7 +233,7 @@ impl RoutingTable {
     }
 }
 
-/// Value stored in the DHT with metadata
+/// Value stored in the DHT with metadata and access tracking.
 #[derive(Clone, Debug)]
 pub struct DhtValue {
     pub data: Vec<u8>,
@@ -242,17 +242,31 @@ pub struct DhtValue {
     pub ttl: Option<Duration>,
     pub created_at: Instant,
     pub replicas: HashSet<NodeId>,
+    /// Last time this value was accessed (for LRU eviction).
+    pub last_accessed: Instant,
+    /// Number of times this value has been read.
+    pub access_count: u64,
+    /// Cached data size in bytes.
+    pub size_bytes: usize,
+    /// Priority: 0 = normal, >0 = pinned (never evicted by LRU).
+    pub priority: u8,
 }
 
 impl DhtValue {
     pub fn new(data: Vec<u8>, owner: NodeId) -> Self {
+        let size = data.len();
+        let now = Instant::now();
         Self {
             data,
             owner,
             version: 1,
             ttl: None,
-            created_at: Instant::now(),
+            created_at: now,
             replicas: HashSet::new(),
+            last_accessed: now,
+            access_count: 0,
+            size_bytes: size,
+            priority: 0,
         }
     }
 
@@ -261,11 +275,66 @@ impl DhtValue {
         self
     }
 
+    /// Mark as pinned (will not be evicted by cache policies).
+    pub fn pinned(mut self) -> Self {
+        self.priority = 1;
+        self
+    }
+
+    /// Record an access (updates last_accessed and access_count).
+    pub fn touch(&mut self) {
+        self.last_accessed = Instant::now();
+        self.access_count += 1;
+    }
+
     pub fn is_expired(&self) -> bool {
         if let Some(ttl) = self.ttl {
             self.created_at.elapsed() > ttl
         } else {
             false
+        }
+    }
+}
+
+/// Cache eviction policy for DHT storage.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum EvictionPolicy {
+    /// Least Recently Used — evict the entry accessed longest ago.
+    Lru,
+    /// Least Recently Written — evict the oldest entry by creation time.
+    Lrw,
+    /// Largest First — evict the largest entry by data size.
+    LargestFirst,
+}
+
+impl Default for EvictionPolicy {
+    fn default() -> Self {
+        Self::Lru
+    }
+}
+
+/// Cache configuration for DHT storage limits and eviction.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct DhtCacheConfig {
+    /// Maximum number of entries (0 = unlimited).
+    pub max_entries: usize,
+    /// Maximum total bytes across all entries (0 = unlimited).
+    pub max_bytes: usize,
+    /// Default TTL for entries without explicit TTL (None = no expiry).
+    pub default_ttl: Option<Duration>,
+    /// Eviction strategy when at capacity.
+    pub eviction_policy: EvictionPolicy,
+}
+
+impl Default for DhtCacheConfig {
+    fn default() -> Self {
+        Self {
+            max_entries: 10_000,
+            max_bytes: 100 * 1024 * 1024, // 100 MB
+            default_ttl: None,
+            eviction_policy: EvictionPolicy::Lru,
         }
     }
 }
@@ -284,6 +353,8 @@ pub struct DhtConfig {
     pub node_timeout: Duration,
     /// Value expiration check interval
     pub cleanup_interval: Duration,
+    /// Cache policies for storage limits and eviction.
+    pub cache: DhtCacheConfig,
 }
 
 impl Default for DhtConfig {
@@ -294,6 +365,7 @@ impl Default for DhtConfig {
             alpha: 3,
             node_timeout: Duration::from_secs(300),
             cleanup_interval: Duration::from_secs(60),
+            cache: DhtCacheConfig::default(),
         }
     }
 }
@@ -315,6 +387,14 @@ pub struct DhtStats {
     pub get_hits: u64,
     pub get_misses: u64,
     pub replications: u64,
+    /// Number of entries evicted by cache policy.
+    pub evictions: u64,
+    /// Number of entries expired by TTL.
+    pub expirations: u64,
+    /// Current total bytes stored.
+    pub current_bytes: usize,
+    /// Current number of entries.
+    pub current_entries: usize,
 }
 
 impl Dht {
@@ -341,10 +421,20 @@ impl Dht {
         }
     }
 
-    /// Store a value in the DHT
+    /// Store a value in the DHT (with automatic eviction if at capacity).
     pub fn put(&self, key: &str, value: Vec<u8>) -> NodeId {
         let key_id = NodeId::from_string(key);
-        let dht_value = DhtValue::new(value, self.local_id);
+        let mut dht_value = DhtValue::new(value, self.local_id);
+
+        // Apply default TTL if configured and no explicit TTL set
+        if dht_value.ttl.is_none() {
+            if let Some(default_ttl) = self.config.cache.default_ttl {
+                dht_value.ttl = Some(default_ttl);
+            }
+        }
+
+        // Evict if needed before inserting
+        self.evict_if_needed();
 
         let mut storage = self.storage.write().unwrap_or_else(|e| e.into_inner());
         storage.insert(key_id, dht_value);
@@ -354,6 +444,7 @@ impl Dht {
 
         let mut stats = self.stats.write().unwrap_or_else(|e| e.into_inner());
         stats.puts += 1;
+        self.update_size_stats(&mut stats);
 
         #[cfg(feature = "analytics")]
         crate::scalability_monitor::check_scalability(
@@ -378,16 +469,17 @@ impl Dht {
         key_id
     }
 
-    /// Get a value from the DHT
+    /// Get a value from the DHT (updates access tracking for LRU).
     pub fn get(&self, key: &str) -> Option<Vec<u8>> {
         let key_id = NodeId::from_string(key);
 
         let mut stats = self.stats.write().unwrap_or_else(|e| e.into_inner());
         stats.gets += 1;
 
-        let storage = self.storage.read().unwrap_or_else(|e| e.into_inner());
-        if let Some(value) = storage.get(&key_id) {
+        let mut storage = self.storage.write().unwrap_or_else(|e| e.into_inner());
+        if let Some(value) = storage.get_mut(&key_id) {
             if !value.is_expired() {
+                value.touch(); // Update LRU tracking
                 stats.get_hits += 1;
                 return Some(value.data.clone());
             }
@@ -432,12 +524,126 @@ impl Dht {
         let mut storage = self.storage.write().unwrap_or_else(|e| e.into_inner());
         let before = storage.len();
         storage.retain(|_, v| !v.is_expired());
-        before - storage.len()
+        let expired = before - storage.len();
+        drop(storage);
+
+        if expired > 0 {
+            let mut stats = self.stats.write().unwrap_or_else(|e| e.into_inner());
+            stats.expirations += expired as u64;
+            self.update_size_stats(&mut stats);
+        }
+
+        expired
+    }
+
+    /// Evict entries if storage exceeds configured limits.
+    ///
+    /// First removes expired entries, then evicts by policy (LRU/LRW/LargestFirst).
+    /// Pinned entries (priority > 0) are never evicted.
+    pub fn evict_if_needed(&self) {
+        let max_entries = self.config.cache.max_entries;
+        let max_bytes = self.config.cache.max_bytes;
+
+        if max_entries == 0 && max_bytes == 0 {
+            return; // No limits configured
+        }
+
+        // First pass: remove expired
+        {
+            let mut storage = self.storage.write().unwrap_or_else(|e| e.into_inner());
+            let before = storage.len();
+            storage.retain(|_, v| !v.is_expired());
+            let expired = before - storage.len();
+            if expired > 0 {
+                let mut stats = self.stats.write().unwrap_or_else(|e| e.into_inner());
+                stats.expirations += expired as u64;
+            }
+        }
+
+        // Check if still over limits
+        let storage = self.storage.read().unwrap_or_else(|e| e.into_inner());
+        let current_entries = storage.len();
+        let current_bytes: usize = storage.values().map(|v| v.size_bytes).sum();
+
+        // Account for the upcoming insert (+1 entry)
+        let over_entries = max_entries > 0 && current_entries >= max_entries;
+        let over_bytes = max_bytes > 0 && current_bytes > max_bytes;
+
+        if !over_entries && !over_bytes {
+            return;
+        }
+
+        // Collect eviction candidates (non-pinned), sorted by policy
+        let mut candidates: Vec<(NodeId, Instant, Instant, usize)> = storage
+            .iter()
+            .filter(|(_, v)| v.priority == 0) // Never evict pinned
+            .map(|(k, v)| (*k, v.last_accessed, v.created_at, v.size_bytes))
+            .collect();
+        drop(storage);
+
+        // Sort by eviction policy
+        match self.config.cache.eviction_policy {
+            EvictionPolicy::Lru => candidates.sort_by_key(|(_, la, _, _)| *la), // oldest access first
+            EvictionPolicy::Lrw => candidates.sort_by_key(|(_, _, ca, _)| *ca), // oldest creation first
+            EvictionPolicy::LargestFirst => candidates.sort_by(|a, b| b.3.cmp(&a.3)), // largest first
+        }
+
+        // Evict until under limits
+        let mut to_evict = Vec::new();
+        let mut freed_entries = 0;
+        let mut freed_bytes = 0usize;
+
+        for (key, _, _, size) in &candidates {
+            let still_over_entries = max_entries > 0 && (current_entries - freed_entries) >= max_entries;
+            let still_over_bytes = max_bytes > 0 && (current_bytes - freed_bytes) > max_bytes;
+
+            if !still_over_entries && !still_over_bytes {
+                break;
+            }
+
+            to_evict.push(*key);
+            freed_entries += 1;
+            freed_bytes += size;
+        }
+
+        if !to_evict.is_empty() {
+            let mut storage = self.storage.write().unwrap_or_else(|e| e.into_inner());
+            for key in &to_evict {
+                storage.remove(key);
+            }
+            drop(storage);
+
+            let mut stats = self.stats.write().unwrap_or_else(|e| e.into_inner());
+            stats.evictions += to_evict.len() as u64;
+            self.update_size_stats(&mut stats);
+        }
+    }
+
+    /// Update current_bytes and current_entries in stats.
+    fn update_size_stats(&self, stats: &mut DhtStats) {
+        let storage = self.storage.read().unwrap_or_else(|e| e.into_inner());
+        stats.current_entries = storage.len();
+        stats.current_bytes = storage.values().map(|v| v.size_bytes).sum();
+    }
+
+    /// Get the cache hit rate (0.0 to 1.0).
+    pub fn hit_rate(&self) -> f64 {
+        let stats = self.stats.read().unwrap_or_else(|e| e.into_inner());
+        if stats.gets == 0 {
+            0.0
+        } else {
+            stats.get_hits as f64 / stats.gets as f64
+        }
     }
 
     /// Get statistics
     pub fn stats(&self) -> DhtStats {
-        self.stats.read().unwrap_or_else(|e| e.into_inner()).clone()
+        let mut s = self.stats.read().unwrap_or_else(|e| e.into_inner()).clone();
+        // Refresh size stats
+        let storage = self.storage.read().unwrap_or_else(|e| e.into_inner());
+        s.current_entries = storage.len();
+        s.current_bytes = storage.values().map(|v| v.size_bytes).sum();
+        s
     }
 
     /// Get all keys (for iteration)
@@ -1470,6 +1676,12 @@ pub enum NodeMessage {
         request_id: u64,
     },
 
+    // --- Cache Invalidation ---
+    /// Invalidate a cached key across the cluster.
+    Invalidate { key: String, version: u64 },
+    /// Acknowledgement of invalidation.
+    InvalidateAck { key: String, success: bool },
+
     // --- Distributed Log Correlation ---
     /// Request log entries for a specific trace from a remote node.
     LogRequest {
@@ -1910,5 +2122,140 @@ mod tests {
         // Should create multiple chunks
         let (_, total, _, _) = job.progress();
         assert!(total > 1);
+    }
+
+    // ── DHT Cache Policy Tests ──────────────────────────────────
+
+    #[test]
+    fn test_dht_cache_max_entries() {
+        let mut config = DhtConfig::default();
+        config.cache.max_entries = 3;
+        let dht = Dht::new(config);
+
+        for i in 0..5 {
+            dht.put(&format!("key{}", i), vec![i as u8; 10]);
+        }
+
+        let stats = dht.stats();
+        assert!(stats.current_entries <= 3, "Should evict to stay under max_entries");
+        assert!(stats.evictions > 0, "Should have evicted some entries");
+    }
+
+    #[test]
+    fn test_dht_cache_max_bytes() {
+        let mut config = DhtConfig::default();
+        config.cache.max_bytes = 100;
+        config.cache.max_entries = 0; // No entry limit
+        let dht = Dht::new(config);
+
+        for i in 0..20 {
+            dht.put(&format!("key{}", i), vec![i as u8; 20]); // 20 bytes each
+        }
+
+        let stats = dht.stats();
+        // Should be around max_bytes + one entry (eviction happens before insert)
+        assert!(stats.current_bytes <= 120, "Should evict to stay near max_bytes: got {}", stats.current_bytes);
+        assert!(stats.evictions > 0, "Should have evicted some entries");
+    }
+
+    #[test]
+    fn test_dht_cache_lru_eviction() {
+        let mut config = DhtConfig::default();
+        config.cache.max_entries = 3;
+        config.cache.eviction_policy = EvictionPolicy::Lru;
+        let dht = Dht::new(config);
+
+        dht.put("a", b"aaa".to_vec());
+        dht.put("b", b"bbb".to_vec());
+        dht.put("c", b"ccc".to_vec());
+
+        // Access "a" to make it recently used
+        dht.get("a");
+
+        // Insert "d" — should evict "b" (least recently accessed)
+        dht.put("d", b"ddd".to_vec());
+
+        assert!(dht.get("a").is_some(), "a should survive (recently accessed)");
+        assert!(dht.get("c").is_some() || dht.get("d").is_some(), "c or d should exist");
+    }
+
+    #[test]
+    fn test_dht_cache_pinned_not_evicted() {
+        let mut config = DhtConfig::default();
+        config.cache.max_entries = 2;
+        let dht = Dht::new(config);
+
+        // Insert pinned value
+        let key_id = NodeId::from_string("pinned");
+        let pinned_value = DhtValue::new(b"important".to_vec(), dht.local_id).pinned();
+        {
+            let mut storage = dht.storage.write().unwrap();
+            storage.insert(key_id, pinned_value);
+        }
+
+        // Fill with normal values
+        dht.put("normal1", b"x".to_vec());
+        dht.put("normal2", b"y".to_vec());
+        dht.put("normal3", b"z".to_vec());
+
+        // Pinned should still exist
+        let storage = dht.storage.read().unwrap();
+        assert!(storage.contains_key(&key_id), "Pinned entry should not be evicted");
+    }
+
+    #[test]
+    fn test_dht_cache_expired_evicted_first() {
+        let mut config = DhtConfig::default();
+        config.cache.max_entries = 3;
+        let dht = Dht::new(config);
+
+        // Insert expired value
+        dht.put_with_ttl("expired", b"old".to_vec(), Duration::from_millis(1));
+        dht.put("fresh1", b"new1".to_vec());
+        dht.put("fresh2", b"new2".to_vec());
+
+        std::thread::sleep(Duration::from_millis(10));
+
+        // Insert one more — expired should be cleaned first
+        dht.put("fresh3", b"new3".to_vec());
+
+        let stats = dht.stats();
+        assert!(stats.expirations > 0, "Should have expired entries");
+    }
+
+    #[test]
+    fn test_dht_cache_stats_tracking() {
+        let dht = Dht::new(DhtConfig::default());
+
+        dht.put("k1", b"v1".to_vec());
+        dht.put("k2", b"v2".to_vec());
+
+        dht.get("k1"); // hit
+        dht.get("k1"); // hit
+        dht.get("missing"); // miss
+
+        let stats = dht.stats();
+        assert_eq!(stats.puts, 2);
+        assert_eq!(stats.gets, 3);
+        assert_eq!(stats.get_hits, 2);
+        assert_eq!(stats.get_misses, 1);
+        assert_eq!(stats.current_entries, 2);
+        assert!(stats.current_bytes > 0);
+
+        let hr = dht.hit_rate();
+        assert!((hr - 2.0 / 3.0).abs() < 0.01, "Hit rate should be ~0.67, got {}", hr);
+    }
+
+    #[test]
+    fn test_dht_cache_default_ttl() {
+        let mut config = DhtConfig::default();
+        config.cache.default_ttl = Some(Duration::from_millis(1));
+        let dht = Dht::new(config);
+
+        dht.put("auto_expire", b"data".to_vec());
+        assert!(dht.get("auto_expire").is_some());
+
+        std::thread::sleep(Duration::from_millis(10));
+        assert!(dht.get("auto_expire").is_none(), "Should expire with default TTL");
     }
 }

@@ -1455,6 +1455,18 @@ impl EventLoop {
             }
             NodeMessage::VectorSearchResponse { .. } => None,
 
+            // Cache invalidation
+            NodeMessage::Invalidate { key, .. } => {
+                let key_id = crate::distributed::NodeId::from_string(key);
+                let mut store = storage.write().unwrap_or_else(|e| e.into_inner());
+                let success = store.remove(&key_id.to_string()).is_some();
+                Some(NodeMessage::InvalidateAck {
+                    key: key.clone(),
+                    success,
+                })
+            }
+            NodeMessage::InvalidateAck { .. } => None,
+
             // Log correlation: handled at application layer via MessageReceived event.
             // The LogCollector lives outside the event loop; the application matches
             // LogRequest and returns logs from its collector.
