@@ -415,6 +415,7 @@ pub struct MetricsExport {
 pub struct CacheEntry<T> {
     pub data: T,
     pub created_at: Instant,
+    pub last_accessed: Instant,
     pub hits: usize,
 }
 
@@ -439,6 +440,7 @@ impl<T: Clone> SearchCache<T> {
         if let Some(entry) = self.entries.get_mut(key) {
             if entry.created_at.elapsed() < self.ttl {
                 entry.hits += 1;
+                entry.last_accessed = Instant::now();
                 return Some(entry.data.clone());
             } else {
                 // Expired, remove it
@@ -455,11 +457,13 @@ impl<T: Clone> SearchCache<T> {
             self.evict_oldest();
         }
 
+        let now = Instant::now();
         self.entries.insert(
             key,
             CacheEntry {
                 data,
-                created_at: Instant::now(),
+                created_at: now,
+                last_accessed: now,
                 hits: 0,
             },
         );
@@ -471,15 +475,15 @@ impl<T: Clone> SearchCache<T> {
             .retain(|_, entry| entry.created_at.elapsed() < self.ttl);
     }
 
-    /// Evict the oldest entry
+    /// Evict the least recently accessed entry (LRU).
     fn evict_oldest(&mut self) {
-        if let Some(oldest_key) = self
+        if let Some(lru_key) = self
             .entries
             .iter()
-            .min_by_key(|(_, e)| e.created_at)
+            .min_by_key(|(_, e)| e.last_accessed)
             .map(|(k, _)| k.clone())
         {
-            self.entries.remove(&oldest_key);
+            self.entries.remove(&lru_key);
         }
     }
 
