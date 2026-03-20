@@ -1232,13 +1232,15 @@ mod tests {
         let (db, _tmp) = temp_db();
         let store = SqliteSessionStore::new(&db);
 
-        // Create two sessions
+        // Create two sessions (explicit IDs to avoid timestamp collision)
         let mut s1 = ChatSession::new("Alpha session");
+        s1.id = "list_search_alpha".to_string();
         s1.messages
             .push(ChatMessage::user("Tell me about quantum computing"));
         store.save_session(&s1).expect("save s1");
 
         let mut s2 = ChatSession::new("Beta session");
+        s2.id = "list_search_beta".to_string();
         s2.messages
             .push(ChatMessage::user("What is machine learning?"));
         store.save_session(&s2).expect("save s2");

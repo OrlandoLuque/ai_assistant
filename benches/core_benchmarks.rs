@@ -2,40 +2,82 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use std::collections::HashMap;
 
 use ai_assistant::{
-    ChatMessage, CompactableMessage, CompressionAlgorithm, ContentLengthGuard, ContextMessage,
-    ContextWindow, ContextWindowConfig, ConversationCompactor, ConversationTemplate,
-    GuardrailPipeline, HtmlExtractionConfig, HtmlExtractor, IntentClassifier, PatternGuard,
-    PromptShortener, RequestSigner, SentimentAnalyzer, ServerRateLimiter, SignatureAlgorithm,
-    TemplateCategory, TextTransformer, Transform, WsFrame,
-    // v14 benchmark imports
-    ChunkingConfig, SmartChunker,
-    RagDb, KnowledgeChunk, KnowledgeUsage,
-    EmbeddingConfig, LocalEmbedder,
-    HnswConfig, HnswIndex,
-    KnowledgeGraphStore, KnowledgeGraphConfig, KGEntityType,
     parse_tool_calls,
-    PiiDetector, PiiConfig,
-    JsonSchema, SchemaProperty,
-    // v15 benchmark imports
-    NeuralCrossEncoderReranker, RerankerConfig, RerankerPipeline, ScoredDocument,
-    SemanticCache, CacheConfig,
-    FullExport, ChatSession, UserPreferences, AiConfig,
-    ContextComposer, ContextSection,
+    AiConfig,
     // v16 benchmark imports
     AttackDetector,
-    AttackGuard, ToxicityGuard, PiiGuard, RateLimitGuard,
-    InMemoryVectorDb, VectorDb, VectorDbConfig, DistanceMetric,
-    BpeTokenCounter, TokenCounter,
+    AttackGuard,
+    BpeTokenCounter,
+    CacheConfig,
+    ChatMessage,
+    ChatSession,
+    // v14 benchmark imports
+    ChunkingConfig,
+    CompactableMessage,
+    CompressionAlgorithm,
+    ContentLengthGuard,
+    ContextComposer,
+    ContextMessage,
+    ContextSection,
+    ContextWindow,
+    ContextWindowConfig,
+    ConversationCompactor,
+    ConversationTemplate,
+    DistanceMetric,
+    EmbeddingConfig,
+    FullExport,
+    GuardrailPipeline,
+    HnswConfig,
+    HnswIndex,
+    HtmlExtractionConfig,
+    HtmlExtractor,
+    InMemoryVectorDb,
+    IntentClassifier,
+    JsonSchema,
+    KGEntityType,
+    KnowledgeChunk,
+    KnowledgeGraphConfig,
+    KnowledgeGraphStore,
+    KnowledgeUsage,
+    LocalEmbedder,
+    // v15 benchmark imports
+    NeuralCrossEncoderReranker,
+    PatternGuard,
+    PiiConfig,
+    PiiDetector,
+    PiiGuard,
+    PromptShortener,
+    RagDb,
+    RateLimitGuard,
+    RequestSigner,
+    RerankerConfig,
+    RerankerPipeline,
+    SchemaProperty,
+    ScoredDocument,
+    SemanticCache,
+    SentimentAnalyzer,
+    ServerRateLimiter,
+    SignatureAlgorithm,
+    SmartChunker,
+    TemplateCategory,
+    TextTransformer,
+    TokenCounter,
+    ToxicityGuard,
+    Transform,
+    UserPreferences,
+    VectorDb,
+    VectorDbConfig,
+    WsFrame,
 };
 
 #[cfg(feature = "constrained-decoding")]
 use ai_assistant::SchemaToGrammar;
 
 #[cfg(feature = "multi-agent")]
-use ai_assistant::{TaskDecomposer, DecompositionStrategy};
+use ai_assistant::{DecompositionStrategy, TaskDecomposer};
 
 #[cfg(feature = "distributed")]
-use ai_assistant::{MapReduceBuilder, DataChunk, RoutingTable, NodeId, DhtNode, GCounter};
+use ai_assistant::{DataChunk, DhtNode, GCounter, MapReduceBuilder, NodeId, RoutingTable};
 
 #[cfg(feature = "distributed")]
 use std::net::SocketAddr;
@@ -76,8 +118,14 @@ fn bench_conversation_compaction(c: &mut Criterion) {
             let messages: Vec<CompactableMessage> = (0..100)
                 .map(|i| {
                     let role = if i % 2 == 0 { "user" } else { "assistant" };
-                    CompactableMessage::new(role, &format!("Message number {} with some content to make it realistic.", i))
-                        .with_importance(0.3 + (i as f64 % 10.0) * 0.07)
+                    CompactableMessage::new(
+                        role,
+                        &format!(
+                            "Message number {} with some content to make it realistic.",
+                            i
+                        ),
+                    )
+                    .with_importance(0.3 + (i as f64 % 10.0) * 0.07)
                 })
                 .collect();
             let _ = compactor.compact(messages);
@@ -134,10 +182,13 @@ fn bench_sha256_signing(c: &mut Criterion) {
 }
 
 fn bench_template_rendering(c: &mut Criterion) {
-    let template = ConversationTemplate::new("bench", "Benchmark Template", TemplateCategory::Learning)
-        .with_system_prompt("You are a tutor teaching {topic} at {level} level using {language}.")
-        .with_starter("Explain {topic} for a {level} student in {language}.")
-        .with_starter("Give a {language} example of {topic}.");
+    let template =
+        ConversationTemplate::new("bench", "Benchmark Template", TemplateCategory::Learning)
+            .with_system_prompt(
+                "You are a tutor teaching {topic} at {level} level using {language}.",
+            )
+            .with_starter("Explain {topic} for a {level} student in {language}.")
+            .with_starter("Give a {language} example of {topic}.");
 
     let mut vars = HashMap::new();
     vars.insert("topic".to_string(), "algorithms".to_string());
@@ -309,7 +360,10 @@ fn bench_context_window_trim(c: &mut Criterion) {
             for i in 0..50 {
                 window.add(ContextMessage::new(
                     if i % 2 == 0 { "user" } else { "assistant" },
-                    &format!("This is message number {} with enough content to use tokens.", i),
+                    &format!(
+                        "This is message number {} with enough content to use tokens.",
+                        i
+                    ),
                 ));
             }
         });
@@ -418,11 +472,7 @@ fn bench_hnsw_vector_search(c: &mut Criterion) {
         let vec: Vec<f32> = (0..128)
             .map(|d| ((i * 128 + d) as f32 * 0.01).sin())
             .collect();
-        index.insert(
-            &format!("vec_{}", i),
-            vec,
-            serde_json::json!({"idx": i}),
-        );
+        index.insert(&format!("vec_{}", i), vec, serde_json::json!({"idx": i}));
     }
 
     let query: Vec<f32> = (0..128).map(|d| (d as f32 * 0.05).cos()).collect();
@@ -436,18 +486,14 @@ fn bench_hnsw_vector_search(c: &mut Criterion) {
 
 fn bench_knowledge_graph_traversal(c: &mut Criterion) {
     let config = KnowledgeGraphConfig::default();
-    let store = KnowledgeGraphStore::in_memory(config)
-        .expect("create in-memory knowledge graph store");
+    let store =
+        KnowledgeGraphStore::in_memory(config).expect("create in-memory knowledge graph store");
 
     // Build a graph with 100 nodes and ~200 edges
     let mut entity_ids = Vec::new();
     for i in 0..100 {
         let id = store
-            .get_or_create_entity(
-                &format!("Entity_{}", i),
-                KGEntityType::Concept,
-                &[],
-            )
+            .get_or_create_entity(&format!("Entity_{}", i), KGEntityType::Concept, &[])
             .expect("create entity");
         entity_ids.push(id);
     }
@@ -558,10 +604,7 @@ fn bench_json_schema_validation(c: &mut Criterion) {
             "email",
             SchemaProperty::string().with_pattern(r"^[a-zA-Z0-9+_.-]+@[a-zA-Z0-9.-]+$"),
         )
-        .with_property(
-            "tags",
-            SchemaProperty::array(SchemaProperty::string()),
-        )
+        .with_property("tags", SchemaProperty::array(SchemaProperty::string()))
         .with_property("address", SchemaProperty::object());
 
     c.bench_function("json_schema_to_prompt", |b| {
@@ -669,24 +712,63 @@ fn bench_constrained_decoding_grammar(c: &mut Criterion) {
 
 fn bench_reranker_score(c: &mut Criterion) {
     let reranker = NeuralCrossEncoderReranker::default_scorer();
-    let pipeline = RerankerPipeline::new()
-        .add_stage(Box::new(reranker));
+    let pipeline = RerankerPipeline::new().add_stage(Box::new(reranker));
     let mut config = RerankerConfig::default();
     config.top_k = 5;
     config.diversity_lambda = 0.5;
     config.min_score = 0.0;
 
     let docs: Vec<ScoredDocument> = vec![
-        ScoredDocument::new("Rust ownership system prevents memory leaks at compile time", 0.9, 0),
-        ScoredDocument::new("Python garbage collector handles memory management automatically", 0.85, 1),
-        ScoredDocument::new("The borrow checker enforces strict aliasing rules in Rust", 0.8, 2),
-        ScoredDocument::new("JavaScript uses a mark-and-sweep garbage collector for memory", 0.75, 3),
-        ScoredDocument::new("Rust traits are similar to interfaces in other languages", 0.7, 4),
-        ScoredDocument::new("Go goroutines provide lightweight concurrency primitives", 0.65, 5),
-        ScoredDocument::new("Async/await in Rust compiles to state machines for zero-cost futures", 0.6, 6),
-        ScoredDocument::new("C++ RAII pattern ensures resources are released when objects go out of scope", 0.55, 7),
-        ScoredDocument::new("Rust lifetimes ensure references never outlive the data they point to", 0.5, 8),
-        ScoredDocument::new("Java virtual machine performs just-in-time compilation for performance", 0.45, 9),
+        ScoredDocument::new(
+            "Rust ownership system prevents memory leaks at compile time",
+            0.9,
+            0,
+        ),
+        ScoredDocument::new(
+            "Python garbage collector handles memory management automatically",
+            0.85,
+            1,
+        ),
+        ScoredDocument::new(
+            "The borrow checker enforces strict aliasing rules in Rust",
+            0.8,
+            2,
+        ),
+        ScoredDocument::new(
+            "JavaScript uses a mark-and-sweep garbage collector for memory",
+            0.75,
+            3,
+        ),
+        ScoredDocument::new(
+            "Rust traits are similar to interfaces in other languages",
+            0.7,
+            4,
+        ),
+        ScoredDocument::new(
+            "Go goroutines provide lightweight concurrency primitives",
+            0.65,
+            5,
+        ),
+        ScoredDocument::new(
+            "Async/await in Rust compiles to state machines for zero-cost futures",
+            0.6,
+            6,
+        ),
+        ScoredDocument::new(
+            "C++ RAII pattern ensures resources are released when objects go out of scope",
+            0.55,
+            7,
+        ),
+        ScoredDocument::new(
+            "Rust lifetimes ensure references never outlive the data they point to",
+            0.5,
+            8,
+        ),
+        ScoredDocument::new(
+            "Java virtual machine performs just-in-time compilation for performance",
+            0.45,
+            9,
+        ),
     ];
 
     c.bench_function("reranker_score_10_docs", |b| {
@@ -702,7 +784,10 @@ fn bench_semantic_cache_lookup(c: &mut Criterion) {
 
     // Pre-populate the cache with 50 entries, each with a synthetic embedding
     for i in 0..50 {
-        let query = format!("What is the meaning of concept number {} in machine learning?", i);
+        let query = format!(
+            "What is the meaning of concept number {} in machine learning?",
+            i
+        );
         let model = "test-model";
         let response = format!("Concept {} refers to an important topic in ML involving neural networks and transformers.", i);
         let embedding: Vec<f32> = (0..128)
@@ -736,7 +821,10 @@ fn bench_persistence_roundtrip(c: &mut Criterion) {
                 let msg = if j % 2 == 0 {
                     ChatMessage::user(&format!("User message {} in session {}", j, i))
                 } else {
-                    ChatMessage::assistant(&format!("Assistant response {} in session {} with enough content to be realistic.", j, i))
+                    ChatMessage::assistant(&format!(
+                        "Assistant response {} in session {} with enough content to be realistic.",
+                        j, i
+                    ))
                 };
                 session.messages.push(msg);
             }
@@ -777,14 +865,16 @@ fn bench_context_composer_build(c: &mut Criterion) {
 
     // Prepare content for each section
     let system_prompt = "You are a helpful coding assistant specializing in Rust \
-        systems programming. Follow best practices for safety and performance.".to_string();
+        systems programming. Follow best practices for safety and performance."
+        .to_string();
 
     let rag_chunks = "## Retrieved Knowledge\n\
         Chunk 1: Rust ownership ensures each value has exactly one owner at a time.\n\
         Chunk 2: The borrow checker prevents data races at compile time.\n\
         Chunk 3: Lifetimes annotate how long references remain valid.\n\
         Chunk 4: Smart pointers like Box, Rc, and Arc provide heap allocation.\n\
-        Chunk 5: Traits enable polymorphism through static and dynamic dispatch.".to_string();
+        Chunk 5: Traits enable polymorphism through static and dynamic dispatch."
+        .to_string();
 
     let conversation = "User: How does Rust handle memory safety?\n\
         Assistant: Rust uses ownership, borrowing, and lifetimes to guarantee memory safety.\n\
@@ -794,14 +884,17 @@ fn bench_context_composer_build(c: &mut Criterion) {
         Assistant: Rust uses Send and Sync traits plus Arc<Mutex<T>> for safe concurrency.\n\
         User: How do lifetimes work with structs?\n\
         Assistant: Structs holding references need lifetime parameters.\n\
-        User: Show me an example of a lifetime annotation.".to_string();
+        User: Show me an example of a lifetime annotation."
+        .to_string();
 
     let memory_context = "User prefers concise code examples. \
         User is experienced with C++ and learning Rust. \
-        Previous topics: async/await, error handling, trait objects.".to_string();
+        Previous topics: async/await, error handling, trait objects."
+        .to_string();
 
     let user_prompt = "Explain how to implement a thread-safe cache in Rust \
-        using Arc and RwLock, with lifetime considerations.".to_string();
+        using Arc and RwLock, with lifetime considerations."
+        .to_string();
 
     c.bench_function("context_composer_build_5_sections", |b| {
         b.iter(|| {
@@ -881,11 +974,7 @@ fn bench_vector_db_search_euclidean(c: &mut Criterion) {
         let vec: Vec<f32> = (0..128)
             .map(|d| ((i * 128 + d) as f32 * 0.01).sin())
             .collect();
-        let _ = db.insert(
-            &format!("vec_{}", i),
-            vec,
-            serde_json::json!({"idx": i}),
-        );
+        let _ = db.insert(&format!("vec_{}", i), vec, serde_json::json!({"idx": i}));
     }
 
     let query: Vec<f32> = (0..128).map(|d| (d as f32 * 0.05).cos()).collect();
@@ -1067,10 +1156,7 @@ criterion_group!(
 );
 
 #[cfg(feature = "multi-agent")]
-criterion_group!(
-    multi_agent_benches,
-    bench_multi_agent_decompose,
-);
+criterion_group!(multi_agent_benches, bench_multi_agent_decompose,);
 
 #[cfg(feature = "distributed")]
 criterion_group!(
@@ -1081,26 +1167,63 @@ criterion_group!(
 );
 
 // criterion_main — combinatorial cfg for all optional benchmark groups
-#[cfg(all(feature = "constrained-decoding", feature = "multi-agent", feature = "distributed"))]
-criterion_main!(benches, constrained_decoding_benches, multi_agent_benches, distributed_benches);
+#[cfg(all(
+    feature = "constrained-decoding",
+    feature = "multi-agent",
+    feature = "distributed"
+))]
+criterion_main!(
+    benches,
+    constrained_decoding_benches,
+    multi_agent_benches,
+    distributed_benches
+);
 
-#[cfg(all(feature = "constrained-decoding", feature = "multi-agent", not(feature = "distributed")))]
+#[cfg(all(
+    feature = "constrained-decoding",
+    feature = "multi-agent",
+    not(feature = "distributed")
+))]
 criterion_main!(benches, constrained_decoding_benches, multi_agent_benches);
 
-#[cfg(all(feature = "constrained-decoding", not(feature = "multi-agent"), feature = "distributed"))]
+#[cfg(all(
+    feature = "constrained-decoding",
+    not(feature = "multi-agent"),
+    feature = "distributed"
+))]
 criterion_main!(benches, constrained_decoding_benches, distributed_benches);
 
-#[cfg(all(feature = "constrained-decoding", not(feature = "multi-agent"), not(feature = "distributed")))]
+#[cfg(all(
+    feature = "constrained-decoding",
+    not(feature = "multi-agent"),
+    not(feature = "distributed")
+))]
 criterion_main!(benches, constrained_decoding_benches);
 
-#[cfg(all(not(feature = "constrained-decoding"), feature = "multi-agent", feature = "distributed"))]
+#[cfg(all(
+    not(feature = "constrained-decoding"),
+    feature = "multi-agent",
+    feature = "distributed"
+))]
 criterion_main!(benches, multi_agent_benches, distributed_benches);
 
-#[cfg(all(not(feature = "constrained-decoding"), feature = "multi-agent", not(feature = "distributed")))]
+#[cfg(all(
+    not(feature = "constrained-decoding"),
+    feature = "multi-agent",
+    not(feature = "distributed")
+))]
 criterion_main!(benches, multi_agent_benches);
 
-#[cfg(all(not(feature = "constrained-decoding"), not(feature = "multi-agent"), feature = "distributed"))]
+#[cfg(all(
+    not(feature = "constrained-decoding"),
+    not(feature = "multi-agent"),
+    feature = "distributed"
+))]
 criterion_main!(benches, distributed_benches);
 
-#[cfg(all(not(feature = "constrained-decoding"), not(feature = "multi-agent"), not(feature = "distributed")))]
+#[cfg(all(
+    not(feature = "constrained-decoding"),
+    not(feature = "multi-agent"),
+    not(feature = "distributed")
+))]
 criterion_main!(benches);
