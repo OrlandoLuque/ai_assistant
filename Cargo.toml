@@ -242,6 +242,9 @@ whisper-local = ["dep:whisper-rs", "audio"]
 gui = ["dep:eframe", "dep:rfd", "dep:petgraph", "egui-widgets", "rag", "butler"]
 
 # Desktop GUI Pro: full library + all optional features wired into the GUI.
+# Run: cargo run --bin ai_logs_gui --features gui-logs
+gui-logs = ["dep:eframe", "distributed-network"]
+
 # Run: cargo run --bin ai_gui-pro --features gui-pro
 gui-pro = [
     "gui", "full",
@@ -388,6 +391,11 @@ required-features = ["rag"]
 name = "ai_logs"
 path = "src/bin/ai_logs.rs"
 required-features = ["distributed-network"]
+
+[[bin]]
+name = "ai_logs_gui"
+path = "src/bin/ai_logs_gui.rs"
+required-features = ["gui-logs"]
 
 [[bin]]
 name = "ai_cli"
