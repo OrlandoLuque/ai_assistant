@@ -521,8 +521,10 @@ pub use distributed::{
     NodeId,
     ORSet,
     PNCounter,
+    NodeCapabilities,
     ReduceOutput,
     RoutingTable,
+    fnv1a_hash,
 };
 
 #[cfg(feature = "distributed-network")]
@@ -558,7 +560,9 @@ pub use distributed_network::{
     NetworkStats, PeerState as NetworkPeerState, ReplicationConfig, RingInfo, WriteMode,
 };
 #[cfg(feature = "distributed-network")]
-pub use failure_detector::{HeartbeatConfig, HeartbeatManager, NodeStatus, PhiAccrualDetector};
+pub use failure_detector::{
+    FailureClassification, HeartbeatConfig, HeartbeatManager, NodeStatus, PhiAccrualDetector,
+};
 #[cfg(feature = "distributed-network")]
 pub use merkle_sync::{AntiEntropySync, MerkleProof, MerkleTree, SyncDelta as MerkleSyncDelta};
 #[cfg(feature = "distributed-network")]

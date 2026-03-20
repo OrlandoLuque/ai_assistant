@@ -254,6 +254,18 @@ impl NodeStatus {
     }
 }
 
+/// Classification of a node failure for deciding whether to redistribute data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FailureClassification {
+    /// Temporary glitch — node will likely recover soon.
+    /// Don't redistribute data yet, just queue handoffs.
+    Temporary,
+    /// Likely permanent failure — should redistribute data to maintain
+    /// replication factor.
+    Permanent,
+}
+
 // =============================================================================
 // Heartbeat Configuration
 // =============================================================================
@@ -372,6 +384,31 @@ impl HeartbeatManager {
     /// Number of monitored nodes.
     pub fn monitored_count(&self) -> usize {
         self.detectors.len()
+    }
+
+    /// Classify a failed node as temporary or permanent.
+    ///
+    /// - **Temporary**: phi is high but < 12, and dead for < 5 minutes.
+    ///   Queue handoffs but don't redistribute data yet.
+    /// - **Permanent**: phi > 12 OR dead for > 5 minutes.
+    ///   Redistribute data to maintain replication factor.
+    pub fn classify_failure(&self, node: &NodeId) -> Option<FailureClassification> {
+        let detector = self.detectors.get(node)?;
+        let phi = detector.phi();
+
+        if phi < self.config.phi_threshold {
+            return None; // Not failed
+        }
+
+        let time_dead = detector.last_heartbeat_ago().unwrap_or(Duration::from_secs(0));
+        let permanent_phi = self.config.phi_threshold * 1.5; // e.g., 12.0 if threshold=8.0
+        let permanent_duration = Duration::from_secs(300); // 5 minutes
+
+        if phi > permanent_phi || time_dead > permanent_duration {
+            Some(FailureClassification::Permanent)
+        } else {
+            Some(FailureClassification::Temporary)
+        }
     }
 }
 
