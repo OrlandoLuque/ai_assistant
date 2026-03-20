@@ -339,6 +339,88 @@ impl Default for DhtCacheConfig {
     }
 }
 
+/// Capabilities advertised by a node in the cluster.
+///
+/// Used for capability-based routing — a node can select the best peer
+/// for a given task based on available models, features, and load.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct NodeCapabilities {
+    /// Node identifier.
+    pub node_id: String,
+    /// Available LLM models (e.g., ["llama3.2:1b", "mistral:7b"]).
+    pub models: Vec<String>,
+    /// Active feature flags (e.g., ["rag", "multi-agent", "security"]).
+    pub features: Vec<String>,
+    /// Maximum concurrent requests this node can handle.
+    pub max_concurrent: usize,
+    /// Whether the node has a RAG database.
+    pub has_rag: bool,
+    /// Whether the node has GPU acceleration.
+    pub has_gpu: bool,
+    /// Available memory in megabytes.
+    pub total_memory_mb: usize,
+    /// Current utilization (0.0 = idle, 1.0 = fully loaded).
+    pub current_load: f32,
+    /// Timestamp of last update (Unix ms).
+    pub last_updated_ms: u64,
+}
+
+impl Default for NodeCapabilities {
+    fn default() -> Self {
+        Self {
+            node_id: String::new(),
+            models: Vec::new(),
+            features: Vec::new(),
+            max_concurrent: 4,
+            has_rag: false,
+            has_gpu: false,
+            total_memory_mb: 0,
+            current_load: 0.0,
+            last_updated_ms: 0,
+        }
+    }
+}
+
+impl NodeCapabilities {
+    /// Create capabilities for a node with the given ID.
+    pub fn new(node_id: &str) -> Self {
+        Self {
+            node_id: node_id.to_string(),
+            last_updated_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+            ..Default::default()
+        }
+    }
+
+    /// Check if this node can handle a specific model.
+    pub fn has_model(&self, model: &str) -> bool {
+        self.models.iter().any(|m| m == model)
+    }
+
+    /// Check if this node has a specific feature.
+    pub fn has_feature(&self, feature: &str) -> bool {
+        self.features.iter().any(|f| f == feature)
+    }
+
+    /// Whether the node has capacity for more requests.
+    pub fn has_capacity(&self) -> bool {
+        self.current_load < 0.9
+    }
+}
+
+/// Compute FNV-1a hash for data integrity verification.
+pub fn fnv1a_hash(data: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for &byte in data {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
 /// DHT configuration
 #[derive(Clone, Debug)]
 #[non_exhaustive]
@@ -426,6 +508,14 @@ impl Dht {
         let key_id = NodeId::from_string(key);
         let mut dht_value = DhtValue::new(value, self.local_id);
 
+        // Auto-increment version if key already exists
+        {
+            let storage = self.storage.read().unwrap_or_else(|e| e.into_inner());
+            if let Some(existing) = storage.get(&key_id) {
+                dht_value.version = existing.version + 1;
+            }
+        }
+
         // Apply default TTL if configured and no explicit TTL set
         if dht_value.ttl.is_none() {
             if let Some(default_ttl) = self.config.cache.default_ttl {
@@ -510,6 +600,25 @@ impl Dht {
             .write()
             .unwrap_or_else(|e| e.into_inner());
         rt.add(node)
+    }
+
+    /// Record that a node holds a replica of a key.
+    pub fn add_replica(&self, key: &str, node_id: NodeId) {
+        let key_id = NodeId::from_string(key);
+        let mut storage = self.storage.write().unwrap_or_else(|e| e.into_inner());
+        if let Some(value) = storage.get_mut(&key_id) {
+            value.replicas.insert(node_id);
+        }
+    }
+
+    /// Get all nodes that hold replicas of a key.
+    pub fn get_replicas(&self, key: &str) -> Vec<NodeId> {
+        let key_id = NodeId::from_string(key);
+        let storage = self.storage.read().unwrap_or_else(|e| e.into_inner());
+        storage
+            .get(&key_id)
+            .map(|v| v.replicas.iter().copied().collect())
+            .unwrap_or_default()
     }
 
     /// Find closest nodes to a key
@@ -2257,5 +2366,76 @@ mod tests {
 
         std::thread::sleep(Duration::from_millis(10));
         assert!(dht.get("auto_expire").is_none(), "Should expire with default TTL");
+    }
+
+    // ── V49: Version, Replicas, Capabilities tests ──────────────
+
+    #[test]
+    fn test_version_auto_increment() {
+        let dht = Dht::new(DhtConfig::default());
+
+        dht.put("key1", b"v1".to_vec());
+        let meta1 = dht.get_with_meta("key1").unwrap();
+        assert_eq!(meta1.version, 1);
+
+        dht.put("key1", b"v2".to_vec());
+        let meta2 = dht.get_with_meta("key1").unwrap();
+        assert_eq!(meta2.version, 2);
+
+        dht.put("key1", b"v3".to_vec());
+        let meta3 = dht.get_with_meta("key1").unwrap();
+        assert_eq!(meta3.version, 3);
+
+        // Different key starts at 1
+        dht.put("key2", b"x".to_vec());
+        assert_eq!(dht.get_with_meta("key2").unwrap().version, 1);
+    }
+
+    #[test]
+    fn test_replica_tracking() {
+        let dht = Dht::new(DhtConfig::default());
+        dht.put("key1", b"data".to_vec());
+
+        let node_b = NodeId::random();
+        let node_c = NodeId::random();
+
+        dht.add_replica("key1", node_b);
+        dht.add_replica("key1", node_c);
+
+        let replicas = dht.get_replicas("key1");
+        assert_eq!(replicas.len(), 2);
+        assert!(replicas.contains(&node_b));
+        assert!(replicas.contains(&node_c));
+
+        // Non-existent key returns empty
+        assert!(dht.get_replicas("nonexistent").is_empty());
+    }
+
+    #[test]
+    fn test_node_capabilities_serialize() {
+        let mut caps = NodeCapabilities::new("node-A");
+        caps.models = vec!["llama3.2:1b".to_string(), "mistral:7b".to_string()];
+        caps.features = vec!["rag".to_string(), "security".to_string()];
+        caps.has_gpu = true;
+        caps.total_memory_mb = 16384;
+        caps.current_load = 0.42;
+
+        let json = serde_json::to_string(&caps).unwrap();
+        let parsed: NodeCapabilities = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed.node_id, "node-A");
+        assert_eq!(parsed.models.len(), 2);
+        assert!(parsed.has_model("mistral:7b"));
+        assert!(parsed.has_feature("rag"));
+        assert!(!parsed.has_feature("distributed"));
+        assert!(parsed.has_gpu);
+        assert!(parsed.has_capacity()); // 0.42 < 0.9
+    }
+
+    #[test]
+    fn test_fnv1a_hash_deterministic() {
+        let data = b"hello world";
+        assert_eq!(fnv1a_hash(data), fnv1a_hash(data));
+        assert_ne!(fnv1a_hash(b"hello"), fnv1a_hash(b"world"));
     }
 }
