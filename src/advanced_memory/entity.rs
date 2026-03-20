@@ -32,14 +32,52 @@ pub struct EntityRelation {
 pub struct EntityStore {
     entities: HashMap<String, EntityRecord>,
     name_index: HashMap<String, String>,
+    /// Maximum number of entities (0 = unlimited).
+    max_entities: usize,
 }
 
 impl EntityStore {
-    /// Create an empty entity store.
+    /// Create an empty entity store with default limits.
     pub fn new() -> Self {
         Self {
             entities: HashMap::new(),
             name_index: HashMap::new(),
+            max_entities: 5_000,
+        }
+    }
+
+    /// Create with a custom max entities limit.
+    pub fn with_max(max_entities: usize) -> Self {
+        Self {
+            entities: HashMap::new(),
+            name_index: HashMap::new(),
+            max_entities,
+        }
+    }
+
+    /// Evict the least-mentioned entity if at capacity.
+    fn evict_if_needed(&mut self) {
+        if self.max_entities == 0 || self.entities.len() < self.max_entities {
+            return;
+        }
+        // Find entity with lowest mention_count (and no relations, if possible)
+        if let Some((evict_id, _)) = self
+            .entities
+            .iter()
+            .filter(|(_, r)| r.relations.is_empty()) // prefer evicting entities without relations
+            .min_by_key(|(_, r)| r.mention_count)
+            .map(|(id, r)| (id.clone(), r.mention_count))
+            .or_else(|| {
+                self.entities
+                    .iter()
+                    .min_by_key(|(_, r)| r.mention_count)
+                    .map(|(id, r)| (id.clone(), r.mention_count))
+            })
+        {
+            if let Some(record) = self.entities.remove(&evict_id) {
+                let normalized = record.name.to_lowercase();
+                self.name_index.remove(&normalized);
+            }
         }
     }
 
@@ -53,9 +91,10 @@ impl EntityStore {
         self.entities.is_empty()
     }
 
-    /// Add an entity record. Returns an error if an entity with the same
-    /// normalized name already exists (use `merge` instead).
+    /// Add an entity record. Evicts least-mentioned entity if at capacity.
+    /// Returns an error if an entity with the same normalized name already exists.
     pub fn add(&mut self, record: EntityRecord) -> Result<(), AiError> {
+        self.evict_if_needed();
         let normalized = record.name.to_lowercase();
         if let Some(existing_id) = self.name_index.get(&normalized) {
             return Err(AiError::AdvancedMemory(

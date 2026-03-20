@@ -201,8 +201,15 @@ where
         get_model_context_size(model_name)
     });
 
-    // Store in cache
+    // Store in cache (limit to 500 entries to prevent unbounded growth)
     if let Ok(mut cache) = CONTEXT_SIZE_CACHE.lock() {
+        if cache.len() >= 500 {
+            // Evict arbitrary entries to make room (FIFO-ish via drain)
+            let keys_to_remove: Vec<String> = cache.keys().take(100).cloned().collect();
+            for k in keys_to_remove {
+                cache.remove(&k);
+            }
+        }
         cache.insert(key, size);
     }
 
