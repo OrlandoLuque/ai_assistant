@@ -535,6 +535,8 @@ pub use distributed::NodeMessage;
 #[cfg(feature = "distributed-network")]
 pub mod consistent_hash;
 #[cfg(feature = "distributed-network")]
+pub mod distributed_log;
+#[cfg(feature = "distributed-network")]
 pub mod distributed_network;
 #[cfg(feature = "distributed-network")]
 pub mod failure_detector;
@@ -545,6 +547,11 @@ pub mod node_security;
 
 #[cfg(feature = "distributed-network")]
 pub use consistent_hash::ConsistentHashRing;
+#[cfg(feature = "distributed-network")]
+pub use distributed_log::{
+    DistributedLogEntry, ExportFormat as LogExportFormat, LogCollector, LogCollectorConfig,
+    LogLevel as DistributedLogLevel, TraceContext, generate_trace_id,
+};
 #[cfg(feature = "distributed-network")]
 pub use distributed_network::{
     DiscoveryConfig as NetworkDiscoveryConfig, NetworkConfig, NetworkEvent, NetworkNode,
