@@ -267,6 +267,8 @@ pub struct CompressedCache<V> {
     level: CompressionLevel,
     data: HashMap<String, CompressedData>,
     stats: CacheCompressionStats,
+    /// Maximum entries (0 = unlimited).
+    max_entries: usize,
     _marker: std::marker::PhantomData<V>,
 }
 
@@ -278,6 +280,7 @@ impl<V: Serialize + for<'de> Deserialize<'de>> CompressedCache<V> {
             level: CompressionLevel::Default,
             data: HashMap::new(),
             stats: CacheCompressionStats::default(),
+            max_entries: 5_000,
             _marker: std::marker::PhantomData,
         }
     }
@@ -289,12 +292,26 @@ impl<V: Serialize + for<'de> Deserialize<'de>> CompressedCache<V> {
             level,
             data: HashMap::new(),
             stats: CacheCompressionStats::default(),
+            max_entries: 5_000,
             _marker: std::marker::PhantomData,
         }
     }
 
+    /// Set maximum entries limit.
+    pub fn with_max_entries(mut self, max: usize) -> Self {
+        self.max_entries = max;
+        self
+    }
+
     /// Insert a value
     pub fn insert(&mut self, key: impl Into<String>, value: V) {
+        // Evict oldest if at capacity
+        if self.max_entries > 0 && self.data.len() >= self.max_entries {
+            if let Some(oldest_key) = self.data.keys().next().cloned() {
+                self.data.remove(&oldest_key);
+            }
+        }
+
         let key = key.into();
         let serialized = serde_json::to_vec(&value).unwrap_or_default();
         let compressed = compress(&serialized, self.algorithm, self.level);
