@@ -457,6 +457,7 @@ impl NetworkNode {
             messages_received: messages_received.clone(),
             replication_pending: replication_pending.clone(),
             shutdown_flag: shutdown.clone(),
+            handoff_queue: HintedHandoffQueue::new(1000, 3600),
         };
 
         rt.spawn(event_loop.run(command_rx, event_tx));
@@ -764,6 +765,8 @@ struct EventLoop {
     messages_received: Arc<std::sync::atomic::AtomicU64>,
     replication_pending: Arc<std::sync::atomic::AtomicUsize>,
     shutdown_flag: Arc<std::sync::atomic::AtomicBool>,
+    /// Hinted handoff queue for failed replications.
+    handoff_queue: HintedHandoffQueue,
 }
 
 impl EventLoop {
@@ -2073,14 +2076,36 @@ impl EventLoop {
                     continue;
                 }
 
+                let msg = NodeMessage::Replicate {
+                    key: key.clone(),
+                    value: value.clone(),
+                    version,
+                };
+
                 if self.connections.contains_key(&node_id) {
-                    let msg = NodeMessage::Replicate {
+                    if self.send_to_peer(&node_id, &msg).await.is_ok() {
+                        pending += 1;
+                    } else {
+                        // Send failed — queue for later delivery
+                        self.handoff_queue.enqueue(HintedHandoff {
+                            key: key.clone(),
+                            value: value.clone(),
+                            target_node: node_id.0.to_vec(),
+                            created_at: 0, // auto-set by enqueue
+                            attempts: 0,
+                            ttl_seconds: 0, // auto-set by enqueue
+                        });
+                    }
+                } else {
+                    // Node not connected — queue for when it reconnects
+                    self.handoff_queue.enqueue(HintedHandoff {
                         key: key.clone(),
                         value: value.clone(),
-                        version,
-                    };
-                    let _ = self.send_to_peer(&node_id, &msg).await;
-                    pending += 1;
+                        target_node: node_id.0.to_vec(),
+                        created_at: 0,
+                        attempts: 0,
+                        ttl_seconds: 0,
+                    });
                 }
             }
 
@@ -2091,6 +2116,37 @@ impl EventLoop {
                     .send(NetworkEvent::ReplicationComplete(key, pending + 1))
                     .await;
             }
+        }
+    }
+
+    /// Select the best peers from candidates based on reputation score.
+    ///
+    /// Returns up to `count` peers sorted by reputation descending.
+    /// Peers not found in the peer table are excluded.
+    fn select_best_peers(&self, candidates: &[NodeId], count: usize) -> Vec<NodeId> {
+        let peers = self.peers.read().unwrap_or_else(|e| e.into_inner());
+        let mut scored: Vec<(NodeId, f32)> = candidates
+            .iter()
+            .filter(|id| **id != self.node_id)
+            .filter_map(|id| peers.get(id).map(|p| (*id, p.reputation)))
+            .collect();
+        scored.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        scored.into_iter().take(count).map(|(id, _)| id).collect()
+    }
+
+    /// Drain hinted handoffs for a reconnected peer.
+    async fn drain_handoffs_for_peer(&mut self, peer_id: &NodeId) {
+        let pending = self.handoff_queue.drain_for_node(&peer_id.0);
+        for handoff in pending {
+            let msg = NodeMessage::Replicate {
+                key: handoff.key,
+                value: handoff.value,
+                version: 1,
+            };
+            let _ = self.send_to_peer(peer_id, &msg).await;
         }
     }
 
