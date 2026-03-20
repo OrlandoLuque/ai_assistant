@@ -539,6 +539,243 @@ pub enum ExportFormat {
 }
 
 // ============================================================================
+// File persistence: LogWriter + LogReader + LogTailer
+// ============================================================================
+
+/// Summary of a trace found in log files.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TraceSummary {
+    /// Trace ID.
+    pub trace_id: String,
+    /// Number of log entries.
+    pub entry_count: usize,
+    /// Earliest timestamp.
+    pub first_timestamp_ms: u64,
+    /// Latest timestamp.
+    pub last_timestamp_ms: u64,
+    /// Unique node IDs seen.
+    pub nodes: Vec<String>,
+    /// Count per log level.
+    pub levels: HashMap<String, usize>,
+}
+
+/// Writes log entries to a JSONL file (one JSON object per line).
+pub struct LogWriter {
+    path: std::path::PathBuf,
+    file: std::fs::File,
+}
+
+impl LogWriter {
+    /// Create or open a JSONL log file for appending.
+    pub fn new(path: &std::path::Path) -> Result<Self, std::io::Error> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)?;
+        Ok(Self {
+            path: path.to_path_buf(),
+            file,
+        })
+    }
+
+    /// Write a single log entry as a JSON line.
+    pub fn write_entry(&mut self, entry: &DistributedLogEntry) -> Result<(), std::io::Error> {
+        use std::io::Write;
+        let json = serde_json::to_string(entry)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        writeln!(self.file, "{}", json)?;
+        Ok(())
+    }
+
+    /// Flush buffered writes to disk.
+    pub fn flush(&mut self) -> Result<(), std::io::Error> {
+        use std::io::Write;
+        self.file.flush()
+    }
+
+    /// Path of the log file.
+    pub fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+}
+
+/// Reads log entries from JSONL files.
+pub struct LogReader;
+
+impl LogReader {
+    /// Read all entries from a single JSONL file.
+    pub fn read_file(path: &std::path::Path) -> Result<Vec<DistributedLogEntry>, std::io::Error> {
+        use std::io::BufRead;
+        let file = std::fs::File::open(path)?;
+        let reader = std::io::BufReader::new(file);
+        let mut entries = Vec::new();
+
+        for line in reader.lines() {
+            let line = line?;
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if let Ok(entry) = serde_json::from_str::<DistributedLogEntry>(trimmed) {
+                entries.push(entry);
+            }
+            // Skip unparseable lines silently (forward compat)
+        }
+
+        Ok(entries)
+    }
+
+    /// Read all .jsonl files from a directory, merged and sorted by timestamp.
+    pub fn read_dir(dir: &std::path::Path) -> Result<Vec<DistributedLogEntry>, std::io::Error> {
+        let mut all_entries = Vec::new();
+
+        if dir.is_file() {
+            return Self::read_file(dir);
+        }
+
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+                if let Ok(entries) = Self::read_file(&path) {
+                    all_entries.extend(entries);
+                }
+            }
+        }
+
+        all_entries.sort_by_key(|e| e.timestamp_ms);
+        Ok(all_entries)
+    }
+
+    /// List unique trace IDs with summary from a file or directory.
+    pub fn list_traces(
+        path: &std::path::Path,
+    ) -> Result<Vec<TraceSummary>, std::io::Error> {
+        let entries = if path.is_dir() {
+            Self::read_dir(path)?
+        } else {
+            Self::read_file(path)?
+        };
+
+        let mut traces: HashMap<String, TraceSummary> = HashMap::new();
+
+        for entry in &entries {
+            let summary = traces
+                .entry(entry.trace_id.clone())
+                .or_insert_with(|| TraceSummary {
+                    trace_id: entry.trace_id.clone(),
+                    entry_count: 0,
+                    first_timestamp_ms: entry.timestamp_ms,
+                    last_timestamp_ms: entry.timestamp_ms,
+                    nodes: Vec::new(),
+                    levels: HashMap::new(),
+                });
+
+            summary.entry_count += 1;
+            if entry.timestamp_ms < summary.first_timestamp_ms {
+                summary.first_timestamp_ms = entry.timestamp_ms;
+            }
+            if entry.timestamp_ms > summary.last_timestamp_ms {
+                summary.last_timestamp_ms = entry.timestamp_ms;
+            }
+            if !summary.nodes.contains(&entry.node_id) {
+                summary.nodes.push(entry.node_id.clone());
+            }
+            *summary
+                .levels
+                .entry(entry.level.to_string())
+                .or_insert(0) += 1;
+        }
+
+        let mut result: Vec<TraceSummary> = traces.into_values().collect();
+        result.sort_by(|a, b| b.last_timestamp_ms.cmp(&a.last_timestamp_ms));
+        Ok(result)
+    }
+}
+
+/// Tails a JSONL log file, yielding new entries as they are appended.
+pub struct LogTailer {
+    path: std::path::PathBuf,
+    last_pos: u64,
+}
+
+impl LogTailer {
+    /// Start tailing a JSONL file from the current end.
+    pub fn new(path: &std::path::Path) -> Result<Self, std::io::Error> {
+        let metadata = std::fs::metadata(path)?;
+        Ok(Self {
+            path: path.to_path_buf(),
+            last_pos: metadata.len(),
+        })
+    }
+
+    /// Start tailing from the beginning of the file.
+    pub fn from_start(path: &std::path::Path) -> Result<Self, std::io::Error> {
+        let _ = std::fs::metadata(path)?; // verify exists
+        Ok(Self {
+            path: path.to_path_buf(),
+            last_pos: 0,
+        })
+    }
+
+    /// Check for new entries appended since last call.
+    pub fn next_entries(&mut self) -> Result<Vec<DistributedLogEntry>, std::io::Error> {
+        use std::io::{BufRead, Seek, SeekFrom};
+
+        let mut file = std::fs::File::open(&self.path)?;
+        let current_len = file.metadata()?.len();
+
+        if current_len <= self.last_pos {
+            return Ok(Vec::new());
+        }
+
+        file.seek(SeekFrom::Start(self.last_pos))?;
+        let reader = std::io::BufReader::new(&file);
+        let mut entries = Vec::new();
+
+        for line in reader.lines() {
+            let line = line?;
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if let Ok(entry) = serde_json::from_str::<DistributedLogEntry>(trimmed) {
+                entries.push(entry);
+            }
+        }
+
+        self.last_pos = current_len;
+        Ok(entries)
+    }
+}
+
+/// Colorize a log line for terminal output based on level.
+pub fn colorize_level(level: LogLevel, text: &str) -> String {
+    match level {
+        LogLevel::Error => format!("\x1b[31m{}\x1b[0m", text),
+        LogLevel::Warn => format!("\x1b[33m{}\x1b[0m", text),
+        LogLevel::Info => text.to_string(),
+        LogLevel::Debug => format!("\x1b[90m{}\x1b[0m", text),
+        LogLevel::Trace => format!("\x1b[90m{}\x1b[0m", text),
+    }
+}
+
+/// Parse a log level from a string (case-insensitive).
+pub fn parse_log_level(s: &str) -> Option<LogLevel> {
+    match s.to_lowercase().as_str() {
+        "trace" => Some(LogLevel::Trace),
+        "debug" => Some(LogLevel::Debug),
+        "info" => Some(LogLevel::Info),
+        "warn" | "warning" => Some(LogLevel::Warn),
+        "error" => Some(LogLevel::Error),
+        _ => None,
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -740,5 +977,134 @@ mod tests {
         assert!(LogLevel::Debug < LogLevel::Info);
         assert!(LogLevel::Info < LogLevel::Warn);
         assert!(LogLevel::Warn < LogLevel::Error);
+    }
+
+    // ── File I/O tests ──────────────────────────────────────────────
+
+    #[test]
+    fn test_log_writer_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.jsonl");
+
+        // Write
+        let mut writer = LogWriter::new(&path).unwrap();
+        writer.write_entry(&make_entry("t1", "A", LogLevel::Info, "op1", "hello", 100)).unwrap();
+        writer.write_entry(&make_entry("t1", "B", LogLevel::Warn, "op2", "warning", 200)).unwrap();
+        writer.flush().unwrap();
+
+        // Read
+        let entries = LogReader::read_file(&path).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].message, "hello");
+        assert_eq!(entries[1].message, "warning");
+        assert_eq!(entries[1].node_id, "B");
+    }
+
+    #[test]
+    fn test_log_reader_dir() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Write two files
+        let mut w1 = LogWriter::new(&dir.path().join("a.jsonl")).unwrap();
+        w1.write_entry(&make_entry("t1", "A", LogLevel::Info, "op", "from file a", 300)).unwrap();
+        w1.flush().unwrap();
+
+        let mut w2 = LogWriter::new(&dir.path().join("b.jsonl")).unwrap();
+        w2.write_entry(&make_entry("t1", "B", LogLevel::Info, "op", "from file b", 100)).unwrap();
+        w2.flush().unwrap();
+
+        let entries = LogReader::read_dir(dir.path()).unwrap();
+        assert_eq!(entries.len(), 2);
+        // Sorted by timestamp
+        assert_eq!(entries[0].message, "from file b"); // ts=100
+        assert_eq!(entries[1].message, "from file a"); // ts=300
+    }
+
+    #[test]
+    fn test_list_traces() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("multi.jsonl");
+
+        let mut writer = LogWriter::new(&path).unwrap();
+        writer.write_entry(&make_entry("t1", "A", LogLevel::Info, "op", "msg1", 100)).unwrap();
+        writer.write_entry(&make_entry("t1", "B", LogLevel::Error, "op", "msg2", 200)).unwrap();
+        writer.write_entry(&make_entry("t2", "A", LogLevel::Warn, "op", "msg3", 150)).unwrap();
+        writer.flush().unwrap();
+
+        let traces = LogReader::list_traces(&path).unwrap();
+        assert_eq!(traces.len(), 2);
+
+        // Most recent first (t1 has last_ts=200, t2 has last_ts=150)
+        assert_eq!(traces[0].trace_id, "t1");
+        assert_eq!(traces[0].entry_count, 2);
+        assert_eq!(traces[0].nodes.len(), 2);
+        assert_eq!(traces[1].trace_id, "t2");
+        assert_eq!(traces[1].entry_count, 1);
+    }
+
+    #[test]
+    fn test_tail_new_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tail.jsonl");
+
+        // Write initial data
+        let mut writer = LogWriter::new(&path).unwrap();
+        writer.write_entry(&make_entry("t1", "A", LogLevel::Info, "op", "initial", 100)).unwrap();
+        writer.flush().unwrap();
+
+        // Start tailing from current end
+        let mut tailer = LogTailer::new(&path).unwrap();
+
+        // No new entries yet
+        let new = tailer.next_entries().unwrap();
+        assert!(new.is_empty());
+
+        // Append more data
+        writer.write_entry(&make_entry("t1", "A", LogLevel::Info, "op", "new1", 200)).unwrap();
+        writer.write_entry(&make_entry("t1", "A", LogLevel::Info, "op", "new2", 300)).unwrap();
+        writer.flush().unwrap();
+
+        // Should see the 2 new entries
+        let new = tailer.next_entries().unwrap();
+        assert_eq!(new.len(), 2);
+        assert_eq!(new[0].message, "new1");
+        assert_eq!(new[1].message, "new2");
+
+        // No more new entries
+        let new = tailer.next_entries().unwrap();
+        assert!(new.is_empty());
+    }
+
+    #[test]
+    fn test_trace_summary_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("summary.jsonl");
+
+        let mut writer = LogWriter::new(&path).unwrap();
+        writer.write_entry(&make_entry("t1", "node-A", LogLevel::Info, "op", "a", 100)).unwrap();
+        writer.write_entry(&make_entry("t1", "node-A", LogLevel::Info, "op", "b", 200)).unwrap();
+        writer.write_entry(&make_entry("t1", "node-B", LogLevel::Error, "op", "c", 300)).unwrap();
+        writer.flush().unwrap();
+
+        let traces = LogReader::list_traces(&path).unwrap();
+        assert_eq!(traces.len(), 1);
+
+        let t = &traces[0];
+        assert_eq!(t.entry_count, 3);
+        assert_eq!(t.first_timestamp_ms, 100);
+        assert_eq!(t.last_timestamp_ms, 300);
+        assert!(t.nodes.contains(&"node-A".to_string()));
+        assert!(t.nodes.contains(&"node-B".to_string()));
+        assert_eq!(*t.levels.get("INFO").unwrap(), 2);
+        assert_eq!(*t.levels.get("ERROR").unwrap(), 1);
+    }
+
+    #[test]
+    fn test_parse_log_level() {
+        assert_eq!(parse_log_level("info"), Some(LogLevel::Info));
+        assert_eq!(parse_log_level("WARN"), Some(LogLevel::Warn));
+        assert_eq!(parse_log_level("Error"), Some(LogLevel::Error));
+        assert_eq!(parse_log_level("warning"), Some(LogLevel::Warn));
+        assert_eq!(parse_log_level("unknown"), None);
     }
 }
