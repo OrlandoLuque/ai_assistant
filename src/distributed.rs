@@ -1469,6 +1469,20 @@ pub enum NodeMessage {
         results: Vec<(String, f32, HashMap<String, String>)>,
         request_id: u64,
     },
+
+    // --- Distributed Log Correlation ---
+    /// Request log entries for a specific trace from a remote node.
+    LogRequest {
+        trace_id: String,
+        since_ms: Option<u64>,
+        max_entries: usize,
+        min_level: u8,
+    },
+    /// Response with log entries for the requested trace.
+    LogResponse {
+        trace_id: String,
+        entries: Vec<crate::distributed_log::DistributedLogEntry>,
+    },
 }
 
 // =============================================================================

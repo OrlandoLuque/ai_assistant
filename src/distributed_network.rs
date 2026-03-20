@@ -1454,6 +1454,18 @@ impl EventLoop {
                 })
             }
             NodeMessage::VectorSearchResponse { .. } => None,
+
+            // Log correlation: handled at application layer via MessageReceived event.
+            // The LogCollector lives outside the event loop; the application matches
+            // LogRequest and returns logs from its collector.
+            NodeMessage::LogRequest { trace_id, .. } => {
+                // Return empty response; application layer fills from LogCollector
+                Some(NodeMessage::LogResponse {
+                    trace_id: trace_id.clone(),
+                    entries: Vec::new(),
+                })
+            }
+            NodeMessage::LogResponse { .. } => None,
         }
     }
 

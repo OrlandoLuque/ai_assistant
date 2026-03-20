@@ -141,6 +141,29 @@ impl AxumServerMetrics {
         format!("{:08x}-{:04x}", nanos, counter & 0xFFFF)
     }
 
+    /// Extract `X-Trace-Id` from request headers, or generate a new one.
+    ///
+    /// If the request carries `X-Trace-Id`, reuse it for distributed correlation.
+    /// Otherwise, generate a new trace ID based on timestamp + counter hash.
+    /// The returned trace ID should be included in the response via `X-Trace-Id`
+    /// and propagated to any downstream distributed calls.
+    pub fn extract_or_generate_trace_id(
+        &self,
+        headers: &axum::http::HeaderMap,
+    ) -> String {
+        if let Some(val) = headers.get("x-trace-id") {
+            if let Ok(s) = val.to_str() {
+                if !s.is_empty() {
+                    return s.to_string();
+                }
+            }
+        }
+        let counter = self.request_id_counter.fetch_add(1, Ordering::Relaxed);
+        let nanos = self.started_at.elapsed().as_nanos() as u64;
+        let hash = nanos.wrapping_mul(0x517cc1b727220a95);
+        format!("{:016x}{:04x}", hash, counter & 0xFFFF)
+    }
+
     /// Record a completed request with its status code and duration.
     pub fn record_request(&self, status: u16, duration: Duration) {
         self.requests_total.fetch_add(1, Ordering::Relaxed);
