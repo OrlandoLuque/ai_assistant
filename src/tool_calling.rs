@@ -60,7 +60,7 @@ pub enum ParameterType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCall {
     pub id: String,
-    pub tool_name: String,
+    pub name: String,
     pub arguments: HashMap<String, serde_json::Value>,
 }
 
@@ -68,7 +68,7 @@ pub struct ToolCall {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResult {
     pub call_id: String,
-    pub tool_name: String,
+    pub name: String,
     pub success: bool,
     pub output: String,
     pub error: Option<String>,
@@ -199,15 +199,15 @@ impl ToolRegistry {
     }
 
     pub fn execute(&self, call: &ToolCall) -> ToolResult {
-        let tool = match self.tools.get(&call.tool_name) {
+        let tool = match self.tools.get(&call.name) {
             Some(t) => t,
             None => {
                 return ToolResult {
                     call_id: call.id.clone(),
-                    tool_name: call.tool_name.clone(),
+                    name: call.name.clone(),
                     success: false,
                     output: String::new(),
-                    error: Some(format!("Tool '{}' not found", call.tool_name)),
+                    error: Some(format!("Tool '{}' not found", call.name)),
                 };
             }
         };
@@ -217,7 +217,7 @@ impl ToolRegistry {
             None => {
                 return ToolResult {
                     call_id: call.id.clone(),
-                    tool_name: call.tool_name.clone(),
+                    name: call.name.clone(),
                     success: false,
                     output: String::new(),
                     error: Some("Tool has no handler".to_string()),
@@ -228,14 +228,14 @@ impl ToolRegistry {
         match handler(&call.arguments) {
             Ok(output) => ToolResult {
                 call_id: call.id.clone(),
-                tool_name: call.tool_name.clone(),
+                name: call.name.clone(),
                 success: true,
                 output,
                 error: None,
             },
             Err(e) => ToolResult {
                 call_id: call.id.clone(),
-                tool_name: call.tool_name.clone(),
+                name: call.name.clone(),
                 success: false,
                 output: String::new(),
                 error: Some(e),
@@ -277,7 +277,7 @@ impl ToolRegistry {
                                 .and_then(|i| i.as_str())
                                 .unwrap_or("")
                                 .to_string(),
-                            tool_name: name.to_string(),
+                            name: name.to_string(),
                             arguments,
                         });
                     }
@@ -307,7 +307,7 @@ impl ToolRegistry {
 
                 calls.push(ToolCall {
                     id: uuid::Uuid::new_v4().to_string(),
-                    tool_name: name.to_string(),
+                    name: name.to_string(),
                     arguments,
                 });
             }
@@ -343,7 +343,7 @@ impl ToolRegistry {
 
                 calls.push(ToolCall {
                     id: uuid::Uuid::new_v4().to_string(),
-                    tool_name: name.to_string(),
+                    name: name.to_string(),
                     arguments,
                 });
             }
@@ -360,12 +360,12 @@ impl ToolRegistry {
             if result.success {
                 output.push_str(&format!(
                     "[Tool: {}]\n{}\n\n",
-                    result.tool_name, result.output
+                    result.name, result.output
                 ));
             } else {
                 output.push_str(&format!(
                     "[Tool: {} - Error]\n{}\n\n",
-                    result.tool_name,
+                    result.name,
                     result.error.as_deref().unwrap_or("Unknown error")
                 ));
             }
@@ -378,6 +378,24 @@ impl ToolRegistry {
 impl Default for ToolRegistry {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ── Interop with unified_tools ──
+
+impl From<ToolCall> for crate::unified_tools::ToolCall {
+    fn from(tc: ToolCall) -> Self {
+        crate::unified_tools::ToolCall::with_id(tc.id, tc.name, tc.arguments)
+    }
+}
+
+impl From<crate::unified_tools::ToolCall> for ToolCall {
+    fn from(tc: crate::unified_tools::ToolCall) -> Self {
+        Self {
+            id: tc.id,
+            name: tc.name,
+            arguments: tc.arguments,
+        }
     }
 }
 
@@ -564,7 +582,7 @@ mod tests {
 
         let call = ToolCall {
             id: "1".to_string(),
-            tool_name: "calculator".to_string(),
+            name: "calculator".to_string(),
             arguments: [(
                 "expression".to_string(),
                 serde_json::Value::String("2+3*4".to_string()),
@@ -584,7 +602,7 @@ mod tests {
 
         let calls = registry.parse_tool_calls(response);
         assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].tool_name, "web_search");
+        assert_eq!(calls[0].name, "web_search");
     }
 
     #[test]
@@ -594,7 +612,7 @@ mod tests {
 
         let calls = registry.parse_tool_calls(response);
         assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].tool_name, "search");
+        assert_eq!(calls[0].name, "search");
     }
 
     #[test]
@@ -629,7 +647,7 @@ mod tests {
         let registry = ToolRegistry::new();
         let results = vec![ToolResult {
             call_id: "1".to_string(),
-            tool_name: "test".to_string(),
+            name: "test".to_string(),
             success: true,
             output: "result: 42".to_string(),
             error: None,

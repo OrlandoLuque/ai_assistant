@@ -248,7 +248,7 @@ impl AgenticLoop {
 
                 let call = ToolCall {
                     id: uuid::Uuid::new_v4().to_string(),
-                    tool_name: "web_search".to_string(),
+                    name: "web_search".to_string(),
                     arguments: [("query".to_string(), serde_json::Value::String(query))]
                         .into_iter()
                         .collect(),
@@ -323,7 +323,7 @@ impl AgenticLoop {
     /// Execute a tool call
     fn execute_tool_call(&mut self, call: &ToolCall) -> ToolResult {
         // Special handling for web search
-        if call.tool_name == "web_search" {
+        if call.name == "web_search" {
             if let Some(ref mut search_manager) = self.search_manager {
                 let query = call
                     .arguments
@@ -342,7 +342,7 @@ impl AgenticLoop {
                     Ok(formatted) => {
                         return ToolResult {
                             call_id: call.id.clone(),
-                            tool_name: call.tool_name.clone(),
+                            name: call.name.clone(),
                             success: true,
                             output: formatted,
                             error: None,
@@ -351,7 +351,7 @@ impl AgenticLoop {
                     Err(e) => {
                         return ToolResult {
                             call_id: call.id.clone(),
-                            tool_name: call.tool_name.clone(),
+                            name: call.name.clone(),
                             success: false,
                             output: String::new(),
                             error: Some(e.to_string()),
@@ -395,7 +395,7 @@ impl AgenticLoop {
         // Include successful tool results
         for result in &self.state.tool_results {
             if result.success && !result.output.is_empty() {
-                parts.push(format!("[{}] {}", result.tool_name, result.output));
+                parts.push(format!("[{}] {}", result.name, result.output));
             }
         }
 
@@ -915,11 +915,11 @@ mod tests {
         let agent = AgenticLoop::new(LoopConfig::default());
         let tools = agent.get_tools();
 
-        let tool_names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+        let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
 
-        assert!(tool_names.contains(&"calculator"));
-        assert!(tool_names.contains(&"datetime"));
-        assert!(tool_names.contains(&"text_length"));
+        assert!(names.contains(&"calculator"));
+        assert!(names.contains(&"datetime"));
+        assert!(names.contains(&"text_length"));
     }
 
     #[test]

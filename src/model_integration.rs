@@ -515,7 +515,7 @@ impl IntegratedModelClient {
         // Execute through registry
         let call = ToolCall {
             id: tool_call.id.clone(),
-            tool_name: name.clone(),
+            name: name.clone(),
             arguments: args,
         };
 
