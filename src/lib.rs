@@ -611,6 +611,8 @@ pub mod distributed_agents;
 pub mod interactive_commands;
 #[cfg(feature = "autonomous")]
 pub mod mode_manager;
+#[cfg(any(feature = "autonomous", feature = "containers"))]
+pub mod container_backend;
 #[cfg(feature = "autonomous")]
 pub mod container_tools;
 #[cfg(feature = "autonomous")]
@@ -1962,6 +1964,11 @@ pub mod container_executor;
 pub use container_executor::{
     ContainerCleanupPolicy, ContainerConfig, ContainerError, ContainerExecutor, ContainerRecord,
     ContainerStatus, CreateOptions, ExecResult, NetworkMode,
+};
+
+#[cfg(any(feature = "autonomous", feature = "containers"))]
+pub use container_backend::{
+    BackendContainerInfo, BackendCreateOptions, BackendError, BackendExecResult, ContainerBackend,
 };
 
 // MCP Docker tools (containers + tools)
