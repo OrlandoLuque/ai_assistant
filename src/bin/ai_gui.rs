@@ -63,6 +63,7 @@ enum SidebarTab {
     Sessions,
     Knowledge,
     Butler,
+    WebSearch,
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -497,6 +498,12 @@ struct AiGuiApp {
     analysis_msg_count: usize,
     audit_events: Vec<AuditEvent>,
 
+    // Web search
+    web_search_query: String,
+    web_search_results: Vec<ai_assistant::web_search::SearchResult>,
+    web_search_rx: Option<mpsc::Receiver<Result<Vec<ai_assistant::web_search::SearchResult>, String>>>,
+    web_search_loading: bool,
+
     // UI state
     sidebar_tab: SidebarTab,
     monitor_tab: MonitorTab,
@@ -529,11 +536,10 @@ impl AiGuiApp {
         }
 
         // Initialize diagnostic logger and set as global log backend
-        let debug_logger = Arc::new(DebugLogger::new(DebugConfig {
-            level: DebugLevel::Trace,
-            max_entries: 5000,
-            ..DebugConfig::default()
-        }));
+        let mut debug_config = DebugConfig::default();
+        debug_config.level = DebugLevel::Trace;
+        debug_config.max_entries = 5000;
+        let debug_logger = Arc::new(DebugLogger::new(debug_config));
         let gui_logger = GuiLogger::new(Arc::clone(&debug_logger));
         log::set_boxed_logger(Box::new(gui_logger)).ok();
         log::set_max_level(log::LevelFilter::Trace);
@@ -597,6 +603,11 @@ impl AiGuiApp {
             summary_cache: None,
             analysis_msg_count: 0,
             audit_events: Vec::new(),
+
+            web_search_query: String::new(),
+            web_search_results: Vec::new(),
+            web_search_rx: None,
+            web_search_loading: false,
 
             sidebar_tab: SidebarTab::Sessions,
             monitor_tab: MonitorTab::Overview,
@@ -683,6 +694,7 @@ impl AiGuiApp {
                         self.add_audit(AuditEventType::ResponseCancelled);
                     }
                     AiResponse::ModelsLoaded(_) => {}
+                    _ => {}
                 }
             }
         }
@@ -721,6 +733,7 @@ impl AiGuiApp {
                         }
                         self.add_toast(&format!("Indexing error: {}", error), true);
                     }
+                    _ => {}
                 }
             }
         }
@@ -2073,6 +2086,7 @@ impl AiGuiApp {
                     ui.selectable_value(&mut self.sidebar_tab, SidebarTab::Sessions, "Sessions");
                     ui.selectable_value(&mut self.sidebar_tab, SidebarTab::Knowledge, "Knowledge");
                     ui.selectable_value(&mut self.sidebar_tab, SidebarTab::Butler, "Butler");
+                    ui.selectable_value(&mut self.sidebar_tab, SidebarTab::WebSearch, "Web");
                 });
                 ui.separator();
 
@@ -2080,6 +2094,7 @@ impl AiGuiApp {
                     SidebarTab::Sessions => self.render_sessions_tab(ui),
                     SidebarTab::Knowledge => self.render_knowledge_tab(ui),
                     SidebarTab::Butler => self.render_butler_tab(ui),
+                    SidebarTab::WebSearch => self.render_web_search_tab(ui),
                 }
             });
     }
@@ -2242,6 +2257,7 @@ impl AiGuiApp {
                 FreshContextEffectiveness::Ineffective => {
                     (Color32::from_rgb(220, 80, 80), "Ineffective")
                 }
+                _ => (Color32::from_rgb(160, 160, 160), "Unknown"),
             };
             ui.colored_label(
                 eff_color,
@@ -2281,6 +2297,81 @@ impl AiGuiApp {
                     self.add_toast("Graph cleared (no sources to re-index)", false);
                 }
             }
+        }
+    }
+
+    fn render_web_search_tab(&mut self, ui: &mut Ui) {
+        // Poll for async results
+        if let Some(ref rx) = self.web_search_rx {
+            if let Ok(result) = rx.try_recv() {
+                match result {
+                    Ok(results) => {
+                        self.web_search_results = results;
+                    }
+                    Err(e) => {
+                        self.last_error = Some(format!("Search error: {}", e));
+                    }
+                }
+                self.web_search_loading = false;
+                self.web_search_rx = None;
+            }
+        }
+
+        ui.heading("Web Search");
+        ui.label("Search the web using DuckDuckGo (no API key required).");
+        ui.add_space(8.0);
+
+        ui.horizontal(|ui| {
+            let response = ui.text_edit_singleline(&mut self.web_search_query);
+            let enter_pressed = response.lost_focus()
+                && ui.input(|i| i.key_pressed(egui::Key::Enter));
+
+            if (ui.button("Search").clicked() || enter_pressed)
+                && !self.web_search_query.is_empty()
+                && !self.web_search_loading
+            {
+                self.web_search_loading = true;
+                let query = self.web_search_query.clone();
+                let (tx, rx) = mpsc::channel();
+                self.web_search_rx = Some(rx);
+
+                std::thread::spawn(move || {
+                    let provider = ai_assistant::web_search::DuckDuckGoProvider::new();
+                    let config = ai_assistant::web_search::SearchConfig::default();
+                    let result = ai_assistant::web_search::SearchProvider::search(
+                        &provider, &query, &config,
+                    )
+                    .map_err(|e| format!("{}", e));
+                    let _ = tx.send(result);
+                });
+            }
+        });
+
+        if self.web_search_loading {
+            ui.spinner();
+            ui.label("Searching...");
+        }
+
+        ui.add_space(8.0);
+
+        if !self.web_search_results.is_empty() {
+            ui.label(format!("{} results", self.web_search_results.len()));
+            ui.separator();
+
+            egui::ScrollArea::vertical()
+                .max_height(ui.available_height())
+                .show(ui, |ui| {
+                    for result in &self.web_search_results {
+                        ui.group(|ui| {
+                            ui.strong(&result.title);
+                            ui.hyperlink_to(&result.url, &result.url);
+                            if !result.snippet.is_empty() {
+                                ui.label(&result.snippet);
+                            }
+                        });
+                        ui.add_space(4.0);
+                    }
+                });
         }
     }
 
@@ -2345,6 +2436,7 @@ impl AiGuiApp {
                                 RecommendationPriority::High => Color32::from_rgb(220, 140, 30),
                                 RecommendationPriority::Medium => Color32::from_rgb(200, 200, 50),
                                 RecommendationPriority::Low => Color32::GRAY,
+                                _ => Color32::GRAY,
                             };
                             ui.horizontal(|ui| {
                                 ui.colored_label(color, format!("[{:?}]", rec.priority));
@@ -2807,6 +2899,7 @@ impl AiGuiApp {
                             DebugLevel::Debug => Color32::from_rgb(180, 180, 180),
                             DebugLevel::Trace => Color32::from_rgb(120, 120, 120),
                             DebugLevel::Off   => Color32::DARK_GRAY,
+                            _ => Color32::GRAY,
                         };
 
                         ui.horizontal(|ui| {

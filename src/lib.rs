@@ -1806,8 +1806,9 @@ pub use conflict_resolution::{
 };
 
 pub use web_search::{
-    BraveSearchProvider, DuckDuckGoProvider, SearXNGProvider, SearchConfig, SearchProvider,
-    SearchResult as WebSearchResult, WebSearchEngine,
+    BingSearchProvider, BraveSearchProvider, DuckDuckGoProvider, GoogleSearchProvider,
+    SearXNGProvider, SearchConfig, SearchProvider, SearchResult as WebSearchResult,
+    SerpApiProvider, TavilyProvider, WebSearchEngine,
 };
 
 pub use content_versioning::{

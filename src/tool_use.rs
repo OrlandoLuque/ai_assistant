@@ -1,4 +1,8 @@
-//! Function calling / Tool use support
+//! Function calling / Tool use support (DEPRECATED)
+//!
+//! **Deprecated**: Use [`unified_tools`](crate::unified_tools) instead.
+//! This module has no consumers in the codebase. It is retained for
+//! backward compatibility but will be removed in a future major version.
 //!
 //! This module provides support for LLM function calling (tool use),
 //! allowing models to invoke external functions.

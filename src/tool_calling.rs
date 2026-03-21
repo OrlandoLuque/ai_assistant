@@ -1,4 +1,8 @@
-//! Tool calling system
+//! Tool calling system (legacy)
+//!
+//! **Note**: For new code, prefer [`unified_tools`](crate::unified_tools) which is
+//! the canonical tool framework. This module is retained for `agentic_loop` and
+//! `model_integration` compatibility.
 //!
 //! Enables LLM models to use tools like web search, calculations, etc.
 

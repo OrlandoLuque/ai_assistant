@@ -321,6 +321,248 @@ impl SearchProvider for SearXNGProvider {
     }
 }
 
+// =============================================================================
+// Additional Search Providers (API-based)
+// =============================================================================
+
+/// Google Custom Search API provider.
+///
+/// Requires a Google API key and a Custom Search Engine ID (cx).
+/// See: https://developers.google.com/custom-search/v1/overview
+pub struct GoogleSearchProvider {
+    api_key: String,
+    cx: String,
+}
+
+impl GoogleSearchProvider {
+    pub fn new(api_key: &str, cx: &str) -> Self {
+        Self {
+            api_key: api_key.to_string(),
+            cx: cx.to_string(),
+        }
+    }
+}
+
+impl SearchProvider for GoogleSearchProvider {
+    fn search(&self, query: &str, config: &SearchConfig) -> Result<Vec<SearchResult>, SearchError> {
+        let url = format!(
+            "https://www.googleapis.com/customsearch/v1?key={}&cx={}&q={}&num={}",
+            self.api_key,
+            self.cx,
+            urlencoding::encode(query),
+            config.max_results.min(10), // Google max is 10 per page
+        );
+
+        let response = ureq::get(&url)
+            .timeout(config.timeout)
+            .call()
+            .map_err(|e| SearchError::Network(e.to_string()))?;
+
+        let text = response
+            .into_string()
+            .map_err(|e| SearchError::Network(e.to_string()))?;
+
+        let json: serde_json::Value =
+            serde_json::from_str(&text).map_err(|e| SearchError::Parse(e.to_string()))?;
+
+        let mut results = Vec::new();
+        if let Some(items) = json.get("items").and_then(|i| i.as_array()) {
+            for item in items {
+                let title = item.get("title").and_then(|t| t.as_str()).unwrap_or("");
+                let link = item.get("link").and_then(|l| l.as_str()).unwrap_or("");
+                let snippet = item.get("snippet").and_then(|s| s.as_str()).unwrap_or("");
+                results.push(SearchResult::new(title, link, snippet));
+            }
+        }
+
+        Ok(results)
+    }
+
+    fn name(&self) -> &str {
+        "Google Custom Search"
+    }
+}
+
+/// Bing Web Search API provider.
+///
+/// Requires a Microsoft Azure Cognitive Services API key.
+/// See: https://learn.microsoft.com/en-us/bing/search-apis/bing-web-search/overview
+pub struct BingSearchProvider {
+    api_key: String,
+}
+
+impl BingSearchProvider {
+    pub fn new(api_key: &str) -> Self {
+        Self {
+            api_key: api_key.to_string(),
+        }
+    }
+}
+
+impl SearchProvider for BingSearchProvider {
+    fn search(&self, query: &str, config: &SearchConfig) -> Result<Vec<SearchResult>, SearchError> {
+        let url = format!(
+            "https://api.bing.microsoft.com/v7.0/search?q={}&count={}",
+            urlencoding::encode(query),
+            config.max_results,
+        );
+
+        let response = ureq::get(&url)
+            .timeout(config.timeout)
+            .set("Ocp-Apim-Subscription-Key", &self.api_key)
+            .call()
+            .map_err(|e| SearchError::Network(e.to_string()))?;
+
+        let text = response
+            .into_string()
+            .map_err(|e| SearchError::Network(e.to_string()))?;
+
+        let json: serde_json::Value =
+            serde_json::from_str(&text).map_err(|e| SearchError::Parse(e.to_string()))?;
+
+        let mut results = Vec::new();
+        if let Some(pages) = json
+            .get("webPages")
+            .and_then(|w| w.get("value"))
+            .and_then(|v| v.as_array())
+        {
+            for item in pages {
+                let title = item.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                let url = item.get("url").and_then(|u| u.as_str()).unwrap_or("");
+                let snippet = item.get("snippet").and_then(|s| s.as_str()).unwrap_or("");
+                results.push(SearchResult::new(title, url, snippet));
+            }
+        }
+
+        Ok(results)
+    }
+
+    fn name(&self) -> &str {
+        "Bing Web Search"
+    }
+}
+
+/// SerpAPI provider — unified search API supporting Google, Bing, Yahoo, and more.
+///
+/// See: https://serpapi.com/
+pub struct SerpApiProvider {
+    api_key: String,
+    engine: String,
+}
+
+impl SerpApiProvider {
+    /// Create a SerpAPI provider using Google as the search engine.
+    pub fn new(api_key: &str) -> Self {
+        Self {
+            api_key: api_key.to_string(),
+            engine: "google".to_string(),
+        }
+    }
+
+    /// Create with a specific search engine (e.g., "google", "bing", "yahoo").
+    pub fn with_engine(api_key: &str, engine: &str) -> Self {
+        Self {
+            api_key: api_key.to_string(),
+            engine: engine.to_string(),
+        }
+    }
+}
+
+impl SearchProvider for SerpApiProvider {
+    fn search(&self, query: &str, config: &SearchConfig) -> Result<Vec<SearchResult>, SearchError> {
+        let url = format!(
+            "https://serpapi.com/search.json?api_key={}&engine={}&q={}&num={}",
+            self.api_key,
+            self.engine,
+            urlencoding::encode(query),
+            config.max_results,
+        );
+
+        let response = ureq::get(&url)
+            .timeout(config.timeout)
+            .call()
+            .map_err(|e| SearchError::Network(e.to_string()))?;
+
+        let text = response
+            .into_string()
+            .map_err(|e| SearchError::Network(e.to_string()))?;
+
+        let json: serde_json::Value =
+            serde_json::from_str(&text).map_err(|e| SearchError::Parse(e.to_string()))?;
+
+        let mut results = Vec::new();
+        if let Some(organic) = json.get("organic_results").and_then(|o| o.as_array()) {
+            for item in organic {
+                let title = item.get("title").and_then(|t| t.as_str()).unwrap_or("");
+                let link = item.get("link").and_then(|l| l.as_str()).unwrap_or("");
+                let snippet = item.get("snippet").and_then(|s| s.as_str()).unwrap_or("");
+                results.push(SearchResult::new(title, link, snippet));
+            }
+        }
+
+        Ok(results)
+    }
+
+    fn name(&self) -> &str {
+        "SerpAPI"
+    }
+}
+
+/// Tavily Search API provider — AI-optimized search with content extraction.
+///
+/// See: https://tavily.com/
+pub struct TavilyProvider {
+    api_key: String,
+}
+
+impl TavilyProvider {
+    pub fn new(api_key: &str) -> Self {
+        Self {
+            api_key: api_key.to_string(),
+        }
+    }
+}
+
+impl SearchProvider for TavilyProvider {
+    fn search(&self, query: &str, config: &SearchConfig) -> Result<Vec<SearchResult>, SearchError> {
+        let body = serde_json::json!({
+            "api_key": self.api_key,
+            "query": query,
+            "max_results": config.max_results,
+            "search_depth": "basic",
+        });
+
+        let response = ureq::post("https://api.tavily.com/search")
+            .timeout(config.timeout)
+            .set("Content-Type", "application/json")
+            .send_string(&body.to_string())
+            .map_err(|e| SearchError::Network(e.to_string()))?;
+
+        let text = response
+            .into_string()
+            .map_err(|e| SearchError::Network(e.to_string()))?;
+
+        let json: serde_json::Value =
+            serde_json::from_str(&text).map_err(|e| SearchError::Parse(e.to_string()))?;
+
+        let mut results = Vec::new();
+        if let Some(items) = json.get("results").and_then(|r| r.as_array()) {
+            for item in items {
+                let title = item.get("title").and_then(|t| t.as_str()).unwrap_or("");
+                let url = item.get("url").and_then(|u| u.as_str()).unwrap_or("");
+                let content = item.get("content").and_then(|c| c.as_str()).unwrap_or("");
+                results.push(SearchResult::new(title, url, content));
+            }
+        }
+
+        Ok(results)
+    }
+
+    fn name(&self) -> &str {
+        "Tavily"
+    }
+}
+
 /// Web search manager
 pub struct WebSearchEngine {
     providers: Vec<Box<dyn SearchProvider>>,

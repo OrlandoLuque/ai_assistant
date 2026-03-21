@@ -1,4 +1,8 @@
-//! Function calling support for OpenAI-compatible APIs
+//! Function calling support for OpenAI-compatible APIs (DEPRECATED)
+//!
+//! **Deprecated**: Use [`unified_tools`](crate::unified_tools) instead.
+//! This module has no consumers in the codebase. It is retained for
+//! backward compatibility but will be removed in a future major version.
 //!
 //! This module provides function calling capabilities compatible with
 //! OpenAI's function calling API and similar implementations.
