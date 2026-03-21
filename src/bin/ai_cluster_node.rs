@@ -144,17 +144,15 @@ fn main() -> ExitCode {
         }
     };
 
-    let cluster_config = ClusterConfig {
-        node_id: node_id.clone(),
-        quic_addr,
-        bootstrap_peers: bootstrap_peers
-            .iter()
-            .filter_map(|p| p.parse().ok())
-            .collect(),
-        join_token: cli.join_token.clone(),
-        data_dir: PathBuf::from(&data_dir),
-        ..Default::default()
-    };
+    let mut cluster_config = ClusterConfig::default();
+    cluster_config.node_id = node_id.clone();
+    cluster_config.quic_addr = quic_addr;
+    cluster_config.bootstrap_peers = bootstrap_peers
+        .iter()
+        .filter_map(|p| p.parse().ok())
+        .collect();
+    cluster_config.join_token = cli.join_token.clone();
+    cluster_config.data_dir = PathBuf::from(&data_dir);
 
     let cluster = match ClusterManager::new(cluster_config) {
         Ok(c) => c,
@@ -321,16 +319,15 @@ fn build_config(cli: &CliArgs) -> Result<ServerConfig, String> {
     if let Some(ref host) = cli.host { config.host = host.clone(); }
     if let Some(port) = cli.port { config.port = port; }
     if let Some(ref key) = cli.api_key {
-        config.auth = AuthConfig {
-            enabled: true,
-            bearer_tokens: vec![key.clone()],
-            api_keys: vec![],
-            exempt_paths: vec!["/health".to_string()],
-        };
+        let mut auth = AuthConfig::default();
+        auth.enabled = true;
+        auth.bearer_tokens = vec![key.clone()];
+        auth.exempt_paths = vec!["/health".to_string()];
+        config.auth = auth;
     }
     match (&cli.tls_cert, &cli.tls_key) {
         (Some(cert), Some(key)) => {
-            config.tls = Some(TlsConfig { cert_path: cert.clone(), key_path: key.clone() });
+            config.tls = Some(TlsConfig::new(cert.clone(), key.clone()));
         }
         (Some(_), None) => return Err("--tls-cert requires --tls-key".to_string()),
         (None, Some(_)) => return Err("--tls-key requires --tls-cert".to_string()),
