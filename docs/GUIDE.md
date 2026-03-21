@@ -9282,3 +9282,69 @@ This integrates with the P2P module's existing NAT traversal infrastructure (`p2
 ```bash
 cargo test --features "full,distributed-agents" --lib distributed_harden
 ```
+
+---
+
+## 163. Distributed MapReduce (V50)
+
+V50 transforms MapReduce from local-only execution to actual distributed computation across network nodes.
+
+### The Problem: Closures Can't Cross the Network
+
+Rust closures capture local state and cannot be serialized. The solution is `MapWorkerRegistry` — each node registers the same functions under a shared `job_id`:
+
+```rust
+use ai_assistant::{MapWorkerRegistry, DataChunk, MapOutput};
+
+let mut registry = MapWorkerRegistry::new();
+
+// Register a word-count map function
+registry.register_map("word-count", Box::new(|chunk: &DataChunk| {
+    let text = String::from_utf8_lossy(&chunk.data);
+    text.split_whitespace()
+        .map(|word| MapOutput {
+            key: word.to_lowercase(),
+            value: 1u32.to_le_bytes().to_vec(),
+        })
+        .collect()
+}));
+
+// On the remote node, register the SAME function under the SAME job_id
+// The coordinator sends MapTask { job_id: "word-count", data: ... }
+// The remote node looks up "word-count" in its registry and executes
+```
+
+### Distributed Execution
+
+`execute_distributed_with_results()` splits work between local and remote nodes:
+
+```rust
+use ai_assistant::MapReduceJob;
+
+let mut job = MapReduceJob::new("word-count");
+job.add_chunks(chunks); // all input data
+
+// Calculate distribution: 1 local + N remote workers
+let total_workers = remote_peers.len() + 1;
+let local_count = job.local_chunk_count(total_workers);
+let remote = job.remote_chunks(total_workers);
+
+// Send remote chunks as MapTask messages via network...
+// Meanwhile, execute local chunks + merge remote results:
+let results = job.execute_distributed_with_results(
+    local_count,
+    &peer_map_results, // HashMap<chunk_id, Vec<MapOutput>>
+);
+```
+
+### Fallback Behavior
+
+- **No peers available**: All chunks processed locally with rayon (identical to `execute()`)
+- **Peer timeout**: Failed remote chunks re-executed locally
+- **Self always works**: Local node always processes its share, even with remote peers
+
+### Testing
+```bash
+cargo test --features "full" --lib -- distributed::tests::test_worker_registry
+cargo test --features "full" --lib -- distributed::tests::test_distributed_mapreduce
+```

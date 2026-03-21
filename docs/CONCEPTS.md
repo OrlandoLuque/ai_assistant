@@ -4137,3 +4137,13 @@ A distributed system that works structurally — nodes can join, data can replic
 - **Hinted handoff**: When a write targets a node that is temporarily unavailable, the write is queued as a "hint" on another node. When the target recovers, the hints are forwarded — no data loss from transient outages.
 - **Reputation-based routing**: Nodes accumulate reputation scores based on response times, success rates, and uptime. Routing prefers high-reputation nodes, naturally steering traffic away from slow or unreliable peers.
 - **NAT traversal integration**: Nodes behind NAT firewalls can participate via STUN/TURN hole-punching, integrated with the P2P module's existing NAT traversal infrastructure.
+
+## 198. Distributed MapReduce: From Local to Network
+
+MapReduce is a two-phase computation pattern: **map** transforms each input chunk into key-value pairs, **reduce** aggregates all values for the same key into a final result. The canonical example is word count — map emits `(word, 1)` for each word in a text chunk, reduce sums all counts for each word.
+
+The challenge in Rust is that closures (the map and reduce functions) cannot be serialized and sent over the network — they capture references to local memory, stack frames, and vtables that have no meaning on another machine. The solution is the **MapWorkerRegistry**: every participating node registers the same map/reduce functions under the same `job_id` before the job starts. When the coordinator sends a `MapTask` containing a `job_id` and raw data, the receiving node looks up the registered function by that ID and executes it locally.
+
+**Distribution strategy**: The coordinator divides input chunks among all available workers (itself + N remote peers) using round-robin allocation. It processes its own share locally with rayon's parallel iterators while simultaneously dispatching `MapTask` messages to remote nodes. When all map results arrive (local + remote), the coordinator performs the **shuffle** phase — grouping all outputs by key — followed by the **reduce** phase, which produces the final aggregated results.
+
+**Graceful degradation**: If no remote peers are available, the coordinator processes all chunks locally with rayon — identical to the pre-distribution behavior. If a remote node fails to respond within the timeout, its chunks are re-executed locally as a fallback. The system always completes, trading parallelism for reliability when necessary.
