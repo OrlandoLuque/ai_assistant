@@ -4119,3 +4119,21 @@ When multiple nodes collaborate on a task, logs are scattered across machines. W
 When node A distributes work to nodes B and C, a `TraceContext` carries a shared `trace_id` that identifies the entire distributed operation. Each node logs using `DistributedLogEntry`, which combines the `trace_id` with a `node_id` (which node produced the log), a `span_id` (which sub-operation within that node), a `level` (Trace/Debug/Info/Warn/Error), and an `operation` description. Remote nodes return their logs alongside their task responses. The originating node then merges all logs via `LogCollector` into a unified, time-sorted view that spans every node involved in the operation.
 
 Configuration is flexible: operators can set the minimum log level to collect (e.g., only Warn+Error in production), whether remote nodes should share their logs at all, retention duration for completed traces, and maximum entries per trace to bound memory usage. Export formats include JSON (machine-readable), Text (human-readable), and CSV (spreadsheet/analysis).
+
+## 196. Cache Policies: Bounded Growth for Every Store
+
+Every in-memory store needs four things: a maximum size, an eviction policy (LRU, LFU, or FIFO), a TTL for entries, and metrics to observe behavior. Without these, any long-running process will eventually consume all available memory. The `BoundedCache<K, V>` generic provides the foundation — a configurable cache with max entries, max bytes, LRU eviction, TTL expiry, pinning (entries that survive eviction), and invalidation callbacks.
+
+V48 audited 57 in-memory stores across the codebase and added explicit limits to the 9 most critical ones: DHT storage (max entries + max bytes + LRU + pinned keys + invalidation callbacks), EntityStore (max 5,000 entities), Context cache (cap 500 entries), SearchCache (converted from FIFO to LRU), ResponseCache (converted from FIFO to LRU), EmbeddingCache (memory-based limit instead of entry count), and CompressedCache (max 5,000 entries). The remaining 48 stores already had adequate limits or are bounded by their container's lifecycle.
+
+## 197. Distributed Systems Hardening: From Structural to Production
+
+A distributed system that works structurally — nodes can join, data can replicate, messages can flow — is not the same as one that works in production. Production adds version conflicts, partial failures, heterogeneous nodes, and NAT firewalls. V49 addresses each gap:
+
+- **Version auto-increment**: `DhtValue` automatically increments its version on every `set()`, preventing silent overwrites when two nodes write the same key concurrently. The higher version wins during replication.
+- **Replica tracking**: The system knows which nodes hold replicas of which keys. When a node departs, the system can identify under-replicated data and re-replicate to healthy nodes.
+- **NodeCapabilities catalog**: Each node advertises its capabilities (storage capacity, compute power, supported features). Routing decisions can prefer nodes that are best suited for a given task.
+- **FailureClassification**: Not all failures are equal. A timeout is temporary (retry soon). A connection refused is permanent (remove from routing). Classifying failures enables smarter retry and routing decisions.
+- **Hinted handoff**: When a write targets a node that is temporarily unavailable, the write is queued as a "hint" on another node. When the target recovers, the hints are forwarded — no data loss from transient outages.
+- **Reputation-based routing**: Nodes accumulate reputation scores based on response times, success rates, and uptime. Routing prefers high-reputation nodes, naturally steering traffic away from slow or unreliable peers.
+- **NAT traversal integration**: Nodes behind NAT firewalls can participate via STUN/TURN hole-punching, integrated with the P2P module's existing NAT traversal infrastructure.

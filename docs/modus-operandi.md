@@ -23,8 +23,10 @@ Continúa con el desarrollo del proyecto. Lee docs/modus-operandi.md y el últim
 - **V44**: COMPLETE — Procedural Memory Integration (ProceduralStore wired into conversation pipeline, WORKFLOW GUIDELINES injection, outcome tracking, CRUD API, 10 tests)
 - **V45**: COMPLETE — Procedure Import/Export/Defaults + Multi-User Isolation (6 builtin procedures, versioned ProcedureExport, merge/replace import, UserScope classification, per-user session filtering, concepts 192-193)
 - **V47**: COMPLETE — Distributed Log Correlation (TraceContext propagation, LogCollector buffer+merge, DistributedLogEntry, export JSON/Text/CSV, concepts 194-195, 13 tests)
-- **Latest**: V47 — Distributed Log Correlation (COMPLETE)
-- **Test count**: 6,887 lib tests (0 failures) + 39 harness precision + 18 fallback resilience + 8 conversation quality scored tests
+- **V48**: COMPLETE — Cache Policies Audit (DHT max_entries/bytes/LRU/pinned/invalidation, EntityStore max 5K, Context cache cap 500, SearchCache/ResponseCache FIFO→LRU, EmbeddingCache memory limit, CompressedCache max 5K)
+- **V49**: COMPLETE — Distributed Systems Hardening (DhtValue version auto-increment, replica tracking, NodeCapabilities catalog, FailureClassification temp/permanent, hinted handoff wired, reputation routing, NAT traversal integration)
+- **Latest**: V49 — Distributed Systems Hardening (COMPLETE)
+- **Test count**: 6,901 lib tests (0 failures) + 39 harness precision + 18 fallback resilience + 8 conversation quality scored tests
 - **Source files**: 320 .rs files, ~390K LOC
 - **Feature flags**: 55 (+1: chaos-testing)
 - **Status**: Experimental — compiles and passes tests, but not validated in production
@@ -208,7 +210,8 @@ cargo check --features "full,autonomous,scheduler,butler,browser,distributed-age
 | `src/unified_persistence.rs` | UnifiedDb, SqliteSessionStore, SqliteMemoryStore |
 | `docs/IMPROVEMENTS_V43.md` | V43 — FreshContext + Fallback Chains |
 | `docs/IMPROVEMENTS_V44.md` | V44 — Procedural Memory Integration |
-| `docs/IMPROVEMENTS_V45.md` | Latest roadmap — Import/Export/Defaults + Multi-User |
+| `docs/IMPROVEMENTS_V48.md` | V48 — Cache Policies Audit |
+| `docs/IMPROVEMENTS_V49.md` | Latest roadmap — Distributed Systems Hardening |
 | `README.md` | Project overview for GitHub |
 
 ## Repository structure

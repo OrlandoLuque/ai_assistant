@@ -9181,3 +9181,104 @@ let csv = collector.export_csv(trace_id);
 ```bash
 cargo test --features "full,distributed-agents" --lib distributed_log
 ```
+
+---
+
+## 161. V48 — Cache Policies Audit
+
+V48 audits every in-memory store in the codebase and ensures bounded growth with proper eviction policies.
+
+### BoundedCache Foundation
+
+The generic `BoundedCache<K, V>` provides configurable caching with:
+- **Max entries** — hard cap on the number of items
+- **Max bytes** — memory-based limit (requires items to report their size)
+- **LRU eviction** — least-recently-used entries are evicted first when limits are reached
+- **TTL** — entries expire after a configurable duration
+- **Pinning** — critical entries can be pinned to survive eviction
+- **Invalidation callbacks** — custom logic runs when entries are evicted
+
+### Stores Audited and Hardened
+
+| Store | Policy | Limit |
+|-------|--------|-------|
+| DHT storage | LRU + pinned + invalidation callbacks | max_entries + max_bytes |
+| EntityStore | LRU | 5,000 entities |
+| Context cache | LRU | 500 entries |
+| SearchCache | LRU (was FIFO) | Configurable |
+| ResponseCache | LRU (was FIFO) | Configurable |
+| EmbeddingCache | Memory-based | Max bytes instead of entry count |
+| CompressedCache | LRU | 5,000 entries |
+
+The remaining 48 of 57 audited stores already had adequate limits or are bounded by their container's lifecycle (e.g., request-scoped buffers that are dropped after use).
+
+### Testing
+```bash
+cargo test --features "full,distributed-agents" --lib cache_polic
+```
+
+---
+
+## 162. V49 — Distributed Systems Hardening
+
+V49 hardens the distributed subsystem from structural correctness to production readiness.
+
+### DhtValue Version Auto-Increment
+
+Every `set()` operation on a DHT key automatically increments the value's version counter. During replication, the higher version wins. This prevents silent overwrites when two nodes write the same key concurrently.
+
+### Replica Tracking
+
+The system maintains a map of which nodes hold replicas of which keys. When a node departs or fails, under-replicated keys are identified and re-replicated to healthy nodes automatically.
+
+### NodeCapabilities Catalog
+
+Each node advertises its capabilities:
+- Storage capacity (disk and memory)
+- Compute power (CPU cores, GPU availability)
+- Supported features (e.g., embedding generation, document parsing)
+- Network characteristics (bandwidth, latency class)
+
+Routing decisions use this catalog to prefer nodes best suited for a given task.
+
+### FailureClassification
+
+Failures are classified as temporary or permanent:
+
+| Classification | Examples | Action |
+|---------------|----------|--------|
+| Temporary | Timeout, busy, rate-limited | Retry with backoff |
+| Permanent | Connection refused, auth failure, node removed | Remove from routing, alert |
+
+This classification drives smarter retry policies and routing decisions.
+
+### Hinted Handoff
+
+When a write targets a temporarily unavailable node:
+1. The write is stored as a "hint" on another healthy node
+2. The hint includes the target node ID, the key, the value, and a timestamp
+3. When the target recovers and re-joins, hints are forwarded
+4. Hints expire after a configurable duration to prevent unbounded growth
+
+### Reputation-Based Routing
+
+Nodes accumulate reputation scores based on:
+- Response latency (faster = better)
+- Success rate (fewer errors = better)
+- Uptime (longer = better)
+
+Routing naturally prefers high-reputation nodes, steering traffic away from slow or unreliable peers without explicit blacklisting.
+
+### NAT Traversal Integration
+
+Nodes behind NAT firewalls participate in the distributed network via:
+- STUN for address discovery
+- TURN for relay when direct connection fails
+- ICE for connectivity checks
+
+This integrates with the P2P module's existing NAT traversal infrastructure (`p2p.rs`).
+
+### Testing
+```bash
+cargo test --features "full,distributed-agents" --lib distributed_harden
+```
