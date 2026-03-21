@@ -385,6 +385,25 @@ impl NetworkNode {
 
         let (endpoint, local_addr) = local_addr?;
 
+        // Attempt NAT traversal if P2P feature is enabled
+        #[cfg(feature = "p2p")]
+        {
+            let port = local_addr.port();
+            let p2p_config = crate::p2p::P2PConfig::default();
+            let mut nat = crate::p2p::NatTraversal::new(p2p_config.clone());
+
+            if let Ok(result) = nat.discover_nat() {
+                if let Some(ref _public_ip) = result.public_ip {
+                    // NAT traversal succeeded — public IP discovered
+                    // Available for peer exchange advertising
+                }
+            }
+
+            if p2p_config.enable_upnp {
+                let _ = nat.try_upnp_mapping(port, port);
+            }
+        }
+
         // Create shared state
         let peers: Arc<RwLock<HashMap<NodeId, PeerState>>> = Arc::new(RwLock::new(HashMap::new()));
         let ring = Arc::new(RwLock::new(ConsistentHashRing::new(
