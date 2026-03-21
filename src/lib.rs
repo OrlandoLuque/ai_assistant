@@ -1845,8 +1845,8 @@ pub use decision_tree::{
 };
 
 pub use task_planning::{
-    PlanBuilder, PlanStep as TaskPlanStep, PlanSummary, StepNote, StepPriority, StepStatus,
-    TaskPlan,
+    PlanBuilder, PlanStep as TaskPlanStep, PlanStore, PlanSummary, StepNote, StepPriority,
+    StepStatus, TaskPlan,
 };
 
 pub use request_coalescing::{

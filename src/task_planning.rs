@@ -698,6 +698,155 @@ impl PlanBuilder {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// PlanStore — Collection manager with file persistence
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A store for multiple TaskPlans with JSON file persistence.
+#[derive(Debug, Clone)]
+pub struct PlanStore {
+    plans: HashMap<String, TaskPlan>,
+    /// Path for auto-persistence (None = in-memory only).
+    persist_path: Option<std::path::PathBuf>,
+    /// Number of modifications since last save.
+    dirty_count: usize,
+    /// Auto-save after this many modifications (0 = disabled).
+    auto_save_threshold: usize,
+}
+
+impl PlanStore {
+    /// Create an empty in-memory plan store.
+    pub fn new() -> Self {
+        Self {
+            plans: HashMap::new(),
+            persist_path: None,
+            dirty_count: 0,
+            auto_save_threshold: 0,
+        }
+    }
+
+    /// Create a plan store backed by a JSON file.
+    /// Loads existing plans from the file if it exists.
+    pub fn with_file(path: impl Into<std::path::PathBuf>) -> Self {
+        let path = path.into();
+        let mut store = Self {
+            plans: HashMap::new(),
+            persist_path: Some(path.clone()),
+            dirty_count: 0,
+            auto_save_threshold: 5,
+        };
+        // Try to load existing plans
+        if path.exists() {
+            let _ = store.load();
+        }
+        store
+    }
+
+    /// Set auto-save threshold (0 = disabled).
+    pub fn set_auto_save_threshold(&mut self, threshold: usize) {
+        self.auto_save_threshold = threshold;
+    }
+
+    /// Add or replace a plan. Returns the previous plan if it existed.
+    pub fn upsert(&mut self, plan: TaskPlan) -> Option<TaskPlan> {
+        let prev = self.plans.insert(plan.id.clone(), plan);
+        self.mark_dirty();
+        prev
+    }
+
+    /// Get a plan by ID.
+    pub fn get(&self, id: &str) -> Option<&TaskPlan> {
+        self.plans.get(id)
+    }
+
+    /// Get a mutable reference to a plan.
+    pub fn get_mut(&mut self, id: &str) -> Option<&mut TaskPlan> {
+        self.plans.get_mut(id)
+    }
+
+    /// Remove a plan by ID.
+    pub fn remove(&mut self, id: &str) -> Option<TaskPlan> {
+        let removed = self.plans.remove(id);
+        if removed.is_some() {
+            self.mark_dirty();
+        }
+        removed
+    }
+
+    /// List all plans (sorted by updated_at descending).
+    pub fn list(&self) -> Vec<&TaskPlan> {
+        let mut plans: Vec<&TaskPlan> = self.plans.values().collect();
+        plans.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        plans
+    }
+
+    /// Number of plans in the store.
+    pub fn len(&self) -> usize {
+        self.plans.len()
+    }
+
+    /// Whether the store is empty.
+    pub fn is_empty(&self) -> bool {
+        self.plans.is_empty()
+    }
+
+    /// Get summaries for all plans.
+    pub fn summaries(&self) -> Vec<(String, String, PlanSummary)> {
+        self.plans
+            .values()
+            .map(|p| (p.id.clone(), p.name.clone(), p.summary()))
+            .collect()
+    }
+
+    /// Save all plans to the configured file.
+    pub fn save(&self) -> Result<(), String> {
+        let path = self
+            .persist_path
+            .as_ref()
+            .ok_or_else(|| "No persist path configured".to_string())?;
+        let plans: Vec<&TaskPlan> = self.plans.values().collect();
+        let json =
+            serde_json::to_string_pretty(&plans).map_err(|e| format!("Serialize error: {}", e))?;
+        let tmp = path.with_extension("tmp");
+        std::fs::write(&tmp, &json).map_err(|e| format!("Write error: {}", e))?;
+        std::fs::rename(&tmp, path).map_err(|e| format!("Rename error: {}", e))?;
+        Ok(())
+    }
+
+    /// Load plans from the configured file, replacing current contents.
+    pub fn load(&mut self) -> Result<usize, String> {
+        let path = self
+            .persist_path
+            .as_ref()
+            .ok_or_else(|| "No persist path configured".to_string())?;
+        let data = std::fs::read_to_string(path).map_err(|e| format!("Read error: {}", e))?;
+        let plans: Vec<TaskPlan> =
+            serde_json::from_str(&data).map_err(|e| format!("Deserialize error: {}", e))?;
+        let count = plans.len();
+        self.plans.clear();
+        for plan in plans {
+            self.plans.insert(plan.id.clone(), plan);
+        }
+        self.dirty_count = 0;
+        Ok(count)
+    }
+
+    /// Mark the store as modified and auto-save if threshold reached.
+    fn mark_dirty(&mut self) {
+        self.dirty_count += 1;
+        if self.auto_save_threshold > 0 && self.dirty_count >= self.auto_save_threshold {
+            let _ = self.save();
+            self.dirty_count = 0;
+        }
+    }
+}
+
+impl Default for PlanStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1142,5 +1291,85 @@ mod tests {
         // A progress = 1.0, B progress = (1.0 + 0.0) / 2 = 0.5
         // Plan progress = (1.0 + 0.5) / 2 = 0.75
         assert!((plan.progress() - 0.75).abs() < 0.001);
+    }
+
+    // ── PlanStore tests (G3) ──
+
+    #[test]
+    fn test_plan_store_upsert_get() {
+        let mut store = PlanStore::new();
+        let plan = TaskPlan::new("Test Plan");
+        let id = plan.id.clone();
+        store.upsert(plan);
+        assert_eq!(store.len(), 1);
+        assert!(store.get(&id).is_some());
+    }
+
+    #[test]
+    fn test_plan_store_remove() {
+        let mut store = PlanStore::new();
+        let plan = TaskPlan::new("Removable");
+        let id = plan.id.clone();
+        store.upsert(plan);
+        assert_eq!(store.len(), 1);
+        let removed = store.remove(&id);
+        assert!(removed.is_some());
+        assert_eq!(store.len(), 0);
+    }
+
+    #[test]
+    fn test_plan_store_list_sorted() {
+        let mut store = PlanStore::new();
+        let p1 = TaskPlan::new("First");
+        let p2 = TaskPlan::new("Second");
+        store.upsert(p1);
+        store.upsert(p2);
+        let list = store.list();
+        assert_eq!(list.len(), 2);
+        // Most recently updated first
+        assert!(list[0].updated_at >= list[1].updated_at);
+    }
+
+    #[test]
+    fn test_plan_store_save_load_roundtrip() {
+        let dir = std::env::temp_dir().join("ai_assistant_test_plan_store");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("plans.json");
+
+        // Save
+        {
+            let mut store = PlanStore::with_file(&path);
+            let mut plan = TaskPlan::new("Persistent Plan");
+            plan.add_step(PlanStep::new("Step 1"));
+            store.upsert(plan);
+            store.save().unwrap();
+        }
+
+        // Load in a new store
+        {
+            let store = PlanStore::with_file(&path);
+            assert_eq!(store.len(), 1);
+            let plans = store.list();
+            assert_eq!(plans[0].name, "Persistent Plan");
+            assert_eq!(plans[0].total_steps(), 1);
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_plan_store_summaries() {
+        let mut store = PlanStore::new();
+        let mut plan = TaskPlan::new("Summary Test");
+        plan.add_step(PlanStep::new("Step A"));
+        let mut step_b = PlanStep::new("Step B");
+        step_b.status = StepStatus::Done;
+        plan.add_step(step_b);
+        store.upsert(plan);
+
+        let summaries = store.summaries();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].2.total_steps, 2);
+        assert_eq!(summaries[0].2.done, 1);
     }
 }
