@@ -4,7 +4,7 @@
 //! and complete complex tasks iteratively.
 
 use crate::tool_calling::{ParameterType, Tool, ToolCall, ToolParameter, ToolRegistry, ToolResult};
-use crate::web_search::{SearchConfig, WebSearchManager};
+use crate::web_search::{SearchConfig, WebSearchEngine};
 use std::sync::Arc;
 
 /// Agent configuration
@@ -95,7 +95,7 @@ pub enum LoopRole {
 pub struct AgenticLoop {
     config: LoopConfig,
     tools: ToolRegistry,
-    search_manager: Option<WebSearchManager>,
+    search_manager: Option<WebSearchEngine>,
     conversation: Vec<LoopMessage>,
     state: LoopState,
     response_generator: Option<Arc<dyn Fn(&[LoopMessage]) -> String + Send + Sync>>,
@@ -129,7 +129,7 @@ impl AgenticLoop {
 
     /// Enable web search capability
     pub fn with_web_search(mut self, search_config: SearchConfig) -> Self {
-        self.search_manager = Some(WebSearchManager::new(search_config));
+        self.search_manager = Some(WebSearchEngine::new(search_config));
 
         // Register web search tool
         let search_tool =

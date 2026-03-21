@@ -4,7 +4,7 @@
 //! tool calling, web search, and agentic capabilities.
 
 use crate::tool_calling::{Tool, ToolCall, ToolRegistry};
-use crate::web_search::{SearchConfig, WebSearchManager};
+use crate::web_search::{SearchConfig, WebSearchEngine};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -332,7 +332,7 @@ impl ModelProvider for LMStudioProvider {
 pub struct IntegratedModelClient {
     provider: Box<dyn ModelProvider>,
     tools: ToolRegistry,
-    search_manager: Option<WebSearchManager>,
+    search_manager: Option<WebSearchEngine>,
     conversation: Vec<ChatMessage>,
     system_prompt: Option<String>,
 }
@@ -350,7 +350,7 @@ impl IntegratedModelClient {
 
     /// Enable web search
     pub fn with_web_search(mut self, config: SearchConfig) -> Self {
-        self.search_manager = Some(WebSearchManager::new(config));
+        self.search_manager = Some(WebSearchEngine::new(config));
 
         // Register search tool
         let search_tool = Tool::new("web_search", "Search the web for current information")

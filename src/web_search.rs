@@ -322,14 +322,14 @@ impl SearchProvider for SearXNGProvider {
 }
 
 /// Web search manager
-pub struct WebSearchManager {
+pub struct WebSearchEngine {
     providers: Vec<Box<dyn SearchProvider>>,
     config: SearchConfig,
     cache: HashMap<String, (Vec<SearchResult>, std::time::Instant)>,
     cache_ttl: Duration,
 }
 
-impl WebSearchManager {
+impl WebSearchEngine {
     pub fn new(config: SearchConfig) -> Self {
         Self {
             providers: Vec::new(),
@@ -418,7 +418,7 @@ impl WebSearchManager {
     }
 }
 
-impl Default for WebSearchManager {
+impl Default for WebSearchEngine {
     fn default() -> Self {
         let mut manager = Self::new(SearchConfig::default());
         manager.add_provider(Box::new(DuckDuckGoProvider::new()));

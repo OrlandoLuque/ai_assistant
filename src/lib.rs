@@ -565,7 +565,7 @@ pub use failure_detector::{
     FailureClassification, HeartbeatConfig, HeartbeatManager, NodeStatus, PhiAccrualDetector,
 };
 #[cfg(feature = "distributed-network")]
-pub use merkle_sync::{AntiEntropySync, MerkleProof, MerkleTree, SyncDelta as MerkleSyncDelta};
+pub use merkle_sync::{AntiEntropySync, MerkleProof, MerkleTree, MerkleSyncDelta};
 #[cfg(feature = "distributed-network")]
 pub use node_security::{CertificateManager, ChallengeResponse, JoinToken, NodeIdentity};
 
@@ -682,7 +682,7 @@ pub use task_board::{
 pub use interactive_commands::{CommandProcessor, CommandResult, UserIntent};
 
 #[cfg(feature = "autonomous")]
-pub use multi_agent::{MultiAgentSession, SessionSummary as MultiAgentSessionSummary};
+pub use multi_agent::{MultiAgentSession, MultiAgentSessionSummary};
 
 #[cfg(feature = "autonomous")]
 pub use mcts_planner::{
@@ -1666,7 +1666,7 @@ pub use cost_integration::{
 };
 
 pub use entities::{
-    CustomPattern, Entity, EntityExtractor, EntityExtractorConfig, EntityType, Fact, FactExtractor,
+    EntityCustomPattern, Entity, EntityExtractor, EntityExtractorConfig, EntityType, Fact, FactExtractor,
     FactExtractorConfig, FactStore, FactType,
 };
 
@@ -1803,7 +1803,7 @@ pub use conflict_resolution::{
 
 pub use web_search::{
     BraveSearchProvider, DuckDuckGoProvider, SearXNGProvider, SearchConfig, SearchProvider,
-    SearchResult as WebSearchResult, WebSearchManager,
+    SearchResult as WebSearchResult, WebSearchEngine,
 };
 
 pub use content_versioning::{

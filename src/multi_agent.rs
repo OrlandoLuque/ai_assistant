@@ -587,7 +587,7 @@ impl std::fmt::Debug for MultiAgentSession {
 /// Summary of a multi-agent session's current state.
 #[cfg(feature = "autonomous")]
 #[derive(Debug, Clone)]
-pub struct SessionSummary {
+pub struct MultiAgentSessionSummary {
     /// Session name.
     pub name: String,
     /// Orchestration status.
@@ -740,7 +740,7 @@ impl MultiAgentSession {
     }
 
     /// Get session summary.
-    pub fn summary(&self) -> SessionSummary {
+    pub fn summary(&self) -> MultiAgentSessionSummary {
         let status = self.orchestrator.get_status();
         let agent_states: Vec<(String, String)> = self
             .agents
@@ -751,7 +751,7 @@ impl MultiAgentSession {
         let total = status.total_tasks.max(1) as f64;
         let progress = status.completed_tasks as f64 / total;
 
-        SessionSummary {
+        MultiAgentSessionSummary {
             name: self.name.clone(),
             status,
             agent_states,

@@ -132,7 +132,7 @@ pub struct EntityExtractorConfig {
     /// Enable URLs and emails
     pub extract_links: bool,
     /// Custom patterns to match (regex-like simple patterns)
-    pub custom_patterns: Vec<CustomPattern>,
+    pub custom_patterns: Vec<EntityCustomPattern>,
 }
 
 impl Default for EntityExtractorConfig {
@@ -151,7 +151,7 @@ impl Default for EntityExtractorConfig {
 
 /// A custom pattern for entity extraction
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CustomPattern {
+pub struct EntityCustomPattern {
     /// Pattern name
     pub name: String,
     /// Keywords that trigger this pattern
@@ -689,7 +689,7 @@ impl EntityExtractor {
     }
 
     /// Apply a custom pattern
-    fn apply_custom_pattern(&self, text: &str, pattern: &CustomPattern) -> Vec<Entity> {
+    fn apply_custom_pattern(&self, text: &str, pattern: &EntityCustomPattern) -> Vec<Entity> {
         let mut entities = Vec::new();
         let text_lower = text.to_lowercase();
 

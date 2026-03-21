@@ -280,7 +280,7 @@ pub struct MerkleProof {
 
 /// Result of comparing two Merkle trees for anti-entropy sync.
 #[derive(Debug, Clone)]
-pub struct SyncDelta {
+pub struct MerkleSyncDelta {
     /// Keys we have that the remote doesn't (or has different values).
     /// These should be sent to the remote.
     pub keys_to_send: Vec<String>,
@@ -289,7 +289,7 @@ pub struct SyncDelta {
     pub keys_to_request: Vec<String>,
 }
 
-impl SyncDelta {
+impl MerkleSyncDelta {
     /// Total number of keys that need synchronization.
     pub fn total_diff(&self) -> usize {
         self.keys_to_send.len() + self.keys_to_request.len()
@@ -360,7 +360,7 @@ impl AntiEntropySync {
         local: &MerkleTree,
         remote: &MerkleTree,
         local_data: &BTreeMap<String, Vec<u8>>,
-    ) -> SyncDelta {
+    ) -> MerkleSyncDelta {
         let differing = local.diff(remote);
 
         let mut keys_to_send = Vec::new();
@@ -381,7 +381,7 @@ impl AntiEntropySync {
             }
         }
 
-        SyncDelta {
+        MerkleSyncDelta {
             keys_to_send,
             keys_to_request,
         }
@@ -580,7 +580,7 @@ mod tests {
 
     #[test]
     fn test_sync_delta_no_diff() {
-        let delta = SyncDelta {
+        let delta = MerkleSyncDelta {
             keys_to_send: Vec::new(),
             keys_to_request: Vec::new(),
         };

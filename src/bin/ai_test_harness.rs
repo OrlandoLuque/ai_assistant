@@ -13960,6 +13960,127 @@ fn write_json_file(results: &[CategoryResult], path: &str) {
     }
 }
 
+/// Export results in JUnit XML format (compatible with CI systems like Jenkins, GitHub Actions).
+fn write_junit_xml(results: &[CategoryResult], path: &str) {
+    let mut xml = String::from(r#"<?xml version="1.0" encoding="UTF-8"?>"#);
+    xml.push('\n');
+
+    let total_tests: usize = results.iter().map(|c| c.total_active()).sum();
+    let total_failures: usize = results.iter().map(|c| c.failed()).sum();
+    let total_skipped: usize = results.iter().map(|c| c.skipped()).sum();
+    let total_time: f64 = results
+        .iter()
+        .flat_map(|c| c.results.iter())
+        .filter(|t| !t.skipped)
+        .map(|t| t.duration_ms)
+        .sum::<f64>()
+        / 1000.0;
+
+    xml.push_str(&format!(
+        r#"<testsuites tests="{}" failures="{}" skipped="{}" time="{:.3}">"#,
+        total_tests, total_failures, total_skipped, total_time
+    ));
+    xml.push('\n');
+
+    for cat in results {
+        let cat_time: f64 = cat
+            .results
+            .iter()
+            .filter(|t| !t.skipped)
+            .map(|t| t.duration_ms)
+            .sum::<f64>()
+            / 1000.0;
+
+        xml.push_str(&format!(
+            r#"  <testsuite name="{}" tests="{}" failures="{}" skipped="{}" time="{:.3}">"#,
+            xml_escape(&cat.name),
+            cat.total_active(),
+            cat.failed(),
+            cat.skipped(),
+            cat_time,
+        ));
+        xml.push('\n');
+
+        for test in &cat.results {
+            let time_s = test.duration_ms / 1000.0;
+            xml.push_str(&format!(
+                r#"    <testcase name="{}" classname="{}" time="{:.3}">"#,
+                xml_escape(&test.name),
+                xml_escape(&cat.name),
+                time_s,
+            ));
+
+            if test.skipped {
+                xml.push_str("<skipped/>");
+            } else if !test.passed {
+                let msg = test
+                    .message
+                    .as_deref()
+                    .unwrap_or("Test failed");
+                xml.push_str(&format!(
+                    r#"<failure message="{}">{}</failure>"#,
+                    xml_escape(msg),
+                    xml_escape(msg),
+                ));
+            }
+
+            xml.push_str("</testcase>\n");
+        }
+
+        xml.push_str("  </testsuite>\n");
+    }
+
+    xml.push_str("</testsuites>\n");
+
+    if let Err(e) = std::fs::write(path, &xml) {
+        eprintln!("Failed to write JUnit XML to {}: {}", path, e);
+    } else {
+        println!("{}", green(&format!("JUnit XML report written to: {}", path)));
+    }
+}
+
+/// Export results in TAP (Test Anything Protocol) format.
+fn write_tap(results: &[CategoryResult], path: &str) {
+    let all_tests: Vec<(&str, &TestResult)> = results
+        .iter()
+        .flat_map(|c| c.results.iter().map(move |t| (c.name.as_str(), t)))
+        .collect();
+
+    let mut tap = format!("TAP version 13\n1..{}\n", all_tests.len());
+
+    for (i, (cat, test)) in all_tests.iter().enumerate() {
+        let num = i + 1;
+        if test.skipped {
+            tap.push_str(&format!(
+                "ok {} - {} # SKIP\n",
+                num, test.name
+            ));
+        } else if test.passed {
+            tap.push_str(&format!("ok {} - {} ({})\n", num, test.name, cat));
+        } else {
+            tap.push_str(&format!("not ok {} - {} ({})\n", num, test.name, cat));
+            if let Some(ref msg) = test.message {
+                tap.push_str(&format!("  ---\n  message: {}\n  ...\n", msg));
+            }
+        }
+    }
+
+    if let Err(e) = std::fs::write(path, &tap) {
+        eprintln!("Failed to write TAP to {}: {}", path, e);
+    } else {
+        println!("{}", green(&format!("TAP report written to: {}", path)));
+    }
+}
+
+/// Escape special XML characters.
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
 fn interactive_menu() {
     let categories = all_categories();
     loop {
@@ -14772,6 +14893,8 @@ fn main() {
     let mut replay_session: Option<usize> = None;
     let mut json_output = false;
     let mut json_file: Option<String> = None;
+    let mut junit_xml_file: Option<String> = None;
+    let mut tap_file: Option<String> = None;
     let mut retry_failed: usize = 0;
     let mut diff_baseline: Option<String> = None;
     let mut save_baseline: Option<String> = None;
@@ -14843,6 +14966,24 @@ fn main() {
                     std::process::exit(1);
                 }
             }
+            "--junit-xml" => {
+                i += 1;
+                if i < args.len() {
+                    junit_xml_file = Some(args[i].clone());
+                } else {
+                    eprintln!("--junit-xml requires a path");
+                    std::process::exit(1);
+                }
+            }
+            "--tap" => {
+                i += 1;
+                if i < args.len() {
+                    tap_file = Some(args[i].clone());
+                } else {
+                    eprintln!("--tap requires a path");
+                    std::process::exit(1);
+                }
+            }
             "--regression-threshold" => {
                 i += 1;
                 if i < args.len() {
@@ -14863,6 +15004,8 @@ fn main() {
                 println!("  --no-color              Disable ANSI colors");
                 println!("  --json                  Output results as JSON to stdout");
                 println!("  --json-file <path>      Write JSON report to file");
+                println!("  --junit-xml <path>      Write JUnit XML report (CI integration)");
+                println!("  --tap <path>            Write TAP (Test Anything Protocol) report");
                 println!();
                 println!("Debug Options:");
                 println!("  --verbose, -v           Show detailed per-test output in summary");
@@ -15082,6 +15225,12 @@ fn main() {
     }
     if let Some(ref path) = json_file {
         write_json_file(&results, path);
+    }
+    if let Some(ref path) = junit_xml_file {
+        write_junit_xml(&results, path);
+    }
+    if let Some(ref path) = tap_file {
+        write_tap(&results, path);
     }
 
     // Diff against baseline

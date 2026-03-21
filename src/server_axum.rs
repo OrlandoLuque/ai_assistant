@@ -87,6 +87,9 @@ pub struct AppState {
     /// Optional MCP server for Docker container tools (behind `containers` + `tools`).
     #[cfg(all(feature = "containers", feature = "tools"))]
     pub mcp_server: Option<Arc<std::sync::RwLock<crate::mcp_protocol::McpServer>>>,
+    /// Optional distributed log collector (behind `distributed-network` feature).
+    #[cfg(feature = "distributed-network")]
+    pub log_collector: Option<Arc<tokio::sync::Mutex<crate::distributed_log::LogCollector>>>,
 }
 
 /// Per-session metadata stored in the DashMap.
@@ -762,6 +765,14 @@ pub fn build_router(state: AppState, config: &ServerConfig) -> Router {
     #[cfg(all(feature = "containers", feature = "tools"))]
     {
         app = app.route("/mcp", post(mcp_handler));
+    }
+
+    // Distributed log endpoints (behind distributed-network feature)
+    #[cfg(feature = "distributed-network")]
+    {
+        app = app
+            .route("/v1/logs/traces", get(list_traces_handler))
+            .route("/v1/logs/traces/{trace_id}", get(get_trace_handler));
     }
 
     // Swagger UI (behind server-openapi feature)
@@ -1992,6 +2003,87 @@ async fn mcp_handler(
 }
 
 // ============================================================================
+// Distributed Log Handlers (distributed-network)
+// ============================================================================
+
+/// Query parameters for GET /v1/logs/traces/{trace_id}.
+#[cfg(feature = "distributed-network")]
+#[derive(Debug, Deserialize)]
+struct TraceQuery {
+    /// Export format: "json" (default), "text", "csv".
+    #[serde(default = "default_format")]
+    format: String,
+    /// Minimum log level filter: "trace", "debug", "info", "warn", "error".
+    #[serde(default)]
+    min_level: Option<String>,
+}
+
+#[cfg(feature = "distributed-network")]
+fn default_format() -> String {
+    "json".to_string()
+}
+
+/// GET /v1/logs/traces — List active traces with summaries.
+#[cfg(feature = "distributed-network")]
+async fn list_traces_handler(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let collector = state
+        .log_collector
+        .as_ref()
+        .ok_or_else(|| AppError::ServiceUnavailable("Log collector not enabled".into()))?;
+
+    let guard = collector.lock().await;
+    let active = guard.active_trace_count();
+    let total_entries = guard.total_entry_count();
+
+    Ok(Json(serde_json::json!({
+        "active_traces": active,
+        "total_entries": total_entries,
+    })))
+}
+
+/// GET /v1/logs/traces/{trace_id} — Get unified log for a trace.
+#[cfg(feature = "distributed-network")]
+async fn get_trace_handler(
+    State(state): State<AppState>,
+    Path(trace_id): Path<String>,
+    Query(params): Query<TraceQuery>,
+) -> Result<Response, AppError> {
+    let collector = state
+        .log_collector
+        .as_ref()
+        .ok_or_else(|| AppError::ServiceUnavailable("Log collector not enabled".into()))?;
+
+    let guard = collector.lock().await;
+
+    let format = match params.format.as_str() {
+        "text" => crate::distributed_log::ExportFormat::Text,
+        "csv" => crate::distributed_log::ExportFormat::Csv,
+        _ => crate::distributed_log::ExportFormat::Json,
+    };
+
+    let body = guard.export_trace(&trace_id, format);
+
+    let content_type = match format {
+        crate::distributed_log::ExportFormat::Json => "application/json",
+        crate::distributed_log::ExportFormat::Text => "text/plain",
+        crate::distributed_log::ExportFormat::Csv => "text/csv",
+    };
+
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, content_type)
+        .body(body.into())
+        .unwrap_or_else(|_| {
+            Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body("Internal error".into())
+                .unwrap()
+        }))
+}
+
+// ============================================================================
 // AxumServer — Entrypoint + Graceful Shutdown (Phase 5)
 // ============================================================================
 
@@ -2116,6 +2208,8 @@ fn build_app_state(config: ServerConfig, assistant: AiAssistant) -> AppState {
         cluster: None,
         #[cfg(all(feature = "containers", feature = "tools"))]
         mcp_server: build_mcp_docker_server(),
+        #[cfg(feature = "distributed-network")]
+        log_collector: None,
     }
 }
 
