@@ -422,6 +422,9 @@ impl FactExtractor for LlmFactExtractor {
     }
 }
 
+/// Maximum number of semantic facts retained before eviction.
+const MAX_SEMANTIC_FACTS: usize = 5_000;
+
 /// Store for semantic facts with deduplication and querying.
 pub struct FactStore {
     facts: Vec<SemanticFact>,
@@ -456,8 +459,20 @@ impl FactStore {
             false
         } else {
             self.facts.push(fact);
+            self.evict_if_needed();
             true
         }
+    }
+
+    /// Evict lowest-confidence facts when over the limit.
+    fn evict_if_needed(&mut self) {
+        if self.facts.len() <= MAX_SEMANTIC_FACTS {
+            return;
+        }
+        // Sort by confidence descending — highest-confidence facts survive truncation
+        self.facts
+            .sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
+        self.facts.truncate(MAX_SEMANTIC_FACTS);
     }
 
     /// Find all facts with the given subject (case-insensitive).
@@ -618,5 +633,44 @@ impl EnhancedConsolidator {
     /// internal counter used by `EveryNEpisodes` scheduling.
     pub fn notify_episode_added(&mut self) {
         self.episodes_since_last += 1;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_fact(subject: &str, confidence: f64) -> SemanticFact {
+        SemanticFact {
+            id: uuid::Uuid::new_v4().to_string(),
+            subject: subject.to_string(),
+            predicate: "is".to_string(),
+            object: "test".to_string(),
+            confidence,
+            source_episodes: Vec::new(),
+            created_at: chrono::Utc::now(),
+            last_confirmed: chrono::Utc::now(),
+        }
+    }
+
+    #[test]
+    fn test_semantic_fact_store_eviction() {
+        let mut store = FactStore::new();
+        // Insert MAX + 10 facts with varying confidence
+        for i in 0..(MAX_SEMANTIC_FACTS + 10) {
+            let confidence = (i as f64) / (MAX_SEMANTIC_FACTS as f64);
+            store.add_fact(make_fact(&format!("subject-{}", i), confidence));
+        }
+        // Should have been evicted down to MAX
+        assert_eq!(store.len(), MAX_SEMANTIC_FACTS);
+    }
+
+    #[test]
+    fn test_semantic_fact_store_under_limit_no_eviction() {
+        let mut store = FactStore::new();
+        for i in 0..100 {
+            store.add_fact(make_fact(&format!("subject-{}", i), 0.5));
+        }
+        assert_eq!(store.len(), 100);
     }
 }

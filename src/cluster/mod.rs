@@ -123,11 +123,14 @@ pub struct ClusterState {
     pub model_catalog: Arc<RwLock<LWWMap<String, String>>>,
 }
 
+/// Maximum number of sessions tracked in cluster state.
+const MAX_CLUSTER_SESSIONS: usize = 10_000;
+
 impl ClusterState {
     fn new() -> Self {
         Self {
             rate_limits: Arc::new(RwLock::new(PNCounter::new())),
-            sessions: Arc::new(RwLock::new(LWWMap::new())),
+            sessions: Arc::new(RwLock::new(LWWMap::with_max_entries(MAX_CLUSTER_SESSIONS))),
             config_register: Arc::new(RwLock::new(LWWMap::new())),
             active_nodes: Arc::new(RwLock::new(ORSet::new())),
             request_counts: Arc::new(RwLock::new(GCounter::new())),

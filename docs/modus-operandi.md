@@ -27,8 +27,9 @@ Continúa con el desarrollo del proyecto. Lee docs/modus-operandi.md y el últim
 - **V48**: COMPLETE — Cache Policies Audit (DHT max_entries/bytes/LRU/pinned/invalidation, EntityStore max 5K, Context cache cap 500, SearchCache/ResponseCache FIFO→LRU, EmbeddingCache memory limit, CompressedCache max 5K)
 - **V49**: COMPLETE — Distributed Systems Hardening (DhtValue version auto-increment, replica tracking, NodeCapabilities catalog, FailureClassification temp/permanent, hinted handoff wired, reputation routing, NAT traversal integration)
 - **V50**: COMPLETE — Distributed MapReduce (MapWorkerRegistry for closure serialization, execute_distributed_with_results, local+remote chunk splitting, self-as-worker, fallback to local, concept 198, 6 tests)
-- **Latest**: V50 — Distributed MapReduce (COMPLETE)
-- **Test count**: 6,920 lib tests (0 failures) + 39 harness precision + 18 fallback resilience + 8 conversation quality scored tests
+- **V51**: COMPLETE — Store Limits Hardening (A2A TaskStore max 10K evict completed-first, consolidation FactStore max 5K evict lowest-confidence, entities FactStore enforce 10K evict lowest-reinforcement, LWWMap optional max_entries evict oldest, push_configs max 5K, 8 tests)
+- **Latest**: V51 — Store Limits Hardening (COMPLETE)
+- **Test count**: 6,928 lib tests (0 failures) + 39 harness precision + 18 fallback resilience + 8 conversation quality scored tests
 - **Source files**: 320 .rs files, ~390K LOC
 - **Feature flags**: 55 (+1: chaos-testing)
 - **Status**: Experimental — compiles and passes tests, but not validated in production

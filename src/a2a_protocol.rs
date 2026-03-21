@@ -470,6 +470,11 @@ pub type TaskHandler = Box<dyn Fn(&A2AMessage) -> Result<A2AMessage, AiError> + 
 // A2A Server
 // =============================================================================
 
+/// Maximum number of tasks retained in memory (completed/failed tasks evicted first).
+const MAX_A2A_TASKS: usize = 10_000;
+/// Maximum number of push notification configs retained.
+const MAX_PUSH_CONFIGS: usize = 5_000;
+
 /// An A2A-protocol server that hosts an agent and processes JSON-RPC requests.
 pub struct A2AServer {
     card: AgentCard,
@@ -528,6 +533,48 @@ impl A2AServer {
         &self.card
     }
 
+    /// Evict completed/failed tasks when over the limit, oldest first.
+    fn evict_tasks_if_needed(tasks: &mut HashMap<String, A2ATask>) {
+        if tasks.len() <= MAX_A2A_TASKS {
+            return;
+        }
+        // Collect completed/failed/canceled task IDs sorted by creation time (oldest first)
+        let mut terminal: Vec<(String, u64)> = tasks
+            .iter()
+            .filter(|(_, t)| {
+                matches!(
+                    t.status,
+                    A2ATaskStatus::Completed | A2ATaskStatus::Failed | A2ATaskStatus::Canceled
+                )
+            })
+            .map(|(id, t)| {
+                let ts = t.history.first().map(|h| h.timestamp).unwrap_or(0);
+                (id.clone(), ts)
+            })
+            .collect();
+        terminal.sort_by_key(|(_, ts)| *ts);
+
+        let to_remove = tasks.len() - MAX_A2A_TASKS;
+        for (id, _) in terminal.into_iter().take(to_remove) {
+            tasks.remove(&id);
+        }
+    }
+
+    /// Evict oldest push configs when over the limit.
+    fn evict_push_configs_if_needed(
+        configs: &mut HashMap<String, PushNotificationConfig>,
+    ) {
+        if configs.len() <= MAX_PUSH_CONFIGS {
+            return;
+        }
+        // No timestamp on PushNotificationConfig — just remove arbitrary excess
+        let to_remove = configs.len() - MAX_PUSH_CONFIGS;
+        let keys: Vec<String> = configs.keys().take(to_remove).cloned().collect();
+        for key in keys {
+            configs.remove(&key);
+        }
+    }
+
     /// Register a push notification configuration for a task.
     pub fn register_push(
         &self,
@@ -551,6 +598,7 @@ impl A2AServer {
             AiError::Other(format!("Failed to lock push_configs: {}", e))
         })?;
         push.insert(task_id, config);
+        Self::evict_push_configs_if_needed(&mut push);
         Ok(())
     }
 
@@ -709,6 +757,7 @@ impl A2AServer {
                 };
                 if let Ok(mut tasks) = self.tasks.lock() {
                     tasks.insert(task_id, task);
+                    Self::evict_tasks_if_needed(&mut tasks);
                 }
                 JsonRpcResponse::success(request.id.clone(), task_value)
             }
@@ -717,6 +766,7 @@ impl A2AServer {
                 let _ = task.transition(A2ATaskStatus::Failed);
                 if let Ok(mut tasks) = self.tasks.lock() {
                     tasks.insert(task.id.clone(), task);
+                    Self::evict_tasks_if_needed(&mut tasks);
                 }
                 JsonRpcResponse::error(
                     request.id.clone(),
@@ -3026,5 +3076,80 @@ mod tests {
         assert!(entries[0].endpoint.is_none());
         assert!(entries[0].version.is_none());
         assert!(entries[0].capabilities.is_empty());
+    }
+
+    #[test]
+    fn test_a2a_task_eviction_over_limit() {
+        let card = AgentCard::new("test", "test", "http://localhost");
+        let handler: TaskHandler = Box::new(|msg| Ok(msg.clone()));
+        let server = A2AServer::new(card, handler);
+
+        {
+            let mut tasks = server.tasks.lock().unwrap();
+            // Insert MAX + 5 completed tasks
+            for i in 0..(MAX_A2A_TASKS + 5) {
+                let mut task = A2ATask::new();
+                task.id = format!("task-{}", i);
+                task.status = A2ATaskStatus::Completed;
+                task.history = vec![TaskStatusUpdate {
+                    status: A2ATaskStatus::Completed,
+                    message: None,
+                    timestamp: i as u64,
+                }];
+                tasks.insert(task.id.clone(), task);
+            }
+            assert_eq!(tasks.len(), MAX_A2A_TASKS + 5);
+
+            // Trigger eviction
+            A2AServer::evict_tasks_if_needed(&mut tasks);
+            assert_eq!(tasks.len(), MAX_A2A_TASKS);
+
+            // Oldest tasks (lowest timestamp) should have been evicted
+            assert!(!tasks.contains_key("task-0"));
+            assert!(!tasks.contains_key("task-4"));
+            // Newest tasks should remain
+            assert!(tasks.contains_key(&format!("task-{}", MAX_A2A_TASKS + 4)));
+        }
+    }
+
+    #[test]
+    fn test_a2a_task_eviction_prefers_completed() {
+        let card = AgentCard::new("test", "test", "http://localhost");
+        let handler: TaskHandler = Box::new(|msg| Ok(msg.clone()));
+        let server = A2AServer::new(card, handler);
+
+        {
+            let mut tasks = server.tasks.lock().unwrap();
+            // Insert MAX + 2 tasks: MAX are Working, 2 are Completed
+            for i in 0..MAX_A2A_TASKS {
+                let mut task = A2ATask::new();
+                task.id = format!("working-{}", i);
+                task.status = A2ATaskStatus::Working;
+                task.history = vec![TaskStatusUpdate {
+                    status: A2ATaskStatus::Working,
+                    message: None,
+                    timestamp: i as u64,
+                }];
+                tasks.insert(task.id.clone(), task);
+            }
+            for i in 0..2 {
+                let mut task = A2ATask::new();
+                task.id = format!("completed-{}", i);
+                task.status = A2ATaskStatus::Completed;
+                task.history = vec![TaskStatusUpdate {
+                    status: A2ATaskStatus::Completed,
+                    message: None,
+                    timestamp: i as u64,
+                }];
+                tasks.insert(task.id.clone(), task);
+            }
+            assert_eq!(tasks.len(), MAX_A2A_TASKS + 2);
+
+            A2AServer::evict_tasks_if_needed(&mut tasks);
+            // Only completed tasks should have been evicted
+            assert_eq!(tasks.len(), MAX_A2A_TASKS);
+            assert!(!tasks.contains_key("completed-0"));
+            assert!(!tasks.contains_key("completed-1"));
+        }
     }
 }

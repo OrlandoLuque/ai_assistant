@@ -6,7 +6,7 @@ The project has two testing layers:
 
 | Layer | Tests | Run Command |
 |-------|-------|-------------|
-| Unit tests (`#[test]`) | 6,920 | `cargo test --lib --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite,chaos-testing"` |
+| Unit tests (`#[test]`) | 6,928 | `cargo test --lib --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite,chaos-testing"` |
 | Integration tests | 38 | `cargo test --test integration_tests --features full` |
 | Test harness (CLI) | ~436 | `cargo run --bin ai_test_harness -- --all` (sin P2P) |
 | Distributed networking tests | 115 | `cargo test --features "full,distributed-network"` |
@@ -15,7 +15,7 @@ The project has two testing layers:
 | Test harness P2P categories | 16 | `cargo run --bin ai_test_harness --features "full,p2p" -- --category=p2p_nat` |
 | Benchmarks | 42 | `cargo bench --bench core_benchmarks --features full` |
 
-**Total: 6,920 tests** (lib tests, verified with `cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite,chaos-testing" --lib`)
+**Total: 6,928 tests** (lib tests, verified with `cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite,chaos-testing" --lib`)
 
 ## Quick Start
 
@@ -496,6 +496,7 @@ The harness exits with code 1 if any test fails, making it suitable for CI pipel
 | v48 (Cache Policies Audit) | 6,893 | +6 | 2026-03-21 |
 | v49 (Distributed Systems Hardening) | 6,901 | +8 | 2026-03-21 |
 | v50 (Distributed MapReduce) | 6,920 | +19 | 2026-03-21 |
+| v51 (Store Limits Hardening) | 6,928 | +8 | 2026-03-21 |
 
 > **Note on v37 count**: Test count reflects current `--lib` run. Some tests from v28-v36 were
 > in integration tests or feature combinations not included in the standard lib test run.

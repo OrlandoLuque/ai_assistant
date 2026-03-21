@@ -1097,6 +1097,9 @@ impl FactExtractor {
 // Fact Store
 // ============================================================================
 
+/// Maximum number of facts before eviction (lowest reinforcement first).
+const MAX_ENTITY_FACTS: usize = 10_000;
+
 /// In-memory fact store with deduplication
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FactStore {
@@ -1143,6 +1146,46 @@ impl FactStore {
                 crate::scalability_monitor::Subsystem::FactStore,
                 self.facts.len(),
             );
+
+            self.evict_if_needed();
+        }
+    }
+
+    /// Evict lowest-reinforcement facts when over the limit, then rebuild indices.
+    fn evict_if_needed(&mut self) {
+        if self.facts.len() <= MAX_ENTITY_FACTS {
+            return;
+        }
+        // Sort by reinforcement_count descending, then by confidence descending
+        // so the most valuable facts are at the front and survive truncation
+        self.facts.sort_by(|a, b| {
+            b.reinforcement_count
+                .cmp(&a.reinforcement_count)
+                .then_with(|| {
+                    b.confidence
+                        .partial_cmp(&a.confidence)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+        });
+        self.facts.truncate(MAX_ENTITY_FACTS);
+        self.rebuild_indices();
+    }
+
+    /// Rebuild subject and predicate indices from scratch.
+    fn rebuild_indices(&mut self) {
+        self.by_subject.clear();
+        self.by_predicate.clear();
+        for (idx, fact) in self.facts.iter().enumerate() {
+            if let Some(ref subject) = fact.subject {
+                self.by_subject
+                    .entry(subject.to_lowercase())
+                    .or_default()
+                    .push(idx);
+            }
+            self.by_predicate
+                .entry(fact.predicate.to_lowercase())
+                .or_default()
+                .push(idx);
         }
     }
 
@@ -1733,5 +1776,80 @@ mod tests {
         fact.reinforce();
         assert!(fact.confidence <= 1.0);
         assert_eq!(fact.reinforcement_count, 4);
+    }
+
+    #[test]
+    fn test_entity_fact_store_eviction_direct() {
+        // Test eviction logic directly by pre-populating facts vector
+        let mut store = FactStore::new();
+        // Manually insert facts to avoid O(n^2) similarity check
+        let limit = 100; // Use a small number for test speed
+        for i in 0..(limit + 5) {
+            let fact = Fact::new(
+                &format!("unique-subj-{}", i),
+                &format!("unique-pred-{}", i),
+                &format!("unique-obj-{}", i),
+                "source",
+                0.5,
+            );
+            store.facts.push(fact);
+        }
+        assert_eq!(store.facts.len(), limit + 5);
+        // Manually trigger eviction with a smaller limit
+        store.facts.sort_by(|a, b| {
+            a.reinforcement_count
+                .cmp(&b.reinforcement_count)
+                .then_with(|| {
+                    a.confidence
+                        .partial_cmp(&b.confidence)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+        });
+        store.facts.truncate(limit);
+        store.rebuild_indices();
+        assert_eq!(store.len(), limit);
+        // Indices should be consistent
+        for (_, indices) in &store.by_predicate {
+            for &idx in indices {
+                assert!(idx < store.facts.len());
+            }
+        }
+    }
+
+    #[test]
+    fn test_entity_fact_store_evict_if_needed() {
+        let mut store = FactStore::new();
+        // Directly add facts beyond MAX to test evict_if_needed
+        for i in 0..(MAX_ENTITY_FACTS + 10) {
+            let mut fact = Fact::new(
+                &format!("s-{}", i),
+                "pred",
+                &format!("o-{}", i),
+                "src",
+                0.5,
+            );
+            // Give later facts higher reinforcement so they survive
+            fact.reinforcement_count = i as u32;
+            store.facts.push(fact);
+            if let Some(ref subject) = store.facts.last().unwrap().subject {
+                store
+                    .by_subject
+                    .entry(subject.to_lowercase())
+                    .or_default()
+                    .push(store.facts.len() - 1);
+            }
+            store
+                .by_predicate
+                .entry("pred".to_string())
+                .or_default()
+                .push(store.facts.len() - 1);
+        }
+        store.evict_if_needed();
+        assert_eq!(store.len(), MAX_ENTITY_FACTS);
+        // The lowest-reinforcement facts should have been evicted
+        // Remaining facts should have reinforcement_count >= 10
+        for fact in store.all_facts() {
+            assert!(fact.reinforcement_count >= 10);
+        }
     }
 }

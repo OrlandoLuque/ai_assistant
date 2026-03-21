@@ -1015,12 +1015,23 @@ impl<T: Clone + Eq + Hash> Default for ORSet<T> {
 #[derive(Clone, Debug)]
 pub struct LWWMap<K: Clone + Eq + Hash, V: Clone> {
     entries: HashMap<K, LWWRegister<V>>,
+    /// Optional maximum number of entries. When set, oldest entries are evicted on insert.
+    max_entries: Option<usize>,
 }
 
 impl<K: Clone + Eq + Hash, V: Clone> LWWMap<K, V> {
     pub fn new() -> Self {
         Self {
             entries: HashMap::new(),
+            max_entries: None,
+        }
+    }
+
+    /// Create a new LWWMap with a maximum entry limit.
+    pub fn with_max_entries(max: usize) -> Self {
+        Self {
+            entries: HashMap::new(),
+            max_entries: Some(max),
         }
     }
 
@@ -1028,6 +1039,7 @@ impl<K: Clone + Eq + Hash, V: Clone> LWWMap<K, V> {
     pub fn set(&mut self, key: K, value: V, timestamp: u64, node_id: &str) {
         let entry = self.entries.entry(key).or_insert_with(LWWRegister::new);
         entry.set(value, timestamp, node_id);
+        self.evict_if_needed();
     }
 
     /// Get a value
@@ -1044,11 +1056,45 @@ impl<K: Clone + Eq + Hash, V: Clone> LWWMap<K, V> {
                 .or_insert_with(LWWRegister::new);
             entry.merge(reg);
         }
+        self.evict_if_needed();
     }
 
     /// Get all keys
     pub fn keys(&self) -> Vec<&K> {
         self.entries.keys().collect()
+    }
+
+    /// Number of entries currently stored.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Whether the map is empty.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Evict oldest entries (by timestamp) when over the configured max.
+    fn evict_if_needed(&mut self) {
+        let max = match self.max_entries {
+            Some(m) => m,
+            None => return,
+        };
+        if self.entries.len() <= max {
+            return;
+        }
+        // Collect entries sorted by timestamp ascending (oldest first)
+        let mut by_age: Vec<(K, u64)> = self
+            .entries
+            .iter()
+            .map(|(k, reg)| (k.clone(), reg.timestamp))
+            .collect();
+        by_age.sort_by_key(|(_, ts)| *ts);
+
+        let to_remove = self.entries.len() - max;
+        for (key, _) in by_age.into_iter().take(to_remove) {
+            self.entries.remove(&key);
+        }
     }
 }
 
@@ -2173,6 +2219,33 @@ mod tests {
         m1.merge(&m2);
 
         assert_eq!(m1.get(&"key1"), Some(&"value2"));
+    }
+
+    #[test]
+    fn test_lww_map_max_entries_eviction() {
+        let mut map: LWWMap<String, String> = LWWMap::with_max_entries(5);
+        // Insert 8 entries with increasing timestamps
+        for i in 0..8u64 {
+            map.set(format!("key-{}", i), format!("val-{}", i), i * 10, "node1");
+        }
+        // Should be capped at 5
+        assert_eq!(map.len(), 5);
+        // Oldest entries (lowest timestamp) should have been evicted
+        assert!(map.get(&"key-0".to_string()).is_none());
+        assert!(map.get(&"key-1".to_string()).is_none());
+        assert!(map.get(&"key-2".to_string()).is_none());
+        // Newest entries should remain
+        assert_eq!(map.get(&"key-7".to_string()), Some(&"val-7".to_string()));
+        assert_eq!(map.get(&"key-5".to_string()), Some(&"val-5".to_string()));
+    }
+
+    #[test]
+    fn test_lww_map_no_limit_grows_freely() {
+        let mut map: LWWMap<String, String> = LWWMap::new();
+        for i in 0..100u64 {
+            map.set(format!("key-{}", i), format!("val-{}", i), i, "node1");
+        }
+        assert_eq!(map.len(), 100);
     }
 
     // MapReduce Tests
