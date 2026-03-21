@@ -1058,6 +1058,8 @@ pub mod function_calling;
 pub mod mcp_client;
 #[cfg(feature = "tools")]
 pub mod mcp_protocol;
+#[cfg(all(feature = "tools", feature = "autonomous"))]
+pub mod mcp_agent_tools;
 #[cfg(feature = "tools")]
 pub mod model_integration;
 #[cfg(feature = "tools")]
@@ -2216,6 +2218,9 @@ pub use agent_wiring::{
 
 #[cfg(all(feature = "autonomous", feature = "devtools"))]
 pub use agent_wiring::{plan_next_actions, AgentPlanningState};
+
+#[cfg(all(feature = "tools", feature = "autonomous"))]
+pub use mcp_agent_tools::register_mcp_agent_tools;
 
 // =============================================================================
 // CONSTRAINED DECODING (grammar-guided generation, GBNF, JSON Schema)
