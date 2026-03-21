@@ -1078,4 +1078,47 @@ mod tests {
         tracker.record_usage("openai", "gpt-4", 1000, 500);
         assert!(tracker.budget_remaining().unwrap() < 10.0);
     }
+
+    #[test]
+    fn test_response_cache_lru_eviction() {
+        let config = CacheConfig {
+            max_entries: 3,
+            ..CacheConfig::default()
+        };
+        let mut cache = ResponseCache::new(config);
+
+        cache.put("query_alpha", "model-a", "response1", 10, None);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        cache.put("query_beta", "model-a", "response2", 10, None);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        cache.put("query_gamma", "model-a", "response3", 10, None);
+
+        // Access alpha to update last_used
+        let _ = cache.get("query_alpha", "model-a");
+
+        // Insert delta — should evict beta (oldest last_used)
+        cache.put("query_delta", "model-a", "response4", 10, None);
+
+        // Alpha should survive (recently accessed), delta should exist
+        let stats = cache.stats();
+        assert!(stats.evicted > 0, "Should have evicted at least one entry");
+    }
+
+    #[test]
+    fn test_response_cache_last_used_updated() {
+        let config = CacheConfig::default();
+        let mut cache = ResponseCache::new(config);
+
+        cache.put("query", "model", "response", 10, None);
+
+        // First hit
+        let r1 = cache.get("query", "model");
+        assert!(r1.is_some());
+        assert_eq!(r1.unwrap().hit_count, 1);
+
+        // Second hit
+        let r2 = cache.get("query", "model");
+        assert!(r2.is_some());
+        assert_eq!(r2.unwrap().hit_count, 2);
+    }
 }

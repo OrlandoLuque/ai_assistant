@@ -639,4 +639,38 @@ mod tests {
         cache.clear();
         assert_eq!(cache.entry_count(), 0);
     }
+
+    #[test]
+    fn test_embedding_cache_memory_limit() {
+        let config = EmbeddingCacheConfig {
+            max_entries: 100,
+            max_memory_bytes: 24, // Very small: only ~6 floats (24 bytes)
+            ttl: Duration::from_secs(3600),
+            enable_lru: true,
+            persist: false,
+            cache_path: None,
+        };
+        let mut cache = EmbeddingCache::new(config);
+
+        // Insert several large embeddings to exceed memory limit
+        for i in 0..10 {
+            cache.set(&format!("text{}", i), "model", vec![i as f32; 4]); // 16 bytes each
+        }
+
+        // With 24-byte limit and 16 bytes per entry, should only keep ~1-2 entries
+        let stats = cache.stats();
+        assert!(stats.entries <= 3, "Should have limited entries: got {}", stats.entries);
+    }
+
+    #[test]
+    fn test_embedding_cache_memory_tracking() {
+        let config = EmbeddingCacheConfig::default();
+        let mut cache = EmbeddingCache::new(config);
+
+        cache.set("a", "model", vec![1.0, 2.0, 3.0]); // 3 floats = 12 bytes
+        cache.set("b", "model", vec![4.0, 5.0]);       // 2 floats = 8 bytes
+
+        let stats = cache.stats();
+        assert_eq!(stats.memory_bytes, 20); // 12 + 8
+    }
 }

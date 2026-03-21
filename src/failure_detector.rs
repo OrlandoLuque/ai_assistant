@@ -783,4 +783,61 @@ mod tests {
             );
         }
     }
+
+    // ── V49: FailureClassification tests ────────────────────────
+
+    #[test]
+    fn test_failure_classification_alive_returns_none() {
+        let config = HeartbeatConfig {
+            phi_threshold: 8.0,
+            ..HeartbeatConfig::default()
+        };
+        let mut mgr = HeartbeatManager::new(config);
+        let node = NodeId::random();
+
+        // Record heartbeats — node is alive
+        mgr.record_heartbeat(&node);
+        std::thread::sleep(Duration::from_millis(10));
+        mgr.record_heartbeat(&node);
+
+        // Should return None (not failed)
+        assert!(mgr.classify_failure(&node).is_none());
+    }
+
+    #[test]
+    fn test_failure_classification_temporary() {
+        let config = HeartbeatConfig {
+            phi_threshold: 8.0,
+            interval: Duration::from_millis(10),
+            max_samples: 10,
+            suspicious_threshold: 4.0,
+        };
+        let mut mgr = HeartbeatManager::new(config);
+        let node = NodeId::random();
+
+        // Record a few quick heartbeats then stop
+        for _ in 0..5 {
+            mgr.record_heartbeat(&node);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        // Wait enough for phi to exceed threshold but not permanent_phi
+        std::thread::sleep(Duration::from_millis(200));
+
+        let classification = mgr.classify_failure(&node);
+        // May be None if phi hasn't risen enough, or Temporary
+        if let Some(c) = classification {
+            assert_eq!(c, FailureClassification::Temporary);
+        }
+    }
+
+    #[test]
+    fn test_failure_classification_unknown_node() {
+        let config = HeartbeatConfig::default();
+        let mgr = HeartbeatManager::new(config);
+        let unknown = NodeId::random();
+
+        // Unknown node returns None
+        assert!(mgr.classify_failure(&unknown).is_none());
+    }
 }

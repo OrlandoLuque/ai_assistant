@@ -955,4 +955,40 @@ mod tests {
         let session = tracker.get_session_metrics();
         assert_eq!(session.message_count, 2);
     }
+
+    #[test]
+    fn test_search_cache_lru_eviction() {
+        let mut cache: SearchCache<String> = SearchCache::new(3, 300);
+
+        cache.insert("q1".to_string(), "result1".to_string());
+        cache.insert("q2".to_string(), "result2".to_string());
+        cache.insert("q3".to_string(), "result3".to_string());
+
+        // Access q1 to make it recently used
+        let _ = cache.get("q1");
+
+        // Insert q4 — should evict q2 (LRU), not q1
+        cache.insert("q4".to_string(), "result4".to_string());
+
+        assert!(cache.get("q1").is_some(), "q1 should survive (recently accessed)");
+        assert!(cache.get("q4").is_some(), "q4 should exist (just inserted)");
+    }
+
+    #[test]
+    fn test_search_cache_touch_on_get() {
+        let mut cache: SearchCache<String> = SearchCache::new(10, 300);
+
+        cache.insert("key".to_string(), "value".to_string());
+
+        let r1 = cache.get("key");
+        assert!(r1.is_some());
+
+        let r2 = cache.get("key");
+        assert!(r2.is_some());
+
+        // Verify hits increased
+        let (entries, total_hits) = cache.stats();
+        assert_eq!(entries, 1);
+        assert_eq!(total_hits, 2);
+    }
 }
