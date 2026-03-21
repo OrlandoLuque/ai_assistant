@@ -28,8 +28,9 @@ Continúa con el desarrollo del proyecto. Lee docs/modus-operandi.md y el últim
 - **V49**: COMPLETE — Distributed Systems Hardening (DhtValue version auto-increment, replica tracking, NodeCapabilities catalog, FailureClassification temp/permanent, hinted handoff wired, reputation routing, NAT traversal integration)
 - **V50**: COMPLETE — Distributed MapReduce (MapWorkerRegistry for closure serialization, execute_distributed_with_results, local+remote chunk splitting, self-as-worker, fallback to local, concept 198, 6 tests)
 - **V51**: COMPLETE — Store Limits Hardening (A2A TaskStore max 10K evict completed-first, consolidation FactStore max 5K evict lowest-confidence, entities FactStore enforce 10K evict lowest-reinforcement, LWWMap optional max_entries evict oldest, push_configs max 5K, 8 tests)
-- **Latest**: V51 — Store Limits Hardening (COMPLETE)
-- **Test count**: 6,928 lib tests (0 failures) + 39 harness precision + 18 fallback resilience + 8 conversation quality scored tests
+- **V52**: COMPLETE — Consolidation & Production Readiness (HTTP log endpoints, JUnit XML/TAP harness export, Block B+F source renames complete (zero aliases), Block C container backend trait, Block G2 EntityStore generalization (query/embedding/TTL), Block G3 PlanStore persistence, Block H MCP agent management tools, 22 tests)
+- **Latest**: V52 — Consolidation & Production Readiness (COMPLETE)
+- **Test count**: 6,950 lib tests (0 failures) + 39 harness precision + 18 fallback resilience + 8 conversation quality scored tests
 - **Source files**: 320 .rs files, ~390K LOC
 - **Feature flags**: 55 (+1: chaos-testing)
 - **Status**: Experimental — compiles and passes tests, but not validated in production
@@ -171,9 +172,7 @@ cargo check --features "full,autonomous,scheduler,butler,browser,distributed-age
 
 ## What's next
 
-- **v35 remaining blocks**: B (source renames), C (container abstraction), D (tool framework consolidation), F (naming edge cases), G2-G3 (memory extensions), H (MCP agent tools)
-- **Harness exports**: JUnit XML / TAP output for CI integration
-- **Coverage integration**: `cargo-llvm-cov` or `grcov` with harness coverage
+- **v35 Block D**: Tool framework consolidation (5 files, 61 types — HIGH RISK, deferred)
 - **Comprehensive review**: API consistency, dead code, documentation polish
 - **GitHub publication**: repos ready, domain configured
 - **PI registration**: Spain (cultura.gob.es), WIPO PROOF, Safe Creative — PENDING
@@ -215,7 +214,8 @@ cargo check --features "full,autonomous,scheduler,butler,browser,distributed-age
 | `docs/IMPROVEMENTS_V44.md` | V44 — Procedural Memory Integration |
 | `docs/IMPROVEMENTS_V48.md` | V48 — Cache Policies Audit |
 | `docs/IMPROVEMENTS_V49.md` | V49 — Distributed Systems Hardening |
-| `docs/IMPROVEMENTS_V50.md` | Latest roadmap — Distributed MapReduce |
+| `docs/IMPROVEMENTS_V50.md` | V50 — Distributed MapReduce |
+| `docs/IMPROVEMENTS_V52.md` | Latest roadmap — Consolidation & Production Readiness |
 | `README.md` | Project overview for GitHub |
 
 ## Repository structure
