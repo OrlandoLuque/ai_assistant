@@ -1358,6 +1358,195 @@ impl MapReduceJob {
     }
 }
 
+/// Registry of map/reduce functions available on this node.
+///
+/// Since closures cannot be serialized over the network, each node must
+/// register the same map/reduce functions under the same `job_id`. When a
+/// `MapTask` arrives from the network, the registry looks up the function
+/// by `job_id` and executes it locally on the received data.
+pub struct MapWorkerRegistry {
+    map_fns: HashMap<String, MapFn>,
+    reduce_fns: HashMap<String, ReduceFn>,
+}
+
+impl MapWorkerRegistry {
+    /// Create an empty registry.
+    pub fn new() -> Self {
+        Self {
+            map_fns: HashMap::new(),
+            reduce_fns: HashMap::new(),
+        }
+    }
+
+    /// Register a map function for a job ID.
+    pub fn register_map(&mut self, job_id: &str, map_fn: MapFn) {
+        self.map_fns.insert(job_id.to_string(), map_fn);
+    }
+
+    /// Register a reduce function for a job ID.
+    pub fn register_reduce(&mut self, job_id: &str, reduce_fn: ReduceFn) {
+        self.reduce_fns.insert(job_id.to_string(), reduce_fn);
+    }
+
+    /// Execute a registered map function on a data chunk.
+    /// Returns None if the job_id is not registered.
+    pub fn execute_map(&self, job_id: &str, chunk: &DataChunk) -> Option<Vec<MapOutput>> {
+        let map_fn = self.map_fns.get(job_id)?;
+        Some((map_fn)(chunk))
+    }
+
+    /// Execute a registered reduce function.
+    /// Returns None if the job_id is not registered.
+    pub fn execute_reduce(
+        &self,
+        job_id: &str,
+        key: &str,
+        values: Vec<Vec<u8>>,
+    ) -> Option<ReduceOutput> {
+        let reduce_fn = self.reduce_fns.get(job_id)?;
+        Some((reduce_fn)(key, values))
+    }
+
+    /// Check if a job is registered.
+    pub fn has_job(&self, job_id: &str) -> bool {
+        self.map_fns.contains_key(job_id)
+    }
+
+    /// Number of registered jobs.
+    pub fn job_count(&self) -> usize {
+        self.map_fns.len()
+    }
+}
+
+impl Default for MapWorkerRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MapReduceJob {
+    /// Distribute chunks across local node + remote peers.
+    ///
+    /// The local node is ALWAYS included as a worker — it processes its share
+    /// with rayon while remote peers process theirs via `NodeMessage::MapTask`.
+    ///
+    /// If `peer_map_results` is empty (no peers responded), all chunks are
+    /// processed locally as fallback.
+    ///
+    /// # Arguments
+    /// * `peer_map_results` — pre-collected map results from remote peers,
+    ///   keyed by chunk_id. The caller is responsible for sending MapTasks
+    ///   to peers and collecting MapResults (via NetworkNode).
+    /// * `local_chunk_count` — how many of the first input_chunks to process locally.
+    ///   The rest are assumed handled by peers.
+    pub fn execute_distributed_with_results(
+        &mut self,
+        local_chunk_count: usize,
+        peer_map_results: Vec<Vec<MapOutput>>,
+    ) -> Result<Vec<ReduceOutput>, String> {
+        use rayon::prelude::*;
+
+        self.started_at = Some(Instant::now());
+
+        // Phase 1: Local map (our share of chunks)
+        self.status = JobStatus::Mapping;
+        let local_count = local_chunk_count.min(self.input_chunks.len());
+        let local_chunks = &self.input_chunks[..local_count];
+
+        let map_fn = &self.map_fn;
+        let local_outputs: Vec<Vec<MapOutput>> = local_chunks
+            .par_iter()
+            .map(|chunk| (map_fn)(chunk))
+            .collect();
+
+        // Phase 2: Merge local + remote map outputs
+        {
+            let mut map_outputs = self.map_outputs.lock().unwrap_or_else(|e| e.into_inner());
+
+            // Local outputs
+            for outputs in &local_outputs {
+                for output in outputs {
+                    map_outputs
+                        .entry(output.key.clone())
+                        .or_insert_with(Vec::new)
+                        .push(output.value.clone());
+                }
+            }
+
+            // Remote peer outputs
+            for outputs in &peer_map_results {
+                for output in outputs {
+                    map_outputs
+                        .entry(output.key.clone())
+                        .or_insert_with(Vec::new)
+                        .push(output.value.clone());
+                }
+            }
+        }
+
+        let total_mapped = local_count + peer_map_results.len();
+        *self.mapped_chunks.lock().unwrap_or_else(|e| e.into_inner()) = total_mapped;
+
+        // Phase 3: Shuffle (already grouped by key)
+        self.status = JobStatus::Shuffling;
+
+        // Optional combiner
+        if self.config.use_combiner {
+            if let Some(ref combine_fn) = self.combine_fn {
+                let mut map_outputs = self.map_outputs.lock().unwrap_or_else(|e| e.into_inner());
+                for (key, values) in map_outputs.iter_mut() {
+                    if values.len() > 1 {
+                        let combined = (combine_fn)(key, values.clone());
+                        *values = vec![combined];
+                    }
+                }
+            }
+        }
+
+        // Phase 4: Reduce (always local — coordinator aggregates)
+        self.status = JobStatus::Reducing;
+        let map_outputs = self.map_outputs.lock().unwrap_or_else(|e| e.into_inner());
+        let reduce_fn = &self.reduce_fn;
+
+        let entries: Vec<(&String, &Vec<Vec<u8>>)> = map_outputs.iter().collect();
+        let results: Vec<ReduceOutput> = entries
+            .par_iter()
+            .map(|(key, values)| (reduce_fn)(key, (*values).clone()))
+            .collect();
+
+        *self.reduced_keys.lock().unwrap_or_else(|e| e.into_inner()) = results.len();
+
+        self.status = JobStatus::Completed;
+        self.completed_at = Some(Instant::now());
+        *self.reduce_outputs.lock().unwrap_or_else(|e| e.into_inner()) = results.clone();
+
+        Ok(results)
+    }
+
+    /// Calculate how many chunks the local node should process given total workers.
+    ///
+    /// `total_workers` includes the local node (self).
+    pub fn local_chunk_count(&self, total_workers: usize) -> usize {
+        if total_workers <= 1 {
+            self.input_chunks.len()
+        } else {
+            (self.input_chunks.len() + total_workers - 1) / total_workers
+        }
+    }
+
+    /// Get chunks assigned to remote peer `peer_index` (0-based, excluding local).
+    pub fn remote_chunks(&self, peer_index: usize, total_workers: usize) -> Vec<&DataChunk> {
+        let chunks_per_worker = self.local_chunk_count(total_workers);
+        let start = chunks_per_worker + peer_index * chunks_per_worker;
+        let end = (start + chunks_per_worker).min(self.input_chunks.len());
+        if start >= self.input_chunks.len() {
+            Vec::new()
+        } else {
+            self.input_chunks[start..end].iter().collect()
+        }
+    }
+}
+
 /// Builder for creating common MapReduce patterns
 pub struct MapReduceBuilder;
 
@@ -2437,5 +2626,140 @@ mod tests {
         let data = b"hello world";
         assert_eq!(fnv1a_hash(data), fnv1a_hash(data));
         assert_ne!(fnv1a_hash(b"hello"), fnv1a_hash(b"world"));
+    }
+
+    // ── V50: Distributed MapReduce tests ────────────────────────
+
+    #[test]
+    fn test_worker_registry_register_execute() {
+        let mut registry = MapWorkerRegistry::new();
+
+        let map_fn: MapFn = Arc::new(|chunk| {
+            vec![MapOutput {
+                key: "count".to_string(),
+                value: vec![chunk.data.len() as u8],
+            }]
+        });
+
+        registry.register_map("job1", map_fn);
+        assert!(registry.has_job("job1"));
+        assert_eq!(registry.job_count(), 1);
+
+        let chunk = DataChunk::new("c1", b"hello".to_vec());
+        let result = registry.execute_map("job1", &chunk);
+        assert!(result.is_some());
+        let outputs = result.unwrap();
+        assert_eq!(outputs.len(), 1);
+        assert_eq!(outputs[0].key, "count");
+        assert_eq!(outputs[0].value, vec![5u8]); // "hello".len() = 5
+    }
+
+    #[test]
+    fn test_worker_registry_unknown_job() {
+        let registry = MapWorkerRegistry::new();
+        let chunk = DataChunk::new("c1", b"data".to_vec());
+
+        assert!(!registry.has_job("nonexistent"));
+        assert!(registry.execute_map("nonexistent", &chunk).is_none());
+    }
+
+    #[test]
+    fn test_distributed_mapreduce_local_only() {
+        // With 0 peers, execute_distributed_with_results behaves like local execute
+        let mut job = MapReduceBuilder::word_count();
+        job.add_input(DataChunk::new("c1", b"hello world hello".to_vec()));
+        job.add_input(DataChunk::new("c2", b"world foo".to_vec()));
+
+        let local_count = job.local_chunk_count(1); // 1 worker = all local
+        assert_eq!(local_count, 2);
+
+        let results = job.execute_distributed_with_results(local_count, Vec::new()).unwrap();
+        assert!(!results.is_empty());
+
+        // Check word count results
+        let hello_count = results.iter().find(|r| r.key == "hello");
+        assert!(hello_count.is_some());
+    }
+
+    #[test]
+    fn test_chunk_distribution_round_robin() {
+        let mut job = MapReduceBuilder::word_count();
+        for i in 0..9 {
+            job.add_input(DataChunk::new(format!("c{}", i), format!("word{}", i).into_bytes()));
+        }
+
+        // 3 workers (1 local + 2 peers): 3 chunks each
+        let local_count = job.local_chunk_count(3);
+        assert_eq!(local_count, 3);
+
+        let peer0_chunks = job.remote_chunks(0, 3);
+        assert_eq!(peer0_chunks.len(), 3);
+
+        let peer1_chunks = job.remote_chunks(1, 3);
+        assert_eq!(peer1_chunks.len(), 3);
+
+        // 10th peer would get 0 chunks
+        let peer9_chunks = job.remote_chunks(9, 3);
+        assert!(peer9_chunks.is_empty());
+    }
+
+    #[test]
+    fn test_self_included_as_worker() {
+        let mut job = MapReduceBuilder::word_count();
+        for i in 0..6 {
+            job.add_input(DataChunk::new(format!("c{}", i), b"hello world".to_vec()));
+        }
+
+        // 2 workers: local gets 3, peer gets 3
+        let local_count = job.local_chunk_count(2);
+        assert_eq!(local_count, 3);
+
+        // Simulate: peer processes its 3 chunks and returns results
+        let peer_results: Vec<Vec<MapOutput>> = job.remote_chunks(0, 2)
+            .iter()
+            .map(|_chunk| {
+                vec![
+                    MapOutput { key: "hello".to_string(), value: 1u64.to_le_bytes().to_vec() },
+                    MapOutput { key: "world".to_string(), value: 1u64.to_le_bytes().to_vec() },
+                ]
+            })
+            .collect();
+
+        let results = job.execute_distributed_with_results(local_count, peer_results).unwrap();
+        assert!(!results.is_empty());
+
+        // "hello" should appear 6 times total (3 local + 3 from peer)
+        let hello = results.iter().find(|r| r.key == "hello");
+        assert!(hello.is_some());
+    }
+
+    #[test]
+    fn test_distributed_mapreduce_with_peer_results() {
+        let map_fn: MapFn = Arc::new(|chunk| {
+            let n = chunk.data.len();
+            vec![MapOutput { key: "total_bytes".to_string(), value: (n as u64).to_le_bytes().to_vec() }]
+        });
+        let reduce_fn: ReduceFn = Arc::new(|_key, values| {
+            let sum: u64 = values.iter()
+                .map(|v| u64::from_le_bytes(v[..8].try_into().unwrap_or([0;8])))
+                .sum();
+            ReduceOutput { key: _key.to_string(), value: sum.to_le_bytes().to_vec() }
+        });
+
+        let mut job = MapReduceJob::new("byte_count", map_fn, reduce_fn);
+        job.add_input(DataChunk::new("local1", b"abc".to_vec()));     // 3 bytes
+        job.add_input(DataChunk::new("local2", b"de".to_vec()));      // 2 bytes
+        job.add_input(DataChunk::new("remote1", b"fghij".to_vec()));  // 5 bytes
+
+        // Local processes first 2 chunks, peer processes 1
+        let peer_results = vec![
+            vec![MapOutput { key: "total_bytes".to_string(), value: 5u64.to_le_bytes().to_vec() }]
+        ];
+
+        let results = job.execute_distributed_with_results(2, peer_results).unwrap();
+        assert_eq!(results.len(), 1);
+
+        let total = u64::from_le_bytes(results[0].value[..8].try_into().unwrap());
+        assert_eq!(total, 10); // 3 + 2 + 5 = 10
     }
 }

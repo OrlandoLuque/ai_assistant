@@ -521,6 +521,7 @@ pub use distributed::{
     NodeId,
     ORSet,
     PNCounter,
+    MapWorkerRegistry,
     NodeCapabilities,
     ReduceOutput,
     RoutingTable,
