@@ -29,7 +29,8 @@ Continúa con el desarrollo del proyecto. Lee docs/modus-operandi.md y el últim
 - **V50**: COMPLETE — Distributed MapReduce (MapWorkerRegistry for closure serialization, execute_distributed_with_results, local+remote chunk splitting, self-as-worker, fallback to local, concept 198, 6 tests)
 - **V51**: COMPLETE — Store Limits Hardening (A2A TaskStore max 10K evict completed-first, consolidation FactStore max 5K evict lowest-confidence, entities FactStore enforce 10K evict lowest-reinforcement, LWWMap optional max_entries evict oldest, push_configs max 5K, 8 tests)
 - **V52**: COMPLETE — Consolidation & Production Readiness (HTTP log endpoints, JUnit XML/TAP harness export, Block B+F source renames complete (zero aliases), Block C container backend trait, Block G2 EntityStore generalization (query/embedding/TTL), Block G3 PlanStore persistence, Block H MCP agent management tools, 22 tests)
-- **Latest**: V52 — Consolidation & Production Readiness (COMPLETE)
+- **V53**: COMPLETE — Block D audit (deprecated tool_use+function_calling, unified_tools canonical), 4 SearchProviders (Google, Bing, SerpAPI, Tavily), web search in GUI, clippy clean
+- **Latest**: V53 — SearchProviders + Web Search GUI + Block D Audit (COMPLETE)
 - **Test count**: 6,950 lib tests (0 failures) + 39 harness precision + 18 fallback resilience + 8 conversation quality scored tests
 - **Source files**: 320 .rs files, ~390K LOC
 - **Feature flags**: 55 (+1: chaos-testing)
