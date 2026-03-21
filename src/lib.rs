@@ -2080,7 +2080,8 @@ pub mod advanced_memory;
 #[cfg(feature = "advanced-memory")]
 pub use advanced_memory::{
     AdvancedMemoryManager, ConsolidationPipelineResult, ConsolidationResult,
-    ConsolidationSchedule, EnhancedConsolidator, EntityRecord, EntityRelation, EntityStore,
+    ConsolidationSchedule, EnhancedConsolidator, EntityQuery, EntityRecord, EntityRelation,
+    EntityStore,
     Episode, EpisodicStore, EvolutionConfig, EvolutionReport, EvolutionStatistics,
     FactExtractor as MemoryFactExtractor, FactStore as MemoryFactStore, FeedbackOutcome,
     LlmFactExtractor, MemoryConsolidator, PatternFactExtractor, Procedure, ProceduralStore,

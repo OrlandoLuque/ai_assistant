@@ -175,6 +175,8 @@ fn main() {
         first_seen: now,
         last_updated: now,
         mention_count: 15,
+        embedding: None,
+        expires_at: 0,
     });
 
     let _ = entities.add(EntityRecord {
@@ -191,6 +193,8 @@ fn main() {
         first_seen: now,
         last_updated: now,
         mention_count: 8,
+        embedding: None,
+        expires_at: 0,
     });
 
     let _ = entities.add(EntityRecord {
@@ -206,6 +210,8 @@ fn main() {
         first_seen: now,
         last_updated: now,
         mention_count: 5,
+        embedding: None,
+        expires_at: 0,
     });
 
     println!("Stored {} entities", entities.len());

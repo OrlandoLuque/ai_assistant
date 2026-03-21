@@ -49,6 +49,8 @@ use std::collections::HashMap;
             first_seen: now,
             last_updated: now,
             mention_count: 1,
+            embedding: None,
+            expires_at: 0,
         }
     }
 
@@ -3186,4 +3188,119 @@ use std::collections::HashMap;
     fn test_checksum_empty_data() {
         let c = AutoPersistenceConfig::compute_checksum(b"");
         assert_ne!(c, 0); // FNV offset basis
+    }
+
+    // ----------------------------------------------------------
+    // G2: EntityStore generalization tests
+    // ----------------------------------------------------------
+
+    #[test]
+    fn test_entity_query_by_type() {
+        let mut store = EntityStore::new();
+        store.add(make_entity("e1", "Alice", "person")).unwrap();
+        store.add(make_entity("e2", "Bob", "person")).unwrap();
+        store.add(make_entity("e3", "Server1", "device")).unwrap();
+
+        let q = EntityQuery {
+            entity_type: Some("person".to_string()),
+            ..Default::default()
+        };
+        let results = store.query(&q);
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn test_entity_query_by_name() {
+        let mut store = EntityStore::new();
+        store.add(make_entity("e1", "Alice Smith", "person")).unwrap();
+        store.add(make_entity("e2", "Bob Jones", "person")).unwrap();
+
+        let q = EntityQuery {
+            name_contains: Some("alice".to_string()),
+            ..Default::default()
+        };
+        let results = store.query(&q);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "Alice Smith");
+    }
+
+    #[test]
+    fn test_entity_query_limit() {
+        let mut store = EntityStore::new();
+        for i in 0..10 {
+            store.add(make_entity(&format!("e{}", i), &format!("Entity {}", i), "thing")).unwrap();
+        }
+
+        let q = EntityQuery {
+            limit: Some(3),
+            ..Default::default()
+        };
+        let results = store.query(&q);
+        assert_eq!(results.len(), 3);
+    }
+
+    #[test]
+    fn test_entity_find_by_type() {
+        let mut store = EntityStore::new();
+        store.add(make_entity("e1", "Alice", "person")).unwrap();
+        store.add(make_entity("e2", "Temp", "sensor")).unwrap();
+        let people = store.find_by_type("person");
+        assert_eq!(people.len(), 1);
+    }
+
+    #[test]
+    fn test_entity_search_similar() {
+        let mut store = EntityStore::new();
+        let mut e1 = make_entity("e1", "Rust", "language");
+        e1.embedding = Some(vec![1.0, 0.0, 0.0]);
+        store.add(e1).unwrap();
+
+        let mut e2 = make_entity("e2", "Python", "language");
+        e2.embedding = Some(vec![0.0, 1.0, 0.0]);
+        store.add(e2).unwrap();
+
+        let mut e3 = make_entity("e3", "Cargo", "tool");
+        e3.embedding = Some(vec![0.9, 0.1, 0.0]);
+        store.add(e3).unwrap();
+
+        // Search for something close to [1, 0, 0]
+        let results = store.search_similar(&[1.0, 0.0, 0.0], 2);
+        assert_eq!(results.len(), 2);
+        // "Rust" should be the most similar
+        assert_eq!(results[0].0.name, "Rust");
+    }
+
+    #[test]
+    fn test_entity_ttl_expiration() {
+        let mut store = EntityStore::new();
+        let mut entity = make_entity("e1", "Temp", "sensor");
+        entity.expires_at = 1; // Already expired (Unix timestamp 1 second)
+        store.add(entity).unwrap();
+        store.add(make_entity("e2", "Permanent", "device")).unwrap();
+
+        let evicted = store.evict_expired();
+        assert_eq!(evicted, 1);
+        assert_eq!(store.len(), 1);
+        assert!(store.get("e2").is_some());
+    }
+
+    #[test]
+    fn test_entity_set_embedding() {
+        let mut store = EntityStore::new();
+        store.add(make_entity("e1", "Test", "thing")).unwrap();
+        store.set_embedding("e1", vec![0.5, 0.5]).unwrap();
+        let e = store.get("e1").unwrap();
+        assert!(e.embedding.is_some());
+        assert_eq!(e.embedding.as_ref().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_entity_count_by_type() {
+        let mut store = EntityStore::new();
+        store.add(make_entity("e1", "A", "person")).unwrap();
+        store.add(make_entity("e2", "B", "person")).unwrap();
+        store.add(make_entity("e3", "C", "device")).unwrap();
+        let counts = store.count_by_type();
+        assert_eq!(counts.get("person"), Some(&2));
+        assert_eq!(counts.get("device"), Some(&1));
     }

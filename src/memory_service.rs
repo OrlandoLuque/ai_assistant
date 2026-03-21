@@ -648,6 +648,8 @@ mod tests {
             first_seen: now_millis(),
             last_updated: now_millis(),
             mention_count: 1,
+            embedding: None,
+            expires_at: 0,
         }
     }
 

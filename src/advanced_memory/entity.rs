@@ -6,6 +6,20 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{AdvancedMemoryError, AiError};
 
+/// Cosine similarity between two vectors.
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() || a.is_empty() {
+        return 0.0;
+    }
+    let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if norm_a == 0.0 || norm_b == 0.0 {
+        return 0.0;
+    }
+    dot / (norm_a * norm_b)
+}
+
 /// A record for a named entity with typed attributes and relations.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntityRecord {
@@ -17,6 +31,27 @@ pub struct EntityRecord {
     pub first_seen: u64,
     pub last_updated: u64,
     pub mention_count: usize,
+    /// Optional embedding vector for semantic search.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embedding: Option<Vec<f32>>,
+    /// Optional TTL: entity expires at this Unix timestamp (0 = no expiry).
+    #[serde(default)]
+    pub expires_at: u64,
+}
+
+/// Query builder for filtering entities by type, attributes, or text.
+#[derive(Debug, Clone, Default)]
+pub struct EntityQuery {
+    /// Filter by entity type (exact match).
+    pub entity_type: Option<String>,
+    /// Attribute contains this substring (key or value).
+    pub attribute_contains: Option<String>,
+    /// Name contains this substring (case-insensitive).
+    pub name_contains: Option<String>,
+    /// Minimum mention count.
+    pub min_mentions: Option<usize>,
+    /// Maximum results to return.
+    pub limit: Option<usize>,
 }
 
 /// A directed relation from one entity to another.
@@ -277,7 +312,134 @@ impl EntityStore {
             .unwrap_or(0)
     }
 
+    /// Query entities with filters.
+    pub fn query(&self, q: &EntityQuery) -> Vec<&EntityRecord> {
+        let mut results: Vec<&EntityRecord> = self
+            .entities
+            .values()
+            .filter(|e| {
+                if let Some(ref t) = q.entity_type {
+                    if e.entity_type.to_lowercase() != t.to_lowercase() {
+                        return false;
+                    }
+                }
+                if let Some(ref name_q) = q.name_contains {
+                    let lower = name_q.to_lowercase();
+                    if !e.name.to_lowercase().contains(&lower) {
+                        return false;
+                    }
+                }
+                if let Some(min) = q.min_mentions {
+                    if e.mention_count < min {
+                        return false;
+                    }
+                }
+                if let Some(ref attr_q) = q.attribute_contains {
+                    let lower = attr_q.to_lowercase();
+                    let has_match = e.attributes.iter().any(|(k, v)| {
+                        k.to_lowercase().contains(&lower)
+                            || v.to_string().to_lowercase().contains(&lower)
+                    });
+                    if !has_match {
+                        return false;
+                    }
+                }
+                true
+            })
+            .collect();
+
+        // Sort by mention_count descending (most relevant first)
+        results.sort_by(|a, b| b.mention_count.cmp(&a.mention_count));
+
+        if let Some(limit) = q.limit {
+            results.truncate(limit);
+        }
+        results
+    }
+
+    /// Find entities by type.
+    pub fn find_by_type(&self, entity_type: &str) -> Vec<&EntityRecord> {
+        let lower = entity_type.to_lowercase();
+        self.entities
+            .values()
+            .filter(|e| e.entity_type.to_lowercase() == lower)
+            .collect()
+    }
+
+    /// Search entities by semantic similarity (cosine distance to query embedding).
+    /// Returns (entity, similarity_score) sorted by score descending.
+    pub fn search_similar(
+        &self,
+        query_embedding: &[f32],
+        top_k: usize,
+    ) -> Vec<(&EntityRecord, f32)> {
+        let mut scored: Vec<(&EntityRecord, f32)> = self
+            .entities
+            .values()
+            .filter_map(|e| {
+                let emb = e.embedding.as_ref()?;
+                let sim = cosine_similarity(query_embedding, emb);
+                Some((e, sim))
+            })
+            .collect();
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored.truncate(top_k);
+        scored
+    }
+
+    /// Remove expired entities (those with expires_at > 0 and < now).
+    /// Returns the number of entities evicted.
+    pub fn evict_expired(&mut self) -> usize {
+        let now = Self::now();
+        let expired_ids: Vec<String> = self
+            .entities
+            .iter()
+            .filter(|(_, e)| e.expires_at > 0 && e.expires_at < now)
+            .map(|(id, _)| id.clone())
+            .collect();
+        let count = expired_ids.len();
+        for id in &expired_ids {
+            if let Some(rec) = self.entities.remove(id) {
+                self.name_index.remove(&rec.name.to_lowercase());
+            }
+        }
+        count
+    }
+
+    /// Set a TTL on an entity (expiry in seconds from now).
+    pub fn set_ttl(&mut self, id: &str, ttl_secs: u64) -> Result<(), AiError> {
+        let entity = self.entities.get_mut(id).ok_or_else(|| {
+            AiError::AdvancedMemory(AdvancedMemoryError::EntityNotFound {
+                name: id.to_string(),
+            })
+        })?;
+        entity.expires_at = Self::now() + ttl_secs;
+        Ok(())
+    }
+
+    /// Set an embedding vector on an entity.
+    pub fn set_embedding(&mut self, id: &str, embedding: Vec<f32>) -> Result<(), AiError> {
+        let entity = self.entities.get_mut(id).ok_or_else(|| {
+            AiError::AdvancedMemory(AdvancedMemoryError::EntityNotFound {
+                name: id.to_string(),
+            })
+        })?;
+        entity.embedding = Some(embedding);
+        entity.last_updated = Self::now();
+        Ok(())
+    }
+
+    /// Count of entities by type.
+    pub fn count_by_type(&self) -> HashMap<String, usize> {
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        for e in self.entities.values() {
+            *counts.entry(e.entity_type.clone()).or_insert(0) += 1;
+        }
+        counts
+    }
+
     /// Save the entity store to a JSON file. Uses atomic write (temp file + rename).
+    #[allow(clippy::inherent_to_string)]
     pub fn save_to_file(&self, path: &std::path::Path) -> Result<String, String> {
         let entries: Vec<&EntityRecord> = self.entities.values().collect();
         let json = serde_json::to_string_pretty(&entries)
