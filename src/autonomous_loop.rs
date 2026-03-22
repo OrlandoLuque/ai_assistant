@@ -4,6 +4,23 @@
 //! cycle with sandbox validation, user interaction, and task board integration.
 
 use crate::agent_policy::{ActionDescriptor, ActionType, AgentPolicy};
+
+/// Provides knowledge context to agents before each LLM call.
+///
+/// Implementations can draw from any combination of RAG, KnowledgeGraph,
+/// MemoryManager, ProceduralStore, or other context sources. The agent
+/// calls `enrich()` with the current query/task before each iteration,
+/// and the returned string is injected as a system message.
+pub trait KnowledgeProvider: Send + Sync {
+    /// Build enriched context for the given query.
+    /// Returns a string to inject as system context, or empty if nothing relevant.
+    fn enrich(&self, query: &str) -> String;
+
+    /// Provider name for diagnostics.
+    fn name(&self) -> &str {
+        "KnowledgeProvider"
+    }
+}
 use crate::agent_sandbox::SandboxValidator;
 use crate::agentic_loop::{LoopMessage, LoopRole};
 use crate::mode_manager::OperationMode;
@@ -200,6 +217,8 @@ pub struct AutonomousAgent {
     mailbox: Option<std::sync::mpsc::Receiver<InterAgentMessage>>,
     /// Index of the planning hint message in conversation (for cleanup).
     planning_hint_idx: Option<usize>,
+    /// Optional knowledge provider for context enrichment (RAG, KG, Memory, etc.).
+    knowledge_provider: Option<Arc<dyn KnowledgeProvider>>,
 }
 
 impl AutonomousAgent {
@@ -379,8 +398,42 @@ impl AutonomousAgent {
     pub fn run_iteration(&mut self) -> IterationOutcome {
         self.iteration += 1;
 
+        // 0. Inject knowledge context if provider is available
+        let knowledge_msg_idx = if let Some(ref provider) = self.knowledge_provider {
+            // Build query from the last user/tool message
+            let query = self
+                .conversation
+                .iter()
+                .rev()
+                .find(|m| m.role == LoopRole::User || m.role == LoopRole::Tool)
+                .map(|m| m.content.clone())
+                .unwrap_or_default();
+            let context = provider.enrich(&query);
+            if !context.is_empty() {
+                let idx = self.conversation.len();
+                self.conversation.push(LoopMessage {
+                    role: LoopRole::System,
+                    content: format!("--- KNOWLEDGE CONTEXT ---\n{}", context),
+                    tool_calls: None,
+                    tool_results: None,
+                });
+                Some(idx)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // 1. Generate response
         let response = (self.response_generator)(&self.conversation);
+
+        // Remove the temporary knowledge context message to avoid accumulation
+        if let Some(idx) = knowledge_msg_idx {
+            if idx < self.conversation.len() {
+                self.conversation.remove(idx);
+            }
+        }
 
         // 2. Add assistant message
         self.conversation.push(LoopMessage {
@@ -733,6 +786,7 @@ pub struct AutonomousAgentBuilder {
     current_task_id: Option<String>,
     cancellation_token: Option<Arc<AtomicBool>>,
     mailbox: Option<std::sync::mpsc::Receiver<InterAgentMessage>>,
+    knowledge_provider: Option<Arc<dyn KnowledgeProvider>>,
 }
 
 impl AutonomousAgentBuilder {
@@ -755,7 +809,14 @@ impl AutonomousAgentBuilder {
             current_task_id: None,
             cancellation_token: None,
             mailbox: None,
+            knowledge_provider: None,
         }
+    }
+
+    /// Set an optional knowledge provider for context enrichment.
+    pub fn with_knowledge_provider(mut self, provider: Arc<dyn KnowledgeProvider>) -> Self {
+        self.knowledge_provider = Some(provider);
+        self
     }
 
     pub fn max_iterations(mut self, n: usize) -> Self {
@@ -845,6 +906,7 @@ impl AutonomousAgentBuilder {
             cancellation_token: self.cancellation_token,
             mailbox: self.mailbox,
             planning_hint_idx: None,
+            knowledge_provider: self.knowledge_provider,
         }
     }
 }
@@ -1477,5 +1539,101 @@ Let me process the results."#;
             result.tools_called,
             vec!["tool_a".to_string(), "tool_b".to_string()]
         );
+    }
+
+    // ── KnowledgeProvider tests ──
+
+    struct MockKnowledgeProvider {
+        context: String,
+    }
+
+    impl KnowledgeProvider for MockKnowledgeProvider {
+        fn enrich(&self, _query: &str) -> String {
+            self.context.clone()
+        }
+        fn name(&self) -> &str {
+            "MockKnowledgeProvider"
+        }
+    }
+
+    #[test]
+    fn test_agent_with_knowledge_provider() {
+        let call_log = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let log_clone = call_log.clone();
+
+        let gen = Arc::new(move |msgs: &[LoopMessage]| -> String {
+            // Record whether KNOWLEDGE CONTEXT is in the messages
+            let has_knowledge = msgs
+                .iter()
+                .any(|m| m.content.contains("KNOWLEDGE CONTEXT"));
+            log_clone
+                .lock()
+                .unwrap()
+                .push(format!("has_knowledge={}", has_knowledge));
+            "Final answer: done".to_string()
+        });
+
+        let provider = Arc::new(MockKnowledgeProvider {
+            context: "Important: the capital of France is Paris.".to_string(),
+        });
+
+        let mut agent = AutonomousAgent::builder("test-agent", gen)
+            .max_iterations(3)
+            .with_knowledge_provider(provider)
+            .build();
+
+        let result = agent.run("What is the capital of France?").unwrap();
+        assert_eq!(result.output, "Final answer: done");
+
+        // Verify the knowledge context was injected
+        let log = call_log.lock().unwrap();
+        assert!(!log.is_empty());
+        assert_eq!(log[0], "has_knowledge=true");
+    }
+
+    #[test]
+    fn test_agent_without_knowledge_provider() {
+        let gen = Arc::new(|_msgs: &[LoopMessage]| -> String {
+            "Answer without knowledge".to_string()
+        });
+
+        let mut agent = AutonomousAgent::builder("test-agent", gen)
+            .max_iterations(3)
+            .build();
+
+        let result = agent.run("Hello").unwrap();
+        assert_eq!(result.output, "Answer without knowledge");
+    }
+
+    #[test]
+    fn test_knowledge_provider_empty_context_not_injected() {
+        let call_log = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let log_clone = call_log.clone();
+
+        let gen = Arc::new(move |msgs: &[LoopMessage]| -> String {
+            let has_knowledge = msgs
+                .iter()
+                .any(|m| m.content.contains("KNOWLEDGE CONTEXT"));
+            log_clone
+                .lock()
+                .unwrap()
+                .push(format!("has_knowledge={}", has_knowledge));
+            "Done".to_string()
+        });
+
+        // Provider returns empty string → should NOT inject
+        let provider = Arc::new(MockKnowledgeProvider {
+            context: String::new(),
+        });
+
+        let mut agent = AutonomousAgent::builder("test-agent", gen)
+            .max_iterations(3)
+            .with_knowledge_provider(provider)
+            .build();
+
+        let _ = agent.run("Hello").unwrap();
+
+        let log = call_log.lock().unwrap();
+        assert_eq!(log[0], "has_knowledge=false");
     }
 }
