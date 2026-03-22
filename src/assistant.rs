@@ -1522,7 +1522,7 @@ impl AiAssistant {
         let effective_knowledge: String;
         let knowledge_ref = {
             let mut augmented = knowledge_context.to_string();
-            if self.context_mode == ContextMode::FreshContext {
+            {
                 let query = self.conversation.last().map(|m| m.content.clone()).unwrap_or_default();
                 let memory_ctx = self.build_memory_context(&query, 512);
                 if !memory_ctx.is_empty() {
@@ -1675,7 +1675,7 @@ impl AiAssistant {
         let effective_knowledge: String;
         let knowledge_ref = {
             let mut augmented = knowledge_context.to_string();
-            if self.context_mode == ContextMode::FreshContext {
+            {
                 let query = self.conversation.last().map(|m| m.content.clone()).unwrap_or_default();
                 let memory_ctx = self.build_memory_context(&query, 512);
                 if !memory_ctx.is_empty() {
@@ -1747,7 +1747,7 @@ impl AiAssistant {
         let effective_knowledge: String;
         let knowledge_ref = {
             let mut augmented = knowledge_context.to_string();
-            if self.context_mode == ContextMode::FreshContext {
+            {
                 let query = self.conversation.last().map(|m| m.content.clone()).unwrap_or_default();
                 let memory_ctx = self.build_memory_context(&query, 512);
                 if !memory_ctx.is_empty() {
@@ -1868,7 +1868,7 @@ impl AiAssistant {
         let effective_knowledge: String;
         let knowledge_ref = {
             let mut augmented = knowledge_context.to_string();
-            if self.context_mode == ContextMode::FreshContext {
+            {
                 let query = self.conversation.last().map(|m| m.content.clone()).unwrap_or_default();
                 let memory_ctx = self.build_memory_context(&query, 512);
                 if !memory_ctx.is_empty() {
@@ -2001,7 +2001,7 @@ impl AiAssistant {
         let effective_knowledge: String;
         let knowledge_ref = {
             let mut augmented = knowledge_context.to_string();
-            if self.context_mode == ContextMode::FreshContext {
+            {
                 let query = self.conversation.last().map(|m| m.content.clone()).unwrap_or_default();
                 let memory_ctx = self.build_memory_context(&query, 512);
                 if !memory_ctx.is_empty() {
