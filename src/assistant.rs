@@ -1600,6 +1600,26 @@ impl AiAssistant {
         self.send_message(user_message, &context);
     }
 
+    /// Send a message with automatic RAG context lookup.
+    ///
+    /// Calls `build_rag_context()` internally before sending, so the caller
+    /// doesn't need to manage RAG context manually. If RAG is not configured,
+    /// behaves like `send_message_simple()`.
+    #[cfg(feature = "rag")]
+    pub fn send_message_with_rag(&mut self, user_message: String) {
+        let (knowledge_ctx, _conversation_ctx) = self.build_rag_context(&user_message);
+        self.send_message(user_message, &knowledge_ctx);
+    }
+
+    /// Synchronous response generation with automatic RAG context.
+    ///
+    /// Like `generate_sync()` but automatically builds RAG context from the query.
+    #[cfg(feature = "rag")]
+    pub fn generate_sync_with_rag(&mut self, user_message: String) -> Result<String> {
+        let (knowledge_ctx, _conversation_ctx) = self.build_rag_context(&user_message);
+        self.generate_sync(user_message, &knowledge_ctx)
+    }
+
     /// Send a message using internal knowledge context with additional session notes
     ///
     /// Combines the internal knowledge context with session-specific notes.
