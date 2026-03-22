@@ -1268,20 +1268,7 @@ fn tests_tools() -> CategoryResult {
         Ok(())
     }));
 
-    results.push(run_test("FunctionBuilder", || {
-        let mut registry = ai_assistant::FunctionRegistry::new();
-        let func = ai_assistant::FunctionBuilder::new("calculate")
-            .description("Perform a calculation")
-            .required_string("expression", "Math expression")
-            .build();
-        registry.register(func, |_call| {
-            ai_assistant::FunctionResult::success("calculate", "42")
-        });
-        let funcs = registry.definitions();
-        assert_test!(!funcs.is_empty(), "should have registered function");
-        assert_eq_test!(funcs[0].name, "calculate");
-        Ok(())
-    }));
+    // FunctionBuilder test removed — function_calling module eliminated in Block D consolidation
 
     results.push(run_test("Builtin tools", || {
         let tools = ai_assistant::create_builtin_tools();

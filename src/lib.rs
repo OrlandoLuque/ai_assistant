@@ -1053,8 +1053,6 @@ pub use provider_plugins::{
 #[cfg(feature = "tools")]
 pub mod agentic_loop;
 #[cfg(feature = "tools")]
-pub mod function_calling;
-#[cfg(feature = "tools")]
 pub mod mcp_client;
 #[cfg(feature = "tools")]
 pub mod mcp_protocol;
@@ -1067,8 +1065,6 @@ pub mod prompt_chaining;
 #[cfg(feature = "tools")]
 pub mod tool_calling;
 #[cfg(feature = "tools")]
-pub mod tool_use;
-#[cfg(feature = "tools")]
 pub mod tools;
 #[cfg(feature = "tools")]
 pub mod unified_tools;
@@ -1076,7 +1072,7 @@ pub mod unified_tools;
 #[cfg(feature = "tools")]
 pub use unified_tools::{
     builtin_tools as unified_builtin_tools, evaluate_math,
-    parse_tool_calls as unified_parse_tool_calls, ParamSchema, ParamType as UnifiedParamType,
+    parse_tool_calls, ParamSchema, ParamType as UnifiedParamType,
     ProviderCapabilities as UnifiedProviderCapabilities, ProviderPlugin as UnifiedProviderPlugin,
     ProviderRegistry as UnifiedProviderRegistry, ToolBuilder, ToolCall as UnifiedToolCall,
     ToolChoice as UnifiedToolChoice, ToolDef as UnifiedToolDef, ToolError as UnifiedToolError,
@@ -1094,22 +1090,9 @@ pub use tools::{
 };
 
 #[cfg(feature = "tools")]
-pub use tool_use::{
-    parse_tool_calls, ParameterType as ToolParameterType, Tool as ToolUseTool,
-    ToolCall as ToolUseCall, ToolError, ToolParameter as ToolUseParameter,
-    ToolRegistry as ToolUseRegistry, ToolResult as ToolUseResult,
-};
-
-#[cfg(feature = "tools")]
 pub use tool_calling::{
     CommonTools, ParameterType as ParamType, Tool as ToolDef, ToolCall as ToolInvocation,
     ToolParameter as ToolParam, ToolRegistry as ToolRepo, ToolResult as ToolOutput,
-};
-
-#[cfg(feature = "tools")]
-pub use function_calling::{
-    parse_function_calls, FunctionBuilder, FunctionCall, FunctionDefinition, FunctionParameters,
-    FunctionRegistry, FunctionResult, ParameterProperty, ToolChoice,
 };
 
 #[cfg(feature = "tools")]
