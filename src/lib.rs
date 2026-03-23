@@ -1383,8 +1383,9 @@ pub use rag_advanced::{
 
 #[cfg(feature = "rag")]
 pub use rag_tiers::{
-    auto_select_tier, HybridWeights, QueryComplexity, RagTierConfig, RagFeatures,
-    RagRequirement, RagStats, RagTier, TierSelectionHints, UserPreference,
+    auto_select_tier, HybridWeights, QueryComplexity, RagTierConfig, RagTierDefinition,
+    RagTierStore, RagFeatures, RagRequirement, RagStats, RagTier, TierSelectionHints,
+    UserPreference,
 };
 
 // Knowledge graph exports - use module path to avoid naming conflicts

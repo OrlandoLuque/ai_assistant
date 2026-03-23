@@ -1598,6 +1598,153 @@ pub fn auto_select_tier(hints: &TierSelectionHints) -> RagTier {
 }
 
 // ============================================================================
+// Shareable Tier Definitions
+// ============================================================================
+
+/// A serializable, shareable RAG tier definition.
+///
+/// Unlike the `RagTier` enum (which is code), `RagTierDefinition` is data —
+/// it can be saved to JSON/TOML, shared between users, imported/exported.
+///
+/// The builtin tiers (Fast, Enhanced, etc.) are loaded as defaults.
+/// Users can create custom tiers and share them as files.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RagTierDefinition {
+    /// Tier name (unique identifier within a store).
+    pub name: String,
+    /// Human-readable description.
+    pub description: String,
+    /// Author (for shared tiers).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    /// Version string.
+    #[serde(default = "default_version")]
+    pub version: String,
+    /// The feature flags for this tier.
+    pub features: RagFeatures,
+    /// Optional context budget strategy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overflow_strategy: Option<String>,
+    /// Whether this is a builtin tier (not removable).
+    #[serde(default)]
+    pub builtin: bool,
+}
+
+fn default_version() -> String {
+    "1.0".to_string()
+}
+
+impl RagTierDefinition {
+    /// Create a definition from a builtin tier.
+    pub fn from_builtin(tier: RagTier) -> Self {
+        let config = RagTierConfig::with_tier(tier);
+        Self {
+            name: tier.display_name().to_string(),
+            description: tier.description().to_string(),
+            author: None,
+            version: "1.0".to_string(),
+            features: config.effective_features().clone(),
+            overflow_strategy: None,
+            builtin: true,
+        }
+    }
+
+    /// Convert this definition into a usable RagTierConfig.
+    pub fn to_config(&self) -> RagTierConfig {
+        let mut config = RagTierConfig::with_tier(RagTier::Custom);
+        config.features = self.features.clone();
+        config.use_custom_features = true;
+        config
+    }
+}
+
+/// Store for RAG tier definitions with import/export support.
+pub struct RagTierStore {
+    tiers: HashMap<String, RagTierDefinition>,
+}
+
+impl RagTierStore {
+    /// Create a new store pre-loaded with all builtin tiers.
+    pub fn new() -> Self {
+        let mut store = Self {
+            tiers: HashMap::new(),
+        };
+        // Load builtins
+        for tier in &[
+            RagTier::Disabled,
+            RagTier::Fast,
+            RagTier::Semantic,
+            RagTier::Enhanced,
+            RagTier::Thorough,
+            RagTier::Agentic,
+            RagTier::Graph,
+            RagTier::Full,
+        ] {
+            let def = RagTierDefinition::from_builtin(*tier);
+            store.tiers.insert(def.name.clone(), def);
+        }
+        store
+    }
+
+    /// Register a custom tier definition.
+    pub fn register(&mut self, def: RagTierDefinition) {
+        self.tiers.insert(def.name.clone(), def);
+    }
+
+    /// Get a tier by name.
+    pub fn get(&self, name: &str) -> Option<&RagTierDefinition> {
+        self.tiers.get(name)
+    }
+
+    /// Remove a tier by name. Builtins cannot be removed.
+    pub fn remove(&mut self, name: &str) -> Option<RagTierDefinition> {
+        if self.tiers.get(name).map(|d| d.builtin).unwrap_or(false) {
+            return None; // Cannot remove builtins
+        }
+        self.tiers.remove(name)
+    }
+
+    /// List all tiers (builtins first, then custom sorted by name).
+    pub fn list(&self) -> Vec<&RagTierDefinition> {
+        let mut builtins: Vec<&RagTierDefinition> =
+            self.tiers.values().filter(|d| d.builtin).collect();
+        let mut custom: Vec<&RagTierDefinition> =
+            self.tiers.values().filter(|d| !d.builtin).collect();
+        builtins.sort_by_key(|d| &d.name);
+        custom.sort_by_key(|d| &d.name);
+        builtins.extend(custom);
+        builtins
+    }
+
+    /// Export custom (non-builtin) tiers as JSON.
+    pub fn export_custom(&self) -> Result<String, String> {
+        let custom: Vec<&RagTierDefinition> =
+            self.tiers.values().filter(|d| !d.builtin).collect();
+        serde_json::to_string_pretty(&custom).map_err(|e| format!("Serialize error: {}", e))
+    }
+
+    /// Import tier definitions from JSON. Skips builtins, adds/replaces custom.
+    /// Returns the number of tiers imported.
+    pub fn import(&mut self, json: &str) -> Result<usize, String> {
+        let defs: Vec<RagTierDefinition> =
+            serde_json::from_str(json).map_err(|e| format!("Deserialize error: {}", e))?;
+        let mut count = 0;
+        for mut def in defs {
+            def.builtin = false; // Imported tiers are never builtin
+            self.tiers.insert(def.name.clone(), def);
+            count += 1;
+        }
+        Ok(count)
+    }
+}
+
+impl Default for RagTierStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -2257,5 +2404,76 @@ mod tests {
         let fast_config = RagTierConfig::with_tier(RagTier::Fast);
         assert!(!fast_config.is_feature_enabled("discourse_chunking"));
         assert!(!fast_config.is_feature_enabled("deduplication"));
+    }
+
+    // ── RagTierDefinition tests ──
+
+    #[test]
+    fn test_tier_definition_from_builtin() {
+        let def = RagTierDefinition::from_builtin(RagTier::Enhanced);
+        assert_eq!(def.name, "Enhanced");
+        assert!(def.features.query_expansion);
+        assert!(def.features.reranking);
+        assert!(!def.features.agentic_mode);
+    }
+
+    #[test]
+    fn test_tier_definition_serialization_roundtrip() {
+        let def = RagTierDefinition::from_builtin(RagTier::Thorough);
+        let json = serde_json::to_string_pretty(&def).unwrap();
+        let restored: RagTierDefinition = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.name, def.name);
+        assert_eq!(restored.features, def.features);
+    }
+
+    #[test]
+    fn test_tier_definition_to_config() {
+        let def = RagTierDefinition::from_builtin(RagTier::Graph);
+        let config = def.to_config();
+        assert_eq!(config.tier, RagTier::Custom);
+        assert!(config.use_custom_features);
+        assert!(config.features.graph_rag);
+    }
+
+    #[test]
+    fn test_tier_store_crud() {
+        let mut store = RagTierStore::new();
+        // Builtins should be loaded
+        assert!(store.get("Fast").is_some());
+        assert!(store.get("Enhanced").is_some());
+
+        // Add custom
+        let mut custom = RagTierDefinition::from_builtin(RagTier::Enhanced);
+        custom.name = "Budget-Friendly".to_string();
+        custom.description = "Low cost high quality".to_string();
+        custom.author = Some("Lander".to_string());
+        custom.features.reranking = false; // save cost
+        custom.builtin = false; // user-created, removable
+        store.register(custom);
+
+        assert!(store.get("Budget-Friendly").is_some());
+        assert!(store.list().len() > 8); // builtins + custom
+
+        // Remove custom
+        assert!(store.remove("Budget-Friendly").is_some());
+        assert!(store.get("Budget-Friendly").is_none());
+    }
+
+    #[test]
+    fn test_tier_store_export_import() {
+        let mut store = RagTierStore::new();
+        let mut custom = RagTierDefinition::from_builtin(RagTier::Fast);
+        custom.name = "MyTier".to_string();
+        custom.author = Some("TestUser".to_string());
+        custom.builtin = false;
+        store.register(custom);
+
+        let json = store.export_custom().unwrap();
+        assert!(json.contains("MyTier"));
+
+        let mut store2 = RagTierStore::new();
+        let imported = store2.import(&json).unwrap();
+        assert_eq!(imported, 1);
+        assert!(store2.get("MyTier").is_some());
     }
 }
