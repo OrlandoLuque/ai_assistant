@@ -1744,6 +1744,28 @@ impl Default for RagTierStore {
     }
 }
 
+impl RagTierStore {
+    /// Save custom tiers to a StorageContext.
+    pub fn save(&self, ctx: &crate::storage_context::StorageContext) -> Result<(), String> {
+        let custom: Vec<&RagTierDefinition> = self.tiers.values().filter(|d| !d.builtin).collect();
+        ctx.save_json("rag_tiers_custom", &custom)
+    }
+
+    /// Load custom tiers from a StorageContext (adds to builtin tiers).
+    pub fn load_custom(&mut self, ctx: &crate::storage_context::StorageContext) -> Result<usize, String> {
+        if !ctx.exists("rag_tiers_custom") {
+            return Ok(0);
+        }
+        let defs: Vec<RagTierDefinition> = ctx.load_json("rag_tiers_custom")?;
+        let count = defs.len();
+        for mut def in defs {
+            def.builtin = false;
+            self.tiers.insert(def.name.clone(), def);
+        }
+        Ok(count)
+    }
+}
+
 // ============================================================================
 // Tests
 // ============================================================================

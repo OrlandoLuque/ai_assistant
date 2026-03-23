@@ -689,6 +689,16 @@ impl StrategyBandit {
     pub fn total_pulls(&self) -> u64 {
         self.total_pulls
     }
+
+    /// Save bandit state to a StorageContext.
+    pub fn save(&self, ctx: &crate::storage_context::StorageContext) -> Result<(), String> {
+        ctx.save_json("strategy_bandit", self)
+    }
+
+    /// Load bandit state from a StorageContext.
+    pub fn load(ctx: &crate::storage_context::StorageContext) -> Result<Self, String> {
+        ctx.load_json("strategy_bandit")
+    }
 }
 
 // ============================================================================

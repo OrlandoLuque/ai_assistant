@@ -34,8 +34,9 @@ Continúa con el desarrollo del proyecto. Lee docs/modus-operandi.md y el últim
 - **V55**: COMPLETE — Adaptive Context Budget Allocator (ContextItem/ContextSource/ContextBudgetAllocator, score-based allocation, extractive compression RECOMP-style, LlmCompressor trait with domain filtering, StrategyBandit UCB1, RagTierDefinition shareable + TierStore import/export, 27 tests)
 - **V56**: COMPLETE — Voice/Audio Enhancement (EmotionDetector trait, EmotionState, KeywordEmotionDetector, ExpressiveOpenAiTtsProvider, ElevenLabsProvider, VoiceCodec trait, empathetic loop wiring, diagram 25)
 - **V57**: COMPLETE — Agent Interruption & Safety (ToolSafetyProfile, SnapshotStore cross-platform rollback, RollbackStrategy Snapshot/Git 5 modes, KnowledgeWatcher auto-reindex, ToolCallRecord saga tracking)
-- **Latest**: V57 — Agent Interruption & Knowledge Watcher (COMPLETE)
-- **Test count**: 6,985 lib tests (0 failures) + 39 harness precision + 18 fallback resilience + 8 conversation quality scored tests
+- **V58**: COMPLETE — StorageContext unified persistence (save_json/load_json atomic, DirtyFlags, drain_writes(), StrategyBandit + RagTierStore persistence)
+- **Latest**: V58 — StorageContext Persistence (COMPLETE)
+- **Test count**: 6,992 lib tests (0 failures) + 39 harness precision + 18 fallback resilience + 8 conversation quality scored tests
 - **Source files**: 320 .rs files, ~390K LOC
 - **Feature flags**: 55 (+1: chaos-testing)
 - **Status**: Experimental — compiles and passes tests, but not validated in production
