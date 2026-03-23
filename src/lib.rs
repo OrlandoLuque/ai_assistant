@@ -362,7 +362,7 @@ pub use cache_compression::{
 pub use context_budget::{
     AllocationResult, ClosureSource, CompressionLevel as ContextCompressionLevel,
     ContextBudgetAllocator, ContextItem, ContextSource, ContextSourceType, LegacyStringSource,
-    OverflowStrategy,
+    LlmCompressor, OverflowStrategy, StrategyBandit, build_compressor_prompt,
 };
 
 pub use internal_storage::{

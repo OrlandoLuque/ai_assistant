@@ -419,6 +419,185 @@ fn estimate_tokens(text: &str) -> usize {
 }
 
 // ============================================================================
+// LLM-assisted context compression
+// ============================================================================
+
+/// Trait for LLM-based context compression.
+///
+/// Implementations call a secondary (cheap/fast) LLM to intelligently
+/// filter, summarize, and compress context items based on the user's query.
+pub trait LlmCompressor: Send + Sync {
+    /// Compress the given items to fit within the token budget.
+    ///
+    /// The compressor receives:
+    /// - `user_query`: the user's original question (for relevance judgment)
+    /// - `items`: context items WITH scores (for informed prioritization)
+    /// - `target_tokens`: desired output size
+    /// - `level`: how aggressively to compress
+    ///
+    /// Returns compressed text ready to inject into the prompt.
+    fn compress(
+        &self,
+        user_query: &str,
+        items: &[ContextItem],
+        target_tokens: usize,
+        level: CompressionLevel,
+    ) -> Result<String, String>;
+}
+
+/// Build the prompt sent to the compressor LLM.
+///
+/// Includes each item with its score and source type so the compressor
+/// can make informed decisions about what to keep, summarize, or discard.
+pub fn build_compressor_prompt(
+    user_query: &str,
+    items: &[ContextItem],
+    level: CompressionLevel,
+    target_tokens: usize,
+) -> String {
+    #[allow(unreachable_patterns)]
+    let level_instruction = match level {
+        CompressionLevel::Light => {
+            "Eliminate redundancy and rephrase concisely. Keep ALL details and facts."
+        }
+        CompressionLevel::Medium => {
+            "Keep key points and essential facts. Compress explanations. Omit secondary context."
+        }
+        CompressionLevel::Aggressive => {
+            "Extract ONLY the information directly needed to answer the question. Discard everything else."
+        }
+        _ => "Keep key points and essential facts.",
+    };
+
+    let mut prompt = format!(
+        "You are a context compression assistant. The user's question is:\n\"{}\"\n\n\
+         Compress the following information to fit in ~{} tokens.\n\
+         Instructions: {}\n\
+         IMPORTANT: Discard items that are keyword-relevant but contextually irrelevant \
+         to the question (wrong domain, wrong topic, false matches).\n\n\
+         --- ITEMS (with relevance scores) ---\n",
+        user_query, target_tokens, level_instruction
+    );
+
+    for item in items {
+        prompt.push_str(&format!(
+            "\n[score {:.2}] [{}] {}\n",
+            item.score, item.source, item.content
+        ));
+    }
+
+    prompt.push_str("\n--- END ITEMS ---\n\nCompressed output:");
+    prompt
+}
+
+// ============================================================================
+// MBA-RAG: Multi-Armed Bandit for strategy selection
+// ============================================================================
+
+/// Multi-armed bandit for learning which overflow strategy works best.
+///
+/// Uses Upper Confidence Bound (UCB1) to balance exploration vs exploitation.
+/// Each "arm" is an overflow strategy. The reward is context quality
+/// (measured by user feedback or response quality metrics).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct StrategyBandit {
+    /// Per-arm statistics: (total_reward, pull_count).
+    arms: HashMap<String, (f64, u64)>,
+    /// Total number of pulls across all arms.
+    total_pulls: u64,
+    /// Exploration parameter (higher = more exploration).
+    exploration: f64,
+}
+
+impl StrategyBandit {
+    /// Create a new bandit with the given arm names.
+    pub fn new(arm_names: &[&str]) -> Self {
+        let mut arms = HashMap::new();
+        for name in arm_names {
+            arms.insert(name.to_string(), (0.0, 0));
+        }
+        Self {
+            arms,
+            total_pulls: 0,
+            exploration: 1.41, // sqrt(2), standard UCB1
+        }
+    }
+
+    /// Create with default arms for overflow strategies.
+    pub fn default_strategies() -> Self {
+        Self::new(&[
+            "score_truncation",
+            "extractive_light",
+            "extractive_medium",
+            "llm_light",
+            "llm_medium",
+            "llm_aggressive",
+        ])
+    }
+
+    /// Select the best arm using UCB1.
+    pub fn select(&self) -> &str {
+        if self.total_pulls == 0 {
+            // Return first arm that hasn't been pulled
+            return self
+                .arms
+                .iter()
+                .find(|(_, (_, count))| *count == 0)
+                .map(|(name, _)| name.as_str())
+                .unwrap_or("score_truncation");
+        }
+
+        // Pull any arm that hasn't been tried yet
+        for (name, (_, count)) in &self.arms {
+            if *count == 0 {
+                return name;
+            }
+        }
+
+        // UCB1: select arm with highest upper confidence bound
+        let ln_total = (self.total_pulls as f64).ln();
+        self.arms
+            .iter()
+            .max_by(|(_, (r1, c1)), (_, (r2, c2))| {
+                let ucb1 = r1 / *c1 as f64 + self.exploration * (ln_total / *c1 as f64).sqrt();
+                let ucb2 = r2 / *c2 as f64 + self.exploration * (ln_total / *c2 as f64).sqrt();
+                ucb1.partial_cmp(&ucb2).unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|(name, _)| name.as_str())
+            .unwrap_or("score_truncation")
+    }
+
+    /// Record a reward for the given arm.
+    pub fn update(&mut self, arm: &str, reward: f64) {
+        if let Some((total_reward, count)) = self.arms.get_mut(arm) {
+            *total_reward += reward;
+            *count += 1;
+            self.total_pulls += 1;
+        }
+    }
+
+    /// Get the estimated value (average reward) of each arm.
+    pub fn values(&self) -> HashMap<&str, f64> {
+        self.arms
+            .iter()
+            .map(|(name, (reward, count))| {
+                let avg = if *count > 0 {
+                    reward / *count as f64
+                } else {
+                    0.0
+                };
+                (name.as_str(), avg)
+            })
+            .collect()
+    }
+
+    /// Total number of strategy selections made.
+    pub fn total_pulls(&self) -> u64 {
+        self.total_pulls
+    }
+}
+
+// ============================================================================
 // Adapter: wrap a closure as a ContextSource
 // ============================================================================
 
@@ -729,5 +908,99 @@ mod tests {
         // Budget that fits the first but not both fully
         let result = allocator.build("query", 30);
         assert!(result.tokens_used <= 30);
+    }
+
+    // ── Compressor prompt tests ──
+
+    #[test]
+    fn test_compressor_prompt_includes_scores() {
+        let items = vec![
+            make_item("Rust uses ownership for memory safety", 0.95, ContextSourceType::Rag),
+            make_item("User prefers concise answers", 0.7, ContextSourceType::Memory),
+        ];
+        let prompt = build_compressor_prompt("How does Rust manage memory?", &items, CompressionLevel::Medium, 200);
+        assert!(prompt.contains("[score 0.95]"));
+        assert!(prompt.contains("[score 0.70]"));
+        assert!(prompt.contains("[RAG]"));
+        assert!(prompt.contains("[MEMORY]"));
+        assert!(prompt.contains("How does Rust manage memory?"));
+    }
+
+    #[test]
+    fn test_compressor_prompt_levels() {
+        let items = vec![make_item("test", 0.5, ContextSourceType::Rag)];
+
+        let light = build_compressor_prompt("q", &items, CompressionLevel::Light, 100);
+        assert!(light.contains("Keep ALL details"));
+
+        let aggressive = build_compressor_prompt("q", &items, CompressionLevel::Aggressive, 100);
+        assert!(aggressive.contains("ONLY the information directly needed"));
+    }
+
+    #[test]
+    fn test_compressor_prompt_domain_filtering() {
+        let items = vec![make_item("test", 0.5, ContextSourceType::Rag)];
+        let prompt = build_compressor_prompt("q", &items, CompressionLevel::Medium, 100);
+        assert!(prompt.contains("contextually irrelevant"));
+        assert!(prompt.contains("wrong domain"));
+    }
+
+    // ── Bandit tests ──
+
+    #[test]
+    fn test_bandit_select_unexplored() {
+        let bandit = StrategyBandit::new(&["a", "b", "c"]);
+        // Should select an unexplored arm
+        let selected = bandit.select();
+        assert!(["a", "b", "c"].contains(&selected));
+    }
+
+    #[test]
+    fn test_bandit_update_and_learn() {
+        let mut bandit = StrategyBandit::new(&["good", "bad"]);
+
+        // Pull each once
+        bandit.update("good", 0.9);
+        bandit.update("bad", 0.1);
+
+        // After initial exploration, should prefer "good"
+        // Pull a few more times to build confidence
+        for _ in 0..10 {
+            bandit.update("good", 0.9);
+            bandit.update("bad", 0.1);
+        }
+
+        let selected = bandit.select();
+        assert_eq!(selected, "good");
+    }
+
+    #[test]
+    fn test_bandit_values() {
+        let mut bandit = StrategyBandit::new(&["x", "y"]);
+        bandit.update("x", 0.8);
+        bandit.update("x", 0.6);
+        bandit.update("y", 0.2);
+
+        let values = bandit.values();
+        assert!(*values.get("x").unwrap() > *values.get("y").unwrap());
+    }
+
+    #[test]
+    fn test_bandit_default_strategies() {
+        let bandit = StrategyBandit::default_strategies();
+        assert_eq!(bandit.arms.len(), 6);
+        assert!(bandit.arms.contains_key("score_truncation"));
+        assert!(bandit.arms.contains_key("llm_aggressive"));
+    }
+
+    #[test]
+    fn test_bandit_serialization() {
+        let mut bandit = StrategyBandit::default_strategies();
+        bandit.update("score_truncation", 0.8);
+        bandit.update("llm_light", 0.6);
+
+        let json = serde_json::to_string(&bandit).unwrap();
+        let restored: StrategyBandit = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.total_pulls(), 2);
     }
 }
