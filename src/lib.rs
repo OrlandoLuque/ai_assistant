@@ -177,6 +177,7 @@ pub mod config_file;
 pub mod connection_pool;
 pub mod context_budget;
 pub mod knowledge_watcher;
+pub mod storage_context;
 pub mod tool_safety;
 pub mod crawl_policy;
 pub mod data_source_client;
@@ -362,6 +363,9 @@ pub use cache_compression::{
 };
 
 pub use knowledge_watcher::{KnowledgeWatcher, WatchEvent, WatcherConfig};
+pub use storage_context::{
+    DirtyFlags, StorageConfig, StorageContext, Subsystem as StorageSubsystem,
+};
 
 pub use tool_safety::{
     FileOperation, FileSnapshot, GitRollbackConfig, GitRollbackMode, RollbackStrategy,
