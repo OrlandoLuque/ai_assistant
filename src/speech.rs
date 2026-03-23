@@ -1324,6 +1324,294 @@ fn base64_decode(data: &str) -> Result<Vec<u8>> {
 }
 
 // ============================================================================
+// Expressive TTS: OpenAI gpt-4o-mini-tts (steerable voice via instructions)
+// ============================================================================
+
+/// OpenAI Expressive TTS provider using gpt-4o-mini-tts model.
+///
+/// Unlike the standard OpenAI TTS, this model accepts natural language
+/// instructions for controlling tone, emotion, pacing, and accent.
+/// Example: "Speak calmly and reassuringly, as if comforting someone."
+pub struct ExpressiveOpenAiTtsProvider {
+    api_key: String,
+    default_voice: String,
+    default_instruction: String,
+}
+
+impl ExpressiveOpenAiTtsProvider {
+    /// Create with API key from environment or explicit.
+    pub fn new(api_key: &str) -> Self {
+        Self {
+            api_key: api_key.to_string(),
+            default_voice: "alloy".to_string(),
+            default_instruction: "Speak naturally.".to_string(),
+        }
+    }
+
+    /// Create from OPENAI_API_KEY environment variable.
+    pub fn from_env() -> Result<Self> {
+        let key = std::env::var("OPENAI_API_KEY")
+            .context("OPENAI_API_KEY not set")?;
+        Ok(Self::new(&key))
+    }
+
+    /// Set the default voice (alloy, ash, coral, echo, fable, nova, onyx, sage, shimmer).
+    pub fn with_voice(mut self, voice: &str) -> Self {
+        self.default_voice = voice.to_string();
+        self
+    }
+
+    /// Set the default instruction for tone/emotion control.
+    pub fn with_instruction(mut self, instruction: &str) -> Self {
+        self.default_instruction = instruction.to_string();
+        self
+    }
+
+    /// Synthesize with a specific emotion instruction.
+    pub fn synthesize_with_emotion(
+        &self,
+        text: &str,
+        emotion_instruction: &str,
+        options: &SynthesisOptions,
+    ) -> Result<SynthesisResult> {
+        let voice = options
+            .voice
+            .as_deref()
+            .unwrap_or(&self.default_voice);
+
+        let body = serde_json::json!({
+            "model": "gpt-4o-mini-tts",
+            "input": text,
+            "voice": voice,
+            "instructions": emotion_instruction,
+        });
+
+        let response = ureq::post("https://api.openai.com/v1/audio/speech")
+            .set("Authorization", &format!("Bearer {}", self.api_key))
+            .set("Content-Type", "application/json")
+            .send_string(&body.to_string())
+            .context("Failed to call OpenAI Expressive TTS API")?;
+
+        let mut audio = Vec::new();
+        response
+            .into_reader()
+            .read_to_end(&mut audio)
+            .context("Failed to read audio response")?;
+
+        Ok(SynthesisResult {
+            audio,
+            format: AudioFormat::Mp3,
+            duration_secs: 0.0, // OpenAI doesn't return duration
+            sample_rate: 24000,
+        })
+    }
+}
+
+impl SpeechProvider for ExpressiveOpenAiTtsProvider {
+    fn transcribe(
+        &self,
+        _audio: &[u8],
+        _format: AudioFormat,
+        _language: Option<&str>,
+    ) -> Result<TranscriptionResult> {
+        anyhow::bail!("ExpressiveOpenAiTtsProvider is TTS-only; use OpenAISpeechProvider for STT")
+    }
+
+    fn synthesize(&self, text: &str, options: &SynthesisOptions) -> Result<SynthesisResult> {
+        self.synthesize_with_emotion(text, &self.default_instruction, options)
+    }
+
+    fn supports_stt(&self) -> bool {
+        false
+    }
+
+    fn supports_tts(&self) -> bool {
+        true
+    }
+
+    fn tts_voices(&self) -> Vec<String> {
+        vec![
+            "alloy", "ash", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect()
+    }
+
+    fn name(&self) -> &str {
+        "OpenAI Expressive TTS (gpt-4o-mini-tts)"
+    }
+}
+
+// ============================================================================
+// ElevenLabs v3 TTS (audio tags for emotion control)
+// ============================================================================
+
+/// ElevenLabs v3 TTS provider with audio tag support for emotional expression.
+///
+/// Supports emotion tags embedded in text: `[sigh]`, `[excited]`, `[whispers]`,
+/// `[laughs]`, `[nervous]`, `[frustrated]`, etc.
+pub struct ElevenLabsProvider {
+    api_key: String,
+    default_voice_id: String,
+    model_id: String,
+}
+
+impl ElevenLabsProvider {
+    /// Create with API key.
+    pub fn new(api_key: &str) -> Self {
+        Self {
+            api_key: api_key.to_string(),
+            default_voice_id: "21m00Tcm4TlvDq8ikWAM".to_string(), // Rachel
+            model_id: "eleven_multilingual_v2".to_string(),
+        }
+    }
+
+    /// Create from ELEVENLABS_API_KEY environment variable.
+    pub fn from_env() -> Result<Self> {
+        let key = std::env::var("ELEVENLABS_API_KEY")
+            .context("ELEVENLABS_API_KEY not set")?;
+        Ok(Self::new(&key))
+    }
+
+    /// Set default voice ID.
+    pub fn with_voice_id(mut self, voice_id: &str) -> Self {
+        self.default_voice_id = voice_id.to_string();
+        self
+    }
+
+    /// Set model ID (eleven_multilingual_v2, eleven_turbo_v2_5, etc.).
+    pub fn with_model(mut self, model_id: &str) -> Self {
+        self.model_id = model_id.to_string();
+        self
+    }
+}
+
+impl SpeechProvider for ElevenLabsProvider {
+    fn transcribe(
+        &self,
+        _audio: &[u8],
+        _format: AudioFormat,
+        _language: Option<&str>,
+    ) -> Result<TranscriptionResult> {
+        anyhow::bail!("ElevenLabsProvider is TTS-only")
+    }
+
+    fn synthesize(&self, text: &str, options: &SynthesisOptions) -> Result<SynthesisResult> {
+        let voice_id = options
+            .voice
+            .as_deref()
+            .unwrap_or(&self.default_voice_id);
+
+        let url = format!(
+            "https://api.elevenlabs.io/v1/text-to-speech/{}",
+            voice_id
+        );
+
+        let body = serde_json::json!({
+            "text": text,
+            "model_id": self.model_id,
+            "voice_settings": {
+                "stability": 0.5,
+                "similarity_boost": 0.75,
+                "style": 0.5,
+                "use_speaker_boost": true,
+            }
+        });
+
+        let response = ureq::post(&url)
+            .set("xi-api-key", &self.api_key)
+            .set("Content-Type", "application/json")
+            .set("Accept", "audio/mpeg")
+            .send_string(&body.to_string())
+            .context("Failed to call ElevenLabs TTS API")?;
+
+        let mut audio = Vec::new();
+        response
+            .into_reader()
+            .read_to_end(&mut audio)
+            .context("Failed to read ElevenLabs audio response")?;
+
+        Ok(SynthesisResult {
+            audio,
+            format: AudioFormat::Mp3,
+            duration_secs: 0.0,
+            sample_rate: 44100,
+        })
+    }
+
+    fn supports_stt(&self) -> bool {
+        false
+    }
+
+    fn supports_tts(&self) -> bool {
+        true
+    }
+
+    fn tts_voices(&self) -> Vec<String> {
+        // ElevenLabs voices are dynamic (user-created), these are well-known defaults
+        vec![
+            "Rachel", "Domi", "Bella", "Antoni", "Elli", "Josh", "Arnold", "Adam", "Sam",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect()
+    }
+
+    fn name(&self) -> &str {
+        "ElevenLabs v3"
+    }
+}
+
+// ============================================================================
+// Neural Voice Codec (trait for encoding/decoding audio as tokens)
+// ============================================================================
+
+/// Trait for neural voice codecs that encode audio into compact token
+/// representations and decode them back.
+///
+/// This enables "Discord-like" voice transmission at 10x lower bandwidth
+/// by transmitting tokens instead of raw audio.
+pub trait VoiceCodec: Send + Sync {
+    /// Encode audio into compact voice tokens.
+    fn encode(&self, audio: &[u8], sample_rate: u32) -> Result<VoiceTokens>;
+
+    /// Decode voice tokens back into audio.
+    fn decode(&self, tokens: &VoiceTokens) -> Result<Vec<u8>>;
+
+    /// Codec name for diagnostics.
+    fn codec_name(&self) -> &str;
+
+    /// Target bitrate in kbps.
+    fn bitrate_kbps(&self) -> f32;
+}
+
+/// Compact voice token representation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VoiceTokens {
+    /// Encoded token data (codec-specific).
+    pub data: Vec<u8>,
+    /// Number of audio frames encoded.
+    pub frame_count: usize,
+    /// Original sample rate.
+    pub sample_rate: u32,
+    /// Duration in milliseconds.
+    pub duration_ms: u64,
+    /// Codec identifier.
+    pub codec: String,
+}
+
+impl VoiceTokens {
+    /// Compression ratio compared to raw PCM 16-bit audio.
+    pub fn compression_ratio(&self, original_bytes: usize) -> f32 {
+        if self.data.is_empty() {
+            return 0.0;
+        }
+        original_bytes as f32 / self.data.len() as f32
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 

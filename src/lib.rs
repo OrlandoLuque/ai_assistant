@@ -2015,8 +2015,9 @@ pub use emotion_detection::{
 #[cfg(feature = "audio")]
 pub use speech::{
     create_speech_provider, AudioFormat, CoquiTtsProvider, GoogleSpeechProvider,
-    LocalSpeechProvider, OpenAISpeechProvider, PiperTtsProvider, SpeechConfig, SpeechProvider,
-    SynthesisOptions, SynthesisResult, TranscriptionResult, TranscriptionSegment,
+    ElevenLabsProvider, ExpressiveOpenAiTtsProvider, LocalSpeechProvider, OpenAISpeechProvider,
+    PiperTtsProvider, SpeechConfig, SpeechProvider, SynthesisOptions, SynthesisResult,
+    TranscriptionResult, TranscriptionSegment, VoiceCodec, VoiceTokens,
 };
 
 #[cfg(feature = "whisper-local")]
