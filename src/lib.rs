@@ -2004,6 +2004,13 @@ pub use document_pipeline::{
 
 #[cfg(feature = "audio")]
 pub mod speech;
+#[cfg(feature = "audio")]
+pub mod emotion_detection;
+
+#[cfg(feature = "audio")]
+pub use emotion_detection::{
+    AudioEvent, EmotionCategory, EmotionDetector, EmotionState, KeywordEmotionDetector,
+};
 
 #[cfg(feature = "audio")]
 pub use speech::{
