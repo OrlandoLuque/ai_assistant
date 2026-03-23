@@ -176,6 +176,7 @@ pub mod cloud_providers;
 pub mod config_file;
 pub mod connection_pool;
 pub mod context_budget;
+pub mod knowledge_watcher;
 pub mod tool_safety;
 pub mod crawl_policy;
 pub mod data_source_client;
@@ -359,6 +360,8 @@ pub use cache_compression::{
     CompressedCache, CompressedData, CompressionAlgorithm, CompressionError, CompressionLevel,
     StreamingCompressor,
 };
+
+pub use knowledge_watcher::{KnowledgeWatcher, WatchEvent, WatcherConfig};
 
 pub use tool_safety::{
     FileOperation, FileSnapshot, GitRollbackConfig, GitRollbackMode, RollbackStrategy,
