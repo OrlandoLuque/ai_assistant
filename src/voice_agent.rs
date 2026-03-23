@@ -777,6 +777,13 @@ mod inner {
         pub chunk_size_ms: u32,
         /// Turn management policy.
         pub turn_policy: TurnPolicy,
+        /// Enable emotion detection from user audio.
+        /// When enabled, detected emotion is injected into the LLM prompt
+        /// and used to select appropriate TTS tone.
+        pub emotion_enabled: bool,
+        /// TTS instruction override for emotion-adaptive responses.
+        /// If empty, uses EmotionState::suggest_tts_instruction() automatically.
+        pub emotion_tts_instruction: String,
     }
 
     impl Default for VoiceAgentConfig {
@@ -790,6 +797,8 @@ mod inner {
                 sample_rate: 16000,
                 chunk_size_ms: 20,
                 turn_policy: TurnPolicy::NaturalOverlap,
+                emotion_enabled: false,
+                emotion_tts_instruction: String::new(),
             }
         }
     }
@@ -850,6 +859,8 @@ mod inner {
         audio_buffer: Vec<i16>,
         /// Active sessions (session_id -> session).
         sessions: std::collections::HashMap<String, VoiceSession>,
+        /// Last detected emotion from user audio.
+        pub last_emotion: Option<crate::emotion_detection::EmotionState>,
     }
 
     impl VoiceAgent {
@@ -864,6 +875,7 @@ mod inner {
                 vad,
                 audio_buffer: Vec::new(),
                 sessions: std::collections::HashMap::new(),
+                last_emotion: None,
             })
         }
 
