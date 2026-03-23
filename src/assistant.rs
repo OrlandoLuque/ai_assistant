@@ -264,6 +264,37 @@ pub struct FreshContextStatus {
     pub effectiveness: FreshContextEffectiveness,
 }
 
+/// Status report from the Context Budget Allocator, for Butler advisor.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct ContextBudgetStatus {
+    /// Total context window of the model (tokens).
+    pub model_context_window: usize,
+    /// Tokens available for knowledge after system prompt + conversation + reserve.
+    pub available_budget: usize,
+    /// Whether RAG is available.
+    pub rag_available: bool,
+    /// Whether memory is available.
+    pub memory_available: bool,
+    /// Whether procedural store is available.
+    pub procedural_available: bool,
+    /// Recommendations for improving context utilization.
+    pub recommendations: Vec<String>,
+}
+
+impl Default for ContextBudgetStatus {
+    fn default() -> Self {
+        Self {
+            model_context_window: 4096,
+            available_budget: 0,
+            rag_available: false,
+            memory_available: false,
+            procedural_available: false,
+            recommendations: Vec::new(),
+        }
+    }
+}
+
 /// Main AI Assistant state and logic
 pub struct AiAssistant {
     /// Configuration
@@ -1489,6 +1520,85 @@ impl AiAssistant {
             available_knowledge_tokens: available,
             warnings,
             effectiveness,
+        }
+    }
+
+    /// Get the context budget status with recommendations from the Butler advisor.
+    pub fn context_budget_status(&self) -> ContextBudgetStatus {
+        let model_ctx = self.detected_context_size.unwrap_or(4096);
+        let system_tokens = crate::context::estimate_tokens(&self.system_prompt_base);
+        let conversation_tokens: usize = self
+            .conversation
+            .iter()
+            .map(|m| crate::context::estimate_tokens(&m.content))
+            .sum();
+        let response_reserve = 800;
+        let available = model_ctx
+            .saturating_sub(system_tokens)
+            .saturating_sub(conversation_tokens)
+            .saturating_sub(response_reserve);
+
+        let rag_available = self.rag_db.is_some();
+        let memory_available = self.memory_manager.is_some();
+        #[cfg(feature = "advanced-memory")]
+        let procedural_available = self.procedural_store.is_some();
+        #[cfg(not(feature = "advanced-memory"))]
+        let procedural_available = false;
+
+        let mut recommendations = Vec::new();
+
+        // Budget recommendations
+        let utilization_pct = if model_ctx > 0 {
+            ((model_ctx - available) as f64 / model_ctx as f64 * 100.0) as usize
+        } else {
+            0
+        };
+
+        if available < 500 {
+            recommendations.push(
+                "Very low budget — consider using FreshContext mode to free conversation tokens."
+                    .to_string(),
+            );
+        } else if available > model_ctx / 2 && !rag_available {
+            recommendations.push(
+                "Over 50% of context is unused — enable RAG to fill with relevant knowledge."
+                    .to_string(),
+            );
+        }
+
+        if !rag_available {
+            recommendations.push(
+                "RAG not enabled — index documents with add_knowledge_source() for better answers."
+                    .to_string(),
+            );
+        }
+        if !memory_available {
+            recommendations.push(
+                "Memory not enabled — enable_memory() to remember user preferences across turns."
+                    .to_string(),
+            );
+        }
+        if !procedural_available {
+            recommendations.push(
+                "Procedural memory not enabled — workflows could improve task-specific responses."
+                    .to_string(),
+            );
+        }
+
+        if utilization_pct > 85 {
+            recommendations.push(format!(
+                "Context {}% full — consider upgrading to a model with a larger context window.",
+                utilization_pct
+            ));
+        }
+
+        ContextBudgetStatus {
+            model_context_window: model_ctx,
+            available_budget: available,
+            rag_available,
+            memory_available,
+            procedural_available,
+            recommendations,
         }
     }
 
