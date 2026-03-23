@@ -184,6 +184,8 @@ fn print_usage() {
     println!("    --system <prompt>              System prompt");
     println!("    --file <path>                  Read user prompt from file instead of argument");
     println!("    --knowledge <path>             Inject file content as knowledge context");
+    println!("    --rag-tier <tier>              RAG tier (fast, semantic, enhanced, thorough, graph, full)");
+    println!("    --list-tiers                   List available RAG tiers");
     println!("    --json                         Output response as JSON");
     println!("    --temperature <float>          Temperature (0.0-2.0)");
     println!();
@@ -698,6 +700,7 @@ fn cmd_query(args: &[String]) -> ExitCode {
     let mut system_prompt: Option<String> = None;
     let mut prompt_file: Option<String> = None;
     let mut knowledge_path: Option<String> = None;
+    let mut rag_tier_name: Option<String> = None;
     let mut json_output = false;
     let mut temperature: Option<f32> = None;
     let mut prompt_parts: Vec<String> = Vec::new();
@@ -760,6 +763,23 @@ fn cmd_query(args: &[String]) -> ExitCode {
                     return ExitCode::from(1);
                 }
                 knowledge_path = Some(args[i].clone());
+            }
+            "--rag-tier" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("Error: --rag-tier requires a tier name");
+                    return ExitCode::from(1);
+                }
+                rag_tier_name = Some(args[i].clone());
+            }
+            "--list-tiers" => {
+                let store = ai_assistant::RagTierStore::new();
+                println!("Available RAG tiers:");
+                for tier in store.list() {
+                    let marker = if tier.builtin { " (builtin)" } else { "" };
+                    println!("  {:12} — {}{}", tier.name, tier.description, marker);
+                }
+                return ExitCode::SUCCESS;
             }
             "--json" => {
                 json_output = true;
