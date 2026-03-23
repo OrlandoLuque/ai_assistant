@@ -1192,7 +1192,9 @@ impl AiAssistant {
         }
 
         // Calculate available budget
-        let model_ctx = self.detected_context_size.unwrap_or(4096);
+        let model_ctx = self.detected_context_size.unwrap_or_else(|| {
+            crate::context::get_model_context_size_cached(&self.config.selected_model, |_| None)
+        });
         let system_tokens = crate::context::estimate_tokens(&self.system_prompt_base);
         let conversation_tokens: usize = self
             .conversation
@@ -1525,7 +1527,9 @@ impl AiAssistant {
 
     /// Get the context budget status with recommendations from the Butler advisor.
     pub fn context_budget_status(&self) -> ContextBudgetStatus {
-        let model_ctx = self.detected_context_size.unwrap_or(4096);
+        let model_ctx = self.detected_context_size.unwrap_or_else(|| {
+            crate::context::get_model_context_size_cached(&self.config.selected_model, |_| None)
+        });
         let system_tokens = crate::context::estimate_tokens(&self.system_prompt_base);
         let conversation_tokens: usize = self
             .conversation
