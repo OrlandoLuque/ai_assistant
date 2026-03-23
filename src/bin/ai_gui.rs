@@ -417,6 +417,7 @@ struct GuiSettings {
     /// If true: Enter sends, Ctrl+Enter inserts newline (default).
     /// If false: Ctrl+Enter sends, Enter inserts newline.
     enter_sends: bool,
+    rag_tier_name: Option<String>,
 }
 
 impl Default for GuiSettings {
@@ -428,6 +429,7 @@ impl Default for GuiSettings {
             max_history: 20,
             graph_enabled: false,
             enter_sends: true,
+            rag_tier_name: None,
         }
     }
 }
@@ -2186,6 +2188,27 @@ impl AiGuiApp {
                     "Each query builds context fresh from knowledge.",
                 );
             }
+
+            // RAG tier selector
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.label("RAG tier:");
+                let tiers = [
+                    ("Fast", "Keyword search only"),
+                    ("Semantic", "Keyword + embeddings"),
+                    ("Enhanced", "Query expansion + reranking"),
+                    ("Thorough", "Multi-query + compression"),
+                    ("Graph", "Knowledge graph traversal"),
+                    ("Full", "All features enabled"),
+                ];
+                for (name, tooltip) in &tiers {
+                    let selected = self.settings.rag_tier_name.as_deref() == Some(*name);
+                    if ui.selectable_label(selected, *name).on_hover_text(*tooltip).clicked() {
+                        self.settings.rag_tier_name = Some(name.to_string());
+                    }
+                }
+            });
+
             ui.add_space(4.0);
 
             let indexed_chunks: usize = self
