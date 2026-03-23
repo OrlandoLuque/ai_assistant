@@ -31,9 +31,9 @@ Continúa con el desarrollo del proyecto. Lee docs/modus-operandi.md y el últim
 - **V52**: COMPLETE — Consolidation & Production Readiness (HTTP log endpoints, JUnit XML/TAP harness export, Block B+F source renames complete (zero aliases), Block C container backend trait, Block G2 EntityStore generalization (query/embedding/TTL), Block G3 PlanStore persistence, Block H MCP agent management tools, 22 tests)
 - **V53**: COMPLETE — Block D audit (deprecated tool_use+function_calling, unified_tools canonical), 4 SearchProviders (Google, Bing, SerpAPI, Tavily), web search in GUI, clippy clean
 - **V54**: COMPLETE — Block D final (deleted tool_use.rs+function_calling.rs, -1423 LOC), MemoryManager in both context modes, send_message_with_rag(), diagrama flujo 7 corregido
-- **V55**: IN PROGRESS — Adaptive Context Budget Allocator (ContextItem/ContextSource trait, score-based allocation, extractive compression, RagTierDefinition shareable + TierStore import/export)
-- **Latest**: V55 — Adaptive Context Budget Allocator (IN PROGRESS)
-- **Test count**: 6,930+ lib tests (0 failures) + 39 harness precision + 18 fallback resilience + 8 conversation quality scored tests
+- **V55**: COMPLETE — Adaptive Context Budget Allocator (ContextItem/ContextSource/ContextBudgetAllocator, score-based allocation, extractive compression RECOMP-style, LlmCompressor trait with domain filtering, StrategyBandit UCB1, RagTierDefinition shareable + TierStore import/export, 27 tests)
+- **Latest**: V55 — Adaptive Context Budget Allocator (COMPLETE)
+- **Test count**: 6,957 lib tests (0 failures) + 39 harness precision + 18 fallback resilience + 8 conversation quality scored tests
 - **Source files**: 320 .rs files, ~390K LOC
 - **Feature flags**: 55 (+1: chaos-testing)
 - **Status**: Experimental — compiles and passes tests, but not validated in production
@@ -175,8 +175,9 @@ cargo check --features "full,autonomous,scheduler,butler,browser,distributed-age
 
 ## What's next
 
-- **Integrar contexto completo en agentes**: RAG, KG, Memory, Procedural en AutonomousAgent/AgenticLoop/AgentPool
-- **Auditar otros proyectos**: verificar uso de RAG donde sea razonable
+- **Wire ContextBudgetAllocator into send_message()**: replace hardcoded injection with allocator (task #57)
+- **LLM-enhancement de pipeline completo**: 17 módulos identificados para mejora opcional (conversation compaction, entity NER, guardrails, auto-model selection, etc.)
+- **Actualizar diagramas de flujo**: reflejar el nuevo pipeline con allocator
 - **GitHub publication**: repos ready, domain configured
 - **PI registration**: Spain (cultura.gob.es), WIPO PROOF, Safe Creative — PENDING
 
