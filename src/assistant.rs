@@ -1087,6 +1087,111 @@ impl AiAssistant {
         self.memory_manager.as_mut()
     }
 
+    /// Build context using the Adaptive Context Budget Allocator.
+    ///
+    /// Collects items from all available sources (RAG, Memory, Procedural,
+    /// References), assigns scores, and packs into the available token budget
+    /// using score-based greedy allocation.
+    ///
+    /// Falls back to simple concatenation if allocator would add no benefit
+    /// (e.g., total context is small enough to fit without allocation).
+    pub fn build_allocated_context(
+        &mut self,
+        user_message: &str,
+        knowledge_context: &str,
+    ) -> String {
+        use crate::context_budget::{
+            ContextBudgetAllocator, ContextItem, ContextSourceType, OverflowStrategy,
+        };
+
+        let mut items: Vec<ContextItem> = Vec::new();
+
+        // 1. RAG/knowledge context (passed in from caller or build_rag_context)
+        if !knowledge_context.is_empty() {
+            let tokens = crate::context::estimate_tokens(knowledge_context);
+            items.push(
+                ContextItem::new(knowledge_context, tokens, 0.8, ContextSourceType::Rag)
+                    .with_label("knowledge_context"),
+            );
+        }
+
+        // 2. Memory context
+        {
+            let query = self
+                .conversation
+                .last()
+                .map(|m| m.content.clone())
+                .unwrap_or_default();
+            let memory_ctx = self.build_memory_context(&query, 2048);
+            if !memory_ctx.is_empty() {
+                let tokens = crate::context::estimate_tokens(&memory_ctx);
+                items.push(
+                    ContextItem::new(memory_ctx, tokens, 0.7, ContextSourceType::Memory)
+                        .with_label("memory"),
+                );
+            }
+        }
+
+        // 3. Procedural context
+        #[cfg(feature = "advanced-memory")]
+        {
+            let proc_ctx = self.build_procedural_context(user_message, 10, 2048);
+            if !proc_ctx.is_empty() {
+                let tokens = crate::context::estimate_tokens(&proc_ctx);
+                items.push(
+                    ContextItem::new(proc_ctx, tokens, 0.75, ContextSourceType::Procedural)
+                        .with_label("procedural"),
+                );
+            }
+        }
+
+        // 4. Resolved references
+        let resolved_refs = self.reference_resolver.resolve_reference(user_message);
+        if let Some(ref refs) = resolved_refs {
+            let tokens = crate::context::estimate_tokens(refs);
+            items.push(
+                ContextItem::new(refs.clone(), tokens, 1.0, ContextSourceType::Reference)
+                    .with_label("references"),
+            );
+        }
+
+        // If nothing to allocate, return empty
+        if items.is_empty() {
+            return String::new();
+        }
+
+        // Calculate available budget
+        let model_ctx = self.detected_context_size.unwrap_or(4096);
+        let system_tokens = crate::context::estimate_tokens(&self.system_prompt_base);
+        let conversation_tokens: usize = self
+            .conversation
+            .iter()
+            .map(|m| crate::context::estimate_tokens(&m.content))
+            .sum();
+        let user_tokens = crate::context::estimate_tokens(user_message);
+        let response_reserve = 800;
+
+        let budget = ContextBudgetAllocator::available_budget(
+            model_ctx,
+            system_tokens,
+            conversation_tokens,
+            user_tokens,
+            response_reserve,
+        );
+
+        // Allocate
+        let allocator = ContextBudgetAllocator::new(OverflowStrategy::ExtractiveCompression);
+        let result = allocator.build_from_items(items, budget);
+
+        crate::diag_debug!(
+            "[context-budget] allocated: {} tokens used / {} budget ({:.0}% utilization), {} included, {} dropped",
+            result.tokens_used, result.budget, result.utilization() * 100.0,
+            result.included.len(), result.dropped.len()
+        );
+
+        result.context
+    }
+
     /// Build memory-based context for a query (empty string if memory disabled).
     pub fn build_memory_context(&mut self, query: &str, max_tokens: usize) -> String {
         crate::diag_debug!("[memory-context] build_memory_context: max_tokens={}, memory_enabled={}", max_tokens, self.memory_manager.is_some());
@@ -1515,39 +1620,14 @@ impl AiAssistant {
         let (tx, rx) = mpsc::channel();
         self.rx_response = Some(rx);
 
-        // Resolve back-references ("option 3", "the second one", "esa lista")
-        let resolved_refs = self.reference_resolver.resolve_reference(&user_message);
-
-        // Augment knowledge context with memory + resolved references
+        // Build context using the adaptive budget allocator
+        let allocated_context = self.build_allocated_context(&user_message, knowledge_context);
         let effective_knowledge: String;
-        let knowledge_ref = {
-            let mut augmented = knowledge_context.to_string();
-            {
-                let query = self.conversation.last().map(|m| m.content.clone()).unwrap_or_default();
-                let memory_ctx = self.build_memory_context(&query, 512);
-                if !memory_ctx.is_empty() {
-                    augmented.push_str("\n\n--- MEMORY CONTEXT ---\n");
-                    augmented.push_str(&memory_ctx);
-                }
-            }
-            #[cfg(feature = "advanced-memory")]
-            {
-                let proc_ctx = self.build_procedural_context(&user_message, 5, 500);
-                if !proc_ctx.is_empty() {
-                    augmented.push_str("\n\n");
-                    augmented.push_str(&proc_ctx);
-                }
-            }
-            if let Some(ref refs) = resolved_refs {
-                augmented.push_str("\n\n--- RESOLVED REFERENCES ---\n");
-                augmented.push_str(refs);
-            }
-            if augmented == knowledge_context {
-                knowledge_context
-            } else {
-                effective_knowledge = augmented;
-                &effective_knowledge
-            }
+        let knowledge_ref = if allocated_context.is_empty() {
+            knowledge_context
+        } else {
+            effective_knowledge = allocated_context;
+            &effective_knowledge
         };
 
         let config = self.config.clone();
@@ -1691,32 +1771,14 @@ impl AiAssistant {
         let (tx, rx) = mpsc::channel();
         self.rx_response = Some(rx);
 
-        // In FreshContext mode, augment knowledge context with memory + procedures
+        // Build context using the adaptive budget allocator
+        let allocated_context = self.build_allocated_context(&user_message, knowledge_context);
         let effective_knowledge: String;
-        let knowledge_ref = {
-            let mut augmented = knowledge_context.to_string();
-            {
-                let query = self.conversation.last().map(|m| m.content.clone()).unwrap_or_default();
-                let memory_ctx = self.build_memory_context(&query, 512);
-                if !memory_ctx.is_empty() {
-                    augmented.push_str("\n\n--- MEMORY CONTEXT ---\n");
-                    augmented.push_str(&memory_ctx);
-                }
-            }
-            #[cfg(feature = "advanced-memory")]
-            {
-                let proc_ctx = self.build_procedural_context(&user_message, 5, 500);
-                if !proc_ctx.is_empty() {
-                    augmented.push_str("\n\n");
-                    augmented.push_str(&proc_ctx);
-                }
-            }
-            if augmented == knowledge_context {
-                knowledge_context
-            } else {
-                effective_knowledge = augmented;
-                &effective_knowledge
-            }
+        let knowledge_ref = if allocated_context.is_empty() {
+            knowledge_context
+        } else {
+            effective_knowledge = allocated_context;
+            &effective_knowledge
         };
 
         let system_prompt = build_system_prompt_with_notes(
@@ -1763,32 +1825,14 @@ impl AiAssistant {
         );
         self.conversation.push(ChatMessage::user(&user_message));
 
-        // In FreshContext mode, augment knowledge context with memory + procedures
+        // Build context using the adaptive budget allocator
+        let allocated_context = self.build_allocated_context(&user_message, knowledge_context);
         let effective_knowledge: String;
-        let knowledge_ref = {
-            let mut augmented = knowledge_context.to_string();
-            {
-                let query = self.conversation.last().map(|m| m.content.clone()).unwrap_or_default();
-                let memory_ctx = self.build_memory_context(&query, 512);
-                if !memory_ctx.is_empty() {
-                    augmented.push_str("\n\n--- MEMORY CONTEXT ---\n");
-                    augmented.push_str(&memory_ctx);
-                }
-            }
-            #[cfg(feature = "advanced-memory")]
-            {
-                let proc_ctx = self.build_procedural_context(&user_message, 5, 500);
-                if !proc_ctx.is_empty() {
-                    augmented.push_str("\n\n");
-                    augmented.push_str(&proc_ctx);
-                }
-            }
-            if augmented == knowledge_context {
-                knowledge_context
-            } else {
-                effective_knowledge = augmented;
-                &effective_knowledge
-            }
+        let knowledge_ref = if allocated_context.is_empty() {
+            knowledge_context
+        } else {
+            effective_knowledge = allocated_context;
+            &effective_knowledge
         };
 
         let system_prompt = build_system_prompt(
@@ -1884,32 +1928,14 @@ impl AiAssistant {
         let cancel_token = CancellationToken::new();
         self.cancel_token = Some(cancel_token.clone());
 
-        // In FreshContext mode, augment knowledge context with memory + procedures
+        // Build context using the adaptive budget allocator
+        let allocated_context = self.build_allocated_context(&user_message, knowledge_context);
         let effective_knowledge: String;
-        let knowledge_ref = {
-            let mut augmented = knowledge_context.to_string();
-            {
-                let query = self.conversation.last().map(|m| m.content.clone()).unwrap_or_default();
-                let memory_ctx = self.build_memory_context(&query, 512);
-                if !memory_ctx.is_empty() {
-                    augmented.push_str("\n\n--- MEMORY CONTEXT ---\n");
-                    augmented.push_str(&memory_ctx);
-                }
-            }
-            #[cfg(feature = "advanced-memory")]
-            {
-                let proc_ctx = self.build_procedural_context(&user_message, 5, 500);
-                if !proc_ctx.is_empty() {
-                    augmented.push_str("\n\n");
-                    augmented.push_str(&proc_ctx);
-                }
-            }
-            if augmented == knowledge_context {
-                knowledge_context
-            } else {
-                effective_knowledge = augmented;
-                &effective_knowledge
-            }
+        let knowledge_ref = if allocated_context.is_empty() {
+            knowledge_context
+        } else {
+            effective_knowledge = allocated_context;
+            &effective_knowledge
         };
 
         let config = self.config.clone();
@@ -2017,32 +2043,14 @@ impl AiAssistant {
         let cancel_token = CancellationToken::new();
         self.cancel_token = Some(cancel_token.clone());
 
-        // In FreshContext mode, augment knowledge context with memory + procedures
+        // Build context using the adaptive budget allocator
+        let allocated_context = self.build_allocated_context(&user_message, knowledge_context);
         let effective_knowledge: String;
-        let knowledge_ref = {
-            let mut augmented = knowledge_context.to_string();
-            {
-                let query = self.conversation.last().map(|m| m.content.clone()).unwrap_or_default();
-                let memory_ctx = self.build_memory_context(&query, 512);
-                if !memory_ctx.is_empty() {
-                    augmented.push_str("\n\n--- MEMORY CONTEXT ---\n");
-                    augmented.push_str(&memory_ctx);
-                }
-            }
-            #[cfg(feature = "advanced-memory")]
-            {
-                let proc_ctx = self.build_procedural_context(&user_message, 5, 500);
-                if !proc_ctx.is_empty() {
-                    augmented.push_str("\n\n");
-                    augmented.push_str(&proc_ctx);
-                }
-            }
-            if augmented == knowledge_context {
-                knowledge_context
-            } else {
-                effective_knowledge = augmented;
-                &effective_knowledge
-            }
+        let knowledge_ref = if allocated_context.is_empty() {
+            knowledge_context
+        } else {
+            effective_knowledge = allocated_context;
+            &effective_knowledge
         };
 
         let system_prompt = build_system_prompt_with_notes(

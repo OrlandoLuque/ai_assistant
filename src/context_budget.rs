@@ -333,6 +333,100 @@ impl ContextBudgetAllocator {
             source_breakdown,
         }
     }
+
+    /// Build from pre-collected items (without querying sources).
+    ///
+    /// Useful when items have already been gathered by the caller.
+    pub fn build_from_items(&self, items: Vec<ContextItem>, budget: usize) -> AllocationResult {
+        // Sort by score descending
+        let mut sorted_items = items;
+        sorted_items.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        // Greedy packing (same logic as build())
+        let mut included = Vec::new();
+        let mut dropped = Vec::new();
+        let mut tokens_used: usize = 0;
+
+        for item in sorted_items {
+            if tokens_used + item.tokens <= budget {
+                tokens_used += item.tokens;
+                included.push(item);
+            } else {
+                match &self.strategy {
+                    OverflowStrategy::ExtractiveCompression
+                    | OverflowStrategy::Hybrid { .. } => {
+                        let remaining = budget.saturating_sub(tokens_used);
+                        if remaining > 50 && item.score > 0.5 {
+                            let compressed = extractive_compress(&item.content, remaining);
+                            let comp_tokens = estimate_tokens(&compressed);
+                            if comp_tokens > 0 && tokens_used + comp_tokens <= budget {
+                                tokens_used += comp_tokens;
+                                included.push(ContextItem {
+                                    content: compressed,
+                                    tokens: comp_tokens,
+                                    score: item.score * 0.9,
+                                    source: item.source,
+                                    label: format!("{} (compressed)", item.label),
+                                });
+                                continue;
+                            }
+                        }
+                        dropped.push(item);
+                    }
+                    _ => {
+                        dropped.push(item);
+                    }
+                }
+            }
+        }
+
+        // Build assembled context grouped by source
+        let mut by_source: HashMap<ContextSourceType, Vec<&ContextItem>> = HashMap::new();
+        for item in &included {
+            by_source.entry(item.source).or_default().push(item);
+        }
+
+        let mut context = String::new();
+        let source_order = [
+            ContextSourceType::UserNotes,
+            ContextSourceType::Reference,
+            ContextSourceType::Procedural,
+            ContextSourceType::Memory,
+            ContextSourceType::Rag,
+            ContextSourceType::Graph,
+            ContextSourceType::Custom,
+        ];
+
+        for source_type in &source_order {
+            if let Some(items) = by_source.get(source_type) {
+                if !items.is_empty() {
+                    context.push_str(&format!("\n--- {} ---\n", source_type));
+                    for item in items {
+                        context.push_str(&item.content);
+                        context.push('\n');
+                    }
+                }
+            }
+        }
+
+        let mut source_breakdown: HashMap<ContextSourceType, usize> = HashMap::new();
+        for item in &included {
+            *source_breakdown.entry(item.source).or_insert(0) += item.tokens;
+        }
+
+        AllocationResult {
+            context,
+            tokens_used,
+            budget,
+            included,
+            dropped,
+            source_breakdown,
+        }
+    }
 }
 
 impl Default for ContextBudgetAllocator {
