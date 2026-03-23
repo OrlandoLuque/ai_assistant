@@ -31,8 +31,9 @@ Continúa con el desarrollo del proyecto. Lee docs/modus-operandi.md y el últim
 - **V52**: COMPLETE — Consolidation & Production Readiness (HTTP log endpoints, JUnit XML/TAP harness export, Block B+F source renames complete (zero aliases), Block C container backend trait, Block G2 EntityStore generalization (query/embedding/TTL), Block G3 PlanStore persistence, Block H MCP agent management tools, 22 tests)
 - **V53**: COMPLETE — Block D audit (deprecated tool_use+function_calling, unified_tools canonical), 4 SearchProviders (Google, Bing, SerpAPI, Tavily), web search in GUI, clippy clean
 - **V54**: COMPLETE — Block D final (deleted tool_use.rs+function_calling.rs, -1423 LOC), MemoryManager in both context modes, send_message_with_rag(), diagrama flujo 7 corregido
-- **Latest**: V54 — Block D Final + MemoryManager + RAG Convenience API (COMPLETE)
-- **Test count**: 6,930 lib tests (0 failures, -20 from deleted modules) + 39 harness precision + 18 fallback resilience + 8 conversation quality scored tests
+- **V55**: IN PROGRESS — Adaptive Context Budget Allocator (ContextItem/ContextSource trait, score-based allocation, extractive compression, RagTierDefinition shareable + TierStore import/export)
+- **Latest**: V55 — Adaptive Context Budget Allocator (IN PROGRESS)
+- **Test count**: 6,930+ lib tests (0 failures) + 39 harness precision + 18 fallback resilience + 8 conversation quality scored tests
 - **Source files**: 320 .rs files, ~390K LOC
 - **Feature flags**: 55 (+1: chaos-testing)
 - **Status**: Experimental — compiles and passes tests, but not validated in production
