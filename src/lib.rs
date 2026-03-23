@@ -175,6 +175,7 @@ pub mod caching;
 pub mod cloud_providers;
 pub mod config_file;
 pub mod connection_pool;
+pub mod context_budget;
 pub mod crawl_policy;
 pub mod data_source_client;
 pub mod debug;
@@ -356,6 +357,12 @@ pub use cache_compression::{
     compress, compress_string, decompress, decompress_string, CacheCompressionStats,
     CompressedCache, CompressedData, CompressionAlgorithm, CompressionError, CompressionLevel,
     StreamingCompressor,
+};
+
+pub use context_budget::{
+    AllocationResult, ClosureSource, CompressionLevel as ContextCompressionLevel,
+    ContextBudgetAllocator, ContextItem, ContextSource, ContextSourceType, LegacyStringSource,
+    OverflowStrategy,
 };
 
 pub use internal_storage::{
