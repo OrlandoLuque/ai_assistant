@@ -4147,3 +4147,47 @@ The challenge in Rust is that closures (the map and reduce functions) cannot be 
 **Distribution strategy**: The coordinator divides input chunks among all available workers (itself + N remote peers) using round-robin allocation. It processes its own share locally with rayon's parallel iterators while simultaneously dispatching `MapTask` messages to remote nodes. When all map results arrive (local + remote), the coordinator performs the **shuffle** phase — grouping all outputs by key — followed by the **reduce** phase, which produces the final aggregated results.
 
 **Graceful degradation**: If no remote peers are available, the coordinator processes all chunks locally with rayon — identical to the pre-distribution behavior. If a remote node fails to respond within the timeout, its chunks are re-executed locally as a fallback. The system always completes, trading parallelism for reliability when necessary.
+
+## 199. Adaptive Context Budget Allocation
+
+When an LLM has a fixed context window (e.g., 8K tokens), every token matters. The **Adaptive Context Budget Allocator** replaces hardcoded token limits per source with a unified system that merges items from all sources (RAG, Memory, Procedural, References, KnowledgeGraph) and packs them by relevance score. Each source returns `Vec<ContextItem>` with scores; the allocator sorts globally by score and fills greedily. No source is privileged — the most relevant items win regardless of origin. When overflow occurs, strategies include score truncation (free), extractive sentence compression (Rust-pure), or LLM-assisted compression with domain filtering.
+
+## 200. LLM-Assisted Context Compression
+
+When retrieved context exceeds the token budget, a secondary LLM can intelligently compress it. Unlike simple truncation, the compressor receives each item **with its retrieval relevance score** — a novel approach not found in existing systems (LLMLingua, RECOMP, Selective Context all work on text alone). The compressor can also perform **domain-aware filtering**: discarding items that are keyword-relevant but contextually irrelevant (the "Mordor vs Alps" problem). Compression levels (Light, Medium, Aggressive) control the aggressiveness.
+
+## 201. Multi-Armed Bandit for Strategy Selection
+
+A UCB1 multi-armed bandit learns which context overflow strategy works best for different types of queries. Each "arm" is a strategy (score truncation, extractive compression, LLM Light/Medium/Aggressive). After each query, the selected strategy receives a reward based on response quality. Over time, the bandit converges on the optimal strategy per scenario, balancing exploration of new strategies with exploitation of proven ones.
+
+## 202. Shareable RAG Tier Definitions
+
+RAG tiers are data, not code. A `RagTierDefinition` is a JSON-serializable configuration with name, description, author, version, and feature flags across 8 dimensions (Retrieval, Enhancement, Reranking, Filtering, Graph, Compression, Budget, Learning). Users can create custom tiers, export them as files, and share them. A `RagTierStore` manages builtin + custom tiers with import/export support.
+
+## 203. Emotion Detection from Audio
+
+The `EmotionDetector` trait provides a unified interface for detecting emotional state from audio or text. An `EmotionState` captures the primary emotion category (12 types), confidence, intensity, secondary emotion, and full probability distribution. The `KeywordEmotionDetector` provides a free heuristic fallback; ONNX-based models (emotion2vec, SenseVoice) provide higher accuracy. Detected emotion is injected into the LLM prompt and used to adapt TTS tone for empathetic responses.
+
+## 204. Expressive Text-to-Speech
+
+Standard TTS produces neutral speech. Expressive TTS controls tone, emotion, and pacing. OpenAI's gpt-4o-mini-tts accepts natural language instructions ("speak calmly and reassuringly"). ElevenLabs v3 uses audio tags embedded in text (`[sigh]`, `[excited]`, `[whispers]`). Azure Neural TTS uses SSML prosody tags. The `EmotionState.suggest_tts_instruction()` method automatically maps detected user emotion to appropriate TTS instructions for the empathetic response loop.
+
+## 205. Neural Voice Codec
+
+Instead of transmitting raw audio (64 kbps with Opus), a neural voice codec encodes speech into compact token representations (1-24 kbps) and reconstructs it on the receiving end. The `VoiceCodec` trait provides encode/decode operations. This enables "Discord-like" voice communication at 10x lower bandwidth, plus capabilities impossible with raw audio: modifying voice in transit, anonymizing the speaker while preserving emotion, and injecting emotional tone during decoding.
+
+## 206. Tool Safety Profiles
+
+Every tool declares its safety characteristics via `ToolSafetyProfile`: interruptible (can it be stopped mid-execution?), has_side_effects, reversible, snapshot_before (should a backup be taken?), timeout_ms, heartbeat_interval_ms, and dry_run_supported. Four presets cover common patterns: `read_only` (search, query), `destructive_reversible` (write_file, delete_file), `destructive_irreversible` (send_email), and `long_running` (deploy, run_code).
+
+## 207. Filesystem Snapshot Rollback
+
+The `SnapshotStore` provides cross-platform file operation rollback using an internal trash directory (not dependent on OS trash). Before a destructive operation, a `FileSnapshot` captures the original state. Rollback restores it: write/edit → restore content, delete → move back from trash, rename → move back, create → delete, append → truncate. `rollback_iteration()` compensates all operations from an agent iteration in LIFO order (Saga pattern).
+
+## 208. Knowledge Auto-Reindexing
+
+The `KnowledgeWatcher` monitors files that have been indexed into the RAG knowledge base. When a source document is modified on disk, it triggers re-indexing of that specific document. Polling-based detection with configurable interval, extension filters, and exclude paths. Stale files (modified since last indexed) are tracked and can be batch-reindexed.
+
+## 209. Unified Storage Context
+
+The `StorageContext` coordinates persistence of all subsystems to a configurable data directory. Inspired by LlamaIndex's pattern: a single object that can persist/restore everything as a unit. Uses atomic JSON writes (temp file + rename) for crash safety. `DirtyFlags` track which subsystems have unsaved changes; `drain_writes()` flushes only dirty subsystems — called in shutdown handlers and error paths to guarantee no data loss.
