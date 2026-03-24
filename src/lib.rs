@@ -176,6 +176,7 @@ pub mod cloud_providers;
 pub mod config_file;
 pub mod connection_pool;
 pub mod context_budget;
+pub mod config_security;
 pub mod knowledge_watcher;
 pub mod storage_context;
 pub mod tool_safety;
@@ -362,6 +363,11 @@ pub use cache_compression::{
     StreamingCompressor,
 };
 
+pub use config_security::{
+    ConfigLock, ConfigSection as LockableConfigSection,
+    IntegrityChecker as ConfigIntegrityChecker, IntegrityResult as ConfigIntegrityResult,
+    LockAuditEntry, SecurityAlert, SecurityAlertManager, UnlockRequirement,
+};
 pub use knowledge_watcher::{KnowledgeWatcher, WatchEvent, WatcherConfig};
 pub use storage_context::{
     DirtyFlags, StorageConfig, StorageContext, Subsystem as StorageSubsystem,
