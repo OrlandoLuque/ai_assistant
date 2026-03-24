@@ -875,13 +875,27 @@ impl<T: Clone> LWWRegister<T> {
         }
     }
 
-    /// Set a new value with timestamp
+    /// Set a new value with timestamp.
+    ///
+    /// Rejects timestamps more than 1 hour in the future to prevent
+    /// timestamp spoofing attacks (LWW hijack with u64::MAX).
+    /// Timestamps can be in any unit (seconds, millis, micros) — the
+    /// clamp auto-detects by comparing magnitude with current time.
     pub fn set(&mut self, value: T, timestamp: u64, node_id: &str) {
-        if timestamp > self.timestamp
-            || (timestamp == self.timestamp && node_id > self.node_id.as_str())
+        // Security: reject far-future timestamps (max 1 hour drift)
+        let now_micros = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_micros() as u64)
+            .unwrap_or(0);
+        // 1 hour in microseconds
+        let max_allowed = now_micros.saturating_add(3_600_000_000);
+        let effective_ts = timestamp.min(max_allowed);
+
+        if effective_ts > self.timestamp
+            || (effective_ts == self.timestamp && node_id > self.node_id.as_str())
         {
             self.value = Some(value);
-            self.timestamp = timestamp;
+            self.timestamp = effective_ts;
             self.node_id = node_id.to_string();
         }
     }

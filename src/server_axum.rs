@@ -449,12 +449,8 @@ where
             }
         }
 
-        // 3. Auto-generate UUID-like ID
-        let ts = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        let id = format!("sess-{:016x}", ts);
+        // 3. Auto-generate cryptographically random session ID
+        let id = format!("sess-{}", uuid::Uuid::new_v4());
         Ok(SessionId(id))
     }
 }

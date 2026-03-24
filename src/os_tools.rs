@@ -308,6 +308,7 @@ fn register_run_command(registry: &mut ToolRegistry, sandbox: Arc<RwLock<Sandbox
 
         let output = std::process::Command::new(parts[0])
             .args(&parts[1..])
+            .env_clear() // Security: don't leak parent env vars (API keys, secrets)
             .output()
             .map_err(|e| ToolError::ExecutionFailed(format!("Command failed: {}", e)))?;
 

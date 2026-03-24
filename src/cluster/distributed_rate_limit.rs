@@ -163,8 +163,8 @@ impl DistributedRateLimiter {
     /// Call this after `check()` passes Layer 1.
     pub async fn check_global(&self) -> Result<(), u64> {
         let counter = self.global_counter.read().await;
-        let global_count = counter.value();
-        if global_count as u64 > self.config.global_limit {
+        let global_count = counter.value().max(0) as u64; // Safe: clamp negative to 0
+        if global_count > self.config.global_limit {
             Err(self.config.sync_interval_secs)
         } else {
             Ok(())

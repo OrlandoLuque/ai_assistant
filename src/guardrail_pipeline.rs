@@ -181,8 +181,21 @@ impl GuardrailPipeline {
             })) {
                 Ok(r) => r,
                 Err(_) => {
-                    log::error!("[guardrails] Guard '{}' panicked, skipping", guard.name());
-                    continue;
+                    // FAIL CLOSED: a panicking guard blocks the message (not skips).
+                    // A guard that panics on crafted input could be an attack to bypass security.
+                    log::error!("[guardrails] Guard '{}' panicked — blocking message (fail-closed)", guard.name());
+                    let guard_name = guard.name().to_string();
+                    let panic_result = GuardCheckResult {
+                        guard_name: guard_name.clone(),
+                        action: GuardAction::Block("Guard panicked (fail-closed)".to_string()),
+                        score: 1.0,
+                        details: "Guard panicked — message blocked for safety".to_string(),
+                    };
+                    return PipelineResult {
+                        passed: false,
+                        results: vec![panic_result],
+                        blocked_by: Some(guard_name),
+                    };
                 }
             };
 

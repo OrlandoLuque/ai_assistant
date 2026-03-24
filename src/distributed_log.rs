@@ -227,14 +227,9 @@ impl Default for TraceContext {
     }
 }
 
-/// Generate a trace ID (hex-encoded timestamp + random component).
+/// Generate a cryptographically random trace ID.
 pub fn generate_trace_id() -> String {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    let nanos = now.as_nanos() as u64;
-    let hash = nanos.wrapping_mul(0x517cc1b727220a95);
-    format!("{:016x}{:016x}", nanos, hash)
+    uuid::Uuid::new_v4().to_string().replace('-', "")
 }
 
 // ============================================================================
