@@ -179,6 +179,7 @@ pub mod context_budget;
 pub mod config_security;
 pub mod knowledge_watcher;
 pub mod learning_control;
+pub mod network_policy;
 pub mod storage_context;
 pub mod tool_safety;
 pub mod crawl_policy;
@@ -371,6 +372,7 @@ pub use config_security::{
 };
 pub use knowledge_watcher::{KnowledgeWatcher, WatchEvent, WatcherConfig};
 pub use learning_control::{LearningFreezeConfig, LearningSubsystem};
+pub use network_policy::{NetworkPolicy, PolicyDecision};
 pub use storage_context::{
     DirtyFlags, StorageConfig, StorageContext, Subsystem as StorageSubsystem,
 };
