@@ -661,10 +661,11 @@ impl StrategyBandit {
             .unwrap_or("score_truncation")
     }
 
-    /// Record a reward for the given arm.
+    /// Record a reward for the given arm. Reward is clamped to [0.0, 1.0].
     pub fn update(&mut self, arm: &str, reward: f64) {
+        let clamped = reward.clamp(0.0, 1.0);
         if let Some((total_reward, count)) = self.arms.get_mut(arm) {
-            *total_reward += reward;
+            *total_reward += clamped;
             *count += 1;
             self.total_pulls += 1;
         }

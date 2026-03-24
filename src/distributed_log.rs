@@ -98,10 +98,7 @@ impl DistributedLogEntry {
             .unwrap_or_default()
             .as_millis() as u64;
 
-        let span_id = format!(
-            "{:08x}",
-            timestamp_ms.wrapping_mul(0x100000001b3) as u32
-        );
+        let span_id = uuid::Uuid::new_v4().to_string()[..8].to_string();
 
         Self {
             trace_id: trace_id.to_string(),
