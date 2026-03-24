@@ -66,32 +66,6 @@ When creating an implementation plan, follow this iterative process:
    Iteration 3: minor naming tweak only — diminishing returns, plan is solid
    ```
 
-### Task ordering (when multiple tasks overlap)
-
-When there are multiple tasks that touch overlapping areas, order them to minimize rework:
-
-1. **Fix bugs in existing code first** — changes to existing structures/signatures before new features on top
-2. **Group tasks that touch the same files** — avoid touching the same module twice
-3. **Build features on top of fixed foundations** — new features after underlying systems are fixed
-4. **Independent features can go anywhere** — tasks that don't conflict are flexible
-5. **Tests LAST** — test the final state, not intermediate states that will change
-6. **New modules need validation too** — verify they don't introduce new attack vectors
-
-Within a single large task, order sub-items:
-- First: data structures, function signatures, traits
-- Then: validation/checks on existing code
-- Last: new modules and features
-
-### Security validation (for new code)
-
-Every new module, feature, or integration must be checked for:
-- Does it introduce new attack vectors? (Check against the 256-vector catalog)
-- Does it handle untrusted input? (Validate, sanitize, bound)
-- Does it persist data? (Integrity, encryption, permissions)
-- Does it accept feedback/learning? (Bounds, rate limit, anomaly detection, freeze support)
-- Does it communicate externally? (Auth, SSRF check, TLS)
-- Does it touch the filesystem? (Path traversal, symlinks, permissions)
-
 ### Validation checklist (before marking anything DONE)
 
 - [ ] Zero compile errors (`cargo check --features "full"`)
