@@ -44,45 +44,6 @@ Continúa con el desarrollo del proyecto. Lee docs/modus-operandi.md y el últim
 - **License**: PolyForm Noncommercial 1.0.0
 - **Domain**: ai-assistant.runawaybrains.com (CNAME configured)
 
-## Planning methodology
-
-When creating an implementation plan, follow this iterative process:
-
-1. **Draft initial plan** — outline phases, components, dependencies
-2. **Iterate looking for problems** — in each iteration, review the plan searching for:
-   - **Gaps**: missing functionality, unhandled scenarios, things left half-done
-   - **Stubs/TODOs**: nothing left for "later" — everything fully implemented
-   - **Wiring**: every new type/function properly connected to lib.rs, assistant.rs, or wherever it needs to be used
-   - **Edge cases**: empty inputs, huge inputs, concurrent access, Unicode, overflow
-   - **Memory saturation**: buffers with limits, eviction strategies, no unbounded growth
-   - **Fallbacks**: what happens when X fails? Every failure path has a recovery strategy
-   - **Tests**: unit tests for every component, plus realistic integration tests
-   - **Crash recovery**: corrupted state, partial writes, unexpected shutdowns
-3. **Repeat** until the gain from one more iteration is minimal
-4. **Report gains per iteration** — before implementing, show what each iteration found/fixed:
-   ```
-   Iteration 1: +3 edge cases, +2 missing fallbacks, +1 gap in wiring
-   Iteration 2: +1 memory limit missing, +1 test gap
-   Iteration 3: minor naming tweak only — diminishing returns, plan is solid
-   ```
-
-### Validation checklist (before marking anything DONE)
-
-- [ ] Zero compile errors (`cargo check --features "full"`)
-- [ ] Zero clippy warnings on new code
-- [ ] All new types/functions wired into lib.rs with proper re-exports
-- [ ] No name collisions with existing exports (check with `as` aliases if needed)
-- [ ] No stubs, no TODOs, no "implement later" — everything complete
-- [ ] Unit tests for all new functionality
-- [ ] Realistic/integration tests where applicable
-- [ ] Edge cases handled (empty, huge, concurrent, Unicode, overflow)
-- [ ] Buffers/collections have size limits and eviction
-- [ ] Failure paths have fallbacks or graceful degradation
-- [ ] Crash/corruption recovery where state is persisted
-- [ ] Full test suite passes (`cargo test --features "full,..." --lib`)
-- [ ] Documentation updated (IMPROVEMENTS, modus-operandi, TESTING)
-- [ ] Commit after each completed phase (not batched at end)
-
 ## Project-specific patterns
 
 ### lib.rs module organization
