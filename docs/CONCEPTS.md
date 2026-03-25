@@ -4223,3 +4223,11 @@ Documents can be scoped as Private (local only) or Shared (distributed via DHT).
 ## 217. ICE NAT Traversal
 
 Interactive Connectivity Establishment unifies STUN, TURN, and direct connection probing into a single framework. Candidates are gathered (host IPs, STUN-discovered public IPs, TURN relay addresses), connectivity checks rank candidate pairs by priority, and the best route is selected. TURN relay provides fallback when direct connection is impossible (symmetric NAT, carrier-grade NAT).
+
+## 218. Browser Security Policy
+
+`BrowserPolicy` provides granular control over browser automation. URL validation blocks dangerous schemes (file://, data:, javascript://), private IPs (SSRF protection), and cloud metadata endpoints. `JsPermission` levels (Disabled, ReadOnly, Mutating, Full) control what JavaScript can execute — by default, only DOM queries are allowed, blocking fetch(), WebSocket, RTCPeerConnection, document.cookie, localStorage, ServiceWorker, clipboard, and DOM mutation. Domain allow/blocklists, form submission approval, download control, and screenshot permissions are independently configurable.
+
+## 219. Tool Permission Categories
+
+14 fine-grained permission categories for MCP tools beyond simple read/write: Read, Write, Execute, Delete, Create, Admin, Network, Filesystem, CredentialAccess, UserImpersonation, CostIncurring, DataExfiltration, PersistentStateModification, PrivilegeEscalation. Each tool declares its required permissions, and the sandbox enforces them. Critical categories (Execute, Admin, CredentialAccess, PrivilegeEscalation) require explicit approval.
