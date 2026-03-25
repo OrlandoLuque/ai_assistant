@@ -38,9 +38,10 @@ Continúa con el desarrollo del proyecto. Lee docs/modus-operandi.md y el últim
 - **V59**: COMPLETE — Security Hardening (6 concrete vulnerability fixes, ConfigLock, IntegrityChecker, SecurityAlertManager, LearningFreezeConfig, 256-vector audit)
 - **V60**: COMPLETE — Semantic Dedup (3-level with batched fusion), Distributed RAG (DocumentScope, SharedChunkMeta, TTL/refresh), ICE NAT types, P2P Security (TrustLevel, MessageAuthorization, PeerAccessControl), concepts 210-217
 - **V61**: COMPLETE — BrowserPolicy (URL validation, JS permission levels, SSRF, 16 dangerous patterns, 14 tool permission categories), concepts 218-219
-- **Latest**: V61 — Browser Policy + MCP Security (COMPLETE)
-- **Test count**: 7,069 lib tests (0 failures) + 39 harness precision + 18 fallback resilience + 8 conversation quality scored tests
-- **Source files**: 320 .rs files, ~390K LOC
+- **V62**: COMPLETE — Agent Methodology (AgentMethodology, WorkflowProtocol 6 phases, ReviewTriggers 8 conditions, QualityGate, 4 presets, wired into AutonomousAgent), concepts 220-221
+- **Latest**: V62 — Agent Methodology (COMPLETE)
+- **Test count**: 7,082 lib tests (0 failures) + 39 harness precision + 18 fallback resilience + 8 conversation quality scored tests
+- **Source files**: 321 .rs files, ~390K LOC
 - **Feature flags**: 55 (+1: chaos-testing)
 - **Status**: Experimental — compiles and passes tests, but not validated in production
 - **Website**: Separated to `ai_assistant-website` repo (GitHub Pages ready)
@@ -168,7 +169,8 @@ cargo check --features "full,autonomous,scheduler,butler,browser,distributed-age
 | `src/server_axum.rs` | Axum-based server (standalone/cluster) |
 | `src/agent_definition.rs` | AgentDefinition — declarative agent config (JSON/TOML) |
 | `src/agent_wiring.rs` | AgentPool, definition→runtime wiring, supervisor |
-| `src/autonomous_loop.rs` | AutonomousAgent — loop with policy, sandbox, cost tracking |
+| `src/agent_methodology.rs` | AgentMethodology — workflow, reasoning, review triggers, quality gates |
+| `src/autonomous_loop.rs` | AutonomousAgent — loop with policy, sandbox, cost tracking, methodology |
 | `src/multi_agent.rs` | MultiAgentSession, orchestration strategies |
 | `src/memory_service.rs` | Background memory service (episodic, entity, plans) |
 | `src/rag.rs` | RAG database (SQLite + FTS5) |
@@ -186,7 +188,8 @@ cargo check --features "full,autonomous,scheduler,butler,browser,distributed-age
 | `docs/IMPROVEMENTS_V48.md` | V48 — Cache Policies Audit |
 | `docs/IMPROVEMENTS_V49.md` | V49 — Distributed Systems Hardening |
 | `docs/IMPROVEMENTS_V50.md` | V50 — Distributed MapReduce |
-| `docs/IMPROVEMENTS_V52.md` | Latest roadmap — Consolidation & Production Readiness |
+| `docs/IMPROVEMENTS_V52.md` | V52 — Consolidation & Production Readiness |
+| `docs/IMPROVEMENTS_V62.md` | V62 — Agent Methodology |
 | `README.md` | Project overview for GitHub |
 
 ## Repository structure

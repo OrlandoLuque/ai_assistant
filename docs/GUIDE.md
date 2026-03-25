@@ -9348,3 +9348,425 @@ let results = job.execute_distributed_with_results(
 cargo test --features "full" --lib -- distributed::tests::test_worker_registry
 cargo test --features "full" --lib -- distributed::tests::test_distributed_mapreduce
 ```
+
+---
+
+## 164. Agent Methodology (V62)
+
+V62 introduces `AgentMethodology` — a configurable definition of HOW an autonomous agent approaches tasks, separate from WHAT it can do (tools, permissions).
+
+### Core Structure
+
+```rust
+use ai_assistant::{AgentMethodology, MethodologyPhase};
+
+// Use a preset...
+let careful = AgentMethodology::careful();
+let fast = AgentMethodology::fast();
+
+// ...or customize
+let mut m = AgentMethodology::balanced();
+m.risk_tolerance = ai_assistant::RiskTolerance::Conservative;
+m.immutable_after_start = true;
+
+// Check which phases are active
+assert!(m.should_run_phase(MethodologyPhase::Execute)); // always true
+assert!(m.should_run_phase(MethodologyPhase::Plan));    // depends on preset
+```
+
+### Workflow Protocol — 6 Phases
+
+Each phase has `PhaseConfig { enabled, mandatory, max_duration_secs }`:
+
+| Phase | Purpose |
+|-------|---------|
+| ANALYZE | Understand the task, classify complexity |
+| PLAN | Decompose into steps |
+| VALIDATE | Verify plan makes sense before executing |
+| EXECUTE | Perform the work |
+| REVIEW | Check results |
+| CONCLUDE | Cleanup, summary, persist state |
+
+### Review Triggers
+
+8 conditions that force a review cycle during autonomous execution:
+
+```rust
+// Check if review should trigger at current iteration
+let should = agent.should_review_now(
+    milestone_completed,  // a plan step was completed
+    tool_failed,          // a tool call failed
+    user_interrupted,     // new user message arrived mid-execution
+);
+```
+
+Triggers: after N iterations, after milestone, after tool failure, after cost threshold (USD), after time threshold (seconds), on user interrupt, periodic self-check.
+
+### Quality Gates
+
+```rust
+use ai_assistant::{QualityGate, GateCheck, GateAction};
+
+let gate = QualityGate {
+    name: "budget_check".into(),
+    check: GateCheck::CostWithinBudget { max_usd: 1.0 },
+    on_fail: GateAction::AskUser,
+};
+```
+
+### 4 Presets
+
+| Preset | Approach | Phases | Review | Risk |
+|--------|----------|--------|--------|------|
+| Careful | PlanFirst | All mandatory | Every phase | Conservative |
+| Balanced | Iterative | Execute mandatory, rest optional | At milestones | Balanced |
+| Fast | ActFirst | Execute only | Never (except on failure) | Bold |
+| Research | PlanFirst | All mandatory | Every phase + sources | Conservative |
+
+### Wiring with AutonomousAgent
+
+```rust
+use ai_assistant::AgentMethodology;
+
+let agent = AutonomousAgent::builder("analyst", response_gen)
+    .methodology(AgentMethodology::research())
+    .max_iterations(50)
+    .build();
+```
+
+### Testing
+```bash
+cargo test --features "full" --lib -- agent_methodology::tests
+```
+
+---
+
+## 165. Browser Policy — Controlling Browser Automation Safety
+
+`BrowserPolicy` controls what an autonomous agent can do when using browser automation (CDP). It prevents SSRF, limits JavaScript execution, and enforces domain restrictions.
+
+### Configuration
+
+```rust
+use ai_assistant::{BrowserPolicy, JsPermission};
+
+// Restrictive (default) — HTTPS only, block SSRF, ReadOnly JS
+let policy = BrowserPolicy::restrictive();
+
+// Permissive — HTTP+HTTPS, no SSRF blocking, Mutating JS
+let policy = BrowserPolicy::permissive();
+
+// Custom
+let mut policy = BrowserPolicy::restrictive();
+policy.js_permission = JsPermission::Mutating;   // allow DOM modification
+policy.allow_form_submission = true;
+policy.allow_downloads = false;
+policy.max_redirect_depth = 3;
+policy.max_page_size_bytes = 5_000_000;
+policy.domain_blocklist.insert("evil.com".into());
+```
+
+### JavaScript Permission Levels
+
+| Level | Allowed | Blocked |
+|-------|---------|---------|
+| `Disabled` | Nothing | All JS |
+| `ReadOnly` | `querySelector`, `textContent`, `innerText` | `fetch`, `XMLHttpRequest`, cookies, DOM mutation |
+| `Mutating` | DOM reads + writes (`innerHTML`, `click()`, `setAttribute`) | Network requests (`fetch`, `WebSocket`) |
+| `Full` | Everything | Only critical exfiltration patterns |
+
+### URL Validation
+
+```rust
+use ai_assistant::UrlValidation;
+
+match policy.validate_url("http://169.254.169.254/metadata") {
+    UrlValidation::Allowed => { /* proceed */ }
+    UrlValidation::Blocked { reason } => {
+        println!("Blocked: {}", reason);  // "SSRF: cloud metadata endpoint"
+    }
+}
+```
+
+Blocks: private IPs (10.x, 172.16-31.x, 192.168.x), cloud metadata (169.254.169.254), non-allowed schemes, blocklisted domains.
+
+### JS Validation
+
+```rust
+use ai_assistant::JsValidation;
+
+match policy.validate_js("document.cookie") {
+    JsValidation::Allowed => { /* safe */ }
+    JsValidation::Blocked { reason } => {
+        println!("Blocked: {}", reason);  // "cookie access not permitted"
+    }
+}
+```
+
+16 dangerous patterns detected: `document.cookie`, `localStorage`, `fetch(`, `XMLHttpRequest`, `WebSocket`, `eval(`, `Function(`, `navigator.sendBeacon`, `window.open`, `postMessage`, `importScripts`, etc.
+
+### Testing
+```bash
+cargo test --features "full" --lib -- browser_policy::tests
+```
+
+---
+
+## 166. Tool Safety Profiles & Snapshot Rollback
+
+`ToolSafetyProfile` classifies each tool by its risk characteristics, enabling the agent runtime to make informed decisions about interruption, snapshotting, and rollback.
+
+### Safety Presets
+
+```rust
+use ai_assistant::ToolSafetyProfile;
+
+// Safe — read-only operations (search, query, read_file)
+let profile = ToolSafetyProfile::read_only();
+// interruptible=true, has_side_effects=false, reversible=true
+
+// Risky but reversible — file writes, edits
+let profile = ToolSafetyProfile::destructive_reversible();
+// snapshot_before=true, dry_run_supported=true
+
+// Irreversible — send_email, post_to_api, deploy
+let profile = ToolSafetyProfile::destructive_irreversible();
+// reversible=false, snapshot_before=false
+
+// Long running — deploy, web scraping
+let profile = ToolSafetyProfile::long_running();
+// interruptible=true, heartbeat_interval_ms=5000
+```
+
+### Snapshot Store — LIFO Rollback
+
+`SnapshotStore` captures the state before destructive operations and can reverse them in LIFO (Saga pattern) order:
+
+```rust
+use ai_assistant::SnapshotStore;
+
+let mut store = SnapshotStore::new("/tmp/snapshots");
+
+// Before writing a file — store the original
+let snapshot = store.snapshot_write("config.json", "tool-call-1", "iteration-5")?;
+
+// Before deleting — move to trash
+let snapshot = store.snapshot_delete("old_data.csv", "tool-call-2", "iteration-5")?;
+
+// Before renaming
+let snapshot = store.snapshot_rename("a.txt", "b.txt", "tool-call-3", "iteration-5")?;
+
+// Rollback a single operation
+store.rollback(&snapshot)?;
+
+// Rollback an entire iteration (LIFO — undoes in reverse order)
+store.rollback_iteration("iteration-5")?;
+
+// Cleanup expired snapshots (TTL + LRU)
+store.cleanup_expired();
+```
+
+Supports 10 file operations: Write, Edit, Delete, Create, Rename, Move, Copy, Chmod, Append, CreateDir.
+
+### Testing
+```bash
+cargo test --features "full" --lib -- tool_safety::tests
+```
+
+---
+
+## 167. Sandbox Validator — Action-Level Security
+
+`SandboxValidator` sits between the agent and every action, validating against the `AgentPolicy` and maintaining an audit trail.
+
+### How It Works
+
+```
+Agent decides to call a tool
+        ↓
+SandboxValidator.validate(action)
+        ↓
+    ┌───────────────────────────────┐
+    │ 1. Check AgentPolicy rules    │
+    │ 2. Assess risk level          │
+    │ 3. If risk > threshold → ask  │
+    │ 4. Log to audit trail         │
+    └───────────────────────────────┘
+        ↓
+Allow / Deny / AskUser
+```
+
+### Integration
+
+The `SandboxValidator` is created automatically from an `AgentPolicy` when building an `AutonomousAgent`:
+
+```rust
+use ai_assistant::{AgentPolicy, SandboxValidator};
+
+let policy = AgentPolicy::default();
+let sandbox = SandboxValidator::new(policy);
+
+// Validate specific operations
+sandbox.validate_file_read("/home/user/data.csv")?;
+sandbox.validate_file_write("/tmp/output.txt")?;
+sandbox.validate_command("git status")?;
+sandbox.validate_url("https://api.example.com")?;
+sandbox.validate_mcp("file-tools")?;
+sandbox.validate_tool("web_search")?;
+
+// Export audit trail as JSON
+let audit_json = sandbox.export_audit();
+```
+
+### Audit Trail
+
+Every action is logged with timestamp, risk level, and decision:
+
+```rust
+use ai_assistant::{AuditDecision, RiskLevel};
+
+for entry in sandbox.audit_log() {
+    println!("{}: {} → {:?} (risk: {:?})",
+        entry.timestamp,
+        entry.action,
+        entry.decision,  // Approved, Denied, ApprovedByUser, DeniedByUser
+        entry.risk,      // Safe, Low, Medium, High, Critical
+    );
+}
+```
+
+---
+
+## 168. Complete Agent Configuration Guide
+
+This section shows how all the agent configuration layers work together.
+
+### Layer Overview
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  AgentDefinition    — WHAT the agent IS (name, role, tools)  │
+│  AgentPolicy        — WHAT it CAN DO (permissions, limits)   │
+│  AgentMethodology   — HOW it WORKS (reasoning, phases)       │
+│  BrowserPolicy      — browser-specific restrictions          │
+│  ToolSafetyProfile  — per-tool risk classification           │
+│  SandboxValidator   — runtime enforcement + audit            │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### Option A: From JSON (AgentDefinition)
+
+```rust
+use ai_assistant::AgentDefinition;
+
+let json = r#"{
+    "agent": {
+        "name": "security-auditor",
+        "role": "Analyst",
+        "system_prompt": "You are a security auditor. Analyze code for vulnerabilities.",
+        "temperature": 0.2
+    },
+    "tools": [
+        { "name": "read_file", "needs_approval": false },
+        { "name": "grep_codebase", "needs_approval": false },
+        { "name": "write_file", "needs_approval": true }
+    ],
+    "guardrails": {
+        "block_pii": true,
+        "max_turns": 100,
+        "forbidden_patterns": ["rm -rf", "DROP TABLE"]
+    }
+}"#;
+
+let definition: AgentDefinition = serde_json::from_str(json)?;
+
+// Convert to runtime agent via AgentPool
+let agent = AgentPool::from_definition(&definition, tool_registry);
+```
+
+### Option B: From Profile (ProfileRegistry)
+
+```rust
+use ai_assistant::ProfileRegistry;
+
+let registry = ProfileRegistry::with_defaults();
+
+// 8 built-in agent profiles:
+//   coding-assistant, research-agent, devops-agent, data-analyst,
+//   content-writer, code-reviewer, sysadmin, paranoid
+
+let profile = registry.get_agent_profile("research-agent").unwrap();
+// → full internet, read-only filesystem, search tools
+
+// 4 conversation profiles:
+//   casual (temp=0.9), technical (temp=0.3),
+//   brainstorm (temp=1.1), interview (temp=0.5)
+
+// 3 workflow profiles:
+//   code-review-pipeline, research-report, bug-fix
+```
+
+### Option C: Builder Pattern (Full Control)
+
+```rust
+use ai_assistant::{
+    AutonomousAgent, AgentPolicy, AgentPolicyBuilder, AgentMethodology,
+    BrowserPolicy, JsPermission, ToolRegistry,
+};
+
+// 1. Policy — what it can do
+let policy = AgentPolicyBuilder::new()
+    .autonomy(AutonomyLevel::Normal)
+    .internet(InternetMode::SearchOnly)
+    .allow_path("/home/user/project")
+    .deny_command("rm")
+    .max_iterations(100)
+    .max_cost(5.0)
+    .max_runtime_secs(600)
+    .require_approval_above(RiskLevel::High)
+    .build();
+
+// 2. Methodology — how it works
+let methodology = AgentMethodology::careful();
+
+// 3. Browser policy (if browser feature enabled)
+let mut browser = BrowserPolicy::restrictive();
+browser.js_permission = JsPermission::ReadOnly;
+browser.allow_form_submission = false;
+
+// 4. Build the agent
+let agent = AutonomousAgent::builder("my-agent", response_generator)
+    .system_prompt("You are an expert analyst...")
+    .policy(policy)
+    .methodology(methodology)
+    .max_iterations(100)
+    .tool_registry(tools)
+    .with_knowledge_provider(rag_provider)
+    .with_interaction_manager(interaction)
+    .build();
+
+let result = agent.run("Analyze the codebase for security issues")?;
+```
+
+### Multi-Agent Setup
+
+```rust
+use ai_assistant::MultiAgentSession;
+
+let mut session = MultiAgentSession::new("code-review");
+
+// Add agents with different roles and policies
+let reviewer = AutonomousAgent::builder("reviewer", gen.clone())
+    .policy(AgentPolicy::default())
+    .methodology(AgentMethodology::research())
+    .build();
+
+let fixer = AutonomousAgent::builder("fixer", gen.clone())
+    .policy(AgentPolicy::autonomous())
+    .methodology(AgentMethodology::fast())
+    .build();
+
+session.add_agent("reviewer", reviewer);
+session.add_agent("fixer", fixer);
+// Shared TaskBoard + InteractionManager
+```

@@ -8829,3 +8829,386 @@ This follows the existing pattern where `AiAssistant` provides convenience metho
 | 16 | `AdvisorSummary` statistics correctness (counts, top_category) |
 | 17 | Priority sorting (Critical > High > Medium > Low) |
 | 18 | `Butler.advise()` integration (end-to-end from Butler to AdvisorReport) |
+
+---
+
+## 57. Agent Configuration Layers — Complete Architecture
+
+> Fecha: 2026-03-25
+
+### Overview
+
+The agent system has 6 configuration layers, each controlling a different aspect:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Layer              │ Controls              │ Serializable?  │
+├────────────────────┼───────────────────────┼────────────────┤
+│ AgentDefinition    │ Identity, tools, mem  │ ✅ JSON/TOML   │
+│ AgentPolicy        │ Permissions, limits   │ ❌ builder     │
+│ AgentMethodology   │ Workflow, reasoning   │ ✅ JSON        │
+│ AgentProfile       │ Preset combinations   │ ❌ compiled-in │
+│ BrowserPolicy      │ URL, JS, SSRF        │ ✅ JSON        │
+│ ToolSafetyProfile  │ Per-tool risk class   │ ✅ JSON        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### AgentDefinition → Runtime Conversion
+
+```
+AgentDefinition (JSON/TOML)
+       ↓
+  AgentPool::from_definition()
+       ↓
+  AutonomousAgentBuilder
+       ↓
+  AutonomousAgent (runtime)
+```
+
+`AgentDefinition` is the declarative format for agent configuration:
+- `AgentSpec` — name, role (Analyst/Manager/Worker/Expert/Validator), system_prompt, temperature, max_tokens
+- `ToolRef[]` — tool name, needs_approval flag, timeout_ms
+- `MemorySpec` — memory_type (episodic/procedural/entity/all), limits
+- `GuardrailSpec` — block_pii, max_turns, forbidden_patterns (regex)
+
+`AgentPool::from_definition()` converts a declarative definition into a runtime `AutonomousAgent` with the correct tools, policy, and response generator.
+
+### AgentPolicy — Permission Model
+
+```
+AgentPolicy
+├── autonomy: AutonomyLevel      → Paranoid | Normal | Autonomous
+├── internet: InternetMode        → Disabled | SearchOnly | FullAccess | AllowList
+├── allowed_paths: Vec<PathBuf>   → filesystem whitelist
+├── denied_paths: Vec<PathBuf>    → filesystem blacklist (priority)
+├── allowed_commands: Vec<String>  → shell command whitelist
+├── denied_commands: Vec<String>   → shell command blacklist (priority)
+├── mcp_servers: Vec<String>       → MCP server whitelist
+├── max_iterations: usize          → loop limit
+├── max_cost_usd: f64             → cost budget
+├── max_runtime_secs: u64         → time limit
+├── require_approval_above: RiskLevel → approval threshold
+└── tool_permissions: HashMap      → per-tool allow/deny
+```
+
+**Presets:** `::paranoid()` (everything needs approval), `::default()` (normal), `::autonomous()` (full access)
+
+**Builder:** `AgentPolicyBuilder::new().allow_path(...).deny_command(...).max_cost(5.0).build()`
+
+### AgentProfile — Pre-made Combinations
+
+`ProfileRegistry::with_defaults()` provides 8 agent profiles, 4 conversation profiles, 3 workflow profiles:
+
+| Profile | Policy | Tools | Internet |
+|---------|--------|-------|----------|
+| coding-assistant | Normal | filesystem, shell, git | SearchOnly |
+| research-agent | Normal | read-only FS | FullAccess |
+| devops-agent | Autonomous | docker, k8s, terraform | FullAccess |
+| data-analyst | Normal | python | SearchOnly |
+| content-writer | Normal | write files | SearchOnly |
+| code-reviewer | Normal | read-only, git | Disabled |
+| sysadmin | Normal | systemctl, monitoring | Disabled |
+| paranoid | Paranoid | none | Disabled |
+
+### Sandbox Flow
+
+```
+Agent wants to execute action
+       ↓
+SandboxValidator.validate(ActionDescriptor)
+       ↓
+ ┌─────────────────────────────┐
+ │ 1. Check policy rules       │
+ │ 2. assess_risk() → RiskLevel│
+ │ 3. if risk > threshold      │
+ │    → call approval_handler  │
+ │ 4. AuditEntry logged        │
+ └─────────────────────────────┘
+       ↓
+ Ok(()) or Err(SandboxError)
+```
+
+`AuditDecision`: Approved, Denied, ApprovedByUser, DeniedByUser
+`RiskLevel`: Safe < Low < Medium < High < Critical
+
+### 17 tests across configuration layers
+
+| Tests | What they verify |
+|-------|-----------------|
+| AgentPolicy presets | paranoid blocks everything, autonomous allows everything |
+| AgentPolicyBuilder | fluent API constructs correct policy |
+| SandboxValidator | validate_file_read/write, validate_command, validate_url |
+| AgentDefinition | JSON/TOML parsing, field defaults, validation |
+| ProfileRegistry | 8 agent + 4 conversation + 3 workflow profiles load correctly |
+| AgentPool::from_definition | declarative → runtime conversion |
+
+---
+
+## 58. Browser Policy — Browser Automation Security
+
+> Fecha: 2026-03-25
+
+### Architecture
+
+```
+BrowserPolicy
+├── URL Validation
+│   ├── allowed_schemes: ["https"]
+│   ├── domain_allowlist / domain_blocklist
+│   ├── block_private_ips (SSRF: 10.x, 172.16-31.x, 192.168.x)
+│   └── block_metadata_endpoints (169.254.169.254)
+├── JS Permission Levels
+│   ├── Disabled — no JS at all
+│   ├── ReadOnly — DOM queries only (default)
+│   ├── Mutating — DOM reads + writes, no network
+│   └── Full — everything except critical exfiltration
+├── Interaction Controls
+│   ├── allow_cookie_access
+│   ├── allow_form_submission
+│   ├── allow_downloads
+│   ├── allow_screenshots
+│   └── require_approval_for_interaction
+└── Limits
+    ├── max_redirect_depth (default: 5)
+    └── max_page_size_bytes (default: 10MB)
+```
+
+### JS Pattern Detection
+
+16 dangerous patterns blocked at lower permission levels:
+
+| Pattern | ReadOnly | Mutating | Full |
+|---------|----------|----------|------|
+| `document.cookie` | ❌ | ❌ | ✅ |
+| `localStorage/sessionStorage` | ❌ | ❌ | ✅ |
+| `fetch(`, `XMLHttpRequest` | ❌ | ❌ | ✅ |
+| `eval(`, `Function(` | ❌ | ❌ | ❌ |
+| `navigator.sendBeacon` | ❌ | ❌ | ❌ |
+| `innerHTML`, `setAttribute` | ❌ | ✅ | ✅ |
+| `querySelector`, `textContent` | ✅ | ✅ | ✅ |
+
+### 17 tests
+
+| Tests | What they verify |
+|-------|-----------------|
+| 1-4 | URL validation (HTTPS, HTTP, private IPs, metadata endpoints) |
+| 5-8 | JS permission levels (disabled blocks all, full allows most) |
+| 9-12 | Domain allowlist/blocklist enforcement |
+| 13-16 | 16 dangerous JS patterns detected correctly |
+| 17 | Serialization roundtrip |
+
+---
+
+## 59. Tool Safety & Snapshot Rollback
+
+> Fecha: 2026-03-25
+
+### ToolSafetyProfile — Per-Tool Risk Classification
+
+```
+ToolSafetyProfile
+├── interruptible: bool        — safe to cancel mid-execution
+├── has_side_effects: bool     — modifies external state
+├── reversible: bool           — can undo
+├── snapshot_before: bool      — capture state before executing
+├── timeout_ms: u64            — max execution time
+├── dry_run_supported: bool    — can preview without executing
+└── heartbeat_interval_ms: u64 — progress reporting interval
+```
+
+| Preset | Example Tools | Snapshot | Dry Run | Interrupt |
+|--------|---------------|----------|---------|-----------|
+| read_only | search, query, read_file | No | N/A | Yes |
+| destructive_reversible | write, edit, delete | Yes | Yes | Yes |
+| destructive_irreversible | send_email, deploy | No | No | No |
+| long_running | scrape, build | No | No | Yes (heartbeat) |
+
+### SnapshotStore — LIFO Saga Compensation
+
+```
+Tool Execution Timeline:
+  iteration-5:
+    tool-1: write config.json  → snapshot original content
+    tool-2: delete old.csv     → move to trash
+    tool-3: rename a.txt→b.txt → record rename
+
+  On failure at tool-3:
+    rollback_iteration("iteration-5"):
+      1. undo rename: b.txt → a.txt     (LIFO: last first)
+      2. restore old.csv from trash
+      3. restore config.json content
+```
+
+Supports 10 operations: Write, Edit, Delete, Create, Rename, Move, Copy, Chmod, Append, CreateDir.
+Cross-platform: uses platform trash directory, not OS-specific APIs.
+
+### 10 tests
+
+| Tests | What they verify |
+|-------|-----------------|
+| 1-4 | Snapshot creation for write/delete/rename operations |
+| 5-6 | Single-operation rollback, iteration-level LIFO rollback |
+| 7-8 | Expired snapshot cleanup (TTL + LRU) |
+| 9-10 | Concurrent iteration isolation, unique dirs per test |
+
+---
+
+## 60. Agent Configuration — Putting It All Together
+
+> Fecha: 2026-03-25
+
+### Three Ways to Create an Agent
+
+**1. Declarative (JSON/TOML)**
+```json
+{
+  "agent": { "name": "analyst", "role": "Analyst", "system_prompt": "..." },
+  "tools": [{ "name": "read_file", "needs_approval": false }],
+  "guardrails": { "block_pii": true }
+}
+```
+→ `AgentPool::from_definition()` → `AutonomousAgent`
+
+**2. Pre-made Profile**
+```rust
+let registry = ProfileRegistry::with_defaults();
+let profile = registry.get_agent_profile("research-agent");
+```
+
+**3. Builder Pattern (Full Control)**
+```rust
+AutonomousAgent::builder("my-agent", response_gen)
+    .policy(AgentPolicy::default())
+    .methodology(AgentMethodology::careful())
+    .tool_registry(tools)
+    .with_knowledge_provider(rag)
+    .build();
+```
+
+### Decision Matrix
+
+| Scenario | Recommended Approach |
+|----------|---------------------|
+| User-configurable agents (UI, config files) | AgentDefinition (JSON) |
+| Quick standard setup | AgentProfile preset |
+| Fine-grained control | Builder pattern |
+| Multi-agent orchestration | MultiAgentSession + builder |
+| Non-technical users | AgentDefinition + AgentProfile |
+
+### Full Configuration Stack Example
+
+```rust
+// Layer 1: Policy (permissions)
+let policy = AgentPolicyBuilder::new()
+    .autonomy(AutonomyLevel::Normal)
+    .internet(InternetMode::SearchOnly)
+    .allow_path("/data")
+    .max_cost(2.0)
+    .build();
+
+// Layer 2: Methodology (behavior)
+let methodology = AgentMethodology::careful();
+
+// Layer 3: Browser safety (if using browser)
+let browser = BrowserPolicy::restrictive();
+
+// Layer 4: Build runtime agent
+let agent = AutonomousAgent::builder("auditor", gen)
+    .policy(policy)
+    .methodology(methodology)
+    .max_iterations(50)
+    .tool_registry(tools)
+    .build();
+
+// Layer 5: Check at runtime
+assert!(agent.methodology().should_run_phase(MethodologyPhase::Analyze));
+assert!(!agent.should_review_now(false, false, false)); // iteration 0
+```
+
+---
+
+## 56. Agent Methodology — Workflow, Reasoning & Quality Gates
+
+> Fecha: 2026-03-25
+
+### Overview
+
+`AgentMethodology` defines HOW an autonomous agent approaches tasks — separate from its tools, permissions, or policy. It controls: task approach (PlanFirst/ActFirst/Iterative), reasoning strategy (ChainOfThought/StepBack/Reflection/Direct), planning policy, review policy, recovery strategy, communication style, and risk tolerance.
+
+### Architecture
+
+```
+AgentMethodology
+├── TaskApproach          — when to plan vs. act
+├── ReasoningStrategy     — how to think before deciding
+├── PlanningPolicy        — always/only-if-complex/never
+├── ReviewPolicy          — after-each-phase/milestones/end/never
+├── RecoveryStrategy      — retry/alternative/ask-user/abort/cascade
+├── CommunicationStyle    — concise/balanced/detailed/ask-often
+├── RiskTolerance         — conservative/balanced/bold
+├── WorkflowProtocol      — 6 phases with PhaseConfig each
+│   ├── ANALYZE   (understand task, classify complexity)
+│   ├── PLAN      (decompose into steps)
+│   ├── VALIDATE  (verify plan before executing)
+│   ├── EXECUTE   (perform work)
+│   ├── REVIEW    (check results)
+│   └── CONCLUDE  (cleanup, summary, persist)
+├── ReviewTriggers        — 8 conditions that force review
+│   ├── after_n_iterations
+│   ├── after_milestone
+│   ├── after_tool_failure
+│   ├── after_cost_threshold (USD)
+│   ├── after_time_threshold (seconds)
+│   ├── on_user_interrupt
+│   ├── periodic_self_check
+│   └── self_check_interval
+└── QualityGate[]         — pass/fail checks between phases
+    ├── GateCheck: OutputNotEmpty | ContainsKeywords | NoErrors
+    │              CostWithinBudget | TimeWithinLimit | LlmJudge
+    └── GateAction: Retry | AskUser | Abort | ContinueWithWarning
+```
+
+### Integration with AutonomousAgent
+
+`AutonomousAgent` now has a `methodology` field (defaults to `Balanced`). The builder exposes `.methodology(m)`. At runtime, `should_review_now()` evaluates all 8 review triggers against the current iteration state (iteration count, cost, elapsed time, failure flags).
+
+### Presets
+
+| Preset | Approach | Reasoning | All phases? | Risk | Immutable? |
+|--------|----------|-----------|-------------|------|------------|
+| Careful | PlanFirst | Reflection | Yes, all mandatory | Conservative | Yes |
+| Balanced | Iterative | ChainOfThought | Execute mandatory, rest optional | Balanced | No |
+| Fast | ActFirst | Direct | Execute only | Bold | No |
+| Research | PlanFirst | StepBack | Yes, all mandatory | Conservative | Yes |
+
+### Serialization
+
+All types implement `Serialize`/`Deserialize`. Users can save/share/load methodologies as JSON:
+
+```json
+{
+  "name": "Careful",
+  "approach": "PlanFirst",
+  "reasoning": "Reflection",
+  "risk_tolerance": "Conservative",
+  "workflow": {
+    "analyze": { "enabled": true, "mandatory": true, "max_duration_secs": 0 },
+    "plan": { "enabled": true, "mandatory": true, "max_duration_secs": 0 },
+    ...
+  }
+}
+```
+
+### Tests
+
+13 tests covering:
+
+| Tests | What they verify |
+|-------|-----------------|
+| 1-2 | Careful preset (all phases mandatory), Fast preset (skips most phases) |
+| 3-8 | Review triggers: iterations, milestone, tool failure, cost, time, user interrupt |
+| 9 | JSON serialization roundtrip |
+| 10 | Default is Balanced |
+| 11 | QualityGate construction |
+| 12 | WorkflowPhase Display impl |
+| 13 | Research preset values |

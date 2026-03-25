@@ -4231,3 +4231,11 @@ Interactive Connectivity Establishment unifies STUN, TURN, and direct connection
 ## 219. Tool Permission Categories
 
 14 fine-grained permission categories for MCP tools beyond simple read/write: Read, Write, Execute, Delete, Create, Admin, Network, Filesystem, CredentialAccess, UserImpersonation, CostIncurring, DataExfiltration, PersistentStateModification, PrivilegeEscalation. Each tool declares its required permissions, and the sandbox enforces them. Critical categories (Execute, Admin, CredentialAccess, PrivilegeEscalation) require explicit approval.
+
+## 220. Agent Methodology
+
+Defines HOW an autonomous agent approaches tasks, independent of WHAT it can do. `AgentMethodology` bundles: `TaskApproach` (PlanFirst/ActFirst/Iterative), `ReasoningStrategy` (ChainOfThought/StepBack/Reflection/Direct), `PlanningPolicy` (Always/OnlyIfComplex/Never), `ReviewPolicy` (AfterEachPhase/AfterMilestones/AtEnd/Never), `RecoveryStrategy` (Retry/AlternativeTool/AskUser/Abort/Cascade), `CommunicationStyle` (Concise/Balanced/Detailed/AskOften/ReportAtEnd), `RiskTolerance` (Conservative/Balanced/Bold), plus the full `WorkflowProtocol` and `ReviewTriggers`. Four presets: Careful (all phases mandatory, review every step), Balanced (plan only if complex), Fast (act directly, skip analysis/planning/review), Research (deep reasoning, verify every source). Serializable as JSON for sharing between users.
+
+## 221. Quality Gates & Review Triggers
+
+`QualityGate` defines pass/fail checks that gate progress between workflow phases: `GateCheck` (OutputNotEmpty, ContainsKeywords, NoErrors, CostWithinBudget, TimeWithinLimit, LlmJudge) with `GateAction` on failure (Retry, AskUser, Abort, ContinueWithWarning). `ReviewTriggers` define 8 conditions that force a review cycle: after N iterations, after milestone completion, after tool failure, after cost threshold (USD), after time threshold (seconds), on user interrupt, periodic self-check with configurable interval. The `should_review()` method evaluates all conditions and returns true if any trigger fires. Wired into `AutonomousAgent` via `should_review_now()`.
