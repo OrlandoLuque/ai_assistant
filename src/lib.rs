@@ -176,6 +176,7 @@ pub mod cloud_providers;
 pub mod config_file;
 pub mod connection_pool;
 pub mod context_budget;
+pub mod browser_policy;
 pub mod config_security;
 pub mod distributed_rag;
 pub mod knowledge_watcher;
@@ -366,6 +367,10 @@ pub use cache_compression::{
     compress, compress_string, decompress, decompress_string, CacheCompressionStats,
     CompressedCache, CompressedData, CompressionAlgorithm, CompressionError, CompressionLevel,
     StreamingCompressor,
+};
+
+pub use browser_policy::{
+    BrowserPolicy, JsPermission, JsValidation, ToolPermission, UrlValidation,
 };
 
 pub use distributed_rag::{
