@@ -4191,3 +4191,35 @@ The `KnowledgeWatcher` monitors files that have been indexed into the RAG knowle
 ## 209. Unified Storage Context
 
 The `StorageContext` coordinates persistence of all subsystems to a configurable data directory. Inspired by LlamaIndex's pattern: a single object that can persist/restore everything as a unit. Uses atomic JSON writes (temp file + rename) for crash safety. `DirtyFlags` track which subsystems have unsaved changes; `drain_writes()` flushes only dirty subsystems — called in shutdown handlers and error paths to guarantee no data loss.
+
+## 210. Configuration Locking
+
+`ConfigLock` prevents runtime modification of security-critical settings. Eight lockable sections (Providers, Security, RagTiers, AgentPolicy, NetworkPolicy, BudgetLimits, RollbackStrategy, Learning) can be locked independently or all at once. Unlocking requires authentication (MasterKey, UserConfirmation, Both, or Immutable). An audit log tracks all lock/unlock attempts. This prevents MCP tools, plugins, and autonomous agents from modifying guardrails or security settings at runtime.
+
+## 211. Integrity Verification
+
+The `IntegrityChecker` computes checksums of persisted config/state files and verifies them on load. If a file has been tampered with between saves (by malware, a rogue agent, or direct filesystem manipulation), the checker detects the mismatch and alerts via the `SecurityAlertManager`. Combined with `ConfigLock`, this provides defense-in-depth: locking prevents software modification, integrity checking detects filesystem-level tampering.
+
+## 212. Learning Freeze
+
+`LearningFreezeConfig` allows freezing any of 8 learning subsystems (bandit, procedures, entity facts, semantic facts, reputation, model selection, user beliefs, RAG tiers) independently. When frozen, the subsystem serves queries (reads) but rejects all updates (writes). Use cases: lock down learned state after validation, prevent poisoning attacks during import, ensure deterministic behavior for debugging.
+
+## 213. Network Egress Policy
+
+`NetworkPolicy` controls which outbound HTTP requests agents can make. Three modes: permissive (development), restrictive (blocks private IPs + cloud metadata), and paranoid (default-deny, only whitelisted hosts). Prevents SSRF attacks where an agent accesses internal services (169.254.169.254 cloud metadata, localhost, private networks). Presets for common use cases: web search, LLM APIs, research agent.
+
+## 214. P2P Trust Levels and Message Authorization
+
+Every peer in the distributed network has a `TrustLevel` (Probation → Normal → Trusted → Admin) that determines which message types they can send. A newly joined peer in Probation can only ping and request joining; it cannot write data or trigger replication. `MessageAuthorization` enforces this matrix. `PeerAccessControl` provides whitelist/blacklist with auto-ban when reputation drops below threshold.
+
+## 215. Semantic Deduplication with Nuance Preservation
+
+When RAG and KnowledgeGraph return overlapping chunks, a three-level semantic deduplicator handles them: identical chunks (>98% similarity) are eliminated, similar chunks with nuances (85-98%) are merged by an LLM that preserves differing details, and distinct chunks (<85%) are kept as-is. Fusion uses batched LLM calls — all groups in a single prompt — minimizing API costs. This ensures the context window is filled with diverse, non-redundant information.
+
+## 216. Distributed RAG Knowledge Sharing
+
+Documents can be scoped as Private (local only) or Shared (distributed via DHT). Shared document chunks are replicated to K nodes nearest their hash, with configurable TTL and automatic refresh. Queries merge local RAG results with distributed chunks, deduplicate, and score. This enables a cluster of nodes to share a knowledge base without each node having to index every document locally.
+
+## 217. ICE NAT Traversal
+
+Interactive Connectivity Establishment unifies STUN, TURN, and direct connection probing into a single framework. Candidates are gathered (host IPs, STUN-discovered public IPs, TURN relay addresses), connectivity checks rank candidate pairs by priority, and the best route is selected. TURN relay provides fallback when direct connection is impossible (symmetric NAT, carrier-grade NAT).

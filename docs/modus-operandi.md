@@ -36,8 +36,9 @@ Continúa con el desarrollo del proyecto. Lee docs/modus-operandi.md y el últim
 - **V57**: COMPLETE — Agent Interruption & Safety (ToolSafetyProfile, SnapshotStore cross-platform rollback, RollbackStrategy Snapshot/Git 5 modes, KnowledgeWatcher auto-reindex, ToolCallRecord saga tracking)
 - **V58**: COMPLETE — StorageContext unified persistence (save_json/load_json atomic, DirtyFlags, drain_writes(), StrategyBandit + RagTierStore persistence)
 - **V59**: COMPLETE — Security Hardening (6 concrete vulnerability fixes, ConfigLock, IntegrityChecker, SecurityAlertManager, LearningFreezeConfig, 256-vector audit)
-- **Latest**: V59 — Security Hardening (COMPLETE)
-- **Test count**: 7,019 lib tests (0 failures) + 39 harness precision + 18 fallback resilience + 8 conversation quality scored tests
+- **V60**: COMPLETE — Semantic Dedup (3-level with batched fusion), Distributed RAG (DocumentScope, SharedChunkMeta, TTL/refresh), ICE NAT types, P2P Security (TrustLevel, MessageAuthorization, PeerAccessControl), concepts 210-217
+- **Latest**: V60 — Semantic Dedup + Distributed RAG + P2P Security (COMPLETE)
+- **Test count**: 7,052 lib tests (0 failures) + 39 harness precision + 18 fallback resilience + 8 conversation quality scored tests
 - **Source files**: 320 .rs files, ~390K LOC
 - **Feature flags**: 55 (+1: chaos-testing)
 - **Status**: Experimental — compiles and passes tests, but not validated in production
