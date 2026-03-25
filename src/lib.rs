@@ -177,6 +177,7 @@ pub mod config_file;
 pub mod connection_pool;
 pub mod context_budget;
 pub mod config_security;
+pub mod distributed_rag;
 pub mod knowledge_watcher;
 pub mod learning_control;
 pub mod network_policy;
@@ -365,6 +366,13 @@ pub use cache_compression::{
     compress, compress_string, decompress, decompress_string, CacheCompressionStats,
     CompressedCache, CompressedData, CompressionAlgorithm, CompressionError, CompressionLevel,
     StreamingCompressor,
+};
+
+pub use distributed_rag::{
+    DistributedRagConfig, DistributedRagResult, DocumentScope,
+    IceCandidate as P2pIceCandidate, IceCandidateType as P2pIceCandidateType,
+    IceConfig as P2pIceConfig, IceState as P2pIceState, SharedChunkMeta,
+    TurnServerConfig as P2pTurnServerConfig,
 };
 
 pub use config_security::{
