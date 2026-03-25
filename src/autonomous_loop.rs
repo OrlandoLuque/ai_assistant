@@ -3,6 +3,7 @@
 //! Implements the LLM -> parse -> validate -> execute -> feed results -> loop
 //! cycle with sandbox validation, user interaction, and task board integration.
 
+use crate::agent_methodology::AgentMethodology;
 use crate::agent_policy::{ActionDescriptor, ActionType, AgentPolicy};
 
 /// Provides knowledge context to agents before each LLM call.
@@ -219,6 +220,8 @@ pub struct AutonomousAgent {
     planning_hint_idx: Option<usize>,
     /// Optional knowledge provider for context enrichment (RAG, KG, Memory, etc.).
     knowledge_provider: Option<Arc<dyn KnowledgeProvider>>,
+    /// Agent methodology — controls workflow phases, reasoning, review triggers, etc.
+    methodology: AgentMethodology,
 }
 
 impl AutonomousAgent {
@@ -573,6 +576,24 @@ impl AutonomousAgent {
         &self.policy
     }
 
+    /// Get the agent's methodology.
+    pub fn methodology(&self) -> &AgentMethodology {
+        &self.methodology
+    }
+
+    /// Check whether a review is triggered at the current iteration state.
+    pub fn should_review_now(&self, milestone_completed: bool, tool_failed: bool, user_interrupted: bool) -> bool {
+        let elapsed_secs = (now_millis().saturating_sub(self.start_time)) / 1000;
+        self.methodology.should_review(
+            self.iteration,
+            milestone_completed,
+            tool_failed,
+            self.total_cost,
+            elapsed_secs,
+            user_interrupted,
+        )
+    }
+
     /// Get the agent's operation mode.
     pub fn mode(&self) -> OperationMode {
         self.mode
@@ -787,6 +808,7 @@ pub struct AutonomousAgentBuilder {
     cancellation_token: Option<Arc<AtomicBool>>,
     mailbox: Option<std::sync::mpsc::Receiver<InterAgentMessage>>,
     knowledge_provider: Option<Arc<dyn KnowledgeProvider>>,
+    methodology: AgentMethodology,
 }
 
 impl AutonomousAgentBuilder {
@@ -810,12 +832,19 @@ impl AutonomousAgentBuilder {
             cancellation_token: None,
             mailbox: None,
             knowledge_provider: None,
+            methodology: AgentMethodology::default(),
         }
     }
 
     /// Set an optional knowledge provider for context enrichment.
     pub fn with_knowledge_provider(mut self, provider: Arc<dyn KnowledgeProvider>) -> Self {
         self.knowledge_provider = Some(provider);
+        self
+    }
+
+    /// Set the agent methodology (workflow, reasoning, review triggers, etc.).
+    pub fn methodology(mut self, methodology: AgentMethodology) -> Self {
+        self.methodology = methodology;
         self
     }
 
@@ -907,6 +936,7 @@ impl AutonomousAgentBuilder {
             mailbox: self.mailbox,
             planning_hint_idx: None,
             knowledge_provider: self.knowledge_provider,
+            methodology: self.methodology,
         }
     }
 }

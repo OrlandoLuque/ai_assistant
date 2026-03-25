@@ -176,6 +176,7 @@ pub mod cloud_providers;
 pub mod config_file;
 pub mod connection_pool;
 pub mod context_budget;
+pub mod agent_methodology;
 pub mod browser_policy;
 pub mod config_security;
 pub mod distributed_rag;
@@ -367,6 +368,13 @@ pub use cache_compression::{
     compress, compress_string, decompress, decompress_string, CacheCompressionStats,
     CompressedCache, CompressedData, CompressionAlgorithm, CompressionError, CompressionLevel,
     StreamingCompressor,
+};
+
+pub use agent_methodology::{
+    AgentMethodology, CommunicationStyle, GateAction, GateCheck, PhaseConfig,
+    PlanningPolicy, QualityGate, RecoveryStrategy, ReviewPolicy, ReviewTriggers,
+    RiskTolerance, TaskApproach, ReasoningStrategy, WorkflowProtocol,
+    WorkflowPhase as MethodologyPhase,
 };
 
 pub use browser_policy::{
