@@ -4982,7 +4982,13 @@ impl AiAssistant {
         };
         use std::collections::HashMap as HitlHashMap;
 
-        // 1. Send the message to the LLM synchronously
+        // 1. Send the message to the LLM synchronously with context budget allocation
+        let allocated_context = self.build_allocated_context(message, &self.knowledge_context.clone());
+        let effective_knowledge = if allocated_context.is_empty() {
+            self.knowledge_context.clone()
+        } else {
+            allocated_context
+        };
         let conversation = {
             let mut conv = self.conversation.clone();
             conv.push(crate::messages::ChatMessage::user(message));
@@ -4991,7 +4997,7 @@ impl AiAssistant {
         let system_prompt = build_system_prompt(
             &self.system_prompt_base,
             &self.preferences,
-            &self.knowledge_context,
+            &effective_knowledge,
         );
         let response = generate_response(&self.config, &conversation, &system_prompt)
             .map_err(|e| crate::error::AiError::Other(format!("LLM generation failed: {}", e)))?;

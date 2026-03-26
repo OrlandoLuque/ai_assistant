@@ -149,14 +149,23 @@ pub fn register_mcp_agent_tools(server: &mut McpServer, pool: Arc<Mutex<AgentPoo
             }),
             move |_args| {
                 let guard = pool.lock().map_err(|e| format!("Lock error: {}", e))?;
-                let log: Vec<String> = guard
-                    .trigger_log()
-                    .iter()
-                    .map(|r| format!("{:?}", r))
+                let defs: Vec<serde_json::Value> = guard
+                    .definitions()
+                    .values()
+                    .map(|def| {
+                        serde_json::json!({
+                            "name": def.agent.name,
+                            "role": def.agent.role,
+                            "description": def.agent.description,
+                            "system_prompt_length": def.agent.system_prompt.as_ref().map(|s| s.len()).unwrap_or(0),
+                            "tools_count": def.tools.len(),
+                        })
+                    })
                     .collect();
 
                 Ok(serde_json::json!({
-                    "trigger_log": log,
+                    "definitions": defs,
+                    "count": defs.len(),
                     "active_count": guard.active_count(),
                 }))
             },

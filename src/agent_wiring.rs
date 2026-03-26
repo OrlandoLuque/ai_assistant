@@ -751,6 +751,11 @@ impl AgentPool {
         &self.trigger_log
     }
 
+    /// Get registered agent definitions.
+    pub fn definitions(&self) -> &HashMap<String, AgentDefinition> {
+        &self.definitions
+    }
+
     /// Find the best agent for a task using BestFit scoring.
     pub fn find_best_agent(&self, task: &PoolTask) -> Option<String> {
         let mut best_name = None;
