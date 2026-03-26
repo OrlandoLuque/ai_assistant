@@ -34,7 +34,7 @@ Esto te da el contexto completo: dónde estamos, qué se ha hecho, cómo trabaja
 - **Efecto**: Prohíbe TODO uso comercial sin licencia negociada. Solo permite uso personal, académico, investigación.
 - **Archivos**: `LICENSE` (PolyForm Noncommercial), `Cargo.toml` usa `license-file = "LICENSE"`
 - **Licencias anteriores** (MIT/Apache-2.0) eliminadas — nunca fueron distribuidas públicamente
-- **Opción futura**: Considerar publicar un módulo básico pequeño (solo providers) bajo MIT en crates.io como módulo de entrada gratuito
+- **Opción futura**: Considerar publicar un módulo básico pequeño (solo providers) bajo MIT en crates.io como módulo open-source bajo MIT/Apache-2.0
 
 ### Monetización
 - **Modelo elegido**: PolyForm Noncommercial + negociación caso a caso con empresas
@@ -77,5 +77,5 @@ Esto te da el contexto completo: dónde estamos, qué se ha hecho, cómo trabaja
 - [x] Actualizar campo `license` en Cargo.toml (hecho 22/02/2026)
 - [ ] Registrar PI en España, WIPO PROOF y Safe Creative
 - [ ] Implementar CLA en el repositorio
-- [ ] Decidir si publicar módulo básico bajo MIT como módulo de entrada gratuito
+- [ ] Decidir si publicar módulo básico bajo MIT como módulo open-source bajo MIT/Apache-2.0
 - [ ] Crear página web/landing con info de licencia comercial
