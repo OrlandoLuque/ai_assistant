@@ -38,10 +38,10 @@ Continúa con el desarrollo del proyecto. Lee docs/modus-operandi.md y el últim
 - **V59**: COMPLETE — Security Hardening (6 concrete vulnerability fixes, ConfigLock, IntegrityChecker, SecurityAlertManager, LearningFreezeConfig, 256-vector audit)
 - **V60**: COMPLETE — Semantic Dedup (3-level with batched fusion), Distributed RAG (DocumentScope, SharedChunkMeta, TTL/refresh), ICE NAT types, P2P Security (TrustLevel, MessageAuthorization, PeerAccessControl), concepts 210-217
 - **V61**: COMPLETE — BrowserPolicy (URL validation, JS permission levels, SSRF, 16 dangerous patterns, 14 tool permission categories), concepts 218-219
-- **V62**: COMPLETE — Agent Methodology (AgentMethodology, WorkflowProtocol 6 phases, ReviewTriggers 8 conditions, QualityGate, 4 presets, wired into AutonomousAgent), concepts 220-221
-- **Latest**: V62 — Agent Methodology (COMPLETE)
-- **Test count**: 7,082 lib tests (0 failures) + 39 harness precision + 18 fallback resilience + 8 conversation quality scored tests
-- **Source files**: 321 .rs files, ~390K LOC
+- **V62**: COMPLETE — Agent Methodology (AgentMethodology, WorkflowProtocol 6 phases, ReviewTriggers 8 conditions, QualityGate, 4 presets, wired into AutonomousAgent), RateLimitStrategy (4 strategies, patient preset), RagFeatures +5 new fields (semantic_dedup_fusion, distributed_search, context_budget_allocation, fresh_context, emotion_aware), cancellation propagation (partial response save, HTTP endpoint cancel, CancelTask/CancelAck P2P, MapReduceJob.cancel(), DistributedRagConfig timeout), concepts 220-221
+- **Latest**: V62 — Agent Methodology + Rate Limit Strategy + Cancellation (COMPLETE)
+- **Test count**: 7,091 lib tests (0 failures) + 39 harness precision + 18 fallback resilience + 8 conversation quality scored tests
+- **Source files**: 338 .rs files, ~387K LOC
 - **Feature flags**: 55 (+1: chaos-testing)
 - **Status**: Experimental — compiles and passes tests, but not validated in production
 - **Website**: Separated to `ai_assistant-website` repo (GitHub Pages ready)

@@ -27,6 +27,9 @@ pub struct RetryConfig {
     pub attempt_timeout: Option<Duration>,
     /// Errors that should trigger a retry
     pub retryable_errors: Vec<RetryableError>,
+    /// How to handle rate limit (429) errors specifically.
+    /// Default: `RateLimitStrategy::Retry` (treat like any other retryable error).
+    pub rate_limit_strategy: RateLimitStrategy,
 }
 
 impl Default for RetryConfig {
@@ -45,6 +48,7 @@ impl Default for RetryConfig {
                 RetryableError::ServerError,
                 RetryableError::RateLimited,
             ],
+            rate_limit_strategy: RateLimitStrategy::default(),
         }
     }
 }
@@ -61,6 +65,7 @@ impl RetryConfig {
             jitter_factor: 0.1,
             attempt_timeout: Some(Duration::from_secs(5)),
             retryable_errors: vec![RetryableError::ConnectionRefused, RetryableError::Timeout],
+            rate_limit_strategy: RateLimitStrategy::ImmediateFallback,
         }
     }
 
@@ -81,6 +86,10 @@ impl RetryConfig {
                 RetryableError::RateLimited,
                 RetryableError::ServiceUnavailable,
             ],
+            rate_limit_strategy: RateLimitStrategy::WaitForReset {
+                max_wait_secs: 120,
+                default_wait_secs: 30,
+            },
         }
     }
 
@@ -89,6 +98,30 @@ impl RetryConfig {
         Self {
             max_retries: 0,
             ..Default::default()
+        }
+    }
+
+    /// Create a config that waits for rate limits to clear.
+    /// Best for single-provider setups where you prefer waiting over failing.
+    pub fn patient() -> Self {
+        Self {
+            max_retries: 3,
+            initial_delay: Duration::from_millis(100),
+            max_delay: Duration::from_secs(30),
+            backoff_multiplier: 2.0,
+            add_jitter: true,
+            jitter_factor: 0.25,
+            attempt_timeout: Some(Duration::from_secs(30)),
+            retryable_errors: vec![
+                RetryableError::ConnectionRefused,
+                RetryableError::Timeout,
+                RetryableError::ServerError,
+                RetryableError::RateLimited,
+            ],
+            rate_limit_strategy: RateLimitStrategy::WaitForReset {
+                max_wait_secs: 300,
+                default_wait_secs: 60,
+            },
         }
     }
 
@@ -109,6 +142,66 @@ impl RetryConfig {
 
         Duration::from_secs_f64(final_delay)
     }
+}
+
+/// Strategy for handling rate limit (429) errors specifically.
+///
+/// Rate limits are different from transient errors — the provider tells us
+/// exactly when we can retry. This enum lets the caller choose what to do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
+pub enum RateLimitStrategy {
+    /// Treat rate limits like any other retryable error — use exponential backoff.
+    /// If max retries are exhausted, fail (or fall through to FallbackChain).
+    Retry,
+    /// Wait for the full duration indicated by `retry-after` header (or a default
+    /// wait time if no header is present). Blocks until the provider is available again.
+    /// Best for single-provider setups where you'd rather wait than fail.
+    WaitForReset {
+        /// Maximum time to wait (seconds). If retry-after exceeds this, fall back to `Retry` behavior.
+        /// 0 = unlimited (will wait however long the provider says).
+        max_wait_secs: u64,
+        /// Default wait time (seconds) if no retry-after header is present.
+        default_wait_secs: u64,
+    },
+    /// Ask the user what to do: wait, retry, switch provider, or abort.
+    /// Returns `RateLimitDecision` via the callback.
+    AskUser,
+    /// Immediately give up on this provider and let FallbackChain try the next one.
+    /// Useful in multi-provider setups where switching is cheap.
+    ImmediateFallback,
+}
+
+impl Default for RateLimitStrategy {
+    fn default() -> Self {
+        Self::Retry
+    }
+}
+
+/// User's decision when `RateLimitStrategy::AskUser` is active.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RateLimitDecision {
+    /// Wait the specified duration, then retry.
+    Wait,
+    /// Retry immediately (ignore rate limit).
+    RetryNow,
+    /// Give up on this provider, try the next one.
+    SwitchProvider,
+    /// Abort the entire operation.
+    Abort,
+}
+
+/// Information about a rate limit event, passed to the user callback.
+#[derive(Debug, Clone)]
+pub struct RateLimitInfo {
+    /// Provider name (if known).
+    pub provider: String,
+    /// Suggested wait time from `retry-after` header (if present).
+    pub retry_after_secs: Option<u64>,
+    /// How many retries have been attempted so far.
+    pub attempts_so_far: u32,
+    /// Total time spent so far.
+    pub elapsed: Duration,
 }
 
 /// Types of errors that can be retried
@@ -226,10 +319,44 @@ impl RetryExecutor {
         Self { config }
     }
 
-    /// Execute an operation with retries
+    /// Execute an operation with retries.
+    ///
+    /// Rate limit errors (429) are handled according to `RetryConfig::rate_limit_strategy`:
+    /// - `Retry` — normal exponential backoff (default)
+    /// - `WaitForReset` — wait for the `retry-after` duration (or default), then retry once
+    /// - `AskUser` — calls `on_rate_limit` callback (use `execute_with_rate_limit_handler`)
+    /// - `ImmediateFallback` — fail immediately so FallbackChain can try next provider
     pub fn execute<T, F>(&self, mut operation: F) -> RetryResult<T>
     where
         F: FnMut() -> Result<T>,
+    {
+        self.execute_inner(&mut operation, None::<fn(RateLimitInfo) -> RateLimitDecision>)
+    }
+
+    /// Execute with a callback for rate limit decisions.
+    ///
+    /// When `rate_limit_strategy` is `AskUser`, this callback is invoked with
+    /// `RateLimitInfo` and must return a `RateLimitDecision`.
+    pub fn execute_with_rate_limit_handler<T, F, H>(
+        &self,
+        mut operation: F,
+        handler: H,
+    ) -> RetryResult<T>
+    where
+        F: FnMut() -> Result<T>,
+        H: Fn(RateLimitInfo) -> RateLimitDecision,
+    {
+        self.execute_inner(&mut operation, Some(handler))
+    }
+
+    fn execute_inner<T, F, H>(
+        &self,
+        operation: &mut F,
+        rate_limit_handler: Option<H>,
+    ) -> RetryResult<T>
+    where
+        F: FnMut() -> Result<T>,
+        H: Fn(RateLimitInfo) -> RateLimitDecision,
     {
         let start_time = Instant::now();
         let mut error_history = Vec::new();
@@ -252,12 +379,114 @@ impl RetryExecutor {
                     let error_str = e.to_string();
                     let attempt_duration = attempt_start.elapsed();
 
-                    // Check if this error is retryable
+                    // Check if this is a rate limit error
+                    let is_rate_limited = RetryableError::RateLimited.matches(&error_str);
+
+                    // Check if this error is retryable at all
                     let is_retryable = self
                         .config
                         .retryable_errors
                         .iter()
                         .any(|re| re.matches(&error_str));
+
+                    // Handle rate limit with special strategy
+                    if is_rate_limited {
+                        let retry_after = parse_retry_after(&error_str);
+
+                        match self.config.rate_limit_strategy {
+                            RateLimitStrategy::ImmediateFallback => {
+                                error_history.push(RetryAttempt {
+                                    attempt,
+                                    error: Some(error_str),
+                                    duration: attempt_duration,
+                                    delay_after: None,
+                                });
+                                return RetryResult {
+                                    value: None,
+                                    attempts: attempt + 1,
+                                    total_duration: start_time.elapsed(),
+                                    error_history,
+                                    success: false,
+                                };
+                            }
+                            RateLimitStrategy::WaitForReset { max_wait_secs, default_wait_secs } => {
+                                let wait_secs = retry_after.unwrap_or(default_wait_secs);
+                                let wait_secs = if max_wait_secs > 0 { wait_secs.min(max_wait_secs) } else { wait_secs };
+                                let wait = Duration::from_secs(wait_secs);
+
+                                error_history.push(RetryAttempt {
+                                    attempt,
+                                    error: Some(format!("{} (waiting {}s for rate limit reset)", error_str, wait_secs)),
+                                    duration: attempt_duration,
+                                    delay_after: Some(wait),
+                                });
+
+                                thread::sleep(wait);
+                                attempt += 1;
+                                continue;
+                            }
+                            RateLimitStrategy::AskUser => {
+                                let info = RateLimitInfo {
+                                    provider: extract_provider(&error_str),
+                                    retry_after_secs: retry_after,
+                                    attempts_so_far: attempt + 1,
+                                    elapsed: start_time.elapsed(),
+                                };
+
+                                let decision = if let Some(ref handler) = rate_limit_handler {
+                                    handler(info)
+                                } else {
+                                    // No handler provided — fall back to normal retry
+                                    RateLimitDecision::RetryNow
+                                };
+
+                                match decision {
+                                    RateLimitDecision::Wait => {
+                                        let wait_secs = retry_after.unwrap_or(60);
+                                        let wait = Duration::from_secs(wait_secs);
+                                        error_history.push(RetryAttempt {
+                                            attempt,
+                                            error: Some(format!("{} (user chose: wait {}s)", error_str, wait_secs)),
+                                            duration: attempt_duration,
+                                            delay_after: Some(wait),
+                                        });
+                                        thread::sleep(wait);
+                                        attempt += 1;
+                                        continue;
+                                    }
+                                    RateLimitDecision::RetryNow => {
+                                        error_history.push(RetryAttempt {
+                                            attempt,
+                                            error: Some(format!("{} (user chose: retry now)", error_str)),
+                                            duration: attempt_duration,
+                                            delay_after: None,
+                                        });
+                                        attempt += 1;
+                                        continue;
+                                    }
+                                    RateLimitDecision::SwitchProvider | RateLimitDecision::Abort => {
+                                        error_history.push(RetryAttempt {
+                                            attempt,
+                                            error: Some(format!("{} (user chose: {})", error_str,
+                                                if decision == RateLimitDecision::Abort { "abort" } else { "switch provider" })),
+                                            duration: attempt_duration,
+                                            delay_after: None,
+                                        });
+                                        return RetryResult {
+                                            value: None,
+                                            attempts: attempt + 1,
+                                            total_duration: start_time.elapsed(),
+                                            error_history,
+                                            success: false,
+                                        };
+                                    }
+                                }
+                            }
+                            RateLimitStrategy::Retry => {
+                                // Fall through to normal retry logic below
+                            }
+                        }
+                    }
 
                     let can_retry = attempt < self.config.max_retries && is_retryable;
                     let delay_after = if can_retry {
@@ -294,80 +523,44 @@ impl RetryExecutor {
         }
     }
 
-    /// Execute with a callback for each attempt
+    /// Execute with a callback for each retry attempt.
+    /// Rate limit strategy is still respected.
     pub fn execute_with_callback<T, F, C>(
         &self,
-        mut operation: F,
-        mut on_retry: C,
+        operation: F,
+        on_retry: C,
     ) -> RetryResult<T>
     where
         F: FnMut() -> Result<T>,
         C: FnMut(u32, &str, Duration),
     {
-        let start_time = Instant::now();
-        let mut error_history = Vec::new();
-        let mut attempt = 0;
+        self.execute_with_callback_and_rate_limit(
+            operation,
+            on_retry,
+            None::<fn(RateLimitInfo) -> RateLimitDecision>,
+        )
+    }
 
-        loop {
-            let attempt_start = Instant::now();
-
-            match operation() {
-                Ok(value) => {
-                    return RetryResult {
-                        value: Some(value),
-                        attempts: attempt + 1,
-                        total_duration: start_time.elapsed(),
-                        error_history,
-                        success: true,
-                    };
-                }
-                Err(e) => {
-                    let error_str = e.to_string();
-                    let attempt_duration = attempt_start.elapsed();
-
-                    let is_retryable = self
-                        .config
-                        .retryable_errors
-                        .iter()
-                        .any(|re| re.matches(&error_str));
-
-                    let can_retry = attempt < self.config.max_retries && is_retryable;
-                    let delay_after = if can_retry {
-                        Some(self.config.calculate_delay(attempt))
-                    } else {
-                        None
-                    };
-
-                    error_history.push(RetryAttempt {
-                        attempt,
-                        error: Some(error_str.clone()),
-                        duration: attempt_duration,
-                        delay_after,
-                    });
-
-                    if can_retry {
-                        // Call the retry callback
-                        on_retry(attempt, &error_str, delay_after.unwrap_or_default());
-                    }
-
-                    if !can_retry {
-                        return RetryResult {
-                            value: None,
-                            attempts: attempt + 1,
-                            total_duration: start_time.elapsed(),
-                            error_history,
-                            success: false,
-                        };
-                    }
-
-                    if let Some(delay) = delay_after {
-                        thread::sleep(delay);
-                    }
-
-                    attempt += 1;
-                }
+    /// Execute with both a retry callback and a rate limit handler.
+    pub fn execute_with_callback_and_rate_limit<T, F, C, H>(
+        &self,
+        mut operation: F,
+        mut on_retry: C,
+        rate_limit_handler: Option<H>,
+    ) -> RetryResult<T>
+    where
+        F: FnMut() -> Result<T>,
+        C: FnMut(u32, &str, Duration),
+        H: Fn(RateLimitInfo) -> RateLimitDecision,
+    {
+        let result = self.execute_inner(&mut operation, rate_limit_handler);
+        // Replay error history through callback
+        for entry in &result.error_history {
+            if let Some(ref err) = entry.error {
+                on_retry(entry.attempt, err, entry.delay_after.unwrap_or_default());
             }
         }
+        result
     }
 }
 
@@ -638,6 +831,57 @@ impl ResilientExecutor {
     pub fn reset_circuit(&mut self) {
         self.circuit_breaker.reset();
     }
+}
+
+/// Extract retry-after seconds from an error message.
+/// Looks for patterns like "retry after 30", "retry-after: 60", "retry_after=45".
+fn parse_retry_after(error: &str) -> Option<u64> {
+    let lower = error.to_lowercase();
+    // Try "retry.after.*N" pattern
+    if let Some(idx) = lower.find("retry") {
+        let after_retry = &lower[idx..];
+        // Find first number after "retry"
+        let mut num_start = None;
+        for (i, c) in after_retry.char_indices() {
+            if c.is_ascii_digit() {
+                if num_start.is_none() {
+                    num_start = Some(i);
+                }
+            } else if num_start.is_some() {
+                let n = &after_retry[num_start.unwrap()..i];
+                if let Ok(secs) = n.parse::<u64>() {
+                    if secs > 0 && secs < 86400 {
+                        return Some(secs);
+                    }
+                }
+                num_start = None;
+            }
+        }
+        // Check if number runs to end of string
+        if let Some(start) = num_start {
+            if let Ok(secs) = after_retry[start..].parse::<u64>() {
+                if secs > 0 && secs < 86400 {
+                    return Some(secs);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Try to extract a provider name from an error message.
+fn extract_provider(error: &str) -> String {
+    let lower = error.to_lowercase();
+    let providers = [
+        "openai", "anthropic", "claude", "gemini", "google", "bedrock",
+        "ollama", "lmstudio", "together", "groq", "huggingface", "cohere",
+    ];
+    for p in &providers {
+        if lower.contains(p) {
+            return p.to_string();
+        }
+    }
+    "unknown".to_string()
 }
 
 /// Simple pseudo-random number generator (no external deps)
@@ -920,5 +1164,153 @@ mod tests {
         // No DLQ attached — failure should not panic
         let result: Result<i32> = executor.execute(|| Err(anyhow!("some error")));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_rate_limit_strategy_immediate_fallback() {
+        let executor = RetryExecutor::new(RetryConfig {
+            max_retries: 3,
+            initial_delay: Duration::from_millis(1),
+            rate_limit_strategy: RateLimitStrategy::ImmediateFallback,
+            ..RetryConfig::default()
+        });
+
+        let result: RetryResult<i32> = executor.execute(|| {
+            Err(anyhow!("429 Too Many Requests"))
+        });
+
+        assert!(!result.success);
+        assert_eq!(result.attempts, 1); // No retries — immediate fallback
+    }
+
+    #[test]
+    fn test_rate_limit_strategy_retry_default() {
+        let counter = Arc::new(AtomicU32::new(0));
+        let counter_clone = counter.clone();
+
+        let executor = RetryExecutor::new(RetryConfig {
+            max_retries: 3,
+            initial_delay: Duration::from_millis(1),
+            rate_limit_strategy: RateLimitStrategy::Retry,
+            ..RetryConfig::default()
+        });
+
+        let result = executor.execute(|| {
+            let count = counter_clone.fetch_add(1, Ordering::SeqCst);
+            if count < 2 {
+                Err(anyhow!("429 rate limit exceeded"))
+            } else {
+                Ok(42)
+            }
+        });
+
+        assert!(result.success);
+        assert_eq!(result.attempts, 3);
+    }
+
+    #[test]
+    fn test_rate_limit_strategy_ask_user_abort() {
+        let executor = RetryExecutor::new(RetryConfig {
+            max_retries: 5,
+            initial_delay: Duration::from_millis(1),
+            rate_limit_strategy: RateLimitStrategy::AskUser,
+            ..RetryConfig::default()
+        });
+
+        let result: RetryResult<i32> = executor.execute_with_rate_limit_handler(
+            || Err(anyhow!("429 Too Many Requests from openai")),
+            |info| {
+                assert_eq!(info.provider, "openai");
+                RateLimitDecision::Abort
+            },
+        );
+
+        assert!(!result.success);
+        assert_eq!(result.attempts, 1);
+    }
+
+    #[test]
+    fn test_rate_limit_strategy_ask_user_switch_provider() {
+        let executor = RetryExecutor::new(RetryConfig {
+            max_retries: 5,
+            initial_delay: Duration::from_millis(1),
+            rate_limit_strategy: RateLimitStrategy::AskUser,
+            ..RetryConfig::default()
+        });
+
+        let result: RetryResult<i32> = executor.execute_with_rate_limit_handler(
+            || Err(anyhow!("429 rate limited by anthropic")),
+            |info| {
+                assert_eq!(info.provider, "anthropic");
+                RateLimitDecision::SwitchProvider
+            },
+        );
+
+        assert!(!result.success);
+        assert_eq!(result.attempts, 1);
+    }
+
+    #[test]
+    fn test_rate_limit_strategy_ask_user_retry_now() {
+        let counter = Arc::new(AtomicU32::new(0));
+        let counter_clone = counter.clone();
+
+        let executor = RetryExecutor::new(RetryConfig {
+            max_retries: 5,
+            initial_delay: Duration::from_millis(1),
+            rate_limit_strategy: RateLimitStrategy::AskUser,
+            ..RetryConfig::default()
+        });
+
+        let result = executor.execute_with_rate_limit_handler(
+            || {
+                let count = counter_clone.fetch_add(1, Ordering::SeqCst);
+                if count < 1 {
+                    Err(anyhow!("429 rate limit"))
+                } else {
+                    Ok(99)
+                }
+            },
+            |_info| RateLimitDecision::RetryNow,
+        );
+
+        assert!(result.success);
+        assert_eq!(result.value, Some(99));
+    }
+
+    #[test]
+    fn test_parse_retry_after() {
+        assert_eq!(parse_retry_after("429 Too Many Requests, retry after 30 seconds"), Some(30));
+        assert_eq!(parse_retry_after("rate limit, retry-after: 60"), Some(60));
+        assert_eq!(parse_retry_after("no retry info here"), None);
+        assert_eq!(parse_retry_after("retry_after=45"), Some(45));
+    }
+
+    #[test]
+    fn test_extract_provider() {
+        assert_eq!(extract_provider("429 from OpenAI API"), "openai");
+        assert_eq!(extract_provider("Anthropic rate limited"), "anthropic");
+        assert_eq!(extract_provider("some error"), "unknown");
+    }
+
+    #[test]
+    fn test_patient_preset() {
+        let config = RetryConfig::patient();
+        assert_eq!(config.max_retries, 3);
+        assert!(matches!(
+            config.rate_limit_strategy,
+            RateLimitStrategy::WaitForReset { max_wait_secs: 300, default_wait_secs: 60 }
+        ));
+    }
+
+    #[test]
+    fn test_rate_limit_strategy_serialization() {
+        let strategy = RateLimitStrategy::WaitForReset {
+            max_wait_secs: 120,
+            default_wait_secs: 30,
+        };
+        let json = serde_json::to_string(&strategy).unwrap();
+        let restored: RateLimitStrategy = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, strategy);
     }
 }

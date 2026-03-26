@@ -997,12 +997,15 @@ async fn chat_stream_handler(
 
     tokio::task::spawn_blocking(move || {
         let mut ass = assistant.blocking_lock();
-        ass.send_message_with_notes(message, &knowledge_context, &system_prompt, "");
+        // Use cancellable send so client disconnect aborts the LLM call
+        let cancel_token = ass.send_message_cancellable(message, &knowledge_context);
         loop {
             match ass.poll_response() {
                 Some(crate::messages::AiResponse::Chunk(token)) => {
                     if tx.blocking_send(StreamEvent::Token(token)).is_err() {
-                        break; // receiver dropped (client disconnected)
+                        // Client disconnected — cancel the LLM generation
+                        cancel_token.cancel();
+                        break;
                     }
                 }
                 Some(crate::messages::AiResponse::Complete(_)) => {
@@ -1299,18 +1302,18 @@ async fn openai_completions_handler(
                 }
             }
 
-            // Generate with streaming
+            // Generate with streaming + cancellation support
             let mut ass = assistant.blocking_lock();
-            ass.send_message_with_notes(
+            let cancel_token = ass.send_message_cancellable(
                 stream_user_msg,
                 &knowledge_context,
-                &stream_sys_prompt,
-                "",
             );
             loop {
                 match ass.poll_response() {
                     Some(crate::messages::AiResponse::Chunk(token)) => {
                         if tx.blocking_send(StreamEvent::Token(token)).is_err() {
+                            // Client disconnected — cancel the LLM generation
+                            cancel_token.cancel();
                             break;
                         }
                     }

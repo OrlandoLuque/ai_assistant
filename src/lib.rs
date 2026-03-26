@@ -306,8 +306,9 @@ pub use async_support::{
 };
 
 pub use retry::{
-    retry, retry_with_config, CircuitBreaker, CircuitState, ResilientExecutor, RetryAttempt,
-    RetryConfig, RetryExecutor, RetryResult, RetryableError,
+    retry, retry_with_config, CircuitBreaker, CircuitState, RateLimitDecision, RateLimitInfo,
+    RateLimitStrategy, ResilientExecutor, RetryAttempt, RetryConfig, RetryExecutor, RetryResult,
+    RetryableError,
 };
 
 pub use profiles::{ModelProfile, ProfileApplicator, ProfileBuilder, ProfileManager};

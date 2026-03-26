@@ -167,6 +167,34 @@ pub struct RagFeatures {
     /// Multi-modal retrieval (images, tables)
     /// Cost: Vision model | Requires: Vision-capable model
     pub multimodal: bool,
+
+    // === Context & Distribution (V62+) ===
+
+    /// Semantic deduplication with LLM fusion — merges similar chunks
+    /// into a single fused chunk preserving nuances from all originals.
+    /// More expensive than basic `deduplication` but higher quality.
+    /// Cost: 1 LLM call per similar group | Requires: Embeddings + LLM
+    pub semantic_dedup_fusion: bool,
+
+    /// Distributed RAG — search shared chunks across DHT network peers.
+    /// Cost: Network latency | Requires: distributed-network feature + peers
+    pub distributed_search: bool,
+
+    /// Adaptive context budget allocation — score-based token distribution
+    /// across RAG, memory, procedural, graph, and reference sources.
+    /// Uses ContextBudgetAllocator instead of hardcoded injection order.
+    /// Cost: None (allocation logic) | Requires: None
+    pub context_budget_allocation: bool,
+
+    /// FreshContext mode — discard conversation history to maximize
+    /// token budget for knowledge context (RAG + graph + memory).
+    /// Cost: None | Requires: RAG or graph or memory sources
+    pub fresh_context: bool,
+
+    /// Emotion-aware retrieval — detect user emotion and bias results
+    /// toward empathetic or tone-appropriate content.
+    /// Cost: 0-1 LLM calls | Requires: EmotionDetector
+    pub emotion_aware: bool,
 }
 
 impl RagFeatures {
@@ -206,6 +234,11 @@ impl RagFeatures {
             multi_layer_graph: true,
             raptor: true,
             multimodal: true,
+            semantic_dedup_fusion: true,
+            distributed_search: true,
+            context_budget_allocation: true,
+            fresh_context: true,
+            emotion_aware: true,
         }
     }
 
@@ -294,6 +327,21 @@ impl RagFeatures {
             count += 1;
         }
         if self.multimodal {
+            count += 1;
+        }
+        if self.semantic_dedup_fusion {
+            count += 1;
+        }
+        if self.distributed_search {
+            count += 1;
+        }
+        if self.context_budget_allocation {
+            count += 1;
+        }
+        if self.fresh_context {
+            count += 1;
+        }
+        if self.emotion_aware {
             count += 1;
         }
         count
@@ -385,6 +433,21 @@ impl RagFeatures {
         }
         if self.multimodal {
             features.push("multimodal");
+        }
+        if self.semantic_dedup_fusion {
+            features.push("semantic_dedup_fusion");
+        }
+        if self.distributed_search {
+            features.push("distributed_search");
+        }
+        if self.context_budget_allocation {
+            features.push("context_budget_allocation");
+        }
+        if self.fresh_context {
+            features.push("fresh_context");
+        }
+        if self.emotion_aware {
+            features.push("emotion_aware");
         }
         features
     }
@@ -509,6 +572,8 @@ impl RagTier {
                 deduplication: true,
                 diversity_mmr: true,
                 memory_augmented: true,
+                context_budget_allocation: true,
+                fresh_context: true,
                 ..Default::default()
             },
 
@@ -530,6 +595,10 @@ impl RagTier {
                 corrective_rag: true,
                 web_search_augmentation: true,
                 memory_augmented: true,
+                semantic_dedup_fusion: true,
+                context_budget_allocation: true,
+                fresh_context: true,
+                emotion_aware: true,
                 ..Default::default()
             },
 
@@ -553,6 +622,10 @@ impl RagTier {
                 web_search_augmentation: true,
                 memory_augmented: true,
                 agentic_mode: true,
+                semantic_dedup_fusion: true,
+                context_budget_allocation: true,
+                fresh_context: true,
+                emotion_aware: true,
                 ..Default::default()
             },
 
@@ -580,6 +653,11 @@ impl RagTier {
                 graph_rag: true,
                 entity_extraction: true,
                 multi_layer_graph: true,
+                semantic_dedup_fusion: true,
+                distributed_search: true,
+                context_budget_allocation: true,
+                fresh_context: true,
+                emotion_aware: true,
                 ..Default::default()
             },
 
@@ -1786,7 +1864,7 @@ mod tests {
         assert!(semantic.hybrid_search);
 
         let full = RagTier::Full.to_features();
-        assert_eq!(full.enabled_count(), 28); // All features
+        assert_eq!(full.enabled_count(), 33); // All features
     }
 
     #[test]
@@ -1938,8 +2016,8 @@ mod tests {
         let features = RagTier::Full.to_features();
         assert_eq!(
             features.enabled_count(),
-            28,
-            "Full tier must have all 28 features enabled"
+            33,
+            "Full tier must have all 33 features enabled"
         );
         assert!(features.fts_search);
         assert!(features.semantic_search);
@@ -1975,8 +2053,8 @@ mod tests {
         let features = RagFeatures::all();
         assert_eq!(
             features.enabled_count(),
-            28,
-            "all() must produce exactly 28 enabled features"
+            33,
+            "all() must produce exactly 33 features"
         );
     }
 

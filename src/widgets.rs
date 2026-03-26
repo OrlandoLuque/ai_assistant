@@ -4623,6 +4623,34 @@ pub fn rag_features_editor(ui: &mut Ui, features: &mut RagFeatures) -> bool {
                 .checkbox(&mut features.multimodal, "Multimodal")
                 .changed();
             ui.end_row();
+
+            ui.add_space(4.0);
+            ui.end_row();
+
+            // Context & Distribution
+            ui.label(RichText::new("Context & Distribution").strong().size(11.0));
+            ui.end_row();
+
+            changed |= ui
+                .checkbox(&mut features.semantic_dedup_fusion, "Semantic dedup fusion")
+                .changed();
+            changed |= ui
+                .checkbox(&mut features.context_budget_allocation, "Context budget alloc")
+                .changed();
+            ui.end_row();
+
+            changed |= ui
+                .checkbox(&mut features.fresh_context, "FreshContext mode")
+                .changed();
+            changed |= ui
+                .checkbox(&mut features.emotion_aware, "Emotion-aware")
+                .changed();
+            ui.end_row();
+
+            changed |= ui
+                .checkbox(&mut features.distributed_search, "Distributed search")
+                .changed();
+            ui.end_row();
         });
 
     changed

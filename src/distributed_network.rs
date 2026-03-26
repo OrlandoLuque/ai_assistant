@@ -1465,6 +1465,17 @@ impl EventLoop {
             }),
             NodeMessage::ReduceResult { .. } => None,
 
+            // --- Task Cancellation ---
+            NodeMessage::CancelTask { job_id, .. } => {
+                // Acknowledge cancellation. The application layer should check
+                // MapReduceJob::is_cancelled() and stop processing.
+                Some(NodeMessage::CancelAck {
+                    job_id: job_id.clone(),
+                    node_id: self_node_id.0.to_vec(),
+                })
+            }
+            NodeMessage::CancelAck { .. } => None, // Informational only
+
             // --- Vector DB ---
             NodeMessage::VectorSearch { request_id, .. } => {
                 // VectorDb lives at a higher layer. Return empty results here;

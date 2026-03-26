@@ -86,6 +86,12 @@ pub struct DistributedRagConfig {
     pub max_distributed_chunks: usize,
     /// Whether to encrypt shared chunks in the DHT.
     pub encrypt_shared: bool,
+    /// Timeout per distributed query in seconds. If a peer doesn't respond
+    /// within this time, its results are skipped. Default: 5 seconds.
+    pub query_timeout_secs: u64,
+    /// Whether distributed queries are cancellable. When true, the query
+    /// checks a cancellation flag between peer responses and stops early.
+    pub cancellable: bool,
 }
 
 impl Default for DistributedRagConfig {
@@ -97,6 +103,8 @@ impl Default for DistributedRagConfig {
             refresh_interval_secs: 3600,  // refresh every hour
             max_distributed_chunks: 20,
             encrypt_shared: false,
+            query_timeout_secs: 5,
+            cancellable: true,
         }
     }
 }

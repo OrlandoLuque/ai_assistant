@@ -2330,6 +2330,14 @@ impl AiAssistant {
                         }
                         AiResponse::Cancelled(partial) => {
                             self.current_response = partial.clone();
+                            // Save partial response to conversation so the user
+                            // can later send "continue" and the model sees context.
+                            if !partial.is_empty() {
+                                let partial_msg = ChatMessage::assistant(
+                                    &format!("{}\n\n[... response interrupted]", partial),
+                                );
+                                self.conversation.push(partial_msg);
+                            }
                             self.is_generating = false;
                             self.rx_response = None;
                             self.cancel_token = None;

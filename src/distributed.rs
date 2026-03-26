@@ -11,6 +11,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -1264,6 +1265,9 @@ pub struct MapReduceJob {
     // Timing
     started_at: Option<Instant>,
     completed_at: Option<Instant>,
+
+    // Cancellation
+    cancelled: Arc<AtomicBool>,
 }
 
 impl MapReduceJob {
@@ -1283,7 +1287,25 @@ impl MapReduceJob {
             reduced_keys: Arc::new(Mutex::new(0)),
             started_at: None,
             completed_at: None,
+            cancelled: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Get a cancellation handle that can be shared across threads.
+    /// Set to `true` to cancel the job — map/reduce loops will stop
+    /// at the next chunk boundary.
+    pub fn cancellation_handle(&self) -> Arc<AtomicBool> {
+        self.cancelled.clone()
+    }
+
+    /// Cancel this job. In-progress map/reduce will stop at next chunk.
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
+    }
+
+    /// Check if this job has been cancelled.
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
     }
 
     /// Set configuration
@@ -1322,15 +1344,28 @@ impl MapReduceJob {
         use rayon::prelude::*;
 
         self.started_at = Some(Instant::now());
+        self.cancelled.store(false, Ordering::SeqCst);
 
         // Phase 1: Parallel Map
         self.status = JobStatus::Mapping;
         let map_fn = &self.map_fn;
+        let cancelled = &self.cancelled;
         let all_outputs: Vec<Vec<MapOutput>> = self
             .input_chunks
             .par_iter()
-            .map(|chunk| (map_fn)(chunk))
+            .map(|chunk| {
+                // Check cancellation before each chunk
+                if cancelled.load(Ordering::SeqCst) {
+                    return Vec::new();
+                }
+                (map_fn)(chunk)
+            })
             .collect();
+
+        if self.is_cancelled() {
+            self.status = JobStatus::Failed("Cancelled during map phase".into());
+            return Err("Job cancelled during map phase".into());
+        }
 
         // Merge map outputs into grouped structure (sequential — fast, just inserts)
         {
@@ -1349,6 +1384,11 @@ impl MapReduceJob {
         // Phase 2: Shuffle (already grouped by key in map_outputs)
         self.status = JobStatus::Shuffling;
 
+        if self.is_cancelled() {
+            self.status = JobStatus::Failed("Cancelled during shuffle phase".into());
+            return Err("Job cancelled during shuffle phase".into());
+        }
+
         // Optional: Apply combiner
         if self.config.use_combiner {
             if let Some(ref combine_fn) = self.combine_fn {
@@ -1366,12 +1406,23 @@ impl MapReduceJob {
         self.status = JobStatus::Reducing;
         let map_outputs = self.map_outputs.lock().unwrap_or_else(|e| e.into_inner());
         let reduce_fn = &self.reduce_fn;
+        let cancelled = &self.cancelled;
 
         let entries: Vec<(&String, &Vec<Vec<u8>>)> = map_outputs.iter().collect();
         let results: Vec<ReduceOutput> = entries
             .par_iter()
-            .map(|(key, values)| (reduce_fn)(key, (*values).clone()))
+            .filter_map(|(key, values)| {
+                if cancelled.load(Ordering::SeqCst) {
+                    return None;
+                }
+                Some((reduce_fn)(key, (*values).clone()))
+            })
             .collect();
+
+        if self.is_cancelled() {
+            self.status = JobStatus::Failed("Cancelled during reduce phase".into());
+            return Err("Job cancelled during reduce phase".into());
+        }
 
         *self.reduced_keys.lock().unwrap_or_else(|e| e.into_inner()) = results.len();
 
@@ -1996,6 +2047,20 @@ pub enum NodeMessage {
         job_id: String,
         key: String,
         value: Vec<u8>,
+    },
+
+    // --- Task Cancellation ---
+    /// Cancel all in-flight tasks for a given job. Workers should stop processing
+    /// and discard partial results. Coordinators send this when the user cancels
+    /// or the job times out.
+    CancelTask {
+        job_id: String,
+        reason: String,
+    },
+    /// Acknowledge that a task was cancelled (optional, for audit).
+    CancelAck {
+        job_id: String,
+        node_id: Vec<u8>,
     },
 
     // --- Cluster Management ---

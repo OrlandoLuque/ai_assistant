@@ -4239,3 +4239,15 @@ Defines HOW an autonomous agent approaches tasks, independent of WHAT it can do.
 ## 221. Quality Gates & Review Triggers
 
 `QualityGate` defines pass/fail checks that gate progress between workflow phases: `GateCheck` (OutputNotEmpty, ContainsKeywords, NoErrors, CostWithinBudget, TimeWithinLimit, LlmJudge) with `GateAction` on failure (Retry, AskUser, Abort, ContinueWithWarning). `ReviewTriggers` define 8 conditions that force a review cycle: after N iterations, after milestone completion, after tool failure, after cost threshold (USD), after time threshold (seconds), on user interrupt, periodic self-check with configurable interval. The `should_review()` method evaluates all conditions and returns true if any trigger fires. Wired into `AutonomousAgent` via `should_review_now()`.
+
+## 222. Rate Limit Strategy
+
+`RateLimitStrategy` controls what happens when an LLM provider returns HTTP 429 (rate limited). Four strategies: `Retry` (normal exponential backoff, default), `WaitForReset { max_wait_secs, default_wait_secs }` (wait for the retry-after duration then retry — best for single-provider setups), `AskUser` (invoke a callback with `RateLimitInfo` and let the user choose: Wait/RetryNow/SwitchProvider/Abort), `ImmediateFallback` (fail immediately so `FallbackChain` tries the next provider). Configured per `RetryConfig` and respected by `RetryExecutor`. Preset `RetryConfig::patient()` uses WaitForReset(300s max, 60s default). The `retry-after` header is parsed automatically from error messages.
+
+## 223. Cancellation Propagation
+
+End-to-end cancellation across all subsystems. `CancellationToken` (AtomicBool) is checked between streaming chunks by providers. When cancelled, the partial response is saved to conversation history with `[... response interrupted]` so the user can send "continue" and the model picks up where it left off. HTTP streaming endpoints (`/chat/stream`, `/v1/completions`) now use `send_message_cancellable()` and call `cancel_token.cancel()` when the client disconnects. `MapReduceJob` has `cancel()`/`is_cancelled()` checked between rayon chunks. P2P protocol includes `CancelTask { job_id, reason }` and `CancelAck` messages so coordinators can notify remote workers. `DistributedRagConfig` adds `query_timeout_secs` and `cancellable` fields for distributed RAG query cancellation.
+
+## 224. Extended RAG Features
+
+5 new features added to `RagFeatures` (28→33 total): `semantic_dedup_fusion` (LLM-based fusion of similar chunks, from Thorough tier), `distributed_search` (DHT peer search, from Graph tier), `context_budget_allocation` (score-based token distribution via ContextBudgetAllocator, from Enhanced tier), `fresh_context` (discard conversation history to maximize knowledge tokens, from Enhanced tier), `emotion_aware` (detect user emotion and bias retrieval, from Thorough tier). All tier presets updated. Widget `rag_features_editor` includes new "Context & Distribution" section.

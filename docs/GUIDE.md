@@ -9770,3 +9770,102 @@ session.add_agent("reviewer", reviewer);
 session.add_agent("fixer", fixer);
 // Shared TaskBoard + InteractionManager
 ```
+
+---
+
+## 169. Rate Limit Strategy (V62)
+
+Configurable behavior when an LLM provider returns HTTP 429.
+
+### Strategies
+
+```rust
+use ai_assistant::{RetryConfig, RateLimitStrategy};
+
+// Default: normal exponential backoff
+let config = RetryConfig::default(); // RateLimitStrategy::Retry
+
+// Wait for provider to reset (single-provider setup)
+let config = RetryConfig::patient(); // WaitForReset(300s max, 60s default)
+
+// Skip immediately to next provider
+let config = RetryConfig::fast(); // ImmediateFallback
+
+// Ask the user what to do
+let config = RetryConfig {
+    rate_limit_strategy: RateLimitStrategy::AskUser,
+    ..RetryConfig::default()
+};
+```
+
+### User Decision Callback
+
+```rust
+use ai_assistant::{RetryExecutor, RateLimitDecision, RateLimitInfo};
+
+let executor = RetryExecutor::new(config);
+let result = executor.execute_with_rate_limit_handler(
+    || call_provider(),
+    |info: RateLimitInfo| {
+        println!("Rate limited by {}! retry-after: {:?}s",
+            info.provider, info.retry_after_secs);
+        // User decides:
+        RateLimitDecision::Wait          // wait retry-after seconds
+        // RateLimitDecision::RetryNow   // retry immediately
+        // RateLimitDecision::SwitchProvider  // try next provider
+        // RateLimitDecision::Abort      // give up
+    },
+);
+```
+
+---
+
+## 170. Cancellation Propagation (V62)
+
+End-to-end cancellation across all subsystems.
+
+### Streaming Cancellation
+
+```rust
+// Start cancellable generation
+let token = assistant.send_message_cancellable("Explain quantum physics".into(), "");
+
+// Cancel from another thread or UI button
+token.cancel();
+
+// Partial response is saved to conversation:
+// [assistant]: "Quantum physics describes...\n\n[... response interrupted]"
+
+// User can continue later:
+assistant.send_message("continue".into());
+// Model sees the partial response and continues from there
+```
+
+### HTTP Endpoints
+
+Both `/chat/stream` and `/v1/chat/completions` (streaming) now detect client disconnection and call `cancel_token.cancel()`, stopping the upstream LLM generation.
+
+### MapReduce Cancellation
+
+```rust
+let handle = job.cancellation_handle(); // Arc<AtomicBool>
+
+// In another thread:
+handle.store(true, Ordering::SeqCst);
+// Or directly:
+job.cancel();
+
+// execute() checks between chunks and returns Err("Job cancelled")
+```
+
+### P2P Task Cancellation
+
+```rust
+// Coordinator sends CancelTask to all workers
+let msg = NodeMessage::CancelTask {
+    job_id: "word-count".into(),
+    reason: "User cancelled".into(),
+};
+network.broadcast(msg);
+// Workers respond with CancelAck
+```
