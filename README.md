@@ -13,7 +13,7 @@ A comprehensive Rust library for LLM integration — local and cloud. 13+ provid
 
 > **Status: Experimental**
 >
-> This project compiles and passes 7,179+ tests, but it has not been validated in production
+> This project compiles and passes 7,198+ tests, but it has not been validated in production
 > or real-world usage. Developed iteratively with AI assistance, some modules may be
 > incomplete, loosely wired, or tested only at a surface level. A comprehensive review is
 > pending. **Use at your own risk.**
@@ -138,7 +138,7 @@ cargo build --release --bin ai_assistant_cli --features "full,butler"
 
 ### Code Quality
 - **Zero `.unwrap()` in production**: Proper error handling across all files
-- **7,179+ tests**: Comprehensive unit tests with 0 clippy warnings
+- **7,198+ tests**: Comprehensive unit tests with 0 clippy warnings
 - **338 source files**: Fully implemented — zero stubs or TODOs
 - **55 feature flags**: Granular dependency control
 - **~386,000 lines of Rust**: Single crate, modular architecture
