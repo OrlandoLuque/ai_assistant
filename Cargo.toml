@@ -205,6 +205,10 @@ advanced-memory = []
 # Not in 'full' by default — requires tokio for async streams. Opt-in: --features voice-agent
 voice-agent = ["dep:tokio"]
 
+# Real audio I/O: microphone capture, speaker output, sample rate conversion, ring buffer
+# Not in 'full' by default — heavy platform deps (WASAPI/ALSA/CoreAudio). Opt-in: --features audio-io
+audio-io = ["dep:cpal", "dep:hound", "dep:rubato", "dep:ringbuf", "dep:eframe", "egui-widgets", "audio", "voice-agent"]
+
 # Media generation: image (DALL-E, SD, Flux) and video (Runway, Sora) generation
 # Not in 'full' by default — involves external API calls. Opt-in: --features media-generation
 media-generation = []
@@ -352,6 +356,14 @@ getrandom = { version = "0.2", features = ["js"], optional = true }
 bollard = { version = "0.18", optional = true, default-features = false, features = ["ssl", "time"] }
 # Optional whisper.cpp bindings for local STT (heavy native dep, links to C++)
 whisper-rs = { version = "0.15", optional = true }
+# Optional audio I/O for real-time microphone/speaker access (platform: WASAPI/ALSA/CoreAudio)
+cpal = { version = "0.15", optional = true }
+# Optional WAV file read/write
+hound = { version = "3.5", optional = true }
+# Optional high-quality sample rate conversion
+rubato = { version = "0.16", optional = true }
+# Optional lock-free ring buffer for real-time audio threads
+ringbuf = { version = "0.4", optional = true }
 # Optional eframe for GUI application (desktop window with egui)
 eframe = { version = "0.27", optional = true, default-features = false, features = ["default_fonts", "glow"] }
 # Optional native file dialog (open/save file pickers)
@@ -439,6 +451,11 @@ required-features = ["gui"]
 name = "ai_gui-pro"
 path = "src/bin/ai_gui-pro.rs"
 required-features = ["gui-pro"]
+
+[[bin]]
+name = "ai_virtual_mic"
+path = "src/bin/ai_virtual_mic.rs"
+required-features = ["audio-io"]
 
 [[example]]
 name = "autonomous_agent"

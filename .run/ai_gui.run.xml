@@ -1,0 +1,13 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="ai_gui" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
+    <option name="command" value="run --bin ai_gui --features gui" />
+    <option name="workingDirectory" value="file://$PROJECT_DIR$" />
+    <option name="emulateTerminal" value="true" />
+    <option name="channel" value="DEFAULT" />
+    <option name="isRedirectInput" value="false" />
+    <envs />
+    <method v="2">
+      <option name="CARGO.BUILD_TASK" enabled="true" />
+    </method>
+  </configuration>
+</component>

@@ -1,0 +1,13 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Tests (full)" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
+    <option name="command" value="test --features full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,voice-agent,workflows,prompt-signatures,a2a,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite,chaos-testing --lib" />
+    <option name="workingDirectory" value="file://$PROJECT_DIR$" />
+    <option name="emulateTerminal" value="true" />
+    <option name="channel" value="DEFAULT" />
+    <option name="isRedirectInput" value="false" />
+    <envs />
+    <method v="2">
+      <option name="CARGO.BUILD_TASK" enabled="true" />
+    </method>
+  </configuration>
+</component>

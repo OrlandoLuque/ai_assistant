@@ -1,0 +1,13 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Tests (audio+voice)" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
+    <option name="command" value="test --features full,audio,voice-agent --lib -- audio_filter:: voice_agent:: speech:: emotion_detection:: audio_model_registry:: mcp_voice_tools::" />
+    <option name="workingDirectory" value="file://$PROJECT_DIR$" />
+    <option name="emulateTerminal" value="true" />
+    <option name="channel" value="DEFAULT" />
+    <option name="isRedirectInput" value="false" />
+    <envs />
+    <method v="2">
+      <option name="CARGO.BUILD_TASK" enabled="true" />
+    </method>
+  </configuration>
+</component>

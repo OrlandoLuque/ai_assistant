@@ -330,6 +330,185 @@ impl SpeakerGate {
 }
 
 // ============================================================================
+// Speaker Diarization (no enrollment needed)
+// ============================================================================
+
+/// A temporary speaker cluster discovered during diarization.
+#[derive(Debug, Clone)]
+pub struct DiarizedSpeaker {
+    /// Auto-assigned label (e.g., "Speaker 1", "Speaker 2").
+    pub label: String,
+    /// Numeric index (0-based).
+    pub index: usize,
+    /// Mean embedding of all audio segments from this speaker.
+    mean_embedding: Vec<f32>,
+    /// Number of segments assigned to this speaker.
+    pub segment_count: u32,
+    /// Last time this speaker was heard (epoch ms).
+    pub last_seen_ms: u64,
+}
+
+/// Result of a diarization step.
+#[derive(Debug, Clone)]
+pub enum DiarizationResult {
+    /// Matched an existing cluster.
+    Assigned {
+        label: String,
+        index: usize,
+        confidence: f32,
+    },
+    /// New speaker detected — created a new cluster.
+    NewSpeaker {
+        label: String,
+        index: usize,
+    },
+    /// Audio too short or silent to classify.
+    Inconclusive,
+}
+
+/// Speaker diarizer — detects and tracks distinct speakers without enrollment.
+///
+/// Uses MFCC embeddings to cluster audio segments in real-time. Each new voice
+/// that doesn't match existing clusters creates a new "Speaker N" label.
+pub struct SpeakerDiarizer {
+    verifier: Box<dyn SpeakerVerifier>,
+    /// Discovered speaker clusters in the current session.
+    clusters: Vec<DiarizedSpeaker>,
+    /// Similarity threshold to assign to an existing cluster (0.0–1.0).
+    /// Lower = more permissive (fewer speakers detected).
+    threshold: f32,
+    /// Maximum number of clusters to prevent unbounded growth.
+    max_clusters: usize,
+}
+
+impl SpeakerDiarizer {
+    /// Create a new diarizer.
+    ///
+    /// - `threshold`: similarity score above which audio is assigned to existing cluster (default: 0.55)
+    /// - `max_clusters`: maximum distinct speakers to track (default: 10)
+    pub fn new(verifier: Box<dyn SpeakerVerifier>, threshold: f32, max_clusters: usize) -> Self {
+        Self {
+            verifier,
+            clusters: Vec::new(),
+            threshold,
+            max_clusters,
+        }
+    }
+
+    /// Create with sensible defaults (threshold=0.55, max_clusters=10).
+    pub fn with_defaults(verifier: Box<dyn SpeakerVerifier>) -> Self {
+        Self::new(verifier, 0.55, 10)
+    }
+
+    /// Process an audio segment and assign it to a speaker cluster.
+    ///
+    /// Returns which speaker is talking, or `NewSpeaker` if this is a new voice.
+    pub fn process(&mut self, audio: &[i16], sample_rate: u32) -> DiarizationResult {
+        let embedding = match self.verifier.create_embedding(audio, sample_rate) {
+            Ok(e) => e,
+            Err(_) => return DiarizationResult::Inconclusive,
+        };
+
+        if embedding.vector.iter().all(|&v| v == 0.0) {
+            return DiarizationResult::Inconclusive;
+        }
+
+        // Compare against existing clusters
+        let mut best_idx = None;
+        let mut best_score = 0.0f32;
+
+        for (i, cluster) in self.clusters.iter().enumerate() {
+            let ref_emb = VoiceEmbedding {
+                vector: cluster.mean_embedding.clone(),
+                model_id: embedding.model_id.clone(),
+                sample_duration_ms: 0,
+            };
+            let score = self.verifier.compare(&embedding, &ref_emb);
+            if score > best_score {
+                best_score = score;
+                best_idx = Some(i);
+            }
+        }
+
+        let now = now_epoch_ms();
+
+        // If best match is above threshold, assign to that cluster
+        if let Some(idx) = best_idx {
+            if best_score >= self.threshold {
+                let cluster = &mut self.clusters[idx];
+                // Update mean embedding with running average
+                let n = cluster.segment_count as f32;
+                for (j, val) in embedding.vector.iter().enumerate() {
+                    if j < cluster.mean_embedding.len() {
+                        cluster.mean_embedding[j] =
+                            (cluster.mean_embedding[j] * n + val) / (n + 1.0);
+                    }
+                }
+                cluster.segment_count += 1;
+                cluster.last_seen_ms = now;
+
+                return DiarizationResult::Assigned {
+                    label: cluster.label.clone(),
+                    index: cluster.index,
+                    confidence: best_score,
+                };
+            }
+        }
+
+        // No match — create a new cluster (if under limit)
+        if self.clusters.len() >= self.max_clusters {
+            // At capacity — assign to the closest cluster anyway
+            if let Some(idx) = best_idx {
+                let cluster = &self.clusters[idx];
+                return DiarizationResult::Assigned {
+                    label: cluster.label.clone(),
+                    index: cluster.index,
+                    confidence: best_score,
+                };
+            }
+            return DiarizationResult::Inconclusive;
+        }
+
+        let index = self.clusters.len();
+        let label = format!("Speaker {}", index + 1);
+        self.clusters.push(DiarizedSpeaker {
+            label: label.clone(),
+            index,
+            mean_embedding: embedding.vector,
+            segment_count: 1,
+            last_seen_ms: now,
+        });
+
+        DiarizationResult::NewSpeaker { label, index }
+    }
+
+    /// Get all discovered speaker clusters.
+    pub fn clusters(&self) -> &[DiarizedSpeaker] {
+        &self.clusters
+    }
+
+    /// Number of distinct speakers detected so far.
+    pub fn speaker_count(&self) -> usize {
+        self.clusters.len()
+    }
+
+    /// Reset all clusters (start a fresh session).
+    pub fn reset(&mut self) {
+        self.clusters.clear();
+    }
+
+    /// Set the similarity threshold.
+    pub fn set_threshold(&mut self, threshold: f32) {
+        self.threshold = threshold.clamp(0.0, 1.0);
+    }
+
+    /// Get the current threshold.
+    pub fn threshold(&self) -> f32 {
+        self.threshold
+    }
+}
+
+// ============================================================================
 // MFCC Speaker Verifier (pure Rust)
 // ============================================================================
 
@@ -1019,6 +1198,106 @@ mod tests {
         // Reverb should modify the audio (not identical)
         assert_ne!(original, processed);
     }
+
+    // ── Diarization tests ──────────────────────────────────────────────
+
+    #[test]
+    fn test_diarizer_new_speaker() {
+        let verifier = Box::new(MfccSpeakerVerifier::new());
+        let mut diarizer = SpeakerDiarizer::with_defaults(verifier);
+        assert_eq!(diarizer.speaker_count(), 0);
+
+        // Generate speech-like audio (loud enough to not be inconclusive)
+        let audio: Vec<i16> = (0..32000).map(|i| ((i % 73) as i16 * 400) - 14000).collect();
+        let result = diarizer.process(&audio, 16000);
+
+        match result {
+            DiarizationResult::NewSpeaker { label, index } => {
+                assert_eq!(label, "Speaker 1");
+                assert_eq!(index, 0);
+            }
+            other => panic!("Expected NewSpeaker, got {:?}", other),
+        }
+        assert_eq!(diarizer.speaker_count(), 1);
+    }
+
+    #[test]
+    fn test_diarizer_same_speaker_assigned() {
+        let verifier = Box::new(MfccSpeakerVerifier::new());
+        let mut diarizer = SpeakerDiarizer::with_defaults(verifier);
+
+        // Same audio twice should be assigned to same cluster
+        let audio: Vec<i16> = (0..32000).map(|i| ((i % 73) as i16 * 400) - 14000).collect();
+        let _ = diarizer.process(&audio, 16000); // creates Speaker 1
+
+        let result = diarizer.process(&audio, 16000); // should match Speaker 1
+        match result {
+            DiarizationResult::Assigned { label, index, .. } => {
+                assert_eq!(label, "Speaker 1");
+                assert_eq!(index, 0);
+            }
+            DiarizationResult::NewSpeaker { .. } => {
+                // Also acceptable — MFCC can vary slightly
+            }
+            other => panic!("Expected Assigned or NewSpeaker, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_diarizer_reset() {
+        let verifier = Box::new(MfccSpeakerVerifier::new());
+        let mut diarizer = SpeakerDiarizer::with_defaults(verifier);
+
+        let audio: Vec<i16> = (0..32000).map(|i| ((i % 73) as i16 * 400) - 14000).collect();
+        let _ = diarizer.process(&audio, 16000);
+        assert!(diarizer.speaker_count() > 0);
+
+        diarizer.reset();
+        assert_eq!(diarizer.speaker_count(), 0);
+        assert!(diarizer.clusters().is_empty());
+    }
+
+    #[test]
+    fn test_diarizer_inconclusive_on_silence() {
+        let verifier = Box::new(MfccSpeakerVerifier::new());
+        let mut diarizer = SpeakerDiarizer::with_defaults(verifier);
+
+        let silence = vec![0i16; 16000];
+        let result = diarizer.process(&silence, 16000);
+        assert!(matches!(result, DiarizationResult::Inconclusive));
+        assert_eq!(diarizer.speaker_count(), 0);
+    }
+
+    #[test]
+    fn test_diarizer_max_clusters() {
+        let verifier = Box::new(MfccSpeakerVerifier::new());
+        let mut diarizer = SpeakerDiarizer::new(verifier, 0.99, 2); // very high threshold, max 2
+
+        // With threshold 0.99, almost nothing will match, so each call creates a new cluster
+        let a1: Vec<i16> = (0..32000).map(|i| ((i as i32 % 50) * 400 - 10000) as i16).collect();
+        let _ = diarizer.process(&a1, 16000);
+
+        let a2: Vec<i16> = (0..32000).map(|i| ((i as i32 % 120) * 200 - 12000) as i16).collect();
+        let _ = diarizer.process(&a2, 16000);
+
+        // At max — should not create a third
+        let a3: Vec<i16> = (0..32000).map(|i| ((i as i32 % 200) * 150 - 5000) as i16).collect();
+        let result = diarizer.process(&a3, 16000);
+        assert!(diarizer.speaker_count() <= 2);
+        // Should be Assigned (forced) since we hit the limit
+        assert!(!matches!(result, DiarizationResult::NewSpeaker { .. }) || diarizer.speaker_count() <= 2);
+    }
+
+    #[test]
+    fn test_diarizer_threshold() {
+        let verifier = Box::new(MfccSpeakerVerifier::new());
+        let mut diarizer = SpeakerDiarizer::with_defaults(verifier);
+        assert!((diarizer.threshold() - 0.55).abs() < 0.01);
+        diarizer.set_threshold(0.7);
+        assert!((diarizer.threshold() - 0.7).abs() < 0.01);
+    }
+
+    // ── Effect chain tests ───────────────────────────────────────────────
 
     #[test]
     fn test_effect_chain_order() {

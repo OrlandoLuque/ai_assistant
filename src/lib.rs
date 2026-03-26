@@ -192,6 +192,8 @@ pub mod data_source_client;
 pub mod event_source;
 pub mod topic_matcher;
 pub mod audio_filter;
+pub mod audio_model_registry;
+pub mod mcp_voice_tools;
 pub mod debug;
 pub mod diff;
 pub mod error;
@@ -404,9 +406,13 @@ pub use topic_matcher::{
 
 pub use audio_filter::{
     AcousticEchoCanceller, ActiveSpeakerInfo, AudioEffect, AudioEffectChain, AudioSeparator,
-    AutoGainControl, Compressor, Distortion, EffectCategory, MfccSpeakerVerifier, NoiseGate,
-    NoiseSuppressor, Reverb, SeparatedTrack, SpeakerGate, SpeakerIdentification, SpeakerProfile,
-    SpeakerVerifier, VoiceEmbedding,
+    AutoGainControl, Compressor, DiarizationResult, DiarizedSpeaker, Distortion, EffectCategory,
+    MfccSpeakerVerifier, NoiseGate, NoiseSuppressor, Reverb, SeparatedTrack, SpeakerDiarizer,
+    SpeakerGate, SpeakerIdentification, SpeakerProfile, SpeakerVerifier, VoiceEmbedding,
+};
+
+pub use audio_model_registry::{
+    AudioModelCategory, AudioModelInfo, AudioModelRegistry, ModelStatus,
 };
 
 pub use config_security::{
@@ -2095,10 +2101,12 @@ pub use emotion_detection::{
 
 #[cfg(feature = "audio")]
 pub use speech::{
-    create_speech_provider, AudioFormat, CoquiTtsProvider, GoogleSpeechProvider,
-    ElevenLabsProvider, ExpressiveOpenAiTtsProvider, LocalSpeechProvider, OpenAISpeechProvider,
+    assess_enrollment_quality, create_speech_provider, AudioFormat, ClonedVoiceId,
+    ClonedVoiceProfile, CoquiTtsProvider, ElevenLabsCloneProvider, ElevenLabsProvider,
+    ExpressiveOpenAiTtsProvider, GoogleSpeechProvider, LocalSpeechProvider, OpenAISpeechProvider,
     PiperTtsProvider, SpeechConfig, SpeechProvider, SynthesisOptions, SynthesisResult,
-    TranscriptionResult, TranscriptionSegment, VoiceCodec, VoiceTokens,
+    TranscriptionResult, TranscriptionSegment, VoiceCloneProvider, VoiceCodec, VoiceTokens,
+    XttsCloneProvider,
 };
 
 #[cfg(feature = "whisper-local")]
@@ -2224,9 +2232,9 @@ pub mod voice_agent;
 #[cfg(feature = "voice-agent")]
 pub use voice_agent::{
     AudioChunk, AudioFormat as VoiceAudioFormat, ConversationTurn as VoiceTurn, InMemoryTransport,
-    InterruptionEvent, InterruptionPolicy, TurnManager, TurnPolicy, TurnSpeaker, VadConfig,
-    VadDetector, VadEvent, VoiceAgent, VoiceAgentConfig, VoiceSession, VoiceSessionState,
-    VoiceTransport,
+    InterruptionEvent, InterruptionPolicy, PipelineLatency, TurnManager, TurnPolicy,
+    TurnSpeaker, VadConfig, VadDetector, VadEvent, VoiceAgent, VoiceAgentConfig, VoiceSession,
+    VoiceLlmCallback, VoiceSessionState, VoiceTransport,
 };
 
 // =============================================================================

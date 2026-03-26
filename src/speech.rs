@@ -1612,6 +1612,483 @@ impl VoiceTokens {
 }
 
 // ============================================================================
+// Voice Cloning (trait + provider implementations)
+// ============================================================================
+
+/// Unique identifier for a cloned voice.
+pub type ClonedVoiceId = String;
+
+/// Metadata for a cloned voice profile.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClonedVoiceProfile {
+    /// Unique voice identifier (provider-specific).
+    pub voice_id: ClonedVoiceId,
+    /// Provider that created this clone (e.g. "elevenlabs", "xtts").
+    pub provider: String,
+    /// Human-readable name for this voice.
+    pub name: String,
+    /// When the clone was created.
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    /// Quality score from enrollment assessment (0.0 to 1.0).
+    pub quality_score: f32,
+    /// Whether the user has given consent for this clone.
+    pub consent_given: bool,
+}
+
+/// Trait for voice cloning providers.
+///
+/// Abstracts the differences between cloud cloning (ElevenLabs: upload samples
+/// → get voice_id) and local cloning (XTTS: provide reference audio at
+/// synthesis time).
+pub trait VoiceCloneProvider: Send + Sync {
+    /// Enroll a new voice from audio samples.
+    ///
+    /// Returns the cloned voice ID that can be used for synthesis.
+    /// The audio should be clean speech, minimum 3 seconds.
+    fn enroll(
+        &self,
+        audio: &[u8],
+        format: AudioFormat,
+        name: &str,
+        sample_rate: u32,
+    ) -> Result<ClonedVoiceId>;
+
+    /// Synthesize speech using a cloned voice.
+    fn synthesize_cloned(
+        &self,
+        text: &str,
+        voice_id: &ClonedVoiceId,
+        options: &SynthesisOptions,
+    ) -> Result<SynthesisResult>;
+
+    /// List all cloned voices for this provider.
+    fn list_cloned_voices(&self) -> Result<Vec<ClonedVoiceProfile>>;
+
+    /// Delete a cloned voice.
+    fn delete_cloned_voice(&self, voice_id: &ClonedVoiceId) -> Result<()>;
+
+    /// Check if the provider is available and configured.
+    fn is_available(&self) -> bool;
+
+    /// Provider name for diagnostics.
+    fn clone_provider_name(&self) -> &str;
+}
+
+/// Assess enrollment audio quality.
+///
+/// Returns (quality_score, warnings). Quality score is 0.0 to 1.0.
+/// Warns if audio is too short, too quiet, or has silence.
+pub fn assess_enrollment_quality(
+    audio_bytes: &[u8],
+    sample_rate: u32,
+) -> (f32, Vec<String>) {
+    let mut warnings = Vec::new();
+    let mut score = 1.0f32;
+
+    // Check minimum duration (3 seconds)
+    let bytes_per_sample = 2u32; // PCM16
+    let total_samples = audio_bytes.len() as u32 / bytes_per_sample;
+    let duration_secs = if sample_rate > 0 {
+        total_samples as f32 / sample_rate as f32
+    } else {
+        0.0
+    };
+
+    if duration_secs < 3.0 {
+        warnings.push(format!(
+            "Audio too short: {:.1}s (minimum 3s recommended)",
+            duration_secs
+        ));
+        score -= 0.4;
+    } else if duration_secs < 6.0 {
+        warnings.push(format!(
+            "Audio is short: {:.1}s (6+ seconds recommended for best quality)",
+            duration_secs
+        ));
+        score -= 0.15;
+    }
+
+    // Check RMS level (is it too quiet or silent?)
+    let samples: Vec<i16> = audio_bytes
+        .chunks_exact(2)
+        .map(|pair| i16::from_le_bytes([pair[0], pair[1]]))
+        .collect();
+
+    if !samples.is_empty() {
+        let rms = (samples.iter().map(|&s| (s as f64).powi(2)).sum::<f64>()
+            / samples.len() as f64)
+            .sqrt();
+
+        if rms < 100.0 {
+            warnings.push(format!("Audio is very quiet (RMS: {:.0}). Speak louder or check mic.", rms));
+            score -= 0.4;
+        } else if rms < 500.0 {
+            warnings.push(format!("Audio is quiet (RMS: {:.0}). Consider speaking louder.", rms));
+            score -= 0.1;
+        }
+
+        // Check for too much silence (>50% of frames below threshold)
+        let silence_threshold = 200i16;
+        let silent_count = samples.iter().filter(|&&s| s.abs() < silence_threshold).count();
+        let silence_ratio = silent_count as f32 / samples.len() as f32;
+        if silence_ratio > 0.7 {
+            warnings.push(format!(
+                "Audio has {:.0}% silence. Ensure continuous speech.",
+                silence_ratio * 100.0
+            ));
+            score -= 0.2;
+        }
+    } else {
+        warnings.push("Empty audio sample".to_string());
+        score = 0.0;
+    }
+
+    (score.clamp(0.0, 1.0), warnings)
+}
+
+// ============================================================================
+// ElevenLabs Voice Cloning
+// ============================================================================
+
+/// Voice cloning via ElevenLabs "Add Voice" API (Instant Voice Clone).
+///
+/// Uploads audio samples to ElevenLabs and receives a voice_id that can be
+/// used with the standard TTS API. Requires a paid ElevenLabs plan.
+pub struct ElevenLabsCloneProvider {
+    api_key: String,
+    base_url: String,
+}
+
+impl ElevenLabsCloneProvider {
+    /// Create with API key.
+    pub fn new(api_key: &str) -> Self {
+        Self {
+            api_key: api_key.to_string(),
+            base_url: "https://api.elevenlabs.io/v1".to_string(),
+        }
+    }
+
+    /// Create from ELEVENLABS_API_KEY environment variable.
+    pub fn from_env() -> Result<Self> {
+        let key = std::env::var("ELEVENLABS_API_KEY")
+            .context("ELEVENLABS_API_KEY not set")?;
+        Ok(Self::new(&key))
+    }
+
+    /// Set custom base URL (for testing or self-hosted).
+    pub fn with_base_url(mut self, url: &str) -> Self {
+        self.base_url = url.to_string();
+        self
+    }
+}
+
+impl VoiceCloneProvider for ElevenLabsCloneProvider {
+    fn enroll(
+        &self,
+        audio: &[u8],
+        _format: AudioFormat,
+        name: &str,
+        _sample_rate: u32,
+    ) -> Result<ClonedVoiceId> {
+        // ElevenLabs "Add Voice" API uses multipart form upload
+        let url = format!("{}/voices/add", self.base_url);
+
+        // Build multipart boundary
+        let boundary = "----VoiceCloneBoundary";
+        let mut body = Vec::new();
+
+        // Name field
+        body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+        body.extend_from_slice(b"Content-Disposition: form-data; name=\"name\"\r\n\r\n");
+        body.extend_from_slice(name.as_bytes());
+        body.extend_from_slice(b"\r\n");
+
+        // Audio file field
+        body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+        body.extend_from_slice(
+            b"Content-Disposition: form-data; name=\"files\"; filename=\"sample.wav\"\r\n",
+        );
+        body.extend_from_slice(b"Content-Type: audio/wav\r\n\r\n");
+        body.extend_from_slice(audio);
+        body.extend_from_slice(b"\r\n");
+
+        // Closing boundary
+        body.extend_from_slice(format!("--{}--\r\n", boundary).as_bytes());
+
+        let response = ureq::post(&url)
+            .set("xi-api-key", &self.api_key)
+            .set(
+                "Content-Type",
+                &format!("multipart/form-data; boundary={}", boundary),
+            )
+            .send_bytes(&body)
+            .context("Failed to call ElevenLabs Add Voice API")?;
+
+        let json: serde_json::Value = response.into_json()?;
+        let voice_id = json["voice_id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("No voice_id in ElevenLabs response"))?
+            .to_string();
+
+        Ok(voice_id)
+    }
+
+    fn synthesize_cloned(
+        &self,
+        text: &str,
+        voice_id: &ClonedVoiceId,
+        _options: &SynthesisOptions,
+    ) -> Result<SynthesisResult> {
+        // Use the standard ElevenLabs TTS endpoint with the cloned voice_id
+        let url = format!("{}/text-to-speech/{}", self.base_url, voice_id);
+
+        let body = serde_json::json!({
+            "text": text,
+            "model_id": "eleven_multilingual_v2",
+            "voice_settings": {
+                "stability": 0.5,
+                "similarity_boost": 0.85,
+                "style": 0.3,
+                "use_speaker_boost": true,
+            }
+        });
+
+        let response = ureq::post(&url)
+            .set("xi-api-key", &self.api_key)
+            .set("Content-Type", "application/json")
+            .set("Accept", "audio/mpeg")
+            .send_string(&body.to_string())
+            .context("Failed to call ElevenLabs TTS with cloned voice")?;
+
+        let mut audio = Vec::new();
+        response
+            .into_reader()
+            .read_to_end(&mut audio)
+            .context("Failed to read ElevenLabs cloned voice audio")?;
+
+        Ok(SynthesisResult {
+            audio,
+            format: AudioFormat::Mp3,
+            duration_secs: 0.0,
+            sample_rate: 44100,
+        })
+    }
+
+    fn list_cloned_voices(&self) -> Result<Vec<ClonedVoiceProfile>> {
+        let url = format!("{}/voices", self.base_url);
+
+        let response = ureq::get(&url)
+            .set("xi-api-key", &self.api_key)
+            .call()
+            .context("Failed to list ElevenLabs voices")?;
+
+        let json: serde_json::Value = response.into_json()?;
+        let voices = json["voices"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| {
+                        Some(ClonedVoiceProfile {
+                            voice_id: v["voice_id"].as_str()?.to_string(),
+                            provider: "elevenlabs".to_string(),
+                            name: v["name"].as_str().unwrap_or("Unknown").to_string(),
+                            created_at: chrono::Utc::now(), // API doesn't always return this
+                            quality_score: 0.8,             // ElevenLabs doesn't expose quality
+                            consent_given: true,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Ok(voices)
+    }
+
+    fn delete_cloned_voice(&self, voice_id: &ClonedVoiceId) -> Result<()> {
+        let url = format!("{}/voices/{}", self.base_url, voice_id);
+
+        ureq::delete(&url)
+            .set("xi-api-key", &self.api_key)
+            .call()
+            .context("Failed to delete ElevenLabs voice")?;
+
+        Ok(())
+    }
+
+    fn is_available(&self) -> bool {
+        !self.api_key.is_empty()
+    }
+
+    fn clone_provider_name(&self) -> &str {
+        "ElevenLabs Instant Voice Clone"
+    }
+}
+
+// ============================================================================
+// Coqui XTTS v2 Voice Cloning (local HTTP server)
+// ============================================================================
+
+/// Voice cloning via Coqui XTTS v2 local server.
+///
+/// XTTS provides reference-based voice cloning: you pass a reference audio
+/// sample at synthesis time, and the model generates speech in that voice.
+/// No separate enrollment step is needed — the reference audio IS the voice.
+///
+/// Requires the Coqui TTS server running locally with XTTS v2 model loaded.
+pub struct XttsCloneProvider {
+    base_url: String,
+    /// Stored reference audio per voice name (in-memory cache).
+    /// In production, these should be encrypted at rest.
+    voice_references: std::collections::HashMap<String, Vec<u8>>,
+}
+
+impl XttsCloneProvider {
+    /// Create with server URL.
+    pub fn new(base_url: &str) -> Self {
+        Self {
+            base_url: base_url.to_string(),
+            voice_references: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Create with default local URL (http://localhost:5002).
+    pub fn local() -> Self {
+        Self::new("http://localhost:5002")
+    }
+}
+
+impl VoiceCloneProvider for XttsCloneProvider {
+    fn enroll(
+        &self,
+        audio: &[u8],
+        _format: AudioFormat,
+        name: &str,
+        _sample_rate: u32,
+    ) -> Result<ClonedVoiceId> {
+        // XTTS doesn't have a separate enrollment — we store the reference
+        // audio locally and use it at synthesis time. The "voice_id" is
+        // just the name, and we keep the audio in memory.
+
+        // We can't mutate self here (trait is &self), so we return
+        // the name as voice_id. The caller should store the audio via
+        // store_reference() after enrollment.
+        let voice_id = format!("xtts_{}", name.replace(' ', "_").to_lowercase());
+
+        // Validate audio quality
+        let (quality, warnings) = assess_enrollment_quality(audio, 16000);
+        if quality < 0.3 {
+            anyhow::bail!(
+                "Audio quality too low ({:.0}%): {}",
+                quality * 100.0,
+                warnings.join("; ")
+            );
+        }
+
+        Ok(voice_id)
+    }
+
+    fn synthesize_cloned(
+        &self,
+        text: &str,
+        voice_id: &ClonedVoiceId,
+        _options: &SynthesisOptions,
+    ) -> Result<SynthesisResult> {
+        // Get stored reference audio
+        let reference = self
+            .voice_references
+            .get(voice_id)
+            .ok_or_else(|| anyhow::anyhow!(
+                "No reference audio for voice '{}'. Call store_reference() first.",
+                voice_id
+            ))?;
+
+        // XTTS v2 API: POST /api/tts with speaker_wav as base64
+        let url = format!("{}/api/tts", self.base_url);
+
+        let reference_b64 = base64_encode(reference);
+
+        let body = serde_json::json!({
+            "text": text,
+            "speaker_wav": reference_b64,
+            "language": "en"
+        });
+
+        let response = ureq::post(&url)
+            .set("Content-Type", "application/json")
+            .timeout(Duration::from_secs(60))
+            .send_string(&body.to_string())
+            .context("Failed to call XTTS v2 TTS API")?;
+
+        let mut audio = Vec::new();
+        response
+            .into_reader()
+            .read_to_end(&mut audio)
+            .context("Failed to read XTTS audio response")?;
+
+        Ok(SynthesisResult {
+            audio,
+            format: AudioFormat::Wav,
+            duration_secs: 0.0,
+            sample_rate: 22050,
+        })
+    }
+
+    fn list_cloned_voices(&self) -> Result<Vec<ClonedVoiceProfile>> {
+        Ok(self
+            .voice_references
+            .keys()
+            .map(|id| ClonedVoiceProfile {
+                voice_id: id.clone(),
+                provider: "xtts".to_string(),
+                name: id.replace("xtts_", "").replace('_', " "),
+                created_at: chrono::Utc::now(),
+                quality_score: 0.7,
+                consent_given: true,
+            })
+            .collect())
+    }
+
+    fn delete_cloned_voice(&self, _voice_id: &ClonedVoiceId) -> Result<()> {
+        // Can't mutate self in trait method — deletion should be done
+        // via remove_reference() on the concrete type
+        Ok(())
+    }
+
+    fn is_available(&self) -> bool {
+        // Check if the XTTS server is reachable
+        ureq::get(&format!("{}/api/tts", self.base_url))
+            .timeout(Duration::from_secs(2))
+            .call()
+            .is_ok()
+            || ureq::get(&self.base_url)
+                .timeout(Duration::from_secs(2))
+                .call()
+                .is_ok()
+    }
+
+    fn clone_provider_name(&self) -> &str {
+        "Coqui XTTS v2 (local)"
+    }
+}
+
+impl XttsCloneProvider {
+    /// Store reference audio for a voice (call after enroll()).
+    pub fn store_reference(&mut self, voice_id: &str, audio: Vec<u8>) {
+        self.voice_references.insert(voice_id.to_string(), audio);
+    }
+
+    /// Remove stored reference audio.
+    pub fn remove_reference(&mut self, voice_id: &str) -> bool {
+        self.voice_references.remove(voice_id).is_some()
+    }
+
+    /// Check if a reference is stored for a voice.
+    pub fn has_reference(&self, voice_id: &str) -> bool {
+        self.voice_references.contains_key(voice_id)
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -2532,5 +3009,134 @@ mod tests {
             "Error should list whisper: {}",
             err
         );
+    }
+
+    // ------------------------------------------------------------------
+    // V67: Voice Cloning tests
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_cloned_voice_profile_construction() {
+        let profile = ClonedVoiceProfile {
+            voice_id: "voice_123".to_string(),
+            provider: "elevenlabs".to_string(),
+            name: "My Voice".to_string(),
+            created_at: chrono::Utc::now(),
+            quality_score: 0.85,
+            consent_given: true,
+        };
+        assert_eq!(profile.voice_id, "voice_123");
+        assert_eq!(profile.provider, "elevenlabs");
+        assert!(profile.consent_given);
+        assert!(profile.quality_score > 0.8);
+    }
+
+    #[test]
+    fn test_assess_enrollment_quality_good_audio() {
+        // Generate 5 seconds of speech-like audio at 16kHz
+        let sample_rate = 16000u32;
+        let duration_secs = 5.0f32;
+        let num_samples = (sample_rate as f32 * duration_secs) as usize;
+        let samples: Vec<i16> = (0..num_samples)
+            .map(|i| ((i % 100) as i16 * 200) - 10000)
+            .collect();
+        let bytes: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
+
+        let (score, warnings) = assess_enrollment_quality(&bytes, sample_rate);
+        assert!(score > 0.5, "Good audio should score well: {}, warnings: {:?}", score, warnings);
+    }
+
+    #[test]
+    fn test_assess_enrollment_quality_too_short() {
+        // 1 second of audio at 16kHz
+        let samples: Vec<i16> = (0..16000).map(|i| (i % 100) as i16 * 200).collect();
+        let bytes: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
+
+        let (score, warnings) = assess_enrollment_quality(&bytes, 16000);
+        assert!(score < 0.7, "Short audio should score lower: {}", score);
+        assert!(
+            warnings.iter().any(|w| w.contains("short")),
+            "Should warn about short audio: {:?}",
+            warnings
+        );
+    }
+
+    #[test]
+    fn test_assess_enrollment_quality_silent() {
+        // 5 seconds of near-silence
+        let bytes = vec![0u8; 16000 * 5 * 2]; // 5 seconds of silence at 16kHz PCM16
+
+        let (score, warnings) = assess_enrollment_quality(&bytes, 16000);
+        assert!(score < 0.5, "Silent audio should score low: {}", score);
+        assert!(
+            warnings.iter().any(|w| w.contains("quiet") || w.contains("silence")),
+            "Should warn about silence: {:?}",
+            warnings
+        );
+    }
+
+    #[test]
+    fn test_assess_enrollment_quality_empty() {
+        let (score, warnings) = assess_enrollment_quality(&[], 16000);
+        assert_eq!(score, 0.0);
+        assert!(warnings.iter().any(|w| w.contains("Empty")));
+    }
+
+    #[test]
+    fn test_xtts_clone_provider_construction() {
+        let provider = XttsCloneProvider::local();
+        assert_eq!(provider.clone_provider_name(), "Coqui XTTS v2 (local)");
+        assert!(!provider.has_reference("nonexistent"));
+    }
+
+    #[test]
+    fn test_xtts_store_and_remove_reference() {
+        let mut provider = XttsCloneProvider::local();
+        let audio = vec![1u8; 1000];
+
+        provider.store_reference("test_voice", audio);
+        assert!(provider.has_reference("test_voice"));
+
+        let voices = provider.list_cloned_voices().unwrap();
+        assert_eq!(voices.len(), 1);
+        assert_eq!(voices[0].provider, "xtts");
+
+        assert!(provider.remove_reference("test_voice"));
+        assert!(!provider.has_reference("test_voice"));
+        assert!(!provider.remove_reference("nonexistent"));
+    }
+
+    #[test]
+    fn test_xtts_enroll_quality_check() {
+        let provider = XttsCloneProvider::local();
+
+        // Empty audio should fail
+        let result = provider.enroll(&[], AudioFormat::Pcm, "test", 16000);
+        assert!(result.is_err());
+
+        // Good audio should succeed
+        let samples: Vec<i16> = (0..80000).map(|i| ((i % 100) as i16 * 300) - 15000).collect();
+        let bytes: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
+        let result = provider.enroll(&bytes, AudioFormat::Pcm, "Good Voice", 16000);
+        assert!(result.is_ok());
+        assert!(result.unwrap().starts_with("xtts_"));
+    }
+
+    #[test]
+    fn test_elevenlabs_clone_provider_construction() {
+        let provider = ElevenLabsCloneProvider::new("test_key");
+        assert_eq!(provider.clone_provider_name(), "ElevenLabs Instant Voice Clone");
+        assert!(provider.is_available());
+
+        let empty = ElevenLabsCloneProvider::new("");
+        assert!(!empty.is_available());
+    }
+
+    #[test]
+    fn test_base64_encode() {
+        assert_eq!(base64_encode(b"Hello"), "SGVsbG8=");
+        assert_eq!(base64_encode(b""), "");
+        assert_eq!(base64_encode(b"ab"), "YWI=");
+        assert_eq!(base64_encode(b"abc"), "YWJj");
     }
 }

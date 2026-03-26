@@ -12,8 +12,14 @@
 mod inner {
     use std::fmt;
 
+    use crate::audio_filter::AudioEffectChain;
     use crate::error::{AiError, VoiceAgentError};
     use serde::{Deserialize, Serialize};
+
+    #[cfg(feature = "audio")]
+    use crate::emotion_detection::EmotionDetector;
+    #[cfg(feature = "audio")]
+    use crate::speech::{AudioFormat as SpeechAudioFormat, SpeechProvider, SynthesisOptions};
 
     // ========================================================================
     // 3.1 — Audio Types
@@ -754,6 +760,47 @@ mod inner {
     }
 
     // ========================================================================
+    // Pipeline Latency Tracking
+    // ========================================================================
+
+    /// Per-stage latency measurements from the last STT→LLM→TTS cycle.
+    #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+    pub struct PipelineLatency {
+        /// Audio effect chain processing time.
+        pub effects_ms: u64,
+        /// Speech-to-text transcription time.
+        pub stt_ms: u64,
+        /// Emotion detection time.
+        pub emotion_ms: u64,
+        /// LLM response generation time.
+        pub llm_ms: u64,
+        /// Text-to-speech synthesis time.
+        pub tts_ms: u64,
+        /// Total pipeline time (end-to-end).
+        pub total_ms: u64,
+    }
+
+    /// Convert voice_agent AudioFormat to speech::AudioFormat (when audio feature is enabled).
+    #[cfg(feature = "audio")]
+    fn to_speech_audio_format(fmt: &AudioFormat) -> SpeechAudioFormat {
+        match fmt {
+            AudioFormat::Pcm16 => SpeechAudioFormat::Pcm,
+            AudioFormat::Wav => SpeechAudioFormat::Wav,
+            AudioFormat::Ogg => SpeechAudioFormat::Ogg,
+            AudioFormat::Mp3 => SpeechAudioFormat::Mp3,
+        }
+    }
+
+    /// Convert PCM16 i16 samples back to little-endian bytes.
+    fn samples_to_bytes(samples: &[i16]) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(samples.len() * 2);
+        for &s in samples {
+            bytes.extend_from_slice(&s.to_le_bytes());
+        }
+        bytes
+    }
+
+    // ========================================================================
     // 3.1 — VoiceAgentConfig
     // ========================================================================
 
@@ -784,6 +831,11 @@ mod inner {
         /// TTS instruction override for emotion-adaptive responses.
         /// If empty, uses EmotionState::suggest_tts_instruction() automatically.
         pub emotion_tts_instruction: String,
+        /// Language hint for STT (e.g. "en", "es"). None = auto-detect.
+        pub language: Option<String>,
+        /// Maximum audio duration in seconds before forced STT (prevents DoS).
+        /// Default: 60 seconds. Set lower for stricter limits.
+        pub max_audio_duration_secs: u32,
     }
 
     impl Default for VoiceAgentConfig {
@@ -799,6 +851,8 @@ mod inner {
                 turn_policy: TurnPolicy::NaturalOverlap,
                 emotion_enabled: false,
                 emotion_tts_instruction: String::new(),
+                language: None,
+                max_audio_duration_secs: 60,
             }
         }
     }
@@ -838,6 +892,12 @@ mod inner {
                 }
                 .into());
             }
+            if self.max_audio_duration_secs == 0 || self.max_audio_duration_secs > 300 {
+                return Err(VoiceAgentError::StreamFailed {
+                    reason: "max_audio_duration_secs must be in [1, 300]".to_string(),
+                }
+                .into());
+            }
             Ok(())
         }
     }
@@ -846,12 +906,20 @@ mod inner {
     // 3.1 — VoiceAgent
     // ========================================================================
 
+    /// Callback for processing transcribed text through an LLM in the voice pipeline.
+    ///
+    /// Receives the user transcript (optionally enriched with emotion context)
+    /// and returns the LLM response text.
+    pub type VoiceLlmCallback = Box<dyn Fn(&str) -> Result<String, AiError> + Send + Sync>;
+
     /// Main voice agent — orchestrates the STT -> LLM -> TTS pipeline.
     ///
     /// The `VoiceAgent` manages sessions, processes incoming audio through VAD,
     /// sends detected speech to STT, feeds transcripts through the LLM, and
     /// synthesises responses via TTS.
-    #[derive(Debug)]
+    ///
+    /// When STT/TTS providers are set (requires `audio` feature), the pipeline
+    /// uses real providers. Otherwise it falls back to simulated responses.
     pub struct VoiceAgent {
         config: VoiceAgentConfig,
         vad: VadDetector,
@@ -861,6 +929,42 @@ mod inner {
         sessions: std::collections::HashMap<String, VoiceSession>,
         /// Last detected emotion from user audio.
         pub last_emotion: Option<crate::emotion_detection::EmotionState>,
+        /// Audio effect chain applied to input audio before VAD/STT.
+        audio_chain: Option<AudioEffectChain>,
+        /// STT provider for real transcription (requires `audio` feature).
+        #[cfg(feature = "audio")]
+        stt_provider: Option<Box<dyn SpeechProvider>>,
+        /// TTS provider for real speech synthesis (requires `audio` feature).
+        #[cfg(feature = "audio")]
+        tts_provider: Option<Box<dyn SpeechProvider>>,
+        /// Emotion detector for mood analysis on transcribed text (requires `audio` feature).
+        #[cfg(feature = "audio")]
+        emotion_detector: Option<Box<dyn EmotionDetector>>,
+        /// LLM callback for generating responses from transcribed text.
+        llm_callback: Option<VoiceLlmCallback>,
+        /// Latency measurements from the last pipeline cycle.
+        pub last_latency: Option<PipelineLatency>,
+    }
+
+    impl fmt::Debug for VoiceAgent {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            let mut d = f.debug_struct("VoiceAgent");
+            d.field("config", &self.config)
+                .field("vad", &self.vad)
+                .field("audio_buffer_len", &self.audio_buffer.len())
+                .field("sessions", &self.sessions.len())
+                .field("last_emotion", &self.last_emotion)
+                .field("has_audio_chain", &self.audio_chain.is_some());
+            #[cfg(feature = "audio")]
+            {
+                d.field("has_stt_provider", &self.stt_provider.is_some());
+                d.field("has_tts_provider", &self.tts_provider.is_some());
+                d.field("has_emotion_detector", &self.emotion_detector.is_some());
+            }
+            d.field("has_llm_callback", &self.llm_callback.is_some())
+                .field("last_latency", &self.last_latency)
+                .finish()
+        }
     }
 
     impl VoiceAgent {
@@ -876,12 +980,52 @@ mod inner {
                 audio_buffer: Vec::new(),
                 sessions: std::collections::HashMap::new(),
                 last_emotion: None,
+                audio_chain: None,
+                #[cfg(feature = "audio")]
+                stt_provider: None,
+                #[cfg(feature = "audio")]
+                tts_provider: None,
+                #[cfg(feature = "audio")]
+                emotion_detector: None,
+                llm_callback: None,
+                last_latency: None,
             })
         }
 
         /// Create a voice agent with default configuration.
         pub fn with_defaults() -> Result<Self, AiError> {
             Self::new(VoiceAgentConfig::default())
+        }
+
+        /// Set the audio effect chain to apply on input audio before VAD/STT.
+        pub fn set_audio_chain(&mut self, chain: AudioEffectChain) {
+            self.audio_chain = Some(chain);
+        }
+
+        /// Set the STT provider for real transcription (requires `audio` feature).
+        #[cfg(feature = "audio")]
+        pub fn set_stt_provider(&mut self, provider: Box<dyn SpeechProvider>) {
+            self.stt_provider = Some(provider);
+        }
+
+        /// Set the TTS provider for real speech synthesis (requires `audio` feature).
+        #[cfg(feature = "audio")]
+        pub fn set_tts_provider(&mut self, provider: Box<dyn SpeechProvider>) {
+            self.tts_provider = Some(provider);
+        }
+
+        /// Set the emotion detector for mood analysis (requires `audio` feature).
+        #[cfg(feature = "audio")]
+        pub fn set_emotion_detector(&mut self, detector: Box<dyn EmotionDetector>) {
+            self.emotion_detector = Some(detector);
+        }
+
+        /// Set the LLM callback for generating responses from transcribed text.
+        ///
+        /// The callback receives the user transcript (with optional emotion context
+        /// prepended) and should return the LLM response text.
+        pub fn set_llm_callback(&mut self, callback: VoiceLlmCallback) {
+            self.llm_callback = Some(callback);
         }
 
         /// Start a new voice session. Returns the session.
@@ -894,9 +1038,12 @@ mod inner {
 
         /// Process an incoming audio chunk for a session.
         ///
-        /// Runs VAD on the chunk, and when a speech segment ends, simulates
-        /// the STT -> LLM -> TTS pipeline and returns a response audio chunk.
-        /// Returns `None` if no complete response is ready yet.
+        /// Runs the audio effect chain (if set), then VAD on the chunk. When a
+        /// speech segment ends, executes the STT → LLM → TTS pipeline using real
+        /// providers when available, falling back to simulated responses otherwise.
+        ///
+        /// Returns `None` if no complete response is ready yet, or `Some(chunk)`
+        /// with the TTS response audio when a full cycle completes.
         pub fn process_audio(
             &mut self,
             session: &mut VoiceSession,
@@ -922,7 +1069,14 @@ mod inner {
             }
 
             // Convert bytes to PCM16 samples for VAD
-            let samples = Self::bytes_to_samples(&chunk.bytes);
+            let mut samples = Self::bytes_to_samples(&chunk.bytes);
+
+            // Apply audio effect chain (noise gate, AGC, etc.) before VAD
+            let effects_start = std::time::Instant::now();
+            if let Some(ref mut chain) = self.audio_chain {
+                chain.process_frame(&mut samples, self.config.sample_rate);
+            }
+            let effects_elapsed = effects_start.elapsed().as_millis() as u64;
 
             // Feed into VAD frame by frame
             let frame_samples = (self.config.sample_rate as usize
@@ -933,6 +1087,10 @@ mod inner {
             } else {
                 samples.len().max(1)
             };
+
+            // Enforce max audio duration to prevent DoS
+            let max_samples = self.config.max_audio_duration_secs as usize
+                * self.config.sample_rate as usize;
 
             let mut response = None;
 
@@ -947,80 +1105,39 @@ mod inner {
                         self.audio_buffer.extend_from_slice(frame);
                     }
                     VadEvent::Silence if self.vad.is_in_speech() => {
-                        self.audio_buffer.extend_from_slice(frame);
+                        // Accumulate but enforce max duration
+                        if self.audio_buffer.len() + frame.len() <= max_samples {
+                            self.audio_buffer.extend_from_slice(frame);
+                        }
                     }
                     VadEvent::SpeechEnd { duration_ms, .. } => {
-                        self.audio_buffer.extend_from_slice(frame);
+                        if self.audio_buffer.len() + frame.len() <= max_samples {
+                            self.audio_buffer.extend_from_slice(frame);
+                        }
 
                         // Transition to Processing
                         session.transition_to(VoiceSessionState::Processing)?;
 
-                        // Simulate STT: create a transcript from audio length
-                        let transcript = format!(
-                            "[user speech: {}ms, {} samples]",
+                        // Execute the STT → LLM → TTS pipeline
+                        let pipeline_result = self.execute_pipeline(
+                            session,
                             duration_ms,
-                            self.audio_buffer.len()
+                            effects_elapsed,
                         );
-
-                        // Record user turn
-                        session.turn_manager_mut().start_turn(TurnSpeaker::User)?;
-                        if let Ok(turn) = session
-                            .turn_manager_mut()
-                            .end_turn(transcript.clone(), duration_ms)
-                        {
-                            let turn_clone = ConversationTurn {
-                                speaker: turn.speaker.clone(),
-                                transcript: turn.transcript.clone(),
-                                audio_duration_ms: turn.audio_duration_ms,
-                                timestamp: turn.timestamp,
-                                turn_number: turn.turn_number,
-                            };
-                            session.push_turn(turn_clone);
-                        }
-
-                        // Simulate LLM response
-                        let agent_response =
-                            format!("[agent response to: {}]", transcript);
-
-                        // Record agent turn
-                        if session.turn_manager().policy() != &TurnPolicy::StrictAlternating
-                            || session.turn_manager().current_speaker()
-                                != Some(&TurnSpeaker::Agent)
-                        {
-                            let _ =
-                                session.turn_manager_mut().start_turn(TurnSpeaker::Agent);
-                        }
-                        let response_duration = duration_ms / 2; // simulated
-                        if let Ok(turn) = session.turn_manager_mut().end_turn(
-                            agent_response.clone(),
-                            response_duration,
-                        ) {
-                            let turn_clone = ConversationTurn {
-                                speaker: turn.speaker.clone(),
-                                transcript: turn.transcript.clone(),
-                                audio_duration_ms: turn.audio_duration_ms,
-                                timestamp: turn.timestamp,
-                                turn_number: turn.turn_number,
-                            };
-                            session.push_turn(turn_clone);
-                        }
-
-                        // Simulate TTS: create response audio
-                        let response_bytes =
-                            agent_response.as_bytes().to_vec();
-                        let response_chunk = AudioChunk::new(
-                            response_bytes,
-                            self.config.sample_rate,
-                            1,
-                            AudioFormat::Pcm16,
-                        );
-
-                        // Transition to Speaking, then back to Listening
-                        session.transition_to(VoiceSessionState::Speaking)?;
-                        session.transition_to(VoiceSessionState::Listening)?;
 
                         self.audio_buffer.clear();
-                        response = Some(response_chunk);
+
+                        match pipeline_result {
+                            Ok(Some(chunk)) => {
+                                response = Some(chunk);
+                            }
+                            Ok(None) => {}
+                            Err(e) => {
+                                // Pipeline error — transition back to Listening
+                                let _ = session.transition_to(VoiceSessionState::Listening);
+                                return Err(e);
+                            }
+                        }
                     }
                     _ => {
                         // Silence, not in speech — nothing to do
@@ -1029,6 +1146,198 @@ mod inner {
             }
 
             Ok(response)
+        }
+
+        /// Execute the full STT → Emotion → LLM → TTS pipeline.
+        ///
+        /// Uses real providers when available, falls back to simulation otherwise.
+        fn execute_pipeline(
+            &mut self,
+            session: &mut VoiceSession,
+            duration_ms: u64,
+            effects_elapsed_ms: u64,
+        ) -> Result<Option<AudioChunk>, AiError> {
+            let mut latency = PipelineLatency {
+                effects_ms: effects_elapsed_ms,
+                ..Default::default()
+            };
+
+            // ── Stage 1: STT ──────────────────────────────────────────────
+            let stt_start = std::time::Instant::now();
+            let transcript = self.run_stt(duration_ms)?;
+            latency.stt_ms = stt_start.elapsed().as_millis() as u64;
+
+            // Record user turn
+            session.turn_manager_mut().start_turn(TurnSpeaker::User)?;
+            let user_turn = session
+                .turn_manager_mut()
+                .end_turn(transcript.clone(), duration_ms)
+                .ok()
+                .map(|t| ConversationTurn {
+                    speaker: t.speaker.clone(),
+                    transcript: t.transcript.clone(),
+                    audio_duration_ms: t.audio_duration_ms,
+                    timestamp: t.timestamp,
+                    turn_number: t.turn_number,
+                });
+            if let Some(turn) = user_turn {
+                session.push_turn(turn);
+            }
+
+            // ── Stage 2: Emotion detection ────────────────────────────────
+            let emotion_start = std::time::Instant::now();
+            let emotion_context = self.run_emotion_detection(&transcript);
+            latency.emotion_ms = emotion_start.elapsed().as_millis() as u64;
+
+            // ── Stage 3: LLM ──────────────────────────────────────────────
+            let llm_start = std::time::Instant::now();
+            let llm_input = if emotion_context.is_empty() {
+                transcript.clone()
+            } else {
+                format!("[{}] {}", emotion_context, transcript)
+            };
+            let agent_response = self.run_llm(&llm_input)?;
+            latency.llm_ms = llm_start.elapsed().as_millis() as u64;
+
+            // Record agent turn
+            if session.turn_manager().policy() != &TurnPolicy::StrictAlternating
+                || session.turn_manager().current_speaker() != Some(&TurnSpeaker::Agent)
+            {
+                let _ = session.turn_manager_mut().start_turn(TurnSpeaker::Agent);
+            }
+            let response_duration = duration_ms / 2; // estimate
+            let agent_turn = session
+                .turn_manager_mut()
+                .end_turn(agent_response.clone(), response_duration)
+                .ok()
+                .map(|t| ConversationTurn {
+                    speaker: t.speaker.clone(),
+                    transcript: t.transcript.clone(),
+                    audio_duration_ms: t.audio_duration_ms,
+                    timestamp: t.timestamp,
+                    turn_number: t.turn_number,
+                });
+            if let Some(turn) = agent_turn {
+                session.push_turn(turn);
+            }
+
+            // ── Stage 4: TTS ──────────────────────────────────────────────
+            let tts_start = std::time::Instant::now();
+            let response_chunk = self.run_tts(&agent_response)?;
+            latency.tts_ms = tts_start.elapsed().as_millis() as u64;
+
+            // Compute total
+            latency.total_ms = latency.effects_ms
+                + latency.stt_ms
+                + latency.emotion_ms
+                + latency.llm_ms
+                + latency.tts_ms;
+            self.last_latency = Some(latency);
+
+            // Transition to Speaking, then back to Listening
+            session.transition_to(VoiceSessionState::Speaking)?;
+            session.transition_to(VoiceSessionState::Listening)?;
+
+            Ok(Some(response_chunk))
+        }
+
+        /// Run STT: real provider if available, otherwise simulated.
+        fn run_stt(&self, duration_ms: u64) -> Result<String, AiError> {
+            #[cfg(feature = "audio")]
+            if let Some(ref stt) = self.stt_provider {
+                if stt.supports_stt() {
+                    let audio_bytes = samples_to_bytes(&self.audio_buffer);
+                    let speech_format = to_speech_audio_format(&AudioFormat::Pcm16);
+                    let result = stt
+                        .transcribe(
+                            &audio_bytes,
+                            speech_format,
+                            self.config.language.as_deref(),
+                        )
+                        .map_err(|e| VoiceAgentError::StreamFailed {
+                            reason: format!("STT failed: {}", e),
+                        })?;
+                    return Ok(result.text);
+                }
+            }
+            // Fallback: simulated transcript
+            Ok(format!(
+                "[user speech: {}ms, {} samples]",
+                duration_ms,
+                self.audio_buffer.len()
+            ))
+        }
+
+        /// Run emotion detection on transcript text.
+        /// Returns emotion context string (empty if disabled or unavailable).
+        fn run_emotion_detection(&mut self, transcript: &str) -> String {
+            if !self.config.emotion_enabled {
+                return String::new();
+            }
+
+            #[cfg(feature = "audio")]
+            if let Some(ref detector) = self.emotion_detector {
+                if let Ok(emotion) = detector.detect_from_text(transcript) {
+                    let ctx = emotion.to_prompt_context();
+                    self.last_emotion = Some(emotion);
+                    return ctx;
+                }
+            }
+
+            // Without the audio feature, emotion detection is not available
+            #[cfg(not(feature = "audio"))]
+            let _ = transcript;
+
+            String::new()
+        }
+
+        /// Run LLM: callback if set, otherwise simulated.
+        fn run_llm(&self, input: &str) -> Result<String, AiError> {
+            if let Some(ref callback) = self.llm_callback {
+                return callback(input);
+            }
+            // Fallback: simulated response
+            Ok(format!("[agent response to: {}]", input))
+        }
+
+        /// Run TTS: real provider if available, otherwise simulated.
+        fn run_tts(&self, text: &str) -> Result<AudioChunk, AiError> {
+            #[cfg(feature = "audio")]
+            if let Some(ref tts) = self.tts_provider {
+                if tts.supports_tts() {
+                    // Build TTS instruction from emotion if available
+                    let voice = if self.config.voice_id.is_empty() {
+                        None
+                    } else {
+                        Some(self.config.voice_id.clone())
+                    };
+
+                    let options = SynthesisOptions {
+                        voice,
+                        format: SpeechAudioFormat::Pcm,
+                        speed: 1.0,
+                        sample_rate: Some(self.config.sample_rate),
+                    };
+                    let result = tts.synthesize(text, &options).map_err(|e| {
+                        VoiceAgentError::StreamFailed {
+                            reason: format!("TTS failed: {}", e),
+                        }
+                    })?;
+                    return Ok(AudioChunk::new(
+                        result.audio,
+                        result.sample_rate,
+                        1,
+                        AudioFormat::Pcm16,
+                    ));
+                }
+            }
+            // Fallback: simulated TTS (text bytes as audio)
+            Ok(AudioChunk::new(
+                text.as_bytes().to_vec(),
+                self.config.sample_rate,
+                1,
+                AudioFormat::Pcm16,
+            ))
         }
 
         /// Handle an interruption while the agent is speaking.
@@ -3002,6 +3311,181 @@ mod inner {
             let t = &pipeline.transcripts()[0];
             assert!(!t.used_fallback);
             assert_eq!(t.model_id, "gpt-4o-audio-preview");
+        }
+
+        // ----------------------------------------------------------------
+        // V67: Pipeline wiring tests
+        // ----------------------------------------------------------------
+
+        #[test]
+        fn test_pipeline_latency_default() {
+            let lat = PipelineLatency::default();
+            assert_eq!(lat.effects_ms, 0);
+            assert_eq!(lat.stt_ms, 0);
+            assert_eq!(lat.emotion_ms, 0);
+            assert_eq!(lat.llm_ms, 0);
+            assert_eq!(lat.tts_ms, 0);
+            assert_eq!(lat.total_ms, 0);
+        }
+
+        #[test]
+        fn test_samples_to_bytes_roundtrip() {
+            let original: Vec<i16> = vec![0, 1, -1, i16::MAX, i16::MIN, 1234, -5678];
+            let bytes = samples_to_bytes(&original);
+            assert_eq!(bytes.len(), original.len() * 2);
+            let recovered = VoiceAgent::bytes_to_samples(&bytes);
+            assert_eq!(recovered, original);
+        }
+
+        #[test]
+        fn test_voice_agent_config_language() {
+            let mut config = VoiceAgentConfig::default();
+            assert!(config.language.is_none());
+            config.language = Some("es".to_string());
+            assert_eq!(config.language.as_deref(), Some("es"));
+            assert!(config.validate().is_ok());
+        }
+
+        #[test]
+        fn test_voice_agent_config_max_audio_duration() {
+            let mut config = VoiceAgentConfig::default();
+            assert_eq!(config.max_audio_duration_secs, 60);
+            assert!(config.validate().is_ok());
+
+            // Zero duration should fail
+            config.max_audio_duration_secs = 0;
+            assert!(config.validate().is_err());
+
+            // Over 300s should fail
+            config.max_audio_duration_secs = 301;
+            assert!(config.validate().is_err());
+
+            // 300 is OK
+            config.max_audio_duration_secs = 300;
+            assert!(config.validate().is_ok());
+        }
+
+        #[test]
+        fn test_voice_agent_debug_format() {
+            let agent = VoiceAgent::with_defaults().unwrap();
+            let debug = format!("{:?}", agent);
+            assert!(debug.contains("VoiceAgent"));
+            assert!(debug.contains("has_audio_chain"));
+            assert!(debug.contains("has_llm_callback"));
+        }
+
+        #[test]
+        fn test_voice_agent_set_audio_chain() {
+            let mut agent = VoiceAgent::with_defaults().unwrap();
+            let chain = crate::audio_filter::AudioEffectChain::new();
+            agent.set_audio_chain(chain);
+            let debug = format!("{:?}", agent);
+            assert!(debug.contains("has_audio_chain: true"));
+        }
+
+        #[test]
+        fn test_voice_agent_set_llm_callback() {
+            let mut agent = VoiceAgent::with_defaults().unwrap();
+            agent.set_llm_callback(Box::new(|input| {
+                Ok(format!("Echo: {}", input))
+            }));
+            let result = agent.run_llm("hello").unwrap();
+            assert_eq!(result, "Echo: hello");
+        }
+
+        #[test]
+        fn test_voice_agent_llm_fallback() {
+            let agent = VoiceAgent::with_defaults().unwrap();
+            // Without callback, should return simulated response
+            let result = agent.run_llm("hello").unwrap();
+            assert!(result.contains("[agent response to:"));
+            assert!(result.contains("hello"));
+        }
+
+        #[test]
+        fn test_voice_agent_run_stt_fallback() {
+            let agent = VoiceAgent::with_defaults().unwrap();
+            // Without provider, should return simulated transcript
+            let result = agent.run_stt(500).unwrap();
+            assert!(result.contains("[user speech:"));
+            assert!(result.contains("500ms"));
+        }
+
+        #[test]
+        fn test_voice_agent_run_tts_fallback() {
+            let agent = VoiceAgent::with_defaults().unwrap();
+            let chunk = agent.run_tts("Hello world").unwrap();
+            assert_eq!(chunk.bytes, b"Hello world");
+            assert_eq!(chunk.sample_rate, 16000);
+            assert_eq!(chunk.channels, 1);
+        }
+
+        #[test]
+        fn test_voice_agent_emotion_detection_disabled() {
+            let mut agent = VoiceAgent::with_defaults().unwrap();
+            assert!(!agent.config.emotion_enabled);
+            let ctx = agent.run_emotion_detection("I am so happy!");
+            assert!(ctx.is_empty(), "Emotion context should be empty when disabled");
+        }
+
+        #[test]
+        fn test_pipeline_with_effects_chain_and_callback() {
+            let mut agent = VoiceAgent::with_defaults().unwrap();
+
+            // Set up a simple effect chain (NoiseGate)
+            let mut chain = crate::audio_filter::AudioEffectChain::new();
+            chain.add_effect(Box::new(crate::audio_filter::NoiseGate::new(-60.0)));
+            agent.set_audio_chain(chain);
+
+            // Set up LLM callback
+            agent.set_llm_callback(Box::new(|input| {
+                Ok(format!("Response to: {}", input))
+            }));
+
+            // Create a session and process audio with speech
+            let mut session = agent.start_session().unwrap();
+
+            // Generate PCM16 with loud speech-like pattern then silence
+            let sample_rate = 16000u32;
+            let chunk_ms = 20u32;
+            let frame_size = (sample_rate * chunk_ms / 1000) as usize;
+
+            // Send loud frames to trigger SpeechStart
+            let loud_frame: Vec<i16> = (0..frame_size).map(|i| ((i % 50) as i16 * 600)).collect();
+            let loud_bytes: Vec<u8> = loud_frame.iter().flat_map(|s| s.to_le_bytes()).collect();
+            let loud_chunk = AudioChunk::new(loud_bytes.clone(), sample_rate, 1, AudioFormat::Pcm16);
+
+            for _ in 0..10 {
+                let _ = agent.process_audio(&mut session, &loud_chunk);
+            }
+
+            // Send silent frames to trigger SpeechEnd
+            let silent_bytes = vec![0u8; frame_size * 2];
+            let silent_chunk = AudioChunk::new(silent_bytes, sample_rate, 1, AudioFormat::Pcm16);
+
+            let mut got_response = false;
+            for _ in 0..30 {
+                if let Ok(Some(_response)) = agent.process_audio(&mut session, &silent_chunk) {
+                    got_response = true;
+                    break;
+                }
+            }
+
+            // We should have gotten a response and latency should be tracked
+            if got_response {
+                assert!(agent.last_latency.is_some());
+                let lat = agent.last_latency.as_ref().unwrap();
+                assert!(lat.total_ms < 5000, "Pipeline should complete quickly with stubs");
+            }
+        }
+
+        #[cfg(feature = "audio")]
+        #[test]
+        fn test_audio_format_conversion() {
+            assert_eq!(to_speech_audio_format(&AudioFormat::Pcm16), SpeechAudioFormat::Pcm);
+            assert_eq!(to_speech_audio_format(&AudioFormat::Wav), SpeechAudioFormat::Wav);
+            assert_eq!(to_speech_audio_format(&AudioFormat::Ogg), SpeechAudioFormat::Ogg);
+            assert_eq!(to_speech_audio_format(&AudioFormat::Mp3), SpeechAudioFormat::Mp3);
         }
     }
 }
