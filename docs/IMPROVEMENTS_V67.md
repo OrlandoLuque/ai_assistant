@@ -116,6 +116,23 @@
 
 - `audio-io` (new) — cpal + hound + rubato + ringbuf for real audio I/O
 
+## Part G: Agent Mode — DONE
+
+| # | Item | Estado |
+|---|------|--------|
+| 54 | Mode::Agent in ai_virtual_mic (5th mode) | HECHO |
+| 55 | ConnectionMode: Local / RemoteNode / DirectProvider / Custom | HECHO |
+| 56 | AgentConfig: provider, model, RAG tier, STT/TTS, system prompt | HECHO |
+| 57 | Agent name (e.g. "Luna") configurable, respond_only_when_addressed | HECHO |
+| 58 | is_addressed_to_agent() — name mention + contextual pattern detection (EN/ES) | HECHO |
+| 59 | wait_for_silence_ms — don't talk over others (default 800ms) | HECHO |
+| 60 | PipelineState::WaitingForSilence in pipeline status bar | HECHO |
+| 61 | Agent Config tab with presets (Local/Cloud/Remote) and connection modes | HECHO |
+| 62 | Chat view: mood badges, speaker labels (diarization), pipeline status | HECHO |
+| 63 | initialize_agent() creates AiAssistant per connection mode | HECHO |
+| 64 | Processing thread: agent pipeline with LLM query + conversation updates | HECHO |
+| 65 | Config persistence: save/load JSON in model directory | HECHO |
+
 ## Dependencies added
 
 - `cpal 0.15` — Cross-platform audio I/O (optional, under `audio-io`)

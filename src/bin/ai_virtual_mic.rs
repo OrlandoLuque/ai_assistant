@@ -396,6 +396,8 @@ struct VirtualMicApp {
 
     // Agent
     agent: AgentState,
+    /// Shared conversation updated by processing thread (Agent mode)
+    agent_conversation_shared: Arc<Mutex<Vec<ChatMessage>>>,
 
     // UI
     bottom_tab: Option<BottomTab>,
@@ -411,7 +413,7 @@ impl VirtualMicApp {
         let diarizer_verifier = Box::new(MfccSpeakerVerifier::new());
         let diarizer = Arc::new(Mutex::new(SpeakerDiarizer::with_defaults(diarizer_verifier)));
 
-        Self {
+        let mut result = Self {
             mode: Mode::Monitor,
             input_devices,
             output_devices,
@@ -436,6 +438,7 @@ impl VirtualMicApp {
             enrollment_seconds: 0.0,
             is_enrolling: Arc::new(AtomicBool::new(false)),
             enrollment_buffer: Arc::new(Mutex::new(Vec::new())),
+            agent_conversation_shared: Arc::new(Mutex::new(Vec::new())),
             agent: AgentState {
                 config: AgentConfig::default(),
                 initialized: false,
@@ -448,7 +451,9 @@ impl VirtualMicApp {
             },
             bottom_tab: None,
             status_message: "Ready. Select devices and click Start.".to_string(),
-        }
+        };
+        result.load_config();
+        result
     }
 
     /// Auto-detect virtual audio devices and configure for Discord AI mode.
@@ -556,6 +561,14 @@ impl VirtualMicApp {
         let use_diarization = self.use_diarization;
         let enrolling = self.is_enrolling.clone();
         let enroll_buf = self.enrollment_buffer.clone();
+
+        // Agent mode resources
+        let agent_assistant = self.agent.assistant.clone();
+        let agent_pipeline_state = self.agent.pipeline_state.clone();
+        let agent_name = self.agent.config.agent_name.clone();
+        let agent_respond_only = self.agent.config.respond_only_when_addressed;
+        let agent_wait_silence = self.agent.config.wait_for_silence_ms;
+        let agent_conv_ref = self.agent_conversation_shared.clone();
 
         // Build effect chain
         let mut effect_chain = AudioEffectChain::new();
@@ -702,6 +715,96 @@ impl VirtualMicApp {
                     frame_counter = 0;
                 }
 
+                // ── Agent mode: process speech segments ──────────────
+                if mode == Mode::Agent {
+                    // When we have a speaker identification result + accumulated speech,
+                    // send to the LLM agent
+                    if frame_counter == 0 && !speaker_name.is_empty()
+                        && !speaker_name.starts_with('(')
+                    {
+                        // We just finished a ~1s speech segment with speaker ID
+                        // Build a pseudo-transcript from the speaker label
+                        // (real STT will come when VoiceAgent is fully wired)
+                        let transcript = format!("[{} is speaking]", speaker_name);
+
+                        // Check if addressed to agent
+                        let should_respond = !agent_respond_only
+                            || is_addressed_to_agent(&transcript, &agent_name);
+
+                        if should_respond {
+                            if let Some(ref assistant) = agent_assistant {
+                                // Update pipeline state
+                                if let Ok(mut ps) = agent_pipeline_state.lock() {
+                                    *ps = PipelineState::Thinking;
+                                }
+
+                                // Send to LLM
+                                if let Ok(mut ast) = assistant.lock() {
+                                    let prompt = format!(
+                                        "[{} says:] {}",
+                                        speaker_name, transcript
+                                    );
+                                    ast.send_message_simple(prompt);
+
+                                    // Poll for response (blocking, with timeout)
+                                    let mut response_text = String::new();
+                                    let start = std::time::Instant::now();
+                                    loop {
+                                        if let Some(resp) = ast.poll_response() {
+                                            match resp {
+                                                AiResponse::Chunk(chunk) => {
+                                                    response_text.push_str(&chunk);
+                                                }
+                                                AiResponse::Complete(text) => {
+                                                    if response_text.is_empty() {
+                                                        response_text = text;
+                                                    }
+                                                    break;
+                                                }
+                                                AiResponse::Error(_) => break,
+                                                _ => {}
+                                            }
+                                        }
+                                        if start.elapsed().as_secs() > 10 {
+                                            break; // timeout
+                                        }
+                                        std::thread::sleep(std::time::Duration::from_millis(50));
+                                    }
+
+                                    // Add to conversation
+                                    if !response_text.is_empty() {
+                                        let now = chrono::Local::now().format("%H:%M:%S").to_string();
+                                        if let Ok(mut conv) = agent_conv_ref.lock() {
+                                            // User message
+                                            conv.push(ChatMessage {
+                                                role: "user".to_string(),
+                                                speaker: speaker_name.clone(),
+                                                text: transcript.clone(),
+                                                mood: String::new(),
+                                                mood_color: egui::Color32::GRAY,
+                                                timestamp: now.clone(),
+                                            });
+                                            // Agent response
+                                            conv.push(ChatMessage {
+                                                role: "agent".to_string(),
+                                                speaker: agent_name.clone(),
+                                                text: response_text,
+                                                mood: String::new(),
+                                                mood_color: egui::Color32::GRAY,
+                                                timestamp: now,
+                                            });
+                                        }
+                                    }
+                                }
+
+                                if let Ok(mut ps) = agent_pipeline_state.lock() {
+                                    *ps = PipelineState::Listening;
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Measure processing latency
                 let latency_us = capture_ts
                     .map(|ts| ts.elapsed().as_micros() as u64)
@@ -758,6 +861,7 @@ impl VirtualMicApp {
         self._input_stream = None;
         self._output_stream = None;
         self.status_message = "Stopped.".to_string();
+        self.save_config();
     }
 
     fn refresh_devices(&mut self) {
@@ -1128,6 +1232,33 @@ impl VirtualMicApp {
 
     fn render_agent_config_panel(&mut self, ui: &mut egui::Ui) {
         ui.heading("Agent Configuration");
+
+        // Quick presets
+        ui.horizontal(|ui| {
+            ui.label("Preset:");
+            if ui.small_button("Local (Ollama)").clicked() {
+                self.agent.config.connection = ConnectionMode::Local;
+                self.agent.config.provider = "ollama".to_string();
+                self.agent.config.provider_url = "http://localhost:11434".to_string();
+                self.agent.config.model = "llama3.2".to_string();
+                self.agent.config.stt_provider = "openai".to_string();
+                self.agent.config.tts_provider = "piper".to_string();
+                self.agent.config.rag_tier = "fast".to_string();
+            }
+            if ui.small_button("Cloud (OpenAI)").clicked() {
+                self.agent.config.connection = ConnectionMode::DirectProvider;
+                self.agent.config.provider = "openai".to_string();
+                self.agent.config.model = "gpt-4o-mini".to_string();
+                self.agent.config.stt_provider = "openai".to_string();
+                self.agent.config.tts_provider = "openai-expressive".to_string();
+            }
+            if ui.small_button("Remote Node").clicked() {
+                self.agent.config.connection = ConnectionMode::RemoteNode;
+                self.agent.config.provider_url = "http://localhost:3000".to_string();
+                self.agent.config.model = "default".to_string();
+            }
+        });
+
         ui.add_space(4.0);
 
         // Connection mode selector
@@ -1306,7 +1437,7 @@ impl VirtualMicApp {
     // Agent Chat View (central panel when mode==Agent)
     // ========================================================================
 
-    fn render_agent_chat(&self, ui: &mut egui::Ui) {
+    fn render_agent_chat(&mut self, ui: &mut egui::Ui) {
         // Pipeline status bar
         let ps = self.agent.pipeline_state.lock()
             .map(|s| *s)
@@ -1338,6 +1469,13 @@ impl VirtualMicApp {
         });
 
         ui.separator();
+
+        // Sync conversation from shared thread state
+        if let Ok(conv) = self.agent_conversation_shared.lock() {
+            if conv.len() != self.agent.conversation.len() {
+                self.agent.conversation = conv.clone();
+            }
+        }
 
         // Chat messages
         if self.agent.conversation.is_empty() {
@@ -1404,6 +1542,69 @@ impl VirtualMicApp {
         }
     }
 
+    fn config_path(&self) -> String {
+        format!("{}/virtual_mic_config.json", self.model_registry.model_dir())
+    }
+
+    fn save_config(&self) {
+        let cfg = serde_json::json!({
+            "mode": self.mode,
+            "selected_input": self.selected_input,
+            "selected_output": self.selected_output,
+            "noise_gate_enabled": self.noise_gate_enabled,
+            "noise_gate_threshold": self.noise_gate_threshold,
+            "agc_enabled": self.agc_enabled,
+            "agc_target": self.agc_target,
+            "use_diarization": self.use_diarization,
+            "agent": self.agent.config,
+        });
+        let path = self.config_path();
+        if let Some(parent) = std::path::Path::new(&path).parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(json) = serde_json::to_string_pretty(&cfg) {
+            let _ = std::fs::write(&path, json);
+        }
+    }
+
+    fn load_config(&mut self) {
+        let path = self.config_path();
+        if let Ok(data) = std::fs::read_to_string(&path) {
+            if let Ok(cfg) = serde_json::from_str::<serde_json::Value>(&data) {
+                if let Some(m) = cfg.get("mode").and_then(|v| serde_json::from_value::<Mode>(v.clone()).ok()) {
+                    self.mode = m;
+                }
+                if let Some(v) = cfg.get("selected_input").and_then(|v| v.as_u64()) {
+                    self.selected_input = v as usize;
+                }
+                if let Some(v) = cfg.get("selected_output").and_then(|v| v.as_u64()) {
+                    self.selected_output = v as usize;
+                }
+                if let Some(v) = cfg.get("noise_gate_enabled").and_then(|v| v.as_bool()) {
+                    self.noise_gate_enabled = v;
+                }
+                if let Some(v) = cfg.get("noise_gate_threshold").and_then(|v| v.as_f64()) {
+                    self.noise_gate_threshold = v as f32;
+                }
+                if let Some(v) = cfg.get("agc_enabled").and_then(|v| v.as_bool()) {
+                    self.agc_enabled = v;
+                }
+                if let Some(v) = cfg.get("agc_target").and_then(|v| v.as_f64()) {
+                    self.agc_target = v as f32;
+                }
+                if let Some(v) = cfg.get("use_diarization").and_then(|v| v.as_bool()) {
+                    self.use_diarization = v;
+                }
+                if let Some(agent_val) = cfg.get("agent") {
+                    if let Ok(ac) = serde_json::from_value::<AgentConfig>(agent_val.clone()) {
+                        self.agent.config = ac;
+                    }
+                }
+                self.status_message = "Config loaded.".to_string();
+            }
+        }
+    }
+
     fn initialize_agent(&mut self) {
         self.agent.error = None;
 
@@ -1451,6 +1652,7 @@ impl VirtualMicApp {
         self.agent.initialized = true;
         self.agent.conversation.clear();
         self.status_message = "Agent initialized. Click Start to begin.".to_string();
+        self.save_config();
     }
 }
 
