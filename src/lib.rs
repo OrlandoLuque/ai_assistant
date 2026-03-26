@@ -1129,6 +1129,8 @@ pub mod mcp_agent_tools;
 pub mod mcp_task_tools;
 #[cfg(feature = "tools")]
 pub mod mcp_event_tools;
+#[cfg(feature = "home-automation")]
+pub mod home_automation;
 #[cfg(all(feature = "tools", feature = "home-automation"))]
 pub mod mcp_home_tools;
 #[cfg(feature = "tools")]
@@ -2297,9 +2299,17 @@ pub use mcp_task_tools::{
 pub use mcp_event_tools::register_event_tools;
 
 #[cfg(all(feature = "tools", feature = "home-automation"))]
-pub use mcp_home_tools::{
-    register_home_tools, DeviceState, HomeAssistantBackend, HomeBackend, HomeConfig,
+pub use mcp_home_tools::register_home_tools;
+
+#[cfg(feature = "home-automation")]
+pub use home_automation::{
+    DeviceRegistry, DeviceState as HomeDeviceState, HomeBackend, HomeConfig,
+    MqttConfig, MqttHomeBackend, OpenHabBackend, OpenHabConfig, TopicConvention,
 };
+
+// Keep the HA backend re-export from mcp_home_tools for backwards compat
+#[cfg(all(feature = "tools", feature = "home-automation"))]
+pub use mcp_home_tools::HomeAssistantBackend;
 
 // =============================================================================
 // CONSTRAINED DECODING (grammar-guided generation, GBNF, JSON Schema)
