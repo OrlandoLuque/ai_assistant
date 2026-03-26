@@ -1120,6 +1120,10 @@ pub mod mcp_protocol;
 #[cfg(all(feature = "tools", feature = "autonomous"))]
 pub mod mcp_agent_tools;
 #[cfg(feature = "tools")]
+pub mod mcp_task_tools;
+#[cfg(all(feature = "tools", feature = "home-automation"))]
+pub mod mcp_home_tools;
+#[cfg(feature = "tools")]
 pub mod model_integration;
 #[cfg(feature = "tools")]
 pub mod prompt_chaining;
@@ -2275,6 +2279,16 @@ pub use agent_wiring::{plan_next_actions, AgentPlanningState};
 
 #[cfg(all(feature = "tools", feature = "autonomous"))]
 pub use mcp_agent_tools::register_mcp_agent_tools;
+
+#[cfg(feature = "tools")]
+pub use mcp_task_tools::{
+    register_task_tools, TaskPriority, TaskStatus as UserTaskStatus, UserTask, UserTaskStore,
+};
+
+#[cfg(all(feature = "tools", feature = "home-automation"))]
+pub use mcp_home_tools::{
+    register_home_tools, DeviceState, HomeAssistantBackend, HomeBackend, HomeConfig,
+};
 
 // =============================================================================
 // CONSTRAINED DECODING (grammar-guided generation, GBNF, JSON Schema)

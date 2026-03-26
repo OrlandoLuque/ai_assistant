@@ -4251,3 +4251,11 @@ End-to-end cancellation across all subsystems. `CancellationToken` (AtomicBool) 
 ## 224. Extended RAG Features
 
 5 new features added to `RagFeatures` (28→33 total): `semantic_dedup_fusion` (LLM-based fusion of similar chunks, from Thorough tier), `distributed_search` (DHT peer search, from Graph tier), `context_budget_allocation` (score-based token distribution via ContextBudgetAllocator, from Enhanced tier), `fresh_context` (discard conversation history to maximize knowledge tokens, from Enhanced tier), `emotion_aware` (detect user emotion and bias retrieval, from Thorough tier). All tier presets updated. Widget `rag_features_editor` includes new "Context & Distribution" section.
+
+## 225. MCP Task Management Tools
+
+8 MCP tools for user task management: `task_create` (title, description, priority, due_date, tags), `task_list` (filter by status/priority/tag, sort by due_date/priority/created), `task_get`, `task_update` (partial field updates), `task_complete` (shortcut to mark done), `task_delete` (soft-delete with 30-day rollback retention), `task_undelete` (rollback a soft-delete), `task_search` (FTS5 full-text search with LIKE fallback). Backed by `UserTaskStore` on SQLite (migration V5). Input validation: title length, tag sanitization (trim/lowercase/dedup/reject special chars), date format, result limits. Auto-purge of expired soft-deleted tasks on create.
+
+## 226. MCP Home Automation Tools
+
+10 MCP tools for home automation via `HomeBackend` trait: `home_list_devices` (filter by domain: light, switch, sensor, climate, cover, fan, lock, media_player), `home_get_device`, `home_turn_on` (with brightness/color_temp/temperature), `home_turn_off`, `home_toggle`, `home_set_value` (generic service call for climate.set_temperature, cover.set_position, etc.), `home_list_scenes`, `home_activate_scene`, `home_list_automations`, `home_trigger_automation`. Primary implementation: `HomeAssistantBackend` (REST API with Bearer auth). Security: SSRF protection (blocks 169.254.x metadata), entity_id path traversal prevention, domain/service name validation (alphanumeric only), configurable timeout. Feature flag: `home-automation`.

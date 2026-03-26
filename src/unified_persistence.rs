@@ -261,6 +261,43 @@ impl UnifiedDb {
                 CREATE INDEX IF NOT EXISTS idx_memory_entries_store
                     ON memory_entries(store_name);",
             ),
+            (
+                5,
+                "User tasks table with FTS5 search and soft-delete rollback",
+                "CREATE TABLE IF NOT EXISTS user_tasks (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    description TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    priority TEXT NOT NULL DEFAULT 'medium',
+                    due_date TEXT,
+                    tags TEXT NOT NULL DEFAULT '[]',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    deleted_at TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_user_tasks_status ON user_tasks(status);
+                CREATE INDEX IF NOT EXISTS idx_user_tasks_priority ON user_tasks(priority);
+                CREATE INDEX IF NOT EXISTS idx_user_tasks_due_date ON user_tasks(due_date);
+                CREATE INDEX IF NOT EXISTS idx_user_tasks_deleted ON user_tasks(deleted_at);
+                CREATE VIRTUAL TABLE IF NOT EXISTS user_tasks_fts USING fts5(
+                    title, description, content=user_tasks, content_rowid=rowid
+                );
+                CREATE TRIGGER IF NOT EXISTS user_tasks_ai AFTER INSERT ON user_tasks BEGIN
+                    INSERT INTO user_tasks_fts(rowid, title, description)
+                    VALUES (new.rowid, new.title, new.description);
+                END;
+                CREATE TRIGGER IF NOT EXISTS user_tasks_ad AFTER DELETE ON user_tasks BEGIN
+                    INSERT INTO user_tasks_fts(user_tasks_fts, rowid, title, description)
+                    VALUES ('delete', old.rowid, old.title, old.description);
+                END;
+                CREATE TRIGGER IF NOT EXISTS user_tasks_au AFTER UPDATE ON user_tasks BEGIN
+                    INSERT INTO user_tasks_fts(user_tasks_fts, rowid, title, description)
+                    VALUES ('delete', old.rowid, old.title, old.description);
+                    INSERT INTO user_tasks_fts(rowid, title, description)
+                    VALUES (new.rowid, new.title, new.description);
+                END;",
+            ),
         ];
 
         for &(version, description, sql) in migrations {
@@ -1165,12 +1202,12 @@ mod tests {
         let (db, _tmp) = temp_db();
 
         let version = db.current_version().expect("get version");
-        assert_eq!(version, 4, "all 4 migrations should have run");
+        assert_eq!(version, 5, "all 5 migrations should have run");
 
         let versions = db.applied_versions().expect("list versions");
-        assert_eq!(versions.len(), 4);
+        assert_eq!(versions.len(), 5);
         assert_eq!(versions[0].version, 1);
-        assert_eq!(versions[3].version, 4);
+        assert_eq!(versions[4].version, 5);
     }
 
     #[test]
@@ -1185,7 +1222,7 @@ mod tests {
         assert_eq!(v1, v2);
 
         let versions = db2.applied_versions().expect("versions");
-        assert_eq!(versions.len(), 4, "still 4 — no duplicates");
+        assert_eq!(versions.len(), 5, "still 5 — no duplicates");
     }
 
     #[test]
