@@ -195,6 +195,33 @@ pub struct RagFeatures {
     /// toward empathetic or tone-appropriate content.
     /// Cost: 0-1 LLM calls | Requires: EmotionDetector
     pub emotion_aware: bool,
+
+    // === Relevance Hardening (V66+) ===
+
+    /// Lightweight topic matching — Jaccard keyword overlap penalizes
+    /// keyword-relevant but topic-irrelevant chunks.
+    /// Cost: None (pure Rust) | Requires: None
+    pub topic_matching: bool,
+
+    /// Autocut — detect natural gap in score distribution and discard
+    /// everything below the elbow.
+    /// Cost: None (pure math) | Requires: None
+    pub autocut: bool,
+
+    /// LLM-assisted topic classification — classifies ambiguous chunks
+    /// as ON_TOPIC/PARTIAL/OFF_TOPIC. Only processes Jaccard "Partial" chunks.
+    /// Cost: 1 LLM call per batch of ~10 chunks | Requires: LLM provider
+    pub topic_matching_llm: bool,
+
+    /// Self-Query filter extraction — LLM extracts section/date/keyword
+    /// filters from the query before searching.
+    /// Cost: 1 LLM call | Requires: LLM provider
+    pub self_query_filter: bool,
+
+    /// Sub-chunk granular scoring (ChunkRAG-style) — evaluates relevance
+    /// at sentence level within each chunk, extracts only relevant sentences.
+    /// Cost: 1 LLM call per batch of ~5 chunks | Requires: LLM provider
+    pub chunk_granular_scoring: bool,
 }
 
 impl RagFeatures {
@@ -239,6 +266,11 @@ impl RagFeatures {
             context_budget_allocation: true,
             fresh_context: true,
             emotion_aware: true,
+            topic_matching: true,
+            autocut: true,
+            topic_matching_llm: true,
+            self_query_filter: true,
+            chunk_granular_scoring: true,
         }
     }
 
@@ -342,6 +374,21 @@ impl RagFeatures {
             count += 1;
         }
         if self.emotion_aware {
+            count += 1;
+        }
+        if self.topic_matching {
+            count += 1;
+        }
+        if self.autocut {
+            count += 1;
+        }
+        if self.topic_matching_llm {
+            count += 1;
+        }
+        if self.self_query_filter {
+            count += 1;
+        }
+        if self.chunk_granular_scoring {
             count += 1;
         }
         count
@@ -448,6 +495,21 @@ impl RagFeatures {
         }
         if self.emotion_aware {
             features.push("emotion_aware");
+        }
+        if self.topic_matching {
+            features.push("topic_matching");
+        }
+        if self.autocut {
+            features.push("autocut");
+        }
+        if self.topic_matching_llm {
+            features.push("topic_matching_llm");
+        }
+        if self.self_query_filter {
+            features.push("self_query_filter");
+        }
+        if self.chunk_granular_scoring {
+            features.push("chunk_granular_scoring");
         }
         features
     }
@@ -556,6 +618,8 @@ impl RagTier {
                 discourse_chunking: true,
                 fusion_rrf: true,
                 deduplication: true,
+                topic_matching: true,
+                autocut: true,
                 ..Default::default()
             },
 
@@ -574,6 +638,8 @@ impl RagTier {
                 memory_augmented: true,
                 context_budget_allocation: true,
                 fresh_context: true,
+                topic_matching: true,
+                autocut: true,
                 ..Default::default()
             },
 
@@ -599,6 +665,10 @@ impl RagTier {
                 context_budget_allocation: true,
                 fresh_context: true,
                 emotion_aware: true,
+                topic_matching: true,
+                autocut: true,
+                topic_matching_llm: true,
+                self_query_filter: true,
                 ..Default::default()
             },
 
@@ -626,6 +696,11 @@ impl RagTier {
                 context_budget_allocation: true,
                 fresh_context: true,
                 emotion_aware: true,
+                topic_matching: true,
+                autocut: true,
+                topic_matching_llm: true,
+                self_query_filter: true,
+                chunk_granular_scoring: true,
                 ..Default::default()
             },
 
@@ -658,6 +733,11 @@ impl RagTier {
                 context_budget_allocation: true,
                 fresh_context: true,
                 emotion_aware: true,
+                topic_matching: true,
+                autocut: true,
+                topic_matching_llm: true,
+                self_query_filter: true,
+                chunk_granular_scoring: true,
                 ..Default::default()
             },
 
@@ -1864,7 +1944,7 @@ mod tests {
         assert!(semantic.hybrid_search);
 
         let full = RagTier::Full.to_features();
-        assert_eq!(full.enabled_count(), 33); // All features
+        assert_eq!(full.enabled_count(), 38); // All features
     }
 
     #[test]
@@ -2016,8 +2096,8 @@ mod tests {
         let features = RagTier::Full.to_features();
         assert_eq!(
             features.enabled_count(),
-            33,
-            "Full tier must have all 33 features enabled"
+            38,
+            "Full tier must have all 38 features enabled"
         );
         assert!(features.fts_search);
         assert!(features.semantic_search);
@@ -2053,8 +2133,8 @@ mod tests {
         let features = RagFeatures::all();
         assert_eq!(
             features.enabled_count(),
-            33,
-            "all() must produce exactly 33 features"
+            38,
+            "all() must produce exactly 38 features"
         );
     }
 

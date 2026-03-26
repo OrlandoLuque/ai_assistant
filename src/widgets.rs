@@ -4651,6 +4651,34 @@ pub fn rag_features_editor(ui: &mut Ui, features: &mut RagFeatures) -> bool {
                 .checkbox(&mut features.distributed_search, "Distributed search")
                 .changed();
             ui.end_row();
+
+            ui.add_space(4.0);
+            ui.end_row();
+
+            // Relevance Hardening
+            ui.label(RichText::new("Relevance Hardening").strong().size(11.0));
+            ui.end_row();
+
+            changed |= ui
+                .checkbox(&mut features.topic_matching, "Topic matching (Jaccard)")
+                .changed();
+            changed |= ui
+                .checkbox(&mut features.autocut, "Autocut (score gap)")
+                .changed();
+            ui.end_row();
+
+            changed |= ui
+                .checkbox(&mut features.topic_matching_llm, "Topic matching (LLM)")
+                .changed();
+            changed |= ui
+                .checkbox(&mut features.self_query_filter, "Self-query filter")
+                .changed();
+            ui.end_row();
+
+            changed |= ui
+                .checkbox(&mut features.chunk_granular_scoring, "Granular scoring")
+                .changed();
+            ui.end_row();
         });
 
     changed

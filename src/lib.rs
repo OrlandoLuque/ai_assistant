@@ -190,6 +190,7 @@ pub mod tool_safety;
 pub mod crawl_policy;
 pub mod data_source_client;
 pub mod event_source;
+pub mod topic_matcher;
 pub mod debug;
 pub mod diff;
 pub mod error;
@@ -393,6 +394,11 @@ pub use distributed_rag::{
 pub use event_source::{
     EventAction, EventFilter, EventRule, EventSourceConfig, EventSourceManager,
     EventSourceType, IncomingEvent,
+};
+
+pub use topic_matcher::{
+    GranularScoringResult, LlmTopicVerdict, SelfQueryFilter, TopicMatchConfig,
+    TopicMatchLevel, TopicMatchResult, TopicMatcher, autocut_scores,
 };
 
 pub use config_security::{
