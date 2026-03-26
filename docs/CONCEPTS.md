@@ -4259,3 +4259,31 @@ End-to-end cancellation across all subsystems. `CancellationToken` (AtomicBool) 
 ## 226. MCP Home Automation Tools
 
 10 MCP tools for home automation via `HomeBackend` trait: `home_list_devices` (filter by domain: light, switch, sensor, climate, cover, fan, lock, media_player), `home_get_device`, `home_turn_on` (with brightness/color_temp/temperature), `home_turn_off`, `home_toggle`, `home_set_value` (generic service call for climate.set_temperature, cover.set_position, etc.), `home_list_scenes`, `home_activate_scene`, `home_list_automations`, `home_trigger_automation`. Primary implementation: `HomeAssistantBackend` (REST API with Bearer auth). Security: SSRF protection (blocks 169.254.x metadata), entity_id path traversal prevention, domain/service name validation (alphanumeric only), configurable timeout. Feature flag: `home-automation`.
+
+## 227. Universal Event System
+
+`EventSourceManager` handles subscriptions to 8 source types: `WebhookInbound` (receive POST from IFTTT/Zapier/GitHub), `RssFeed` (poll feeds for new entries), `WebScraper` (detect price drops/availability changes), `Calendar` (iCal/CalDAV reminders), `MqttTopic` (MQTT messages), `WebSocket` (external WS streams), `RestPoll` (API change detection), `EmailImap` (new email notifications). Each `EventRule` defines action (`PromptLlm`/`Notify`/`Both`), filters (TitleContains/PriceBelow/DataFieldEquals), cooldown, and prompt template. Events are sanitized against prompt injection: prefixed with `[EXTERNAL EVENT — untrusted data]`, injection patterns filtered, content truncated. Runaway prompt loops prevented: max 10 auto-prompts/minute, cycle detection. 5 MCP tools: `event_subscribe`, `event_unsubscribe`, `event_list_rules`, `event_notifications`, `event_dismiss`.
+
+## 228. MQTT Home Backend
+
+`MqttHomeBackend` controls devices via MQTT broker without requiring Home Assistant. Supports `TopicConvention`: Zigbee2MQTT (`zigbee2mqtt/{device}/set`), Tasmota (`cmnd/{device}/POWER`), HA MQTT Discovery (`homeassistant/+/+/config`), Custom templates. `DeviceRegistry` tracks discovered devices in-memory. Auto-discovery: parses `zigbee2mqtt/bridge/devices` JSON. Security: TLS-by-default with explicit `allow_insecure_mqtt` opt-in, broker URL SSRF protection, topic injection prevention (`$SYS` blocked, wildcards blocked), `CommandRateLimiter` (10 cmd/min/device, 60 global), payload size limit (64KB).
+
+## 229. OpenHAB Home Backend
+
+`OpenHabBackend` implements `HomeBackend` via OpenHAB REST API: `GET /rest/items` (list), `POST /rest/items/{name}` (commands). Maps OpenHAB item types to domains: Switch→switch, Dimmer→light, Color→light, Number→sensor, Contact→binary_sensor, Rollershutter→cover, Player→media_player. Commands mapped: turn_on→ON, turn_off→OFF, toggle→TOGGLE, open→UP, close→DOWN. Scenes and automations detected via item tags.
+
+## 230. CoAP Backend (Industrial IoT)
+
+`CoapBackend` implements `HomeBackend` for constrained IoT devices via UDP (RFC 7252). CoAP message encoding/decoding with confirmable messages, exponential backoff retransmission (ACK timeout × 1.5 per retry, max 4 retries). GET for sensor reading, PUT for actuator control. OBSERVE option for real-time value change subscriptions (max 50 concurrent). Rate limiting: 10 req/s. Device registration with entity_id, address:port, resource path. Feature flag: `coap` (separate from `home-automation`, zero impact unless activated).
+
+## 231. Custom IoT Device Registry
+
+`CustomDeviceDefinition` allows users to register arbitrary IoT devices at runtime. `StateSource`: MqttTopic (subscribe), WebhookInbound (device POSTs to ai_assistant), RestPoll (periodic HTTP GET). `CommandTarget`: MqttTopic (publish) or RestPost. `ThresholdAlert` with `AlertCondition` (Above/Below/Equals/Changed) triggers EventAction when sensor values cross thresholds. Security: SSRF validation on all URLs, MQTT topic injection prevention, admin-only registration, max 50 devices, min 10s poll interval, min 10s alert cooldown.
+
+## 232. mDNS Auto-Discovery
+
+Scans local network for home automation services via mDNS/Zeroconf: `_home-assistant._tcp.local` (Home Assistant), `_openhab-server._tcp.local` (OpenHAB), `_mqtt._tcp.local` (MQTT brokers). Returns `DiscoveredService` with hostname, port, IPs, TXT records. Security: discovery-only, never auto-connects (mDNS spoofing defense #23), user must validate and explicitly connect. MCP tool: `home_discover` with configurable timeout.
+
+## 233. Home Automation Security (51 Attack Vectors)
+
+Comprehensive security audit with 51 identified attack vectors across 11 iterations. Critical mitigations: event prompts NEVER execute tool calls automatically (#33, #46), runaway prompt loop prevention (#29: cooldown + cycle detection + max 10 auto-prompts/min), privilege escalation defense (#51: RBAC checked at action execution, not just rule creation). Infrastructure: `ConfigSection::HomeAutomation` (lockable), `ResourceType::Device` (RBAC), `NetworkPolicy::preset_home_automation()`, `CommandRateLimiter` (global, keyed by entity_id), TLS-by-default for MQTT, SSRF protection on all URLs, topic/service/entity_id injection prevention, credential protection via `SecureString`/`CredentialResolver`.
