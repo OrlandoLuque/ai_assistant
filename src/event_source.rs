@@ -537,7 +537,7 @@ fn validate_source_config(config: &EventSourceConfig) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_url(url: &str, context: &str) -> Result<(), String> {
+pub fn validate_url(url: &str, context: &str) -> Result<(), String> {
     if !url.starts_with("http://") && !url.starts_with("https://") {
         return Err(format!("{} must start with http:// or https://", context));
     }
@@ -581,7 +581,7 @@ fn is_private_host(host: &str) -> bool {
         || lower.contains("169.254.")
 }
 
-fn validate_mqtt_topic_safe(topic: &str) -> Result<(), String> {
+pub fn validate_mqtt_topic_safe(topic: &str) -> Result<(), String> {
     if topic.is_empty() {
         return Err("MQTT topic cannot be empty".into());
     }

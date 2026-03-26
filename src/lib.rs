@@ -2303,8 +2303,11 @@ pub use mcp_home_tools::register_home_tools;
 
 #[cfg(feature = "home-automation")]
 pub use home_automation::{
-    DeviceRegistry, DeviceState as HomeDeviceState, HomeBackend, HomeConfig,
-    MqttConfig, MqttHomeBackend, OpenHabBackend, OpenHabConfig, TopicConvention,
+    AlertCondition, CoapBackend, CoapConfig, CoapDeviceEntry, CommandTarget,
+    CustomDeviceDefinition, DeviceRegistry, DeviceState as HomeDeviceState,
+    DiscoveredService, DiscoveredServiceType, HomeBackend, HomeConfig,
+    MqttConfig, MqttHomeBackend, OpenHabBackend, OpenHabConfig, StateSource,
+    ThresholdAlert, TopicConvention, discover_services, validate_custom_device,
 };
 
 // Keep the HA backend re-export from mcp_home_tools for backwards compat
