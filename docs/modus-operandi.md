@@ -201,5 +201,5 @@ cargo check --features "full,autonomous,scheduler,butler,browser,distributed-age
 | Repo | Content |
 |------|---------|
 | `ai_assistant` (this) | Rust crate source code + dev docs (full project, PolyForm Noncommercial) |
-| `ai_assistant_core` | **Separate crate** published on crates.io as "anzuelo" — lightweight LLM client (MIT/Apache-2.0). Path: `_varios/_dev/ai_assistant_core` |
+| `ai_assistant_core` | **Separate crate** — lightweight LLM client (MIT/Apache-2.0). Path: `_varios/_dev/ai_assistant_core` |
 | `ai_assistant-website` | Landing page + interactive HTML docs (GitHub Pages) |

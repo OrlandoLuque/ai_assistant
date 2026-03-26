@@ -7,7 +7,7 @@
 
 ## Resumen
 
-V46 adds serve mode to ai_assistant_core (separate crate published to crates.io as "anzuelo").
+V46 adds serve mode to ai_assistant_core (separate lightweight LLM client crate, MIT/Apache-2.0).
 The crate can now act as an OpenAI-compatible proxy server for local LLMs, with NAT traversal
 for remote access.
 
