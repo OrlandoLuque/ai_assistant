@@ -41,10 +41,11 @@ Continúa con el desarrollo del proyecto. Lee docs/modus-operandi.md y el últim
 - **V62**: COMPLETE — Agent Methodology (AgentMethodology, WorkflowProtocol 6 phases, ReviewTriggers 8 conditions, QualityGate, 4 presets, wired into AutonomousAgent), RateLimitStrategy (4 strategies, patient preset), RagFeatures +5 new fields (semantic_dedup_fusion, distributed_search, context_budget_allocation, fresh_context, emotion_aware), cancellation propagation (partial response save, HTTP endpoint cancel, CancelTask/CancelAck P2P, MapReduceJob.cancel(), DistributedRagConfig timeout), concepts 220-221
 - **V63**: COMPLETE — MCP Task Tools (8 tools: CRUD + soft-delete rollback + FTS5 search, SQLite migration V5), MCP Home Automation (10 tools: lights/switches/climate/scenes/automations, HomeBackend trait, HomeAssistantBackend, SSRF protection, input validation), concepts 225-226
 - **V64**: COMPLETE — Universal Event System (8 source types, EventSourceManager, prompt template rendering), MQTT Backend (Zigbee2MQTT/Tasmota/HA Discovery, DeviceRegistry, rate limiting), OpenHAB Backend (REST API), CoAP Backend (UDP, RFC 7252, retransmission), Custom IoT Devices (ThresholdAlerts, StateSource/CommandTarget), mDNS Discovery, 51 attack vectors identified, concepts 227-233
-- **Latest**: V64 — Universal Events + Home Automation Expansion (COMPLETE)
+- **V65**: COMPLETE — Model-Aware Tokenization (TokenPrecision enum, TiktokenCounter cfg-gated, ProviderTokenCounter fallback chain, dynamic reserve 10-20%, model-aware budget allocation in assistant.rs), feature flag `precise-tokens`
+- **Latest**: V65 — Precise Tokenization (COMPLETE)
 - **Test count**: 7,179 lib tests (0 failures) + 39 harness precision + 18 fallback resilience + 8 conversation quality scored tests
 - **Source files**: 340 .rs files, ~389K LOC
-- **Feature flags**: 57 (+2: home-automation, coap)
+- **Feature flags**: 58 (+3: home-automation, coap, precise-tokens)
 - **Feature flags**: 55 (+1: chaos-testing)
 - **Status**: Experimental — compiles and passes tests, but not validated in production
 - **Website**: Separated to `ai_assistant-website` repo (GitHub Pages ready)
