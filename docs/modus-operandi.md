@@ -43,8 +43,9 @@ Continúa con el desarrollo del proyecto. Lee docs/modus-operandi.md y el últim
 - **V64**: COMPLETE — Universal Event System (8 source types, EventSourceManager, prompt template rendering), MQTT Backend (Zigbee2MQTT/Tasmota/HA Discovery, DeviceRegistry, rate limiting), OpenHAB Backend (REST API), CoAP Backend (UDP, RFC 7252, retransmission), Custom IoT Devices (ThresholdAlerts, StateSource/CommandTarget), mDNS Discovery, 51 attack vectors identified, concepts 227-233
 - **V65**: COMPLETE — Model-Aware Tokenization (TokenPrecision enum, TiktokenCounter cfg-gated, ProviderTokenCounter fallback chain, dynamic reserve 10-20%, model-aware budget allocation in assistant.rs), feature flag `precise-tokens`
 - **V66**: COMPLETE — Topic-Aware RAG Relevance (TopicMatcher Jaccard, autocut score gap, LLM topic classifier, Self-Query filter extraction, ChunkRAG sub-chunk granular scoring, 5 new RagFeatures 33→38, Butler RAG warnings, 12 attack vectors), concept 235
-- **Latest**: V66 — Topic-Aware RAG Relevance (COMPLETE)
-- **Test count**: 7,198 lib tests (0 failures) + 39 harness precision + 18 fallback resilience + 8 conversation quality scored tests
+- **V67**: IN PROGRESS — Audio Filter Pipeline (audio_filter.rs DONE: MfccSpeakerVerifier, SpeakerGate multi-profile, AEC NLMS, NoiseGate, AGC, Compressor, Distortion, Reverb, AudioEffectChain with latency tracking, 20 tests). PENDING: ai_virtual_mic GUI app (cpal dep), MCP enrollment tools, Cargo.toml deps (cpal/nnnoiseless/rustfft), voice_agent.rs wiring, docs/concepts/diagrams/INNOVATIONS/website
+- **Latest**: V67 — Audio Filter Pipeline (IN PROGRESS)
+- **Test count**: 7,218 lib tests (0 failures) + 39 harness precision + 18 fallback resilience + 8 conversation quality scored tests
 - **Source files**: 340 .rs files, ~389K LOC
 - **Feature flags**: 58 (+3: home-automation, coap, precise-tokens)
 - **Feature flags**: 55 (+1: chaos-testing)
