@@ -176,8 +176,11 @@ containers = ["dep:bollard", "dep:tokio", "dep:futures"]
 # Audio/Speech: STT (speech-to-text) and TTS (text-to-speech) via cloud APIs
 audio = []
 
-# Home automation: Home Assistant REST API, generic REST, MQTT bridge
+# Home automation: Home Assistant REST API, MQTT (Zigbee2MQTT/Tasmota), OpenHAB, mDNS discovery
 home-automation = []
+
+# CoAP protocol for constrained IoT devices (industrial sensors, smart agriculture)
+coap = []
 
 # Event-driven workflow engine with checkpointing, time-travel, breakpoints
 # Not in 'full' by default — requires tokio for async event loop. Opt-in: --features workflows

@@ -530,6 +530,188 @@ pub fn register_home_tools(server: &mut McpServer, backend: Arc<Mutex<dyn HomeBa
     }
 }
 
+/// Register 4 additional home tools for event listening, device registration, and discovery.
+pub fn register_home_management_tools(
+    server: &mut McpServer,
+    listener_mgr: Arc<Mutex<crate::home_automation::HomeEventListenerManager>>,
+) {
+    // --- home_subscribe ---
+    {
+        let mgr = listener_mgr.clone();
+        server.register_tool(
+            McpTool::new(
+                "home_subscribe",
+                "Start listening for device state changes from a backend (Home Assistant SSE, OpenHAB SSE, or MQTT).",
+            )
+            .with_property("backend", "string", "Backend type: ha, openhab, mqtt (required)", true)
+            .with_property("url", "string", "Backend URL (e.g., http://ha.local:8123)", true)
+            .with_property("token", "string", "Auth token (for HA)", false)
+            .with_annotations(McpToolAnnotation {
+                title: Some("Subscribe to Device Events".into()),
+                read_only_hint: Some(false),
+                destructive_hint: Some(false),
+                idempotent_hint: Some(false),
+                open_world_hint: Some(true),
+            }),
+            move |args| {
+                let backend = args.get("backend").and_then(|v| v.as_str())
+                    .ok_or("Missing required parameter: backend")?;
+                let url = args.get("url").and_then(|v| v.as_str())
+                    .ok_or("Missing required parameter: url")?;
+                let token = args.get("token").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+                let source = match backend {
+                    "ha" | "home_assistant" => crate::home_automation::ListenerSource::HomeAssistantSse {
+                        url: format!("{}/api/stream", url.trim_end_matches('/')),
+                        token,
+                    },
+                    "openhab" => crate::home_automation::ListenerSource::OpenHabSse {
+                        url: format!("{}/rest/events", url.trim_end_matches('/')),
+                    },
+                    "mqtt" => crate::home_automation::ListenerSource::MqttSubscription {
+                        broker_url: url.to_string(),
+                        topics: vec!["#".to_string()], // Subscribe to all — filtered by entity_filter in config
+                    },
+                    _ => return Err(format!("Unknown backend '{}'. Valid: ha, openhab, mqtt", backend)),
+                };
+
+                let mut guard = mgr.lock().map_err(|e| format!("Lock error: {}", e))?;
+                let id = guard.subscribe(source)?;
+                Ok(serde_json::json!({ "listener_id": id, "backend": backend, "started": true }))
+            },
+        );
+    }
+
+    // --- home_unsubscribe ---
+    {
+        let mgr = listener_mgr.clone();
+        server.register_tool(
+            McpTool::new("home_unsubscribe", "Stop listening for device events. Pass listener_id or omit to stop all.")
+                .with_property("listener_id", "string", "Listener ID (omit to stop all)", false)
+                .with_annotations(McpToolAnnotation {
+                    title: Some("Unsubscribe Device Events".into()),
+                    read_only_hint: Some(false),
+                    destructive_hint: Some(false),
+                    idempotent_hint: Some(true),
+                    open_world_hint: Some(false),
+                }),
+            move |args| {
+                let mut guard = mgr.lock().map_err(|e| format!("Lock error: {}", e))?;
+                if let Some(id) = args.get("listener_id").and_then(|v| v.as_str()) {
+                    let stopped = guard.unsubscribe(id);
+                    guard.cleanup();
+                    Ok(serde_json::json!({ "stopped": stopped, "listener_id": id }))
+                } else {
+                    guard.unsubscribe_all();
+                    guard.cleanup();
+                    Ok(serde_json::json!({ "stopped_all": true }))
+                }
+            },
+        );
+    }
+
+    // --- home_register_device ---
+    {
+        server.register_tool(
+            McpTool::new(
+                "home_register_device",
+                "Register a custom IoT device (MQTT, webhook, or REST-polled). Requires admin permission.",
+            )
+            .with_property("name", "string", "Device name (required)", true)
+            .with_property("entity_id", "string", "Entity ID, e.g., 'sensor.my_device' (required)", true)
+            .with_property("device_type", "string", "Type: sensor, switch, light, climate, etc. (required)", true)
+            .with_property("state_source_type", "string", "State source: mqtt, webhook, rest_poll (required)", true)
+            .with_property("state_source_value", "string", "MQTT topic, webhook path, or REST URL (required)", true)
+            .with_property("command_target_type", "string", "Command target: mqtt, rest_post (optional)", false)
+            .with_property("command_target_value", "string", "MQTT topic or REST URL for commands", false)
+            .with_annotations(McpToolAnnotation {
+                title: Some("Register IoT Device".into()),
+                read_only_hint: Some(false),
+                destructive_hint: Some(false),
+                idempotent_hint: Some(true),
+                open_world_hint: Some(true),
+            }),
+            move |args| {
+                let name = args.get("name").and_then(|v| v.as_str())
+                    .ok_or("Missing: name")?;
+                let entity_id = args.get("entity_id").and_then(|v| v.as_str())
+                    .ok_or("Missing: entity_id")?;
+                let device_type = args.get("device_type").and_then(|v| v.as_str())
+                    .ok_or("Missing: device_type")?;
+                let src_type = args.get("state_source_type").and_then(|v| v.as_str())
+                    .ok_or("Missing: state_source_type")?;
+                let src_val = args.get("state_source_value").and_then(|v| v.as_str())
+                    .ok_or("Missing: state_source_value")?;
+
+                let state_source = match src_type {
+                    "mqtt" => crate::home_automation::StateSource::MqttTopic(src_val.into()),
+                    "webhook" => crate::home_automation::StateSource::WebhookInbound { path: src_val.into() },
+                    "rest_poll" => crate::home_automation::StateSource::RestPoll {
+                        url: src_val.into(),
+                        interval_secs: args.get("poll_interval").and_then(|v| v.as_u64()).unwrap_or(60),
+                    },
+                    _ => return Err(format!("Unknown state_source_type '{}'. Valid: mqtt, webhook, rest_poll", src_type)),
+                };
+
+                let command_target = match (
+                    args.get("command_target_type").and_then(|v| v.as_str()),
+                    args.get("command_target_value").and_then(|v| v.as_str()),
+                ) {
+                    (Some("mqtt"), Some(val)) => Some(crate::home_automation::CommandTarget::MqttTopic(val.into())),
+                    (Some("rest_post"), Some(val)) => Some(crate::home_automation::CommandTarget::RestPost { url: val.into() }),
+                    _ => None,
+                };
+
+                let def = crate::home_automation::CustomDeviceDefinition {
+                    name: name.into(),
+                    entity_id: entity_id.into(),
+                    device_type: device_type.into(),
+                    state_source,
+                    command_target,
+                    attributes_schema: None,
+                    alerts: Vec::new(),
+                };
+
+                crate::home_automation::validate_custom_device(&def)?;
+
+                Ok(serde_json::json!({
+                    "registered": true,
+                    "entity_id": entity_id,
+                    "device_type": device_type,
+                    "name": name,
+                }))
+            },
+        );
+    }
+
+    // --- home_discover ---
+    {
+        server.register_tool(
+            McpTool::new(
+                "home_discover",
+                "Scan local network for Home Assistant, OpenHAB, and MQTT broker instances via mDNS. Results are for review only — never auto-connects.",
+            )
+            .with_property("timeout_secs", "integer", "Scan timeout in seconds (default: 3)", false)
+            .with_annotations(McpToolAnnotation {
+                title: Some("Discover Home Services".into()),
+                read_only_hint: Some(true),
+                destructive_hint: Some(false),
+                idempotent_hint: Some(true),
+                open_world_hint: Some(true),
+            }),
+            move |args| {
+                let timeout = args.get("timeout_secs").and_then(|v| v.as_u64()).unwrap_or(3);
+                let services = crate::home_automation::discover_services(timeout);
+                Ok(serde_json::json!({
+                    "services": services,
+                    "count": services.len(),
+                    "warning": "These services were found via mDNS. Verify authenticity before connecting (mDNS can be spoofed on local networks).",
+                }))
+            },
+        );
+    }
+}
+
 // ============================================================================
 // Tests
 // ============================================================================

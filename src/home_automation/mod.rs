@@ -10,6 +10,7 @@ pub mod openhab_backend;
 pub mod coap_backend;
 pub mod custom_device;
 pub mod discovery;
+pub mod event_listener;
 
 pub use backend::{
     DeviceState, HomeBackend, HomeConfig, extract_domain, validate_backend_url,
@@ -25,3 +26,7 @@ pub use custom_device::{
     validate_custom_device,
 };
 pub use discovery::{DiscoveredService, DiscoveredServiceType, discover_services};
+pub use event_listener::{
+    DeviceStateChange, EventListenerConfig, HomeEventListenerManager, ListenerSource,
+    ListenerStatus, parse_ha_state_changed, parse_openhab_state_changed,
+};

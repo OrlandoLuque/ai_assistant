@@ -2299,15 +2299,18 @@ pub use mcp_task_tools::{
 pub use mcp_event_tools::register_event_tools;
 
 #[cfg(all(feature = "tools", feature = "home-automation"))]
-pub use mcp_home_tools::register_home_tools;
+pub use mcp_home_tools::{register_home_tools, register_home_management_tools};
 
 #[cfg(feature = "home-automation")]
 pub use home_automation::{
     AlertCondition, CoapBackend, CoapConfig, CoapDeviceEntry, CommandTarget,
     CustomDeviceDefinition, DeviceRegistry, DeviceState as HomeDeviceState,
-    DiscoveredService, DiscoveredServiceType, HomeBackend, HomeConfig,
-    MqttConfig, MqttHomeBackend, OpenHabBackend, OpenHabConfig, StateSource,
-    ThresholdAlert, TopicConvention, discover_services, validate_custom_device,
+    DeviceStateChange, DiscoveredService, DiscoveredServiceType,
+    EventListenerConfig, HomeBackend, HomeConfig, HomeEventListenerManager,
+    ListenerSource, ListenerStatus, MqttConfig, MqttHomeBackend,
+    OpenHabBackend, OpenHabConfig, StateSource, ThresholdAlert,
+    TopicConvention, discover_services, parse_ha_state_changed,
+    parse_openhab_state_changed, validate_custom_device,
 };
 
 // Keep the HA backend re-export from mcp_home_tools for backwards compat
