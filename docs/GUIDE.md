@@ -9869,3 +9869,201 @@ let msg = NodeMessage::CancelTask {
 network.broadcast(msg);
 // Workers respond with CancelAck
 ```
+
+---
+
+## 171. Universal Event System (V64)
+
+Subscribe to any event source and react with LLM prompts, notifications, or both.
+
+### Event Sources
+
+| Source | Method | Example Use Case |
+|--------|--------|-----------------|
+| Webhook | Receive POST | IFTTT, Zapier, GitHub CI |
+| RSS/Atom | Poll feed | Blog posts, release notes |
+| Web Scraper | Poll URL | Price drop, stock availability |
+| Calendar | Poll iCal | Meeting reminders |
+| MQTT | Subscribe | IoT sensor data |
+| WebSocket | Connect | Live game scores |
+| REST Poll | Poll API | API data changes |
+| Email | Check IMAP | Important emails |
+
+### Creating a Subscription
+
+```rust
+use ai_assistant::{EventSourceManager, EventRule, EventAction, EventSourceConfig, EventFilter};
+
+let mut manager = EventSourceManager::new();
+
+manager.add_rule(EventRule {
+    id: "price-watch".into(),
+    name: "PS5 Price Alert".into(),
+    source: EventSourceConfig::Scraper {
+        url: "https://shop.com/ps5".into(),
+        selector: Some("price".into()),
+        watch_field: None,
+    },
+    action: EventAction::Both,
+    prompt_template: Some("The PS5 price changed: {{body}}. Should I buy?".into()),
+    filters: vec![EventFilter::PriceBelow(400.0)],
+    cooldown_secs: 3600,
+    schedule: Some("*/15 * * * *".into()),
+    enabled: true,
+    created_by: None,
+})?;
+```
+
+### Security
+
+Events are marked as untrusted: `[EXTERNAL EVENT — untrusted data]`. Prompt injection patterns are filtered. Event-triggered prompts NEVER auto-execute tool calls. Max 10 auto-prompts/minute.
+
+---
+
+## 172. MQTT Home Backend (V64)
+
+Control devices directly via MQTT broker without Home Assistant.
+
+```rust
+use ai_assistant::{MqttConfig, MqttHomeBackend, TopicConvention};
+
+let config = MqttConfig {
+    broker_url: "mqtt://192.168.1.100:1883".into(),
+    topic_convention: TopicConvention::Zigbee2Mqtt,
+    use_tls: false,
+    allow_insecure_mqtt: true, // explicit opt-in for local network
+    ..MqttConfig::default()
+};
+
+let backend = MqttHomeBackend::new(config)?;
+// Devices auto-discovered from zigbee2mqtt/bridge/devices topic
+let devices = backend.list_devices(None)?;
+backend.call_service("light", "turn_on", "light.living_room", None)?;
+```
+
+---
+
+## 173. OpenHAB Backend (V64)
+
+```rust
+use ai_assistant::{OpenHabConfig, OpenHabBackend};
+
+let backend = OpenHabBackend::new(OpenHabConfig {
+    base_url: "http://openhab.local:8080".into(),
+    ..Default::default()
+})?;
+
+// Items mapped to HomeBackend interface
+let devices = backend.list_devices(Some("light"))?;
+backend.call_service("switch", "turn_off", "switch.porch_light", None)?;
+```
+
+---
+
+## 174. CoAP Backend for Industrial IoT (V64)
+
+```rust
+use ai_assistant::{CoapBackend, CoapConfig, CoapDeviceEntry};
+
+let backend = CoapBackend::new(CoapConfig::default());
+backend.register_device(CoapDeviceEntry {
+    entity_id: "sensor.factory_temp".into(),
+    address: "192.168.1.50".into(),
+    port: 5683,
+    resource_path: "/sensors/temperature".into(),
+    name: "Factory Temperature".into(),
+    domain: "sensor".into(),
+    last_value: None,
+    last_read: 0,
+})?;
+
+let state = backend.get_device("sensor.factory_temp")?;
+println!("Temperature: {}", state.state);
+```
+
+---
+
+## 175. Custom IoT Devices (V64)
+
+Register any device that speaks MQTT, REST, or webhook:
+
+```rust
+use ai_assistant::{CustomDeviceDefinition, StateSource, CommandTarget, ThresholdAlert, AlertCondition};
+use ai_assistant::EventAction;
+
+let device = CustomDeviceDefinition {
+    name: "Greenhouse Temp".into(),
+    entity_id: "sensor.greenhouse_temp".into(),
+    device_type: "sensor".into(),
+    state_source: StateSource::MqttTopic("sensors/greenhouse/temp".into()),
+    command_target: None,
+    attributes_schema: None,
+    alerts: vec![ThresholdAlert {
+        attribute: "temperature".into(),
+        condition: AlertCondition::Above(35.0),
+        action: EventAction::Both,
+        cooldown_secs: 300,
+        message_template: "Greenhouse temp is {{value}}°C!".into(),
+    }],
+};
+```
+
+---
+
+## 176. Device Event Listener (V64)
+
+Listen for real-time device state changes:
+
+```rust
+use ai_assistant::{HomeEventListenerManager, ListenerSource};
+
+let mut listener = HomeEventListenerManager::default();
+
+// Start listening to Home Assistant SSE
+let id = listener.subscribe(ListenerSource::HomeAssistantSse {
+    url: "http://ha.local:8123/api/stream".into(),
+    token: "your-long-lived-token".into(),
+})?;
+
+// Check active listeners
+let active = listener.active_listeners();
+println!("{} listeners active", active.len());
+
+// Stop listening
+listener.unsubscribe(&id);
+```
+
+---
+
+## 177. mDNS Auto-Discovery (V64)
+
+Find home automation services on your local network:
+
+```rust
+use ai_assistant::discover_services;
+
+let services = discover_services(3); // 3-second scan
+for svc in &services {
+    println!("Found: {} at {}:{}", svc.service_type, svc.hostname, svc.port);
+}
+// WARNING: mDNS can be spoofed — always verify before connecting
+```
+
+---
+
+## 178. Home Automation Security (V64)
+
+51 identified attack vectors. Key defenses:
+
+| Defense | What it protects |
+|---------|-----------------|
+| SSRF validation on all URLs | Prevents metadata endpoint access |
+| MQTT topic injection blocking | Prevents `$SYS` and wildcard attacks |
+| TLS-by-default for MQTT | Prevents man-in-the-middle |
+| CommandRateLimiter | Prevents device flooding (10/min/device) |
+| Event prompt sanitization | Prevents LLM prompt injection via events |
+| No auto tool calls from events | Prevents unauthorized device control |
+| RBAC ResourceType::Device | Controls who can access which devices |
+| ConfigLock::HomeAutomation | Prevents config tampering |
+| SecureString for credentials | Prevents credential leakage in logs |
+| mDNS discovery-only | Prevents auto-connection to spoofed services |

@@ -9212,3 +9212,55 @@ All types implement `Serialize`/`Deserialize`. Users can save/share/load methodo
 | 11 | QualityGate construction |
 | 12 | WorkflowPhase Display impl |
 | 13 | Research preset values |
+
+---
+
+## 61. Home Automation & IoT Architecture
+
+> Fecha: 2026-03-26
+
+### Overview
+
+The home automation system is built on the `HomeBackend` trait with 4 implementations + custom IoT devices + a universal event system that connects external world events to LLM reasoning.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    MCP Tools (14 home + 5 event)            │
+├─────────────────────────────────────────────────────────────┤
+│                  HomeEventListenerManager                    │
+│               (SSE/MQTT → EventBus → LLM/Notify)           │
+├────────┬──────────┬──────────┬─────────┬───────────────────┤
+│ HA     │ MQTT     │ OpenHAB  │ CoAP    │ Custom IoT        │
+│ REST   │ Z2M/     │ REST     │ UDP     │ MQTT/REST/Webhook │
+│ API    │ Tasmota  │ API      │ RFC7252 │ + ThresholdAlerts  │
+├────────┴──────────┴──────────┴─────────┴───────────────────┤
+│              DeviceRegistry (in-memory cache)               │
+├─────────────────────────────────────────────────────────────┤
+│                    Security Layer                            │
+│ SSRF │ TopicInjection │ RateLimiter │ RBAC │ ConfigLock     │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│                Universal Event System                        │
+│ Webhook │ RSS │ Scraper │ Calendar │ MQTT │ WS │ REST │ IMAP│
+├─────────────────────────────────────────────────────────────┤
+│  EventRule: action (PromptLlm/Notify/Both) + filters        │
+│  + prompt template + cooldown + cycle detection              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Security: 51 Attack Vectors
+
+The system was audited across 11 iterations. The 6 critical vectors:
+1. **Prompt injection via event data** → sanitize + prefix + filter patterns
+2. **Runaway prompt loop** → cooldown + max 10 prompts/min + cycle detection
+3. **Device control via event prompt** → events NEVER execute tool calls
+4. **Data exfiltration via event prompt** → no context/RAG access in templates
+5. **Privilege escalation via tool chain** → RBAC checked at action execution
+6. **SSRF via webhook callback** → validate on registration AND every call
+
+### Test Coverage
+
+66 tests across: MQTT backend (11), OpenHAB (6), CoAP (7), custom devices (10), event listener (7), mDNS (3), event source (19), event tools (3).
