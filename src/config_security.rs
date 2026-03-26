@@ -33,6 +33,8 @@ pub enum ConfigSection {
     RollbackStrategy,
     /// Learning subsystem settings (bandit, procedures, etc.).
     Learning,
+    /// Home automation configuration (backends, credentials, device access).
+    HomeAutomation,
 }
 
 impl std::fmt::Display for ConfigSection {

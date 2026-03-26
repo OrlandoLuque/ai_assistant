@@ -91,6 +91,21 @@ pub enum AiEvent {
         success: bool,
         duration_ms: u64,
     },
+
+    /// An external event was received (Universal Event System).
+    ExternalEvent {
+        source_type: String,
+        title: String,
+        rule_id: String,
+    },
+
+    /// A home automation device changed state (requires home-automation feature).
+    #[cfg(feature = "home-automation")]
+    DeviceStateChanged {
+        entity_id: String,
+        old_state: String,
+        new_state: String,
+    },
 }
 
 impl AiEvent {
@@ -124,6 +139,11 @@ impl AiEvent {
             AiEvent::DocumentIndexed { .. } | AiEvent::KnowledgeRetrieved { .. } => "rag",
 
             AiEvent::ToolExecuted { .. } => "tool",
+
+            AiEvent::ExternalEvent { .. } => "external",
+
+            #[cfg(feature = "home-automation")]
+            AiEvent::DeviceStateChanged { .. } => "home",
         }
     }
 
@@ -152,6 +172,11 @@ impl AiEvent {
             AiEvent::DocumentIndexed { .. } => "document_indexed",
             AiEvent::KnowledgeRetrieved { .. } => "knowledge_retrieved",
             AiEvent::ToolExecuted { .. } => "tool_executed",
+
+            AiEvent::ExternalEvent { .. } => "external_event",
+
+            #[cfg(feature = "home-automation")]
+            AiEvent::DeviceStateChanged { .. } => "device_state_changed",
         }
     }
 }

@@ -238,6 +238,23 @@ impl NetworkPolicy {
         }
         policy
     }
+
+    /// Preset for home automation: allows common local services.
+    /// Whitelists Home Assistant, OpenHAB, MQTT brokers on local network.
+    pub fn preset_home_automation() -> Self {
+        let mut policy = Self::restrictive();
+        policy.allow_host("homeassistant.local");
+        policy.allow_host("*.homeassistant.local");
+        policy.allow_host("openhab.local");
+        policy.allow_host("*.openhab.local");
+        policy.allow_host("mqtt.local");
+        policy.allow_host("mosquitto.local");
+        // Allow local network access for home devices
+        // (restrictive() blocks some private ranges via blocked_ip_ranges,
+        //  but home automation typically needs local network access)
+        policy.blocked_ip_ranges.clear();
+        policy
+    }
 }
 
 #[cfg(test)]

@@ -189,6 +189,7 @@ pub mod storage_context;
 pub mod tool_safety;
 pub mod crawl_policy;
 pub mod data_source_client;
+pub mod event_source;
 pub mod debug;
 pub mod diff;
 pub mod error;
@@ -387,6 +388,11 @@ pub use distributed_rag::{
     IceCandidate as P2pIceCandidate, IceCandidateType as P2pIceCandidateType,
     IceConfig as P2pIceConfig, IceState as P2pIceState, SharedChunkMeta,
     TurnServerConfig as P2pTurnServerConfig,
+};
+
+pub use event_source::{
+    EventAction, EventFilter, EventRule, EventSourceConfig, EventSourceManager,
+    EventSourceType, IncomingEvent,
 };
 
 pub use config_security::{
@@ -1121,6 +1127,8 @@ pub mod mcp_protocol;
 pub mod mcp_agent_tools;
 #[cfg(feature = "tools")]
 pub mod mcp_task_tools;
+#[cfg(feature = "tools")]
+pub mod mcp_event_tools;
 #[cfg(all(feature = "tools", feature = "home-automation"))]
 pub mod mcp_home_tools;
 #[cfg(feature = "tools")]
@@ -2284,6 +2292,9 @@ pub use mcp_agent_tools::register_mcp_agent_tools;
 pub use mcp_task_tools::{
     register_task_tools, TaskPriority, TaskStatus as UserTaskStatus, UserTask, UserTaskStore,
 };
+
+#[cfg(feature = "tools")]
+pub use mcp_event_tools::register_event_tools;
 
 #[cfg(all(feature = "tools", feature = "home-automation"))]
 pub use mcp_home_tools::{

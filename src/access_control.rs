@@ -26,6 +26,8 @@ pub enum ResourceType {
     Model,
     Plugin,
     Settings,
+    /// Home automation / IoT devices.
+    Device,
 }
 
 /// Access control entry
