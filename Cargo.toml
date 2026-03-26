@@ -182,6 +182,10 @@ home-automation = []
 # CoAP protocol for constrained IoT devices (industrial sensors, smart agriculture)
 coap = []
 
+# Precise token counting via tiktoken (OpenAI exact tokenizer). Adds ~4MB to binary.
+# Without this, uses BPE-200 (±10-15% error) or heuristic (±15-20%).
+precise-tokens = []
+
 # Event-driven workflow engine with checkpointing, time-travel, breakpoints
 # Not in 'full' by default — requires tokio for async event loop. Opt-in: --features workflows
 workflows = ["dep:tokio"]

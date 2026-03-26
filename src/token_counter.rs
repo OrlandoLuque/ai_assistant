@@ -388,17 +388,128 @@ impl TokenCounter for BpeTokenCounter {
 }
 
 // =============================================================================
+// Token Precision Level
+// =============================================================================
+
+/// How precise the token counting is for a given model.
+/// Used to adjust safety margins dynamically (#10, #11).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum TokenPrecision {
+    /// ~3.5 chars/token heuristic. Error: ±15-20%. Reserve: 20%.
+    Approximate,
+    /// 200-rule BPE (pure Rust). Error: ±10-15%. Reserve: 15%.
+    Bpe,
+    /// Exact tokenizer (tiktoken). Error: ±0-1%. Reserve: 10%.
+    Precise,
+}
+
+impl TokenPrecision {
+    /// Recommended response reserve factor (fraction of context to leave for response).
+    pub fn reserve_factor(&self) -> f64 {
+        match self {
+            Self::Approximate => 0.20,
+            Self::Bpe => 0.15,
+            Self::Precise => 0.10,
+        }
+    }
+
+    /// The usable fraction of the context window.
+    pub fn usable_factor(&self) -> f64 {
+        1.0 - self.reserve_factor()
+    }
+}
+
+// =============================================================================
+// TiktokenCounter (precise-tokens feature)
+// =============================================================================
+
+/// Exact OpenAI tokenizer via `tiktoken-rs`.
+/// Only available with the `precise-tokens` feature flag.
+/// Supports cl100k_base (GPT-4, GPT-3.5) and o200k_base (GPT-4o, o1, o3, o4).
+#[cfg(feature = "precise-tokens")]
+pub struct TiktokenCounter {
+    encoding: tiktoken_rs::CoreBPE,
+    model_family: String,
+}
+
+#[cfg(feature = "precise-tokens")]
+impl std::fmt::Debug for TiktokenCounter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TiktokenCounter")
+            .field("model_family", &self.model_family)
+            .finish()
+    }
+}
+
+#[cfg(feature = "precise-tokens")]
+impl TiktokenCounter {
+    /// Create a tiktoken counter for the given model.
+    /// Returns None if the model is not an OpenAI model.
+    pub fn for_model(model: &str) -> Option<Self> {
+        let name = model.to_lowercase();
+        if name.contains("gpt-4o") || name.starts_with("o1")
+            || name.starts_with("o3") || name.starts_with("o4") {
+            tiktoken_rs::o200k_base().ok().map(|e| Self {
+                encoding: e,
+                model_family: "o200k_base".into(),
+            })
+        } else if name.contains("gpt-4") || name.contains("gpt-3.5") || name.contains("gpt4") {
+            tiktoken_rs::cl100k_base().ok().map(|e| Self {
+                encoding: e,
+                model_family: "cl100k_base".into(),
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Get the model family name.
+    pub fn model_family(&self) -> &str {
+        &self.model_family
+    }
+}
+
+#[cfg(feature = "precise-tokens")]
+impl TokenCounter for TiktokenCounter {
+    fn count(&self, text: &str) -> usize {
+        // Max input guard (#1: DoS prevention)
+        if text.len() > 1_000_000 {
+            // Fallback to heuristic for extremely long texts
+            return (text.len() as f64 / 3.5).ceil() as usize;
+        }
+        self.encoding.encode_with_special_tokens(text).len()
+    }
+
+    fn count_messages(&self, messages: &[(&str, &str)]) -> usize {
+        let mut total = 0;
+        for (role, content) in messages {
+            total += 4; // <|im_start|> role \n <|im_end|>
+            total += self.count(role);
+            total += self.count(content);
+        }
+        total += 2; // priming tokens
+        total
+    }
+}
+
+// =============================================================================
 // ProviderTokenCounter
 // =============================================================================
 
 /// Dispatches to the correct [`TokenCounter`] based on model name.
 ///
-/// - OpenAI (`gpt-*`) and Anthropic (`claude-*`) models use [`BpeTokenCounter`]
-/// - Local / unknown models fall back to [`ApproximateCounter`]
+/// Priority order:
+/// 1. TiktokenCounter (if `precise-tokens` feature, OpenAI models only)
+/// 2. BpeTokenCounter (cloud/known models)
+/// 3. ApproximateCounter (local/unknown models)
 #[derive(Debug)]
 pub struct ProviderTokenCounter {
     bpe: BpeTokenCounter,
     approximate: ApproximateCounter,
+    #[cfg(feature = "precise-tokens")]
+    tiktoken_o200k: Option<TiktokenCounter>,
+    #[cfg(feature = "precise-tokens")]
+    tiktoken_cl100k: Option<TiktokenCounter>,
 }
 
 impl ProviderTokenCounter {
@@ -406,15 +517,38 @@ impl ProviderTokenCounter {
         Self {
             bpe: BpeTokenCounter::new(),
             approximate: ApproximateCounter::new(),
+            #[cfg(feature = "precise-tokens")]
+            tiktoken_o200k: tiktoken_rs::o200k_base()
+                .ok()
+                .map(|e| TiktokenCounter { encoding: e, model_family: "o200k_base".into() }),
+            #[cfg(feature = "precise-tokens")]
+            tiktoken_cl100k: tiktoken_rs::cl100k_base()
+                .ok()
+                .map(|e| TiktokenCounter { encoding: e, model_family: "cl100k_base".into() }),
         }
     }
 
     /// Return the appropriate counter for `model`.
-    ///
-    /// Uses BPE for cloud/known models (more accurate), approximate for local/unknown.
     pub fn for_model(&self, model: &str) -> &dyn TokenCounter {
         let name = model.to_lowercase();
 
+        // 1. Try tiktoken (precise, OpenAI only)
+        #[cfg(feature = "precise-tokens")]
+        {
+            if name.contains("gpt-4o") || name.starts_with("o1")
+                || name.starts_with("o3") || name.starts_with("o4") {
+                if let Some(ref counter) = self.tiktoken_o200k {
+                    return counter;
+                }
+            }
+            if name.contains("gpt-4") || name.contains("gpt-3.5") || name.contains("gpt4") {
+                if let Some(ref counter) = self.tiktoken_cl100k {
+                    return counter;
+                }
+            }
+        }
+
+        // 2. BPE for cloud/known models
         if name.starts_with("gpt-")
             || name.starts_with("gpt4")
             || name.starts_with("o1")
@@ -430,8 +564,37 @@ impl ProviderTokenCounter {
         {
             &self.bpe
         } else {
-            // Ollama, LM Studio, local models, unknown
+            // 3. Approximate for local/unknown
             &self.approximate
+        }
+    }
+
+    /// Get the precision level for a given model.
+    pub fn precision_for_model(&self, model: &str) -> TokenPrecision {
+        let name = model.to_lowercase();
+
+        #[cfg(feature = "precise-tokens")]
+        {
+            if (name.contains("gpt-4o") || name.starts_with("o1")
+                || name.starts_with("o3") || name.starts_with("o4"))
+                && self.tiktoken_o200k.is_some()
+            {
+                return TokenPrecision::Precise;
+            }
+            if (name.contains("gpt-4") || name.contains("gpt-3.5") || name.contains("gpt4"))
+                && self.tiktoken_cl100k.is_some()
+            {
+                return TokenPrecision::Precise;
+            }
+        }
+
+        if name.starts_with("gpt-") || name.starts_with("claude-")
+            || name.contains("gemini") || name.contains("mistral")
+            || name.contains("deepseek") || name.contains("command-r")
+        {
+            TokenPrecision::Bpe
+        } else {
+            TokenPrecision::Approximate
         }
     }
 }

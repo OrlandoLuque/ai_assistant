@@ -1782,7 +1782,7 @@ pub use token_budget::{
 
 pub use token_counter::{
     ApproximateCounter, BpeTokenCounter, ProviderTokenCounter, TokenAllocation, TokenBudget,
-    TokenCounter,
+    TokenCounter, TokenPrecision,
 };
 
 pub use regeneration::{

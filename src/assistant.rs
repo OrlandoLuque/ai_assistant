@@ -828,25 +828,25 @@ impl AiAssistant {
     pub fn calculate_available_knowledge_tokens(&mut self, user_message: &str) -> usize {
         let total_context = self.get_model_context_size();
 
-        // Reserve 20% for response generation
-        let response_reserve = total_context / 5;
+        // Reserve based on token precision (dynamic: 10-20% depending on model)
+        let precision = self.token_precision();
+        let response_reserve = (total_context as f64 * precision.reserve_factor()) as usize;
 
-        // Estimate system prompt tokens
-        let system_tokens = estimate_tokens(&self.system_prompt_base);
+        // Estimate tokens using model-aware counting
+        let system_tokens = self.estimate_tokens_for_current_model(&self.system_prompt_base);
 
-        // Estimate conversation history tokens
-        // In FreshContext mode, conversation is not included in context window
+        // Conversation history tokens (FreshContext mode = 0)
         let conversation_tokens: usize = match self.context_mode {
             ContextMode::Conversation => self
                 .conversation
                 .iter()
-                .map(|msg| estimate_tokens(&msg.content))
+                .map(|msg| self.estimate_tokens_for_current_model(&msg.content))
                 .sum(),
             ContextMode::FreshContext => 0,
         };
 
-        // Estimate user message tokens
-        let user_tokens = estimate_tokens(user_message);
+        // User message tokens
+        let user_tokens = self.estimate_tokens_for_current_model(user_message);
 
         // Calculate available
         let used = system_tokens + conversation_tokens + user_tokens + response_reserve;
@@ -1137,9 +1137,15 @@ impl AiAssistant {
 
         let mut items: Vec<ContextItem> = Vec::new();
 
+        // Use model-aware token counting for all budget calculations
+        let model = self.config.selected_model.clone();
+        let count = |text: &str| -> usize {
+            crate::context::estimate_tokens_for_model(text, &model)
+        };
+
         // 1. RAG/knowledge context (passed in from caller or build_rag_context)
         if !knowledge_context.is_empty() {
-            let tokens = crate::context::estimate_tokens(knowledge_context);
+            let tokens = count(knowledge_context);
             items.push(
                 ContextItem::new(knowledge_context, tokens, 0.8, ContextSourceType::Rag)
                     .with_label("knowledge_context"),
@@ -1155,7 +1161,7 @@ impl AiAssistant {
                 .unwrap_or_default();
             let memory_ctx = self.build_memory_context(&query, 2048);
             if !memory_ctx.is_empty() {
-                let tokens = crate::context::estimate_tokens(&memory_ctx);
+                let tokens = count(&memory_ctx);
                 items.push(
                     ContextItem::new(memory_ctx, tokens, 0.7, ContextSourceType::Memory)
                         .with_label("memory"),
@@ -1168,7 +1174,7 @@ impl AiAssistant {
         {
             let proc_ctx = self.build_procedural_context(user_message, 10, 2048);
             if !proc_ctx.is_empty() {
-                let tokens = crate::context::estimate_tokens(&proc_ctx);
+                let tokens = count(&proc_ctx);
                 items.push(
                     ContextItem::new(proc_ctx, tokens, 0.75, ContextSourceType::Procedural)
                         .with_label("procedural"),
@@ -1179,7 +1185,7 @@ impl AiAssistant {
         // 4. Resolved references
         let resolved_refs = self.reference_resolver.resolve_reference(user_message);
         if let Some(ref refs) = resolved_refs {
-            let tokens = crate::context::estimate_tokens(refs);
+            let tokens = count(refs);
             items.push(
                 ContextItem::new(refs.clone(), tokens, 1.0, ContextSourceType::Reference)
                     .with_label("references"),
@@ -1191,18 +1197,19 @@ impl AiAssistant {
             return String::new();
         }
 
-        // Calculate available budget
+        // Calculate available budget with model-aware counting + dynamic reserve
         let model_ctx = self.detected_context_size.unwrap_or_else(|| {
             crate::context::get_model_context_size_cached(&self.config.selected_model, |_| None)
         });
-        let system_tokens = crate::context::estimate_tokens(&self.system_prompt_base);
+        let system_tokens = count(&self.system_prompt_base);
         let conversation_tokens: usize = self
             .conversation
             .iter()
-            .map(|m| crate::context::estimate_tokens(&m.content))
+            .map(|m| count(&m.content))
             .sum();
-        let user_tokens = crate::context::estimate_tokens(user_message);
-        let response_reserve = 800;
+        let user_tokens = count(user_message);
+        let precision = self.token_precision();
+        let response_reserve = (model_ctx as f64 * precision.reserve_factor()).max(800.0) as usize;
 
         let budget = ContextBudgetAllocator::available_budget(
             model_ctx,
@@ -1523,6 +1530,23 @@ impl AiAssistant {
             warnings,
             effectiveness,
         }
+    }
+
+    /// Estimate tokens using the best available method for the current model.
+    ///
+    /// Uses tiktoken (if `precise-tokens` feature + OpenAI model), BPE-200
+    /// (cloud models), or ~3.5 chars/token heuristic (local/unknown).
+    pub fn estimate_tokens_for_current_model(&self, text: &str) -> usize {
+        crate::context::estimate_tokens_for_model(text, &self.config.selected_model)
+    }
+
+    /// Get the token precision level for the current model.
+    pub fn token_precision(&self) -> crate::token_counter::TokenPrecision {
+        use crate::token_counter::ProviderTokenCounter;
+        thread_local! {
+            static COUNTER: ProviderTokenCounter = ProviderTokenCounter::new();
+        }
+        COUNTER.with(|c| c.precision_for_model(&self.config.selected_model))
     }
 
     /// Get the context budget status with recommendations from the Butler advisor.
