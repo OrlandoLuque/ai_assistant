@@ -191,6 +191,7 @@ pub mod crawl_policy;
 pub mod data_source_client;
 pub mod event_source;
 pub mod topic_matcher;
+pub mod audio_filter;
 pub mod debug;
 pub mod diff;
 pub mod error;
@@ -399,6 +400,13 @@ pub use event_source::{
 pub use topic_matcher::{
     GranularScoringResult, LlmTopicVerdict, SelfQueryFilter, TopicMatchConfig,
     TopicMatchLevel, TopicMatchResult, TopicMatcher, autocut_scores,
+};
+
+pub use audio_filter::{
+    AcousticEchoCanceller, ActiveSpeakerInfo, AudioEffect, AudioEffectChain, AudioSeparator,
+    AutoGainControl, Compressor, Distortion, EffectCategory, MfccSpeakerVerifier, NoiseGate,
+    NoiseSuppressor, Reverb, SeparatedTrack, SpeakerGate, SpeakerIdentification, SpeakerProfile,
+    SpeakerVerifier, VoiceEmbedding,
 };
 
 pub use config_security::{
