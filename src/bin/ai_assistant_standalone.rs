@@ -105,7 +105,7 @@ fn main() -> ExitCode {
         // Print recommendations
         let advice = butler.advise(&report);
         for rec in &advice.recommendations {
-            eprintln!("  [Butler] {}: {}", rec.category, rec.message);
+            eprintln!("  [Butler] {}: {}", rec.category, rec.description);
         }
         eprintln!();
     }
