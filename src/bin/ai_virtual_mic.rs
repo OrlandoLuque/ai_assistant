@@ -227,6 +227,58 @@ fn is_addressed_to_agent(transcript: &str, agent_name: &str) -> bool {
     false
 }
 
+/// Try to extract a self-introduction from a transcript.
+///
+/// Detects patterns like "soy Carlos", "me llamo Ana", "I'm John", "my name is Sarah",
+/// "call me Bob", "llámame Pedro". Returns the extracted name if found.
+fn extract_self_introduction(transcript: &str) -> Option<String> {
+    let lower = transcript.to_lowercase();
+
+    let patterns: &[&str] = &[
+        "me llamo ", "soy ", "mi nombre es ",
+        "i'm ", "i am ", "my name is ", "call me ",
+        "llámame ", "llamame ", "dime ", "puedes llamarme ",
+    ];
+
+    for pattern in patterns {
+        if let Some(pos) = lower.find(pattern) {
+            let after = &transcript[pos + pattern.len()..];
+            // Take the first word(s) as name — up to comma, period, or 2 words
+            let name: String = after
+                .split(|c: char| c == ',' || c == '.' || c == '!' || c == '?')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .split_whitespace()
+                .take(2) // first + optional last name
+                .collect::<Vec<_>>()
+                .join(" ");
+            if !name.is_empty() && name.len() < 30 {
+                // Capitalize first letter
+                let mut chars = name.chars();
+                let capitalized = match chars.next() {
+                    Some(c) => c.to_uppercase().to_string() + chars.as_str(),
+                    None => name,
+                };
+                return Some(capitalized);
+            }
+        }
+    }
+    None
+}
+
+/// Resolve a diarization label ("Speaker 1") to a known name if available.
+fn resolve_speaker_name(
+    label: &str,
+    aliases: &std::collections::HashMap<String, String>,
+) -> String {
+    if let Some(name) = aliases.get(label) {
+        format!("{} ({})", name, label)
+    } else {
+        label.to_string()
+    }
+}
+
 struct AgentState {
     config: AgentConfig,
     initialized: bool,
@@ -236,6 +288,9 @@ struct AgentState {
     session_cost: f32,
     error: Option<String>,
     show_advanced: bool,
+    /// Maps diarization labels ("Speaker 1") to real names ("Carlos").
+    /// Updated when someone says "soy X", "I'm X", etc.
+    speaker_aliases: Arc<Mutex<std::collections::HashMap<String, String>>>,
 }
 
 // ============================================================================
@@ -448,6 +503,7 @@ impl VirtualMicApp {
                 session_cost: 0.0,
                 error: None,
                 show_advanced: false,
+                speaker_aliases: Arc::new(Mutex::new(std::collections::HashMap::new())),
             },
             bottom_tab: None,
             status_message: "Ready. Select devices and click Start.".to_string(),
@@ -569,6 +625,7 @@ impl VirtualMicApp {
         let agent_respond_only = self.agent.config.respond_only_when_addressed;
         let agent_wait_silence = self.agent.config.wait_for_silence_ms;
         let agent_conv_ref = self.agent_conversation_shared.clone();
+        let agent_aliases = self.agent.speaker_aliases.clone();
 
         // Build effect chain
         let mut effect_chain = AudioEffectChain::new();
@@ -722,10 +779,24 @@ impl VirtualMicApp {
                     if frame_counter == 0 && !speaker_name.is_empty()
                         && !speaker_name.starts_with('(')
                     {
-                        // We just finished a ~1s speech segment with speaker ID
+                        // Resolve speaker name via aliases
+                        let display_name = {
+                            let aliases = agent_aliases.lock().unwrap_or_else(|e| e.into_inner());
+                            resolve_speaker_name(&speaker_name, &aliases)
+                        };
+
                         // Build a pseudo-transcript from the speaker label
                         // (real STT will come when VoiceAgent is fully wired)
-                        let transcript = format!("[{} is speaking]", speaker_name);
+                        let transcript = format!("[{} is speaking]", display_name);
+
+                        // Try to detect self-introduction ("soy Carlos", "I'm John")
+                        if let Some(real_name) = extract_self_introduction(&transcript) {
+                            // Strip "(new!)" suffix from speaker label
+                            let clean_label = speaker_name.replace(" (new!)", "");
+                            if let Ok(mut aliases) = agent_aliases.lock() {
+                                aliases.insert(clean_label, real_name);
+                            }
+                        }
 
                         // Check if addressed to agent
                         let should_respond = !agent_respond_only
@@ -733,16 +804,15 @@ impl VirtualMicApp {
 
                         if should_respond {
                             if let Some(ref assistant) = agent_assistant {
-                                // Update pipeline state
                                 if let Ok(mut ps) = agent_pipeline_state.lock() {
                                     *ps = PipelineState::Thinking;
                                 }
 
-                                // Send to LLM
                                 if let Ok(mut ast) = assistant.lock() {
+                                    // Build prompt with resolved speaker name
                                     let prompt = format!(
                                         "[{} says:] {}",
-                                        speaker_name, transcript
+                                        display_name, transcript
                                     );
                                     ast.send_message_simple(prompt);
 
@@ -766,25 +836,22 @@ impl VirtualMicApp {
                                             }
                                         }
                                         if start.elapsed().as_secs() > 10 {
-                                            break; // timeout
+                                            break;
                                         }
                                         std::thread::sleep(std::time::Duration::from_millis(50));
                                     }
 
-                                    // Add to conversation
                                     if !response_text.is_empty() {
                                         let now = chrono::Local::now().format("%H:%M:%S").to_string();
                                         if let Ok(mut conv) = agent_conv_ref.lock() {
-                                            // User message
                                             conv.push(ChatMessage {
                                                 role: "user".to_string(),
-                                                speaker: speaker_name.clone(),
+                                                speaker: display_name.clone(),
                                                 text: transcript.clone(),
                                                 mood: String::new(),
                                                 mood_color: egui::Color32::GRAY,
                                                 timestamp: now.clone(),
                                             });
-                                            // Agent response
                                             conv.push(ChatMessage {
                                                 role: "agent".to_string(),
                                                 speaker: agent_name.clone(),
@@ -1222,6 +1289,20 @@ impl VirtualMicApp {
                         ui.label(format!("({:.0}%)", st.speaker_confidence * 100.0));
                     }
                 });
+            }
+        }
+
+        // Show known name aliases
+        if let Ok(aliases) = self.agent.speaker_aliases.lock() {
+            if !aliases.is_empty() {
+                ui.add_space(4.0);
+                ui.separator();
+                ui.label("Known Names:");
+                for (label, name) in aliases.iter() {
+                    ui.horizontal(|ui| {
+                        ui.label(format!("{} = {}", label, name));
+                    });
+                }
             }
         }
     }
