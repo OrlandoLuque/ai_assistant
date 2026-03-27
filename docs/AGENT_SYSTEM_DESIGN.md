@@ -9264,3 +9264,125 @@ The system was audited across 11 iterations. The 6 critical vectors:
 ### Test Coverage
 
 66 tests across: MQTT backend (11), OpenHAB (6), CoAP (7), custom devices (10), event listener (7), mDNS (3), event source (19), event tools (3).
+
+## 62. Voice Pipeline Architecture (V67)
+
+### Audio Flow
+
+```
+                    ┌──────────────────────────────────────────────┐
+                    │            ai_virtual_mic binary             │
+                    │                                              │
+  Microphone ──────>│  cpal input ── ringbuf ── processing thread  │
+  (or VB-Cable)     │                    │                         │
+                    │              ┌─────┴─────┐                   │
+                    │              │            │                   │
+                    │         AudioEffectChain  SpeakerDiarizer    │
+                    │         (NoiseGate, AGC)  (MFCC clusters)   │
+                    │              │            │                   │
+                    │              └─────┬─────┘                   │
+                    │                    │                          │
+                    │              VoiceAgent                       │
+                    │         ┌──────────┴──────────┐              │
+                    │         │  VAD → SpeechEnd    │              │
+                    │         │  STT provider       │              │
+                    │         │  EmotionDetector     │              │
+                    │         │  LLM callback ────────────> AiAssistant (RAG)
+                    │         │  TTS provider       │              │
+                    │         └──────────┬──────────┘              │
+                    │                    │                          │
+                    │              output ringbuf                   │
+                    │                    │                          │
+  Speaker/VB-Cable <│  cpal output <────┘                         │
+                    └──────────────────────────────────────────────┘
+```
+
+### Threading Model
+
+```
+Thread 1 (cpal callback):   Capture audio → push to input ringbuf
+                            Stamp timestamp for latency measurement
+
+Thread 2 (processing):      Pop from input ringbuf
+                            → Effects chain (NoiseGate, AGC)
+                            → Mono mix + i16 conversion
+                            → Diarization (every ~1s)
+                            → Name extraction ("soy X")
+                            → Agent pipeline (if Mode::Agent):
+                              → is_addressed_to_agent()?
+                              → STT → EmotionDetector → LLM → TTS
+                              → Wait for silence
+                            → Push TTS audio to output ringbuf
+                            → Update shared AudioState for GUI
+
+Thread 3 (cpal callback):   Pop from output ringbuf → speaker/virtual mic
+
+Thread 4 (egui):            GUI rendering, reads AudioState
+```
+
+### Agent Mode Pipeline
+
+```
+Speech detected (VAD)
+  │
+  ├── Diarization → "Speaker 2"
+  │                    │
+  │   speaker_aliases: "Speaker 2" → "Carlos"
+  │                    │
+  ├── STT ──────────> "Hola Luna, ¿qué tal?"
+  │                    │
+  ├── is_addressed_to_agent("...Luna...")?  → YES
+  │                    │
+  ├── EmotionDetector → mood: "happy"
+  │                    │
+  ├── Build prompt: "[Carlos (Speaker 2) says:] Hola Luna, ¿qué tal?"
+  │                    │
+  ├── AiAssistant.send_message_with_rag(prompt)
+  │   └── poll_response() (timeout 10s)
+  │                    │
+  ├── Detect response mood → "friendly"
+  │                    │
+  ├── TTS (mood-aware instruction) → audio bytes
+  │                    │
+  ├── Wait for silence (800ms) → others stop talking
+  │                    │
+  └── Play audio → output device
+```
+
+### Speaker Name Learning
+
+```
+Speech: "Hola, soy Carlos"
+  │
+  ├── extract_self_introduction() → Some("Carlos")
+  │     Patterns: "soy X", "me llamo X", "I'm X", "my name is X",
+  │               "call me X", "llámame X" (10+ patterns, EN/ES)
+  │
+  ├── Diarization label: "Speaker 2"
+  │
+  └── speaker_aliases["Speaker 2"] = "Carlos"
+
+Next speech from Speaker 2:
+  └── resolve_speaker_name("Speaker 2") → "Carlos (Speaker 2)"
+      └── LLM prompt: "[Carlos (Speaker 2) says:] ..."
+```
+
+### Connection Modes
+
+| Mode | Provider | RAG | Use Case |
+|------|----------|-----|----------|
+| Local | Ollama, LM Studio | Yes (local DB) | Privacy, offline |
+| Remote Node | ai_assistant_server | Server-side | Shared knowledge base |
+| Direct Provider | OpenAI, Anthropic, Groq | No | Simple, fast |
+| Custom | Any OpenAI-compatible | Configurable | Full control |
+
+### Security: 12 Attack Vectors
+
+| Vector | Severity | Mitigation |
+|--------|----------|------------|
+| Unauthorized voice cloning | Critical | Owner-only enrollment |
+| Prompt injection via STT | High | InputSanitizer |
+| Self-voice feedback loop | High | Ignore audio during Speaking |
+| Unbounded recording (DoS) | Medium | max_audio_duration_secs |
+| Model poisoning | Medium | SHA-256 checksum verification |
+| Cost abuse | Medium | Rate limiter for cloud APIs |
