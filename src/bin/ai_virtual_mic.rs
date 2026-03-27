@@ -2079,12 +2079,79 @@ fn format_latency(us: u64) -> String {
     }
 }
 
+/// Generate a 64x64 RGBA icon: gradient circle with a microphone silhouette.
+fn generate_app_icon() -> egui::IconData {
+    let size = 64usize;
+    let mut rgba = vec![0u8; size * size * 4];
+
+    let center = size as f32 / 2.0;
+    let radius = center - 2.0;
+
+    for y in 0..size {
+        for x in 0..size {
+            let dx = x as f32 - center;
+            let dy = y as f32 - center;
+            let dist = (dx * dx + dy * dy).sqrt();
+            let idx = (y * size + x) * 4;
+
+            if dist <= radius {
+                // Gradient background: deep blue to purple
+                let t = dy / (size as f32); // -0.5 to 0.5
+                let r = (40.0 + t * 60.0).clamp(0.0, 255.0) as u8;
+                let g = (20.0 + t * 30.0).clamp(0.0, 255.0) as u8;
+                let b = (120.0 + t * 80.0).clamp(0.0, 255.0) as u8;
+
+                // Microphone shape: vertical rectangle + rounded top
+                let mic_x = (x as f32 - center).abs();
+                let mic_y = y as f32 - center;
+                let mic_w = 8.0;
+                let mic_top = -18.0;
+                let mic_bot = 6.0;
+                let mic_round_r = 8.0;
+
+                let is_mic_body = mic_x < mic_w && mic_y > mic_top && mic_y < mic_bot;
+                let is_mic_top = mic_x < mic_round_r
+                    && (mic_x * mic_x + (mic_y - mic_top) * (mic_y - mic_top)) < mic_round_r * mic_round_r
+                    && mic_y < mic_top;
+                // Stand: thin line below mic
+                let is_stand = mic_x < 2.0 && mic_y >= mic_bot && mic_y < mic_bot + 10.0;
+                // Base: horizontal line
+                let is_base = mic_x < 10.0 && mic_y >= mic_bot + 8.0 && mic_y < mic_bot + 11.0;
+
+                if is_mic_body || is_mic_top || is_stand || is_base {
+                    // White microphone
+                    rgba[idx] = 240;
+                    rgba[idx + 1] = 240;
+                    rgba[idx + 2] = 250;
+                    rgba[idx + 3] = 255;
+                } else {
+                    rgba[idx] = r;
+                    rgba[idx + 1] = g;
+                    rgba[idx + 2] = b;
+                    // Soft edge
+                    let edge = ((radius - dist) * 4.0).clamp(0.0, 255.0) as u8;
+                    rgba[idx + 3] = edge;
+                }
+            }
+        }
+    }
+
+    egui::IconData {
+        rgba,
+        width: size as u32,
+        height: size as u32,
+    }
+}
+
 fn main() -> Result<(), eframe::Error> {
+    let icon = generate_app_icon();
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([900.0, 650.0])
             .with_min_inner_size([700.0, 450.0])
-            .with_title("ai_virtual_mic"),
+            .with_title("ai_virtual_mic")
+            .with_icon(std::sync::Arc::new(icon)),
         ..Default::default()
     };
 

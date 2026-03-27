@@ -10067,3 +10067,148 @@ for svc in &services {
 | ConfigLock::HomeAutomation | Prevents config tampering |
 | SecureString for credentials | Prevents credential leakage in logs |
 | mDNS discovery-only | Prevents auto-connection to spoofed services |
+
+## 179. Audio Effect Chain
+
+```rust
+use ai_assistant::{AudioEffectChain, NoiseGate, AutoGainControl, AcousticEchoCanceller};
+
+let mut chain = AudioEffectChain::new();
+chain.add_effect(Box::new(NoiseGate::new(-50.0)));       // Silence below -50dB
+chain.add_effect(Box::new(AutoGainControl::new(-18.0)));  // Normalize to -18dB
+
+// Process a frame of PCM16 audio
+let mut samples: Vec<i16> = capture_audio();
+chain.process_frame(&mut samples, 16000);
+
+// Check latency
+println!("Total latency: {}us", chain.total_latency_us());
+for (name, enabled, latency) in chain.latency_breakdown() {
+    println!("  {} ({}): {}us", name, if enabled { "on" } else { "off" }, latency);
+}
+```
+
+## 180. Speaker Diarization (Auto-detect Speakers)
+
+```rust
+use ai_assistant::{SpeakerDiarizer, MfccSpeakerVerifier, DiarizationResult};
+
+let verifier = Box::new(MfccSpeakerVerifier::new());
+let mut diarizer = SpeakerDiarizer::with_defaults(verifier);
+
+// Process audio segments (~1 second each)
+let audio_segment: Vec<i16> = capture_one_second();
+match diarizer.process(&audio_segment, 16000) {
+    DiarizationResult::Assigned { label, confidence, .. } => {
+        println!("{} is speaking (confidence: {:.0}%)", label, confidence * 100.0);
+    }
+    DiarizationResult::NewSpeaker { label, .. } => {
+        println!("New voice detected: {}", label);
+    }
+    DiarizationResult::Inconclusive => {} // silence or too short
+}
+
+println!("Distinct speakers: {}", diarizer.speaker_count());
+diarizer.reset(); // Start fresh session
+```
+
+## 181. Voice Cloning
+
+```rust
+use ai_assistant::{ElevenLabsCloneProvider, XttsCloneProvider, VoiceCloneProvider, assess_enrollment_quality};
+
+// Check audio quality before cloning
+let (quality, warnings) = assess_enrollment_quality(&audio_bytes, 16000);
+if quality < 0.3 {
+    println!("Audio too poor: {:?}", warnings);
+}
+
+// ElevenLabs (cloud)
+let provider = ElevenLabsCloneProvider::from_env()?;
+let voice_id = provider.enroll(&audio_bytes, AudioFormat::Pcm, "My Voice", 16000)?;
+let result = provider.synthesize_cloned("Hello world", &voice_id, &options)?;
+
+// Coqui XTTS v2 (local)
+let mut xtts = XttsCloneProvider::local();
+let voice_id = xtts.enroll(&audio_bytes, AudioFormat::Pcm, "Local Voice", 16000)?;
+xtts.store_reference(&voice_id, audio_bytes);
+let result = xtts.synthesize_cloned("Hello", &voice_id, &options)?;
+```
+
+## 182. Audio Model Management
+
+```rust
+use ai_assistant::{AudioModelRegistry, AudioModelCategory, ModelStatus};
+
+let registry = AudioModelRegistry::new();
+println!("Model dir: {}", registry.model_dir());
+
+// Browse catalog
+for model in registry.models_by_category(AudioModelCategory::Stt) {
+    let status = registry.model_status(model);
+    let icon = match status {
+        ModelStatus::Installed { .. } => "[x]",
+        ModelStatus::NotInstalled => "[ ]",
+        ModelStatus::Corrupted { .. } => "[!]",
+    };
+    println!("{} {} ({})", icon, model.name, model.size_estimate);
+}
+
+// Download with progress
+let model = registry.find_model("whisper-base.en").unwrap();
+registry.download_model(model, |downloaded, total| {
+    println!("Progress: {}/{} bytes", downloaded, total);
+})?;
+```
+
+## 183. ai_virtual_mic — Quick Start
+
+```bash
+# Build (requires audio-io feature)
+cargo run --bin ai_virtual_mic --features audio-io
+
+# The GUI opens with 5 modes:
+# - Monitor: VU meter + speaker detection
+# - Passthrough: Effects chain only
+# - Transform: STT → TTS with voice cloning
+# - Direct: Same as Transform, normal speaker
+# - Agent: Full AI assistant in voice channel
+```
+
+### Agent Mode Setup
+1. Select **Agent** mode in the left panel
+2. Open the **Agent** tab in the bottom panel
+3. Choose a preset: **Local (Ollama)**, **Cloud (OpenAI)**, or **Remote Node**
+4. Click **Initialize Agent**
+5. Click **Start** — speak to the agent by name (default: "Luna")
+
+### Discord AI Setup
+1. Install VoiceMeeter Banana (free) — provides virtual audio cables
+2. Click **Discord AI Mode** button — auto-detects virtual devices
+3. In Discord Web: set output to VoiceMeeter Input, mic to VoiceMeeter Aux Output
+4. Click **Start** — the AI joins as a voice participant
+
+### Virtual Mic Setup by Platform
+
+| Platform | Driver | Setup |
+|----------|--------|-------|
+| **Windows** | VoiceMeeter Banana (free) | Install, restart. Provides VoiceMeeter Input/Output + Aux Input/Output |
+| **Windows** | VB-Cable (free) | Install VB-Cable A + B from vb-audio.com. Provides CABLE Input/Output × 2 |
+| **Linux** | PulseAudio | `pactl load-module module-null-sink sink_name=VirtualMic sink_properties=device.description=VirtualMic` |
+| **Linux** | PipeWire | `pw-cli create-node adapter { factory.name=support.null-audio-sink node.name=VirtualMic media.class=Audio/Sink }` |
+| **macOS** | BlackHole (free) | Download .pkg from github.com/ExistentialAudio/BlackHole, install, restart |
+
+## 184. MCP Voice Tools
+
+8 tools for speaker management and voice cloning via MCP:
+
+| Tool | Description |
+|------|-------------|
+| `voice_enroll_speaker` | Enroll speaker from base64 PCM16 audio |
+| `voice_identify_speaker` | Identify speaker from audio sample |
+| `voice_list_speakers` | List enrolled speaker profiles |
+| `voice_remove_speaker` | Remove a speaker profile |
+| `voice_gate_config` | Configure only_owner / allow_unknown |
+| `voice_clone_create` | Create cloned voice (ElevenLabs/XTTS) |
+| `voice_clone_synthesize` | Synthesize with cloned voice |
+| `voice_clone_list` | List cloned voice profiles |
