@@ -712,11 +712,10 @@ impl AiGuiApp {
         }
 
         // Initialize diagnostic logger and set as global log backend
-        let debug_logger = Arc::new(DebugLogger::new(DebugConfig {
-            level: DebugLevel::Trace,
-            max_entries: 5000,
-            ..DebugConfig::default()
-        }));
+        let mut debug_cfg = DebugConfig::default();
+        debug_cfg.level = DebugLevel::Trace;
+        debug_cfg.max_entries = 5000;
+        let debug_logger = Arc::new(DebugLogger::new(debug_cfg));
         let gui_logger = GuiLogger::new(Arc::clone(&debug_logger));
         log::set_boxed_logger(Box::new(gui_logger)).ok();
         log::set_max_level(log::LevelFilter::Trace);
@@ -867,6 +866,7 @@ impl AiGuiApp {
                         self.add_audit(AuditEventType::ResponseCancelled);
                     }
                     AiResponse::ModelsLoaded(_) => {}
+                    _ => {}
                 }
             }
         }
@@ -905,6 +905,7 @@ impl AiGuiApp {
                         }
                         self.add_toast(&format!("Indexing error: {}", error), true);
                     }
+                    _ => {}
                 }
             }
         }
@@ -2435,6 +2436,7 @@ impl AiGuiApp {
                 FreshContextEffectiveness::Ineffective => {
                     (Color32::from_rgb(220, 80, 80), "Ineffective")
                 }
+                _ => (Color32::GRAY, "Unknown"),
             };
             ui.colored_label(
                 eff_color,
@@ -2535,6 +2537,7 @@ impl AiGuiApp {
                                 RecommendationPriority::High => Color32::from_rgb(220, 140, 30),
                                 RecommendationPriority::Medium => Color32::from_rgb(200, 200, 50),
                                 RecommendationPriority::Low => Color32::GRAY,
+                                _ => Color32::GRAY,
                             };
                             ui.horizontal(|ui| {
                                 ui.colored_label(color, format!("[{:?}]", rec.priority));
@@ -4248,6 +4251,7 @@ impl AiGuiApp {
                             DebugLevel::Debug => Color32::from_rgb(180, 180, 180),
                             DebugLevel::Trace => Color32::from_rgb(120, 120, 120),
                             DebugLevel::Off   => Color32::DARK_GRAY,
+                            _ => Color32::DARK_GRAY,
                         };
 
                         ui.horizontal(|ui| {
