@@ -13,8 +13,9 @@ use ai_assistant::{
     AudioEffectChain, AudioModelCategory, AudioModelInfo, AudioModelRegistry, AutoGainControl,
     DiarizationResult, MfccSpeakerVerifier, ModelStatus, NoiseGate, SpeakerDiarizer,
     SpeakerGate, SpeakerIdentification, SpeakerVerifier,
-    VoiceAgent, VoiceAgentConfig, VoiceLlmCallback,
-    emotion_detection::{EmotionDetector, KeywordEmotionDetector},
+    // Speech providers for STT/TTS
+    create_speech_provider, SpeechProvider, SynthesisOptions,
+    AudioFormat as SpeechAudioFormat,
 };
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -657,11 +658,71 @@ impl VirtualMicApp {
             let _ = stream.play();
         }
 
+        // ── Output stream ───────────────────────────────────────────────
+        let out_rb = HeapRb::<f32>::new(sample_rate as usize * 4); // 4 seconds buffer
+        let (out_producer, mut out_consumer) = out_rb.split();
+        let out_producer = Arc::new(Mutex::new(out_producer));
+        let out_producer_thread = out_producer.clone();
+
+        let output_stream = if mode != Mode::Monitor {
+            let host = cpal::default_host();
+            let out_device = host.output_devices()
+                .ok()
+                .and_then(|mut devs| devs.nth(self.selected_output));
+            if let Some(out_dev) = out_device {
+                let out_config = out_dev.default_output_config().ok();
+                out_config.and_then(|cfg| {
+                    out_dev.build_output_stream(
+                        &cfg.config(),
+                        move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                            for sample in data.iter_mut() {
+                                *sample = out_consumer.try_pop().unwrap_or(0.0);
+                            }
+                        },
+                        |err| eprintln!("Output error: {}", err),
+                        None,
+                    ).ok()
+                })
+            } else { None }
+        } else { None };
+
+        if let Some(ref stream) = output_stream {
+            let _ = stream.play();
+        }
+        self._output_stream = output_stream;
+
+        // ── STT/TTS providers (Agent mode) ──────────────────────────────
+        let stt_provider: Option<Arc<Mutex<Box<dyn SpeechProvider>>>> =
+            if mode == Mode::Agent {
+                create_speech_provider(&self.agent.config.stt_provider)
+                    .ok()
+                    .map(|p| Arc::new(Mutex::new(p)))
+            } else { None };
+        let tts_provider: Option<Arc<Mutex<Box<dyn SpeechProvider>>>> =
+            if mode == Mode::Agent {
+                create_speech_provider(&self.agent.config.tts_provider)
+                    .ok()
+                    .map(|p| Arc::new(Mutex::new(p)))
+            } else { None };
+        let output_sample_rate = sample_rate; // cpal device rate for resampling
+
         // Processing thread
         let process_chain = effect_chain;
         std::thread::spawn(move || {
             let frame_size = (sample_rate as usize) / 50; // 20ms
             let mut frame_buf = Vec::with_capacity(frame_size * channels);
+
+            // Agent mode: dedicated speech buffer (grows until silence)
+            let mut agent_speech_buf: Vec<i16> = Vec::new();
+            let mut agent_silence_frames = 0u32;
+            let agent_silence_threshold = 25u32; // 25 frames × 20ms = 500ms silence = speech end
+            let agent_max_speech_samples = sample_rate as usize * 30; // 30s max
+
+            // Wait-for-silence state
+            let mut pending_tts_audio: Vec<f32> = Vec::new();
+            let mut silence_wait_ms = 0u64;
+            let mut speaking_samples_left = 0usize;
+
             // Accumulate ~1 second for speaker ID (run every 50 frames = 1s)
             let mut speaker_buf: Vec<i16> = Vec::new();
             let mut frame_counter = 0u32;
@@ -772,100 +833,206 @@ impl VirtualMicApp {
                     frame_counter = 0;
                 }
 
-                // ── Agent mode: process speech segments ──────────────
+                // ── Agent mode: full pipeline ────────────────────────
                 if mode == Mode::Agent {
-                    // When we have a speaker identification result + accumulated speech,
-                    // send to the LLM agent
-                    if frame_counter == 0 && !speaker_name.is_empty()
-                        && !speaker_name.starts_with('(')
-                    {
-                        // Resolve speaker name via aliases
-                        let display_name = {
-                            let aliases = agent_aliases.lock().unwrap_or_else(|e| e.into_inner());
-                            resolve_speaker_name(&speaker_name, &aliases)
-                        };
+                    let current_ps = agent_pipeline_state.lock()
+                        .map(|s| *s).unwrap_or(PipelineState::Idle);
 
-                        // Build a pseudo-transcript from the speaker label
-                        // (real STT will come when VoiceAgent is fully wired)
-                        let transcript = format!("[{} is speaking]", display_name);
-
-                        // Try to detect self-introduction ("soy Carlos", "I'm John")
-                        if let Some(real_name) = extract_self_introduction(&transcript) {
-                            // Strip "(new!)" suffix from speaker label
-                            let clean_label = speaker_name.replace(" (new!)", "");
-                            if let Ok(mut aliases) = agent_aliases.lock() {
-                                aliases.insert(clean_label, real_name);
+                    // Self-voice ignore: don't process while speaking
+                    if current_ps == PipelineState::Speaking {
+                        if speaking_samples_left > 0 {
+                            speaking_samples_left = speaking_samples_left.saturating_sub(frame_size);
+                        } else {
+                            if let Ok(mut ps) = agent_pipeline_state.lock() {
+                                *ps = PipelineState::Listening;
                             }
                         }
-
-                        // Check if addressed to agent
-                        let should_respond = !agent_respond_only
-                            || is_addressed_to_agent(&transcript, &agent_name);
-
-                        if should_respond {
-                            if let Some(ref assistant) = agent_assistant {
+                    }
+                    // Wait-for-silence: check if we can play pending audio
+                    else if !pending_tts_audio.is_empty() {
+                        if db < -35.0 {
+                            silence_wait_ms += 20; // frame duration
+                            if silence_wait_ms >= agent_wait_silence || silence_wait_ms > 15000 {
+                                // Silence detected (or timeout) — play TTS audio
+                                if let Ok(mut prod) = out_producer_thread.lock() {
+                                    for &s in &pending_tts_audio {
+                                        let _ = prod.try_push(s);
+                                    }
+                                }
+                                speaking_samples_left = pending_tts_audio.len();
+                                pending_tts_audio.clear();
+                                silence_wait_ms = 0;
                                 if let Ok(mut ps) = agent_pipeline_state.lock() {
-                                    *ps = PipelineState::Thinking;
+                                    *ps = PipelineState::Speaking;
+                                }
+                            }
+                        } else {
+                            silence_wait_ms = 0; // someone is talking, reset
+                        }
+                        if let Ok(mut ps) = agent_pipeline_state.lock() {
+                            if *ps != PipelineState::Speaking {
+                                *ps = PipelineState::WaitingForSilence;
+                            }
+                        }
+                    }
+                    // Normal processing: accumulate speech → STT → LLM → TTS
+                    else if current_ps != PipelineState::Speaking {
+                        // Accumulate speech audio
+                        if is_speech && agent_speech_buf.len() < agent_max_speech_samples {
+                            agent_speech_buf.extend_from_slice(&samples_i16);
+                            agent_silence_frames = 0;
+                        } else if !agent_speech_buf.is_empty() {
+                            agent_silence_frames += 1;
+                        }
+
+                        // Speech end: accumulated audio + enough silence
+                        if !agent_speech_buf.is_empty()
+                            && agent_silence_frames >= agent_silence_threshold
+                        {
+                            let speech_samples = std::mem::take(&mut agent_speech_buf);
+                            agent_silence_frames = 0;
+
+                            // Current speaker from diarization
+                            let display_name = {
+                                let aliases = agent_aliases.lock().unwrap_or_else(|e| e.into_inner());
+                                resolve_speaker_name(&speaker_name, &aliases)
+                            };
+
+                            // ── STT ─────────────────────────────────────
+                            if let Ok(mut ps) = agent_pipeline_state.lock() {
+                                *ps = PipelineState::Transcribing;
+                            }
+
+                            let transcript = if let Some(ref stt) = stt_provider {
+                                if let Ok(stt_lock) = stt.lock() {
+                                    let audio_bytes: Vec<u8> = speech_samples.iter()
+                                        .flat_map(|s| s.to_le_bytes())
+                                        .collect();
+                                    stt_lock.transcribe(&audio_bytes, SpeechAudioFormat::Pcm, None)
+                                        .map(|r| r.text)
+                                        .unwrap_or_else(|_| "[STT error]".to_string())
+                                } else {
+                                    "[STT lock error]".to_string()
+                                }
+                            } else {
+                                // Fallback: no STT provider configured
+                                format!("[{} is speaking ({:.1}s audio)]",
+                                    display_name,
+                                    speech_samples.len() as f32 / sample_rate as f32)
+                            };
+
+                            if transcript.is_empty() || transcript.starts_with("[STT") {
+                                if let Ok(mut ps) = agent_pipeline_state.lock() {
+                                    *ps = PipelineState::Listening;
+                                }
+                            } else {
+                                // Name learning from transcript
+                                if let Some(real_name) = extract_self_introduction(&transcript) {
+                                    let clean_label = speaker_name.replace(" (new!)", "");
+                                    if let Ok(mut aliases) = agent_aliases.lock() {
+                                        aliases.insert(clean_label, real_name);
+                                    }
                                 }
 
-                                if let Ok(mut ast) = assistant.lock() {
-                                    // Build prompt with resolved speaker name
-                                    let prompt = format!(
-                                        "[{} says:] {}",
-                                        display_name, transcript
-                                    );
-                                    ast.send_message_simple(prompt);
+                                // Check if addressed to agent
+                                let should_respond = !agent_respond_only
+                                    || is_addressed_to_agent(&transcript, &agent_name);
 
-                                    // Poll for response (blocking, with timeout)
-                                    let mut response_text = String::new();
-                                    let start = std::time::Instant::now();
-                                    loop {
-                                        if let Some(resp) = ast.poll_response() {
-                                            match resp {
-                                                AiResponse::Chunk(chunk) => {
-                                                    response_text.push_str(&chunk);
-                                                }
-                                                AiResponse::Complete(text) => {
-                                                    if response_text.is_empty() {
-                                                        response_text = text;
-                                                    }
-                                                    break;
-                                                }
-                                                AiResponse::Error(_) => break,
-                                                _ => {}
-                                            }
-                                        }
-                                        if start.elapsed().as_secs() > 10 {
-                                            break;
-                                        }
-                                        std::thread::sleep(std::time::Duration::from_millis(50));
+                                if !should_respond {
+                                    if let Ok(mut ps) = agent_pipeline_state.lock() {
+                                        *ps = PipelineState::Listening;
+                                    }
+                                } else {
+                                    // ── LLM ─────────────────────────────
+                                    if let Ok(mut ps) = agent_pipeline_state.lock() {
+                                        *ps = PipelineState::Thinking;
                                     }
 
-                                    if !response_text.is_empty() {
-                                        let now = chrono::Local::now().format("%H:%M:%S").to_string();
-                                        if let Ok(mut conv) = agent_conv_ref.lock() {
-                                            conv.push(ChatMessage {
-                                                role: "user".to_string(),
-                                                speaker: display_name.clone(),
-                                                text: transcript.clone(),
-                                                mood: String::new(),
-                                                mood_color: egui::Color32::GRAY,
-                                                timestamp: now.clone(),
-                                            });
+                                    let mut response_text = String::new();
+                                    if let Some(ref assistant) = agent_assistant {
+                                        if let Ok(mut ast) = assistant.lock() {
+                                            let prompt = format!(
+                                                "[{} says:] {}",
+                                                display_name, transcript
+                                            );
+                                            ast.send_message_simple(prompt);
+
+                                            let start = std::time::Instant::now();
+                                            loop {
+                                                if let Some(resp) = ast.poll_response() {
+                                                    match resp {
+                                                        AiResponse::Chunk(c) => response_text.push_str(&c),
+                                                        AiResponse::Complete(t) => {
+                                                            if response_text.is_empty() { response_text = t; }
+                                                            break;
+                                                        }
+                                                        AiResponse::Error(_) => break,
+                                                        _ => {}
+                                                    }
+                                                }
+                                                if start.elapsed().as_secs() > 10 { break; }
+                                                std::thread::sleep(std::time::Duration::from_millis(50));
+                                            }
+                                        }
+                                    }
+
+                                    // Update conversation
+                                    let now = chrono::Local::now().format("%H:%M:%S").to_string();
+                                    if let Ok(mut conv) = agent_conv_ref.lock() {
+                                        conv.push(ChatMessage {
+                                            role: "user".to_string(),
+                                            speaker: display_name.clone(),
+                                            text: transcript.clone(),
+                                            mood: String::new(),
+                                            mood_color: egui::Color32::GRAY,
+                                            timestamp: now.clone(),
+                                        });
+                                        if !response_text.is_empty() {
                                             conv.push(ChatMessage {
                                                 role: "agent".to_string(),
                                                 speaker: agent_name.clone(),
-                                                text: response_text,
+                                                text: response_text.clone(),
                                                 mood: String::new(),
                                                 mood_color: egui::Color32::GRAY,
                                                 timestamp: now,
                                             });
                                         }
                                     }
-                                }
 
-                                if let Ok(mut ps) = agent_pipeline_state.lock() {
-                                    *ps = PipelineState::Listening;
+                                    // ── TTS ─────────────────────────────
+                                    if !response_text.is_empty() {
+                                        if let Some(ref tts) = tts_provider {
+                                            if let Ok(tts_lock) = tts.lock() {
+                                                let opts = SynthesisOptions::default();
+                                                if let Ok(synth) = tts_lock.synthesize(&response_text, &opts) {
+                                                    // Convert TTS audio to f32
+                                                    let tts_f32: Vec<f32> = synth.audio
+                                                        .chunks_exact(2)
+                                                        .map(|pair| {
+                                                            i16::from_le_bytes([pair[0], pair[1]]) as f32 / 32768.0
+                                                        })
+                                                        .collect();
+
+                                                    // Resample if needed
+                                                    let final_audio = if synth.sample_rate != output_sample_rate && synth.sample_rate > 0 {
+                                                        resample_simple(&tts_f32, synth.sample_rate, output_sample_rate)
+                                                    } else {
+                                                        tts_f32
+                                                    };
+
+                                                    // Queue for wait-for-silence
+                                                    pending_tts_audio = final_audio;
+                                                    silence_wait_ms = 0;
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    if pending_tts_audio.is_empty() {
+                                        if let Ok(mut ps) = agent_pipeline_state.lock() {
+                                            *ps = PipelineState::Listening;
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -2066,6 +2233,26 @@ impl eframe::App for VirtualMicApp {
 // ============================================================================
 
 /// Format microseconds as human-readable latency.
+/// Simple linear interpolation resampler (no external dep needed for basic quality).
+/// For high-quality resampling, rubato is available but requires more complex setup.
+fn resample_simple(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
+    if from_rate == to_rate || input.is_empty() || from_rate == 0 {
+        return input.to_vec();
+    }
+    let ratio = to_rate as f64 / from_rate as f64;
+    let out_len = (input.len() as f64 * ratio) as usize;
+    let mut output = Vec::with_capacity(out_len);
+    for i in 0..out_len {
+        let src_pos = i as f64 / ratio;
+        let src_idx = src_pos as usize;
+        let frac = (src_pos - src_idx as f64) as f32;
+        let s0 = input.get(src_idx).copied().unwrap_or(0.0);
+        let s1 = input.get(src_idx + 1).copied().unwrap_or(s0);
+        output.push(s0 + (s1 - s0) * frac);
+    }
+    output
+}
+
 fn format_latency(us: u64) -> String {
     if us == 0 || us == u64::MAX {
         return "--".to_string();
