@@ -63,7 +63,7 @@ Esto te da el contexto completo: dónde estamos, qué se ha hecho, cómo trabaja
 3. Respetar la estructura modular existente basada en feature flags de Cargo
 4. Zero `.unwrap()` en producción — usar proper error handling siempre
 5. Zero warnings del compilador — compilación limpia en todas las combinaciones de features
-6. Tests para todo — el proyecto tiene 7.082+ tests y debe mantenerse así
+6. Tests para todo — el proyecto tiene 7.206+ tests y debe mantenerse así
 
 ## Documentos Generados
 - `Informe_Viabilidad_ai_assistant.docx` — Informe completo de viabilidad v2 (monetización, PI, licenciamiento)
