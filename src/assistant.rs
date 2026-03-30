@@ -4666,6 +4666,62 @@ impl AiAssistant {
         butler.suggest_speech_config()
     }
 
+    // === Voice Cloning (V67) ===
+
+    /// Enroll a voice for cloning using the specified provider.
+    ///
+    /// # Arguments
+    /// * `provider_name` - Clone provider: "elevenlabs" or "xtts"
+    /// * `audio` - Raw PCM16 audio bytes (min 3 seconds)
+    /// * `name` - Name for the cloned voice
+    #[cfg(feature = "audio")]
+    pub fn enroll_voice_clone(
+        &self,
+        provider_name: &str,
+        audio: &[u8],
+        name: &str,
+    ) -> Result<String> {
+        use crate::speech::VoiceCloneProvider;
+        let (quality, warnings) = crate::speech::assess_enrollment_quality(audio, 16000);
+        if quality < 0.3 {
+            anyhow::bail!("Audio quality too low ({:.0}%): {}", quality * 100.0, warnings.join("; "));
+        }
+        match provider_name {
+            "elevenlabs" => {
+                let provider = crate::speech::ElevenLabsCloneProvider::from_env()?;
+                provider.enroll(audio, crate::speech::AudioFormat::Pcm, name, 16000)
+            }
+            "xtts" => {
+                let provider = crate::speech::XttsCloneProvider::local();
+                provider.enroll(audio, crate::speech::AudioFormat::Pcm, name, 16000)
+            }
+            _ => anyhow::bail!("Unknown clone provider '{}'. Available: elevenlabs, xtts", provider_name),
+        }
+    }
+
+    /// Synthesize speech using a cloned voice.
+    #[cfg(feature = "audio")]
+    pub fn synthesize_cloned(
+        &self,
+        provider_name: &str,
+        text: &str,
+        voice_id: &str,
+    ) -> Result<crate::speech::SynthesisResult> {
+        use crate::speech::VoiceCloneProvider;
+        let options = crate::speech::SynthesisOptions::default();
+        match provider_name {
+            "elevenlabs" => {
+                let provider = crate::speech::ElevenLabsCloneProvider::from_env()?;
+                provider.synthesize_cloned(text, &voice_id.to_string(), &options)
+            }
+            "xtts" => {
+                let provider = crate::speech::XttsCloneProvider::local();
+                provider.synthesize_cloned(text, &voice_id.to_string(), &options)
+            }
+            _ => anyhow::bail!("Unknown clone provider '{}'", provider_name),
+        }
+    }
+
     // =========================================================================
     // KPKG -> Knowledge Layer Bridge (v4 roadmap item 8.1)
     // =========================================================================

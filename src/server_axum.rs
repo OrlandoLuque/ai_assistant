@@ -2241,6 +2241,24 @@ fn build_mcp_docker_server() -> Option<Arc<std::sync::RwLock<crate::mcp_protocol
     Some(Arc::new(std::sync::RwLock::new(mcp)))
 }
 
+/// Build an MCP server with voice/speaker tools.
+#[cfg(all(feature = "audio", feature = "tools"))]
+fn build_mcp_voice_server() -> Option<Arc<std::sync::RwLock<crate::mcp_protocol::McpServer>>> {
+    use crate::audio_filter::{MfccSpeakerVerifier, SpeakerGate};
+
+    let verifier = Box::new(MfccSpeakerVerifier::new());
+    let gate = std::sync::Arc::new(std::sync::Mutex::new(SpeakerGate::new(verifier, 0.65)));
+
+    let mut mcp = crate::mcp_protocol::McpServer::new(
+        "ai_assistant_voice",
+        env!("CARGO_PKG_VERSION"),
+    );
+    crate::mcp_voice_tools::register_voice_tools(&mut mcp, gate);
+    log::info!("MCP Voice tools: 5 speaker tools registered on /mcp/voice endpoint");
+
+    Some(Arc::new(std::sync::RwLock::new(mcp)))
+}
+
 /// Initialize enrichment subsystems (guardrails, budget manager).
 fn init_enrichment(config: ServerConfig) -> ServerConfig {
     let config = init_guardrail_pipeline(config);

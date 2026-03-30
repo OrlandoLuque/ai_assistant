@@ -2340,6 +2340,16 @@ pub use home_automation::{
 pub use mcp_home_tools::HomeAssistantBackend;
 
 // =============================================================================
+// MCP VOICE TOOLS (speaker enrollment, identification, voice cloning)
+// =============================================================================
+
+#[cfg(feature = "tools")]
+pub use mcp_voice_tools::register_voice_tools;
+
+#[cfg(all(feature = "tools", feature = "audio"))]
+pub use mcp_voice_tools::register_voice_clone_tools;
+
+// =============================================================================
 // CONSTRAINED DECODING (grammar-guided generation, GBNF, JSON Schema)
 // =============================================================================
 
