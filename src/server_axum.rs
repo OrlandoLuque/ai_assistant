@@ -2212,51 +2212,112 @@ fn build_app_state(config: ServerConfig, assistant: AiAssistant) -> AppState {
     }
 }
 
-/// Build an MCP server with Docker tools if Docker is available.
-#[cfg(all(feature = "containers", feature = "tools"))]
-fn build_mcp_docker_server() -> Option<Arc<std::sync::RwLock<crate::mcp_protocol::McpServer>>> {
-    use crate::container_executor::{ContainerConfig, ContainerExecutor};
+/// Build a unified MCP server with ALL available tool categories.
+///
+/// Registers tools based on compiled feature flags:
+/// - Docker/container tools (feature: containers)
+/// - Voice/speaker tools (feature: audio)
+/// - Agent management tools (feature: multi-agent)
+/// - Task management tools (feature: tools)
+/// - Event subscription tools (feature: tools)
+/// - Routing configuration tools (feature: tools)
+/// - Configuration file tools (feature: tools)
+/// - Eval suite tools (feature: eval-suite)
+#[cfg(feature = "tools")]
+fn build_unified_mcp_server() -> Arc<std::sync::RwLock<crate::mcp_protocol::McpServer>> {
+    let mut mcp = crate::mcp_protocol::McpServer::new(
+        "ai_assistant",
+        env!("CARGO_PKG_VERSION"),
+    );
+    let mut tool_count = 0u32;
 
-    if !ContainerExecutor::is_docker_available() {
-        log::info!("MCP Docker tools: Docker not available, skipping");
-        return None;
+    // ── Docker/Container tools ──────────────────────────────────────
+    #[cfg(feature = "containers")]
+    {
+        use crate::container_executor::{ContainerConfig, ContainerExecutor};
+        if ContainerExecutor::is_docker_available() {
+            if let Ok(executor) = ContainerExecutor::new(ContainerConfig::default()) {
+                let exec_arc = std::sync::Arc::new(std::sync::RwLock::new(executor));
+                crate::mcp_docker_tools::register_mcp_docker_tools(&mut mcp, exec_arc);
+                tool_count += 8;
+                log::info!("MCP: +8 Docker tools");
+            }
+        }
     }
 
-    let executor = match ContainerExecutor::new(ContainerConfig::default()) {
-        Ok(e) => e,
-        Err(e) => {
-            log::warn!("MCP Docker tools: executor init failed: {}", e);
-            return None;
+    // ── Voice/Speaker tools ─────────────────────────────────────────
+    #[cfg(feature = "audio")]
+    {
+        use crate::audio_filter::{MfccSpeakerVerifier, SpeakerGate};
+        let verifier = Box::new(MfccSpeakerVerifier::new());
+        let gate = std::sync::Arc::new(std::sync::Mutex::new(SpeakerGate::new(verifier, 0.65)));
+        crate::mcp_voice_tools::register_voice_tools(&mut mcp, gate);
+        tool_count += 5;
+        log::info!("MCP: +5 Voice speaker tools");
+    }
+
+    // Note: Agent management tools (mcp_agent_tools) require an AgentPool
+    // which needs an AiAssistant + ToolRegistry to construct. These are
+    // registered when an AiAssistant is available (e.g., in the standalone binary).
+
+    // ── Task management tools ───────────────────────────────────────
+    #[cfg(feature = "rag")]
+    {
+        let db_path = crate::audio_model_registry::model_directory();
+        let task_db = std::path::Path::new(&db_path).join("tasks.db");
+        if let Ok(store) = crate::mcp_task_tools::UserTaskStore::open(&task_db) {
+            let store_arc = std::sync::Arc::new(std::sync::Mutex::new(store));
+            crate::mcp_task_tools::register_task_tools(&mut mcp, store_arc);
+            tool_count += 7;
+            log::info!("MCP: +7 Task management tools");
         }
-    };
+    }
 
-    let mut mcp = crate::mcp_protocol::McpServer::new(
-        "ai_assistant_docker",
-        env!("CARGO_PKG_VERSION"),
-    );
-    let exec_arc = std::sync::Arc::new(std::sync::RwLock::new(executor));
-    crate::mcp_docker_tools::register_mcp_docker_tools(&mut mcp, exec_arc);
+    // ── Event subscription tools ────────────────────────────────────
+    {
+        let manager = std::sync::Arc::new(std::sync::Mutex::new(
+            crate::event_source::EventSourceManager::new(),
+        ));
+        crate::mcp_event_tools::register_event_tools(&mut mcp, manager);
+        tool_count += 5;
+        log::info!("MCP: +5 Event subscription tools");
+    }
 
-    log::info!("MCP Docker tools: 8 tools registered on /mcp endpoint");
-    Some(Arc::new(std::sync::RwLock::new(mcp)))
-}
+    // ── Routing configuration tools ─────────────────────────────────
+    {
+        let bandit_config = crate::advanced_routing::BanditConfig::default();
+        let pipeline_config = crate::advanced_routing::PipelineConfig::default();
+        let pipeline = std::sync::Arc::new(std::sync::Mutex::new(
+            crate::advanced_routing::RoutingPipeline::new(bandit_config, pipeline_config),
+        ));
+        crate::advanced_routing::register_routing_tools(&mut mcp, pipeline);
+        tool_count += 11;
+        log::info!("MCP: +11 Routing configuration tools");
+    }
 
-/// Build an MCP server with voice/speaker tools.
-#[cfg(all(feature = "audio", feature = "tools"))]
-fn build_mcp_voice_server() -> Option<Arc<std::sync::RwLock<crate::mcp_protocol::McpServer>>> {
-    use crate::audio_filter::{MfccSpeakerVerifier, SpeakerGate};
+    // ── Configuration tools ─────────────────────────────────────────
+    {
+        let config = std::sync::Arc::new(std::sync::Mutex::new(
+            crate::AiConfig::default(),
+        ));
+        crate::config_file::register_config_tools(&mut mcp, config, true);
+        tool_count += 4;
+        log::info!("MCP: +4 Configuration tools");
+    }
 
-    let verifier = Box::new(MfccSpeakerVerifier::new());
-    let gate = std::sync::Arc::new(std::sync::Mutex::new(SpeakerGate::new(verifier, 0.65)));
+    // ── Eval suite tools ────────────────────────────────────────────
+    #[cfg(feature = "eval-suite")]
+    {
+        let generator = std::sync::Arc::new(std::sync::Mutex::new(
+            crate::eval_suite::EvalGenerator::new(),
+        ));
+        crate::eval_suite::register_eval_tools(&mut mcp, generator);
+        tool_count += 3;
+        log::info!("MCP: +3 Eval suite tools");
+    }
 
-    let mut mcp = crate::mcp_protocol::McpServer::new(
-        "ai_assistant_voice",
-        env!("CARGO_PKG_VERSION"),
-    );
-    crate::mcp_voice_tools::register_voice_tools(&mut mcp, gate);
-    log::info!("MCP Voice tools: 5 speaker tools registered on /mcp/voice endpoint");
-
-    Some(Arc::new(std::sync::RwLock::new(mcp)))
+    log::info!("MCP unified server: {} total tools registered", tool_count);
+    Arc::new(std::sync::RwLock::new(mcp))
 }
 
 /// Initialize enrichment subsystems (guardrails, budget manager).
