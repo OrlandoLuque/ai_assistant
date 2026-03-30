@@ -20,6 +20,7 @@ fn main() {
         ("kpkg", &["kpkg_tool"]),
         ("cluster", &["ai_cluster_node"]),
         ("home", &["ai_test_harness", "ai_assistant_standalone"]),
+        ("virtual_mic", &["ai_virtual_mic"]),
     ];
 
     for (icon_name, bins) in icon_map {
