@@ -84,8 +84,8 @@ pub struct AppState {
     /// Optional cluster manager (behind `server-cluster` feature).
     #[cfg(feature = "server-cluster")]
     pub cluster: Option<Arc<crate::cluster::ClusterManager>>,
-    /// Optional MCP server for Docker container tools (behind `containers` + `tools`).
-    #[cfg(all(feature = "containers", feature = "tools"))]
+    /// Unified MCP server with all available tool categories (behind `tools` feature).
+    #[cfg(feature = "tools")]
     pub mcp_server: Option<Arc<std::sync::RwLock<crate::mcp_protocol::McpServer>>>,
     /// Optional distributed log collector (behind `distributed-network` feature).
     #[cfg(feature = "distributed-network")]
@@ -2205,8 +2205,8 @@ fn build_app_state(config: ServerConfig, assistant: AiAssistant) -> AppState {
         model_registry: Arc::new(crate::virtual_model::ModelRegistry::new()),
         #[cfg(feature = "server-cluster")]
         cluster: None,
-        #[cfg(all(feature = "containers", feature = "tools"))]
-        mcp_server: build_mcp_docker_server(),
+        #[cfg(feature = "tools")]
+        mcp_server: Some(build_unified_mcp_server()),
         #[cfg(feature = "distributed-network")]
         log_collector: None,
     }
