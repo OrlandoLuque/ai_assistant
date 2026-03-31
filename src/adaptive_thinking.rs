@@ -1156,7 +1156,7 @@ mod tests {
     fn test_classify_moderate_explanation() {
         let classifier = QueryClassifier::new(enabled_config());
         let strategy =
-            classifier.classify("Explain how async await works in Rust and when to use it");
+            classifier.classify("Explain in detail how async await works in Rust, compare it with threads, and describe when to use each approach with examples");
         assert!(
             strategy.depth >= ThinkingDepth::Moderate,
             "Expected Moderate or higher, got {:?}",
