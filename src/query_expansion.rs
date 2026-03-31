@@ -28,6 +28,9 @@ pub struct ExpansionConfig {
     pub min_keyword_length: usize,
     /// Boost factor for original query
     pub original_boost: f32,
+    /// Use LLM for enhanced query expansion via LlmEnhancer trait.
+    /// When false (default), uses only synonym/keyword/acronym expansion.
+    pub llm_enhanced: bool,
 }
 
 impl Default for ExpansionConfig {
@@ -39,6 +42,7 @@ impl Default for ExpansionConfig {
             extract_keywords: true,
             min_keyword_length: 3,
             original_boost: 2.0,
+            llm_enhanced: false,
         }
     }
 }
@@ -498,6 +502,45 @@ impl Default for ExpansionConfigBuilder {
     }
 }
 
+// ============================================================================
+// LLM Enhancement: Query Expansion (V68)
+// ============================================================================
+
+impl QueryExpander {
+    /// Expand a query with optional LLM enhancement.
+    ///
+    /// If `llm` is Some and config.llm_enhanced is true, adds LLM-generated
+    /// query variations via the existing `expand_with_llm()`. Otherwise
+    /// returns the same result as `expand()`.
+    pub fn expand_with_llm_enhancer(
+        &self,
+        query: &str,
+        llm: Option<&dyn crate::llm_enhance::LlmEnhancer>,
+    ) -> ExpansionResult {
+        let mut result = self.expand(query);
+
+        if let Some(enhancer) = llm {
+            if self.config.llm_enhanced && enhancer.is_available() {
+                let llm_expansions = self.expand_with_llm(query, |prompt| {
+                    enhancer.generate(prompt, 300)
+                });
+
+                for expanded in llm_expansions {
+                    result.expansions.push(ExpandedQuery {
+                        query: expanded,
+                        source: ExpansionSource::LlmGenerated,
+                        weight: 0.85,
+                        keywords: Vec::new(),
+                    });
+                    result.stats.llm_expansions += 1;
+                }
+            }
+        }
+
+        result
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -626,5 +669,57 @@ mod tests {
         let expander = QueryExpander::default();
         let result = expander.expand("find errors");
         let _ = result.stats.synonym_expansions; // verify field exists
+    }
+
+    // ── V68: LLM Enhancement tests ──────────────────────────────────
+
+    #[test]
+    fn test_expand_heuristic_without_llm() {
+        let config = ExpansionConfig {
+            llm_enhanced: false,
+            ..Default::default()
+        };
+        let expander = QueryExpander::new(config);
+        let result = expander.expand_with_llm_enhancer("search for errors", None);
+        // Should still produce synonym/keyword expansions
+        assert!(!result.expansions.is_empty());
+        assert!(
+            result.expansions.iter().any(|e| e.source == ExpansionSource::Original),
+            "Should contain original query"
+        );
+        assert_eq!(result.stats.llm_expansions, 0, "No LLM expansions without LLM");
+    }
+
+    #[test]
+    fn test_expand_with_mock_llm() {
+        let config = ExpansionConfig {
+            llm_enhanced: true,
+            ..Default::default()
+        };
+        let expander = QueryExpander::new(config);
+        let mock = crate::llm_enhance::MockLlm::new(
+            "How to find bugs\nWays to locate issues\nDebugging errors in code",
+        );
+        let result = expander.expand_with_llm_enhancer("search for errors", Some(&mock));
+        // Should have LLM-generated expansions
+        assert!(
+            result.expansions.iter().any(|e| e.source == ExpansionSource::LlmGenerated),
+            "Should contain LLM-generated expansions"
+        );
+        assert!(result.stats.llm_expansions > 0, "LLM expansion count should be > 0");
+    }
+
+    #[test]
+    fn test_expand_llm_fallback_on_failure() {
+        let config = ExpansionConfig {
+            llm_enhanced: true,
+            ..Default::default()
+        };
+        let expander = QueryExpander::new(config);
+        let failing = crate::llm_enhance::FailingMockLlm;
+        let result = expander.expand_with_llm_enhancer("search for errors", Some(&failing));
+        // Should fall back to heuristic (not crash), no LLM expansions
+        assert!(!result.expansions.is_empty());
+        assert_eq!(result.stats.llm_expansions, 0, "No LLM expansions on failure");
     }
 }

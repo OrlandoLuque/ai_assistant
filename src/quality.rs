@@ -158,6 +158,9 @@ pub struct QualityConfig {
     pub check_code: bool,
     /// Check for safety issues
     pub check_safety: bool,
+    /// Use LLM to enhance quality analysis.
+    /// When false (default), uses heuristic analysis only.
+    pub llm_enhanced: bool,
 }
 
 impl Default for QualityConfig {
@@ -170,6 +173,7 @@ impl Default for QualityConfig {
             check_relevance: true,
             check_code: true,
             check_safety: true,
+            llm_enhanced: false,
         }
     }
 }
@@ -639,6 +643,81 @@ impl QualityAnalyzer {
 }
 
 // ============================================================================
+// LLM Enhancement: Quality Analysis (V68)
+// ============================================================================
+
+impl QualityAnalyzer {
+    /// Build a prompt for LLM-based quality analysis.
+    ///
+    /// Returns None if LLM enhancement is disabled or inputs are empty.
+    pub fn build_analyze_prompt(&self, query: &str, response: &str) -> Option<String> {
+        if !self.config.llm_enhanced || response.is_empty() {
+            return None;
+        }
+
+        Some(format!(
+            "Rate this response on relevance, coherence, completeness (0.0-1.0). \
+             Return JSON: {{\"relevance\":0.8,\"coherence\":0.9,\"completeness\":0.7}}\n\n\
+             Query: {}\n\nResponse: {}",
+            crate::llm_enhance::prompt_wrap(query),
+            crate::llm_enhance::prompt_wrap(response)
+        ))
+    }
+
+    /// Parse LLM response for quality scores.
+    pub fn parse_analyze_response(response: &str) -> Option<(f32, f32, f32)> {
+        if let Some(json_str) = crate::llm_enhance::extract_json(response) {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
+                let relevance = val.get("relevance")?.as_f64()? as f32;
+                let coherence = val.get("coherence")?.as_f64()? as f32;
+                let completeness = val.get("completeness")?.as_f64()? as f32;
+                return Some((
+                    relevance.clamp(0.0, 1.0),
+                    coherence.clamp(0.0, 1.0),
+                    completeness.clamp(0.0, 1.0),
+                ));
+            }
+        }
+        None
+    }
+
+    /// Analyze response quality with optional LLM enhancement.
+    ///
+    /// If `llm` is Some and config.llm_enhanced is true, uses LLM scores
+    /// for relevance, coherence, and completeness. Otherwise falls back to
+    /// heuristic analysis.
+    pub fn analyze_with_llm(
+        &self,
+        query: &str,
+        response: &str,
+        context: Option<&str>,
+        llm: Option<&dyn crate::llm_enhance::LlmEnhancer>,
+    ) -> QualityScore {
+        let mut score = self.analyze(query, response, context);
+
+        // Try LLM enhancement to refine scores
+        if let Some(enhancer) = llm {
+            if self.config.llm_enhanced && enhancer.is_available() {
+                if let Some(prompt) = self.build_analyze_prompt(query, response) {
+                    if let Ok(llm_response) = enhancer.generate(&prompt, 200) {
+                        if let Some((rel, coh, comp)) =
+                            Self::parse_analyze_response(&llm_response)
+                        {
+                            score.relevance = rel;
+                            score.coherence = coh;
+                            score.completeness = comp;
+                            score.calculate_overall();
+                        }
+                    }
+                }
+            }
+        }
+
+        score
+    }
+}
+
+// ============================================================================
 // Comparative Analysis
 // ============================================================================
 
@@ -1000,5 +1079,76 @@ mod tests {
         // Test zero
         score.overall = 0.0;
         assert_eq!(score.quality_level(), "Very Poor");
+    }
+
+    // ── V68: LLM Enhancement tests ──────────────────────────────────
+
+    #[test]
+    fn test_analyze_heuristic_without_llm() {
+        let config = QualityConfig {
+            llm_enhanced: false,
+            ..Default::default()
+        };
+        let analyzer = QualityAnalyzer::new(config);
+        let score = analyzer.analyze_with_llm(
+            "What is Rust?",
+            "Rust is a systems programming language focused on safety, speed, and concurrency.",
+            None,
+            None,
+        );
+        assert!(score.overall > 0.0);
+        assert!(score.relevance > 0.0);
+    }
+
+    #[test]
+    fn test_analyze_with_mock_llm() {
+        let config = QualityConfig {
+            llm_enhanced: true,
+            ..Default::default()
+        };
+        let analyzer = QualityAnalyzer::new(config);
+        let mock = crate::llm_enhance::MockLlm::new(
+            "{\"relevance\":0.95,\"coherence\":0.88,\"completeness\":0.92}",
+        );
+        let score = analyzer.analyze_with_llm(
+            "What is Rust?",
+            "Rust is a systems programming language focused on safety, speed, and concurrency.",
+            None,
+            Some(&mock),
+        );
+        assert!(
+            (score.relevance - 0.95).abs() < 0.01,
+            "LLM relevance should be 0.95, got {}",
+            score.relevance
+        );
+        assert!(
+            (score.coherence - 0.88).abs() < 0.01,
+            "LLM coherence should be 0.88, got {}",
+            score.coherence
+        );
+        assert!(
+            (score.completeness - 0.92).abs() < 0.01,
+            "LLM completeness should be 0.92, got {}",
+            score.completeness
+        );
+    }
+
+    #[test]
+    fn test_analyze_llm_fallback_on_failure() {
+        let config = QualityConfig {
+            llm_enhanced: true,
+            ..Default::default()
+        };
+        let analyzer = QualityAnalyzer::new(config);
+        let failing = crate::llm_enhance::FailingMockLlm;
+        let score = analyzer.analyze_with_llm(
+            "What is Rust?",
+            "Rust is a systems programming language focused on safety, speed, and concurrency.",
+            None,
+            Some(&failing),
+        );
+        // Should fall back to heuristic (not crash)
+        assert!(score.overall > 0.0);
+        assert!(score.relevance > 0.0);
     }
 }

@@ -57,13 +57,35 @@ pub struct IntentResult {
     pub all_intents: Vec<(Intent, f64)>,
 }
 
+/// Configuration for LLM-enhanced intent classification.
+#[derive(Debug, Clone)]
+pub struct IntentConfig {
+    /// Use LLM to enhance intent classification.
+    /// When false (default), uses heuristic pattern matching.
+    pub llm_enhanced: bool,
+}
+
+impl Default for IntentConfig {
+    fn default() -> Self {
+        Self {
+            llm_enhanced: false,
+        }
+    }
+}
+
 /// Intent classifier
 pub struct IntentClassifier {
     patterns: HashMap<Intent, Vec<&'static str>>,
+    config: IntentConfig,
 }
 
 impl IntentClassifier {
     pub fn new() -> Self {
+        Self::with_config(IntentConfig::default())
+    }
+
+    /// Create a new classifier with the given configuration.
+    pub fn with_config(config: IntentConfig) -> Self {
         let mut patterns = HashMap::new();
 
         patterns.insert(
@@ -257,7 +279,7 @@ impl IntentClassifier {
             ],
         );
 
-        Self { patterns }
+        Self { patterns, config }
     }
 
     /// Classify the intent of a message
@@ -319,6 +341,92 @@ impl IntentClassifier {
 impl Default for IntentClassifier {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ============================================================================
+// LLM Enhancement: Intent Classification (V68)
+// ============================================================================
+
+impl IntentClassifier {
+    /// Build a prompt for LLM-based intent classification.
+    ///
+    /// Returns None if LLM enhancement is disabled or message is empty.
+    pub fn build_classify_prompt(&self, message: &str) -> Option<String> {
+        if !self.config.llm_enhanced || message.is_empty() {
+            return None;
+        }
+
+        Some(format!(
+            "Classify the intent of this message. Return JSON: \
+             {{\"intent\":\"question|command|greeting|request|complaint|chitchat\",\"confidence\":0.9}}\n\n{}",
+            crate::llm_enhance::prompt_wrap(message)
+        ))
+    }
+
+    /// Parse LLM response for intent classification.
+    pub fn parse_classify_response(response: &str) -> Option<IntentResult> {
+        if let Some(json_str) = crate::llm_enhance::extract_json(response) {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
+                let intent_str = val.get("intent")?.as_str()?;
+                let confidence = val
+                    .get("confidence")
+                    .and_then(|c| c.as_f64())
+                    .unwrap_or(0.8);
+
+                let intent = match intent_str.to_lowercase().as_str() {
+                    "question" => Intent::Question,
+                    "command" => Intent::Command,
+                    "greeting" => Intent::Greeting,
+                    "request" => Intent::Request,
+                    "complaint" => Intent::Complaint,
+                    "chitchat" => Intent::Chitchat,
+                    "farewell" => Intent::Farewell,
+                    "thanks" => Intent::Thanks,
+                    "clarification" => Intent::Clarification,
+                    "confirmation" => Intent::Confirmation,
+                    "negation" => Intent::Negation,
+                    "opinion" => Intent::Opinion,
+                    "code_request" | "coderequest" => Intent::CodeRequest,
+                    "explanation" => Intent::Explanation,
+                    "comparison" => Intent::Comparison,
+                    _ => Intent::Unknown,
+                };
+
+                return Some(IntentResult {
+                    primary: intent,
+                    confidence,
+                    all_intents: vec![(intent, confidence)],
+                });
+            }
+        }
+        None
+    }
+
+    /// Classify intent with optional LLM enhancement.
+    ///
+    /// If `llm` is Some and config.llm_enhanced is true, uses LLM for
+    /// classification. Otherwise falls back to heuristic classification.
+    pub fn classify_with_llm(
+        &self,
+        message: &str,
+        llm: Option<&dyn crate::llm_enhance::LlmEnhancer>,
+    ) -> IntentResult {
+        // Try LLM enhancement first
+        if let Some(enhancer) = llm {
+            if self.config.llm_enhanced && enhancer.is_available() {
+                if let Some(prompt) = self.build_classify_prompt(message) {
+                    if let Ok(response) = enhancer.generate(&prompt, 200) {
+                        if let Some(result) = Self::parse_classify_response(&response) {
+                            return result;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback: heuristic classification
+        self.classify(message)
     }
 }
 
@@ -434,5 +542,47 @@ mod tests {
         let classifier = IntentClassifier::new();
         let intent = classifier.classify("");
         assert_eq!(intent.primary, Intent::Unknown);
+    }
+
+    // ── V68: LLM Enhancement tests ──────────────────────────────────
+
+    #[test]
+    fn test_classify_heuristic_without_llm() {
+        let config = IntentConfig {
+            llm_enhanced: false,
+        };
+        let classifier = IntentClassifier::with_config(config);
+        let result = classifier.classify_with_llm("What is the weather?", None);
+        assert!(
+            result.primary == Intent::Question || result.primary == Intent::Explanation,
+            "Heuristic should classify question, got: {:?}",
+            result.primary
+        );
+    }
+
+    #[test]
+    fn test_classify_with_mock_llm() {
+        let config = IntentConfig {
+            llm_enhanced: true,
+        };
+        let classifier = IntentClassifier::with_config(config);
+        let mock = crate::llm_enhance::MockLlm::new(
+            "{\"intent\":\"complaint\",\"confidence\":0.95}",
+        );
+        let result = classifier.classify_with_llm("this is broken", Some(&mock));
+        assert_eq!(result.primary, Intent::Complaint);
+        assert!((result.confidence - 0.95).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_classify_llm_fallback_on_failure() {
+        let config = IntentConfig {
+            llm_enhanced: true,
+        };
+        let classifier = IntentClassifier::with_config(config);
+        let failing = crate::llm_enhance::FailingMockLlm;
+        let result = classifier.classify_with_llm("goodbye, see you later", Some(&failing));
+        // Should fall back to heuristic (not crash)
+        assert_eq!(result.primary, Intent::Farewell);
     }
 }

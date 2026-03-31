@@ -48,6 +48,9 @@ pub struct ExtractionConfig {
     pub extract_procedures: bool,
     /// Whether to extract preferences.
     pub extract_preferences: bool,
+    /// Use LLM to enhance entity extraction with richer NER.
+    /// When false (default), uses heuristic pattern matching.
+    pub llm_enhanced: bool,
 }
 
 impl Default for ExtractionConfig {
@@ -59,6 +62,7 @@ impl Default for ExtractionConfig {
             extract_entities: true,
             extract_procedures: true,
             extract_preferences: true,
+            llm_enhanced: false,
         }
     }
 }
@@ -435,5 +439,197 @@ impl MemoryExtractor {
                 None
             }
         }
+    }
+}
+
+// ============================================================================
+// LLM Enhancement: Entity Extraction (V68)
+// ============================================================================
+
+/// A named entity extracted by LLM.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtractedEntity {
+    /// Entity name/value.
+    pub name: String,
+    /// Entity type (person, organization, location, date, concept).
+    pub entity_type: String,
+}
+
+impl MemoryExtractor {
+    /// Build a prompt for LLM-based entity extraction.
+    ///
+    /// Returns None if LLM enhancement is disabled or text is empty.
+    pub fn build_entity_prompt(&self, text: &str) -> Option<String> {
+        if !self.config.llm_enhanced || text.is_empty() {
+            return None;
+        }
+
+        Some(format!(
+            "Extract named entities from this text. Return JSON array: \
+             [{{\"name\":\"X\",\"type\":\"person|organization|location|date|concept\"}}]\n\n{}",
+            crate::llm_enhance::prompt_wrap(text)
+        ))
+    }
+
+    /// Parse LLM response for entity extraction.
+    pub fn parse_entity_response(response: &str) -> Vec<ExtractedEntity> {
+        if let Some(json_str) = crate::llm_enhance::extract_json(response) {
+            if let Ok(entities) = serde_json::from_str::<Vec<serde_json::Value>>(json_str) {
+                return entities
+                    .iter()
+                    .filter_map(|v| {
+                        let name = v.get("name")?.as_str()?.to_string();
+                        let entity_type = v.get("type")?.as_str()?.to_string();
+                        if name.is_empty() {
+                            return None;
+                        }
+                        Some(ExtractedEntity { name, entity_type })
+                    })
+                    .collect();
+            }
+        }
+        Vec::new()
+    }
+
+    /// Extract entities with optional LLM enhancement.
+    ///
+    /// If `llm` is Some and config.llm_enhanced is true, uses LLM for richer
+    /// named entity recognition. Otherwise falls back to heuristic extraction.
+    pub fn extract_entities_with_llm(
+        &self,
+        text: &str,
+        llm: Option<&dyn crate::llm_enhance::LlmEnhancer>,
+    ) -> Vec<ExtractedEntity> {
+        // Try LLM enhancement first
+        if let Some(enhancer) = llm {
+            if self.config.llm_enhanced && enhancer.is_available() {
+                if let Some(prompt) = self.build_entity_prompt(text) {
+                    if let Ok(response) = enhancer.generate(&prompt, 500) {
+                        let entities = Self::parse_entity_response(&response);
+                        if !entities.is_empty() {
+                            return entities;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback: convert heuristic extractions to ExtractedEntity
+        self.extract(text)
+            .into_iter()
+            .filter_map(|extraction| match extraction {
+                MemoryExtraction::EntityUpdate {
+                    entity_name,
+                    attribute,
+                    value,
+                } => Some(ExtractedEntity {
+                    name: value,
+                    entity_type: if attribute == "name" {
+                        "person".to_string()
+                    } else if attribute == "email" {
+                        "concept".to_string()
+                    } else {
+                        entity_name
+                    },
+                }),
+                MemoryExtraction::NewFact { fact } => Some(ExtractedEntity {
+                    name: fact.object,
+                    entity_type: "concept".to_string(),
+                }),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_entities_heuristic_only() {
+        // with_defaults() has llm_enhanced=false and built-in rules
+        let extractor = MemoryExtractor::with_defaults();
+        let entities = extractor.extract_entities_with_llm("My name is Alice", None);
+        assert!(
+            entities.iter().any(|e| e.name == "Alice"),
+            "Should extract Alice from heuristic, got: {:?}",
+            entities
+        );
+    }
+
+    #[test]
+    fn test_extract_entities_with_mock_llm() {
+        let mut config = ExtractionConfig::default();
+        config.llm_enhanced = true;
+        let extractor = MemoryExtractor::new(config);
+        let mock = crate::llm_enhance::MockLlm::new(
+            "[{\"name\":\"OpenAI\",\"type\":\"organization\"},{\"name\":\"San Francisco\",\"type\":\"location\"}]",
+        );
+        let entities = extractor.extract_entities_with_llm(
+            "OpenAI is based in San Francisco",
+            Some(&mock),
+        );
+        assert_eq!(entities.len(), 2);
+        assert!(entities.iter().any(|e| e.name == "OpenAI" && e.entity_type == "organization"));
+        assert!(entities.iter().any(|e| e.name == "San Francisco" && e.entity_type == "location"));
+    }
+
+    #[test]
+    fn test_extract_entities_llm_fallback_on_failure() {
+        // Build extractor with llm_enhanced=true and default rules
+        let config = ExtractionConfig {
+            llm_enhanced: true,
+            ..ExtractionConfig::default()
+        };
+        let mut extractor = MemoryExtractor::new(config);
+        // Manually add the name rule so heuristic fallback works
+        extractor.add_rule(ExtractionRule {
+            name: "name_introduction".to_string(),
+            pattern: r"(?i)my name is (\w+)".to_string(),
+            extraction_type: ExtractionRuleType::NamePattern,
+            confidence: 0.9,
+        });
+        let failing = crate::llm_enhance::FailingMockLlm;
+        let entities = extractor.extract_entities_with_llm("My name is Bob", Some(&failing));
+        // Should fall back to heuristic (not crash), and find Bob via NamePattern
+        assert!(
+            entities.iter().any(|e| e.name == "Bob"),
+            "Fallback should extract Bob, got: {:?}",
+            entities
+        );
+    }
+
+    #[test]
+    fn test_build_entity_prompt() {
+        let mut config = ExtractionConfig::default();
+        config.llm_enhanced = true;
+        let extractor = MemoryExtractor::new(config);
+        let prompt = extractor.build_entity_prompt("Hello world");
+        assert!(prompt.is_some());
+        assert!(prompt.unwrap().contains("Extract named entities"));
+    }
+
+    #[test]
+    fn test_build_entity_prompt_disabled() {
+        let config = ExtractionConfig::default(); // llm_enhanced = false
+        let extractor = MemoryExtractor::new(config);
+        assert!(extractor.build_entity_prompt("Hello").is_none());
+    }
+
+    #[test]
+    fn test_parse_entity_response_valid() {
+        let response = "[{\"name\":\"John\",\"type\":\"person\"}]";
+        let entities = MemoryExtractor::parse_entity_response(response);
+        assert_eq!(entities.len(), 1);
+        assert_eq!(entities[0].name, "John");
+        assert_eq!(entities[0].entity_type, "person");
+    }
+
+    #[test]
+    fn test_parse_entity_response_invalid() {
+        let response = "Not valid JSON at all";
+        let entities = MemoryExtractor::parse_entity_response(response);
+        assert!(entities.is_empty());
     }
 }
