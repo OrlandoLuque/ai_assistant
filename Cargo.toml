@@ -462,6 +462,11 @@ name = "ai_setup"
 path = "src/bin/ai_setup.rs"
 required-features = ["full"]
 
+[[bin]]
+name = "ai_setup_gui"
+path = "src/bin/ai_setup_gui.rs"
+required-features = ["gui"]
+
 [[example]]
 name = "autonomous_agent"
 required-features = ["autonomous"]
