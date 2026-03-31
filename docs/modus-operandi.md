@@ -44,9 +44,10 @@ Continúa con el desarrollo del proyecto. Lee docs/modus-operandi.md y el últim
 - **V65**: COMPLETE — Model-Aware Tokenization (TokenPrecision enum, TiktokenCounter cfg-gated, ProviderTokenCounter fallback chain, dynamic reserve 10-20%, model-aware budget allocation in assistant.rs), feature flag `precise-tokens`
 - **V66**: COMPLETE — Topic-Aware RAG Relevance (TopicMatcher Jaccard, autocut score gap, LLM topic classifier, Self-Query filter extraction, ChunkRAG sub-chunk granular scoring, 5 new RagFeatures 33→38, Butler RAG warnings, 12 attack vectors), concept 235
 - **V67**: COMPLETE — Audio Filter Pipeline + Voice Transform Pipeline + Agent Mode (audio_filter.rs effects chain + SpeakerDiarizer, voice_agent wiring to real STT/TTS/emotion providers, VoiceCloneProvider + ElevenLabs/XTTS, AudioModelRegistry, ai_virtual_mic GUI binary 5 modes incl. Agent with AiAssistant/RAG integration + name addressing + wait-for-silence + diarization, 8 MCP voice tools, Discord AI preset, config persistence, 12 attack vectors, 42 new tests)
-- **Latest**: V67 — Audio Filter + Voice Transform + Agent Mode (COMPLETE)
-- **Test count**: 7,206 lib tests (0 failures) + 39 harness precision + 18 fallback resilience + 8 conversation quality scored tests
-- **Source files**: 343 .rs files, ~394K LOC
+- **V68**: COMPLETE — LLM-Enhanced Pipeline (17 modules with optional LLM enhancement: conversation compaction, entity extraction, intent classification, query expansion, response quality, topic detection, auto-model selection, guardrail evaluation, RAG tier auto-selection, document chunking, KG enrichment, procedural evolution, speaker intent, home automation intent, agent task decomposition, sentiment trend, multi-agent consensus + LlmEnhancer trait + MockLlm + MockSpeechProvider)
+- **Latest**: V68 — LLM-Enhanced Pipeline (COMPLETE)
+- **Test count**: 7,275 lib tests (0 failures) + 39 harness precision + 18 fallback resilience + 8 conversation quality scored tests
+- **Source files**: 345 .rs files, ~397K LOC
 - **Feature flags**: 59 (+4: home-automation, coap, precise-tokens, audio-io)
 - **Status**: Experimental — compiles and passes tests, but not validated in production
 - **Website**: Separated to `ai_assistant-website` repo (GitHub Pages ready)
