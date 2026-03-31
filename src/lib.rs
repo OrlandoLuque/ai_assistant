@@ -193,7 +193,10 @@ pub mod event_source;
 pub mod topic_matcher;
 pub mod audio_filter;
 pub mod audio_model_registry;
+pub mod llm_enhance;
 pub mod mcp_voice_tools;
+#[cfg(feature = "audio")]
+pub mod mock_speech;
 pub mod debug;
 pub mod diff;
 pub mod error;
@@ -414,6 +417,14 @@ pub use audio_filter::{
 pub use audio_model_registry::{
     AudioModelCategory, AudioModelInfo, AudioModelRegistry, ModelStatus,
 };
+
+pub use llm_enhance::{
+    extract_json as llm_extract_json, prompt_wrap, FailingMockLlm, LlmEnhancementConfig,
+    LlmEnhancer, MockLlm,
+};
+
+#[cfg(feature = "audio")]
+pub use mock_speech::MockSpeechProvider;
 
 pub use config_security::{
     ConfigLock, ConfigSection as LockableConfigSection,
