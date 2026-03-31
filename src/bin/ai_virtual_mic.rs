@@ -98,7 +98,7 @@ struct AgentConfig {
     connection: ConnectionMode,
     provider: String,
     provider_url: String,
-    #[serde(skip)]
+    #[serde(skip_serializing, default)]
     api_key: String,
     model: String,
     rag_tier: String,
@@ -255,11 +255,19 @@ fn extract_self_introduction(transcript: &str) -> Option<String> {
                 .collect::<Vec<_>>()
                 .join(" ");
             if !name.is_empty() && name.len() < 30 {
+                // Sanitize: only alphanumeric, spaces, hyphens, apostrophes
+                let clean: String = name
+                    .chars()
+                    .filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '-' || *c == '\'')
+                    .collect();
+                if clean.is_empty() {
+                    return None;
+                }
                 // Capitalize first letter
-                let mut chars = name.chars();
+                let mut chars = clean.chars();
                 let capitalized = match chars.next() {
                     Some(c) => c.to_uppercase().to_string() + chars.as_str(),
-                    None => name,
+                    None => clean,
                 };
                 return Some(capitalized);
             }

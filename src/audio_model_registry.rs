@@ -194,9 +194,14 @@ impl AudioModelRegistry {
         installed
     }
 
-    /// Get the expected file path for a model.
+    /// Get the expected file path for a model (path-traversal safe).
     pub fn model_path(&self, model: &AudioModelInfo) -> String {
-        format!("{}/{}", self.model_dir, model.filename)
+        // Prevent path traversal: use only the filename component
+        let safe_name = std::path::Path::new(&model.filename)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown_model");
+        format!("{}/{}", self.model_dir, safe_name)
     }
 
     /// Download a model with progress callback.
@@ -205,19 +210,29 @@ impl AudioModelRegistry {
     /// Returns the path where the model was saved.
     ///
     /// Verifies SHA-256 after download if the model has a checksum.
+    /// Downloads to a temporary file first, then atomic rename (TOCTOU safe).
     pub fn download_model(
         &self,
         model: &AudioModelInfo,
         progress: impl Fn(u64, u64),
     ) -> Result<String, String> {
+        // Validate URL
+        if model.url.is_empty() {
+            return Err("Model has no download URL (install manually)".to_string());
+        }
+        if !model.url.starts_with("https://") && !model.url.starts_with("http://") {
+            return Err("Only http/https URLs allowed".to_string());
+        }
+
         // Ensure directory exists
         if let Err(e) = std::fs::create_dir_all(&self.model_dir) {
             return Err(format!("Failed to create model directory: {}", e));
         }
 
         let path = self.model_path(model);
+        let temp_path = format!("{}.tmp", path);
 
-        // Download with ureq
+        // Download to temporary file (TOCTOU safe)
         let response = ureq::get(&model.url)
             .timeout(std::time::Duration::from_secs(600))
             .call()
@@ -226,7 +241,7 @@ impl AudioModelRegistry {
         let total = model.size_bytes;
         let mut downloaded = 0u64;
         let mut file =
-            std::fs::File::create(&path).map_err(|e| format!("Failed to create file: {}", e))?;
+            std::fs::File::create(&temp_path).map_err(|e| format!("Failed to create temp file: {}", e))?;
 
         let mut reader = response.into_reader();
         let mut buf = vec![0u8; 65536]; // 64KB chunks
@@ -243,20 +258,24 @@ impl AudioModelRegistry {
             downloaded += n as u64;
             progress(downloaded, total);
         }
+        drop(file); // Close before checksum
 
         // Verify checksum if available
         if !model.sha256.is_empty() {
             let file_hash =
-                compute_sha256_file(&path).map_err(|e| format!("Checksum error: {}", e))?;
+                compute_sha256_file(&temp_path).map_err(|e| format!("Checksum error: {}", e))?;
             if file_hash != model.sha256 {
-                // Delete corrupted download
-                let _ = std::fs::remove_file(&path);
+                let _ = std::fs::remove_file(&temp_path);
                 return Err(format!(
                     "Checksum mismatch: expected {}, got {}",
                     model.sha256, file_hash
                 ));
             }
         }
+
+        // Atomic rename: temp → final (TOCTOU safe)
+        std::fs::rename(&temp_path, &path)
+            .map_err(|e| format!("Failed to finalize download: {}", e))?;
 
         Ok(path)
     }

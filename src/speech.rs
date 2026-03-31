@@ -1793,6 +1793,16 @@ impl VoiceCloneProvider for ElevenLabsCloneProvider {
         // ElevenLabs "Add Voice" API uses multipart form upload
         let url = format!("{}/voices/add", self.base_url);
 
+        // Sanitize name: prevent boundary injection and header manipulation
+        let safe_name: String = name
+            .chars()
+            .filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '-' || *c == '\'')
+            .take(100)
+            .collect();
+        if safe_name.is_empty() {
+            anyhow::bail!("Voice name must contain at least one alphanumeric character");
+        }
+
         // Build multipart boundary
         let boundary = "----VoiceCloneBoundary";
         let mut body = Vec::new();
@@ -1800,7 +1810,7 @@ impl VoiceCloneProvider for ElevenLabsCloneProvider {
         // Name field
         body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
         body.extend_from_slice(b"Content-Disposition: form-data; name=\"name\"\r\n\r\n");
-        body.extend_from_slice(name.as_bytes());
+        body.extend_from_slice(safe_name.as_bytes());
         body.extend_from_slice(b"\r\n");
 
         // Audio file field
@@ -1940,6 +1950,8 @@ pub struct XttsCloneProvider {
     /// Stored reference audio per voice name (in-memory cache).
     /// In production, these should be encrypted at rest.
     voice_references: std::collections::HashMap<String, Vec<u8>>,
+    /// Maximum total bytes for reference cache (default 100MB).
+    max_cache_bytes: usize,
 }
 
 impl XttsCloneProvider {
@@ -1948,6 +1960,7 @@ impl XttsCloneProvider {
         Self {
             base_url: base_url.to_string(),
             voice_references: std::collections::HashMap::new(),
+            max_cache_bytes: 100 * 1024 * 1024, // 100MB default
         }
     }
 
@@ -2073,8 +2086,17 @@ impl VoiceCloneProvider for XttsCloneProvider {
 
 impl XttsCloneProvider {
     /// Store reference audio for a voice (call after enroll()).
-    pub fn store_reference(&mut self, voice_id: &str, audio: Vec<u8>) {
+    pub fn store_reference(&mut self, voice_id: &str, audio: Vec<u8>) -> Result<()> {
+        let total: usize = self.voice_references.values().map(|v| v.len()).sum();
+        if total + audio.len() > self.max_cache_bytes {
+            anyhow::bail!(
+                "Reference cache full ({:.1}MB / {:.1}MB). Remove a voice first.",
+                total as f64 / 1_048_576.0,
+                self.max_cache_bytes as f64 / 1_048_576.0
+            );
+        }
         self.voice_references.insert(voice_id.to_string(), audio);
+        Ok(())
     }
 
     /// Remove stored reference audio.

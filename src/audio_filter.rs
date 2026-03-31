@@ -390,8 +390,8 @@ impl SpeakerDiarizer {
         Self {
             verifier,
             clusters: Vec::new(),
-            threshold,
-            max_clusters,
+            threshold: threshold.clamp(0.0, 1.0),
+            max_clusters: max_clusters.max(1), // At least 1 cluster
         }
     }
 

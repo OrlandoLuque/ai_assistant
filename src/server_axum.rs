@@ -2254,6 +2254,15 @@ fn build_unified_mcp_server() -> Arc<std::sync::RwLock<crate::mcp_protocol::McpS
         crate::mcp_voice_tools::register_voice_tools(&mut mcp, gate);
         tool_count += 5;
         log::info!("MCP: +5 Voice speaker tools");
+
+        // Voice cloning tools (ElevenLabs/XTTS)
+        if let Ok(provider) = crate::speech::ElevenLabsCloneProvider::from_env() {
+            let clone_arc: std::sync::Arc<std::sync::Mutex<dyn crate::speech::VoiceCloneProvider>> =
+                std::sync::Arc::new(std::sync::Mutex::new(provider));
+            crate::mcp_voice_tools::register_voice_clone_tools(&mut mcp, clone_arc);
+            tool_count += 3;
+            log::info!("MCP: +3 Voice cloning tools (ElevenLabs)");
+        }
     }
 
     // Note: Agent management tools (mcp_agent_tools) require an AgentPool

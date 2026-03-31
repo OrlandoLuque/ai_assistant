@@ -68,12 +68,23 @@ pub fn register_voice_tools(
                 let audio = simple_base64_decode(audio_b64)
                     .map_err(|e| format!("Invalid base64: {}", e))?;
 
+                if audio.len() % 2 != 0 {
+                    return Err("Audio data must be even-length PCM16 bytes".to_string());
+                }
+                if audio.len() > 16000 * 2 * 300 {
+                    return Err("Audio too large (max 5 minutes)".to_string());
+                }
+
                 let samples: Vec<i16> = audio
-                    .chunks_exact(2)
+                    .chunks(2)
+                    .filter(|pair| pair.len() == 2)
                     .map(|pair| i16::from_le_bytes([pair[0], pair[1]]))
                     .collect();
 
                 let mut gate = gate.lock().map_err(|e| format!("Lock error: {}", e))?;
+                if gate.profiles().len() >= 100 {
+                    return Err("Speaker limit reached (max 100 profiles)".to_string());
+                }
                 let speaker_id = gate
                     .enroll(&samples, 16000, name, is_owner)
                     .map_err(|e| format!("Enrollment failed: {}", e))?;
@@ -105,8 +116,13 @@ pub fn register_voice_tools(
                 let audio = simple_base64_decode(audio_b64)
                     .map_err(|e| format!("Invalid base64: {}", e))?;
 
+                if audio.len() % 2 != 0 {
+                    return Err("Audio data must be even-length PCM16 bytes".to_string());
+                }
+
                 let samples: Vec<i16> = audio
-                    .chunks_exact(2)
+                    .chunks(2)
+                    .filter(|pair| pair.len() == 2)
                     .map(|pair| i16::from_le_bytes([pair[0], pair[1]]))
                     .collect();
 
