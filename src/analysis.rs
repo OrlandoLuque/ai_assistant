@@ -1482,6 +1482,258 @@ impl SentimentAnalyzer {
 }
 
 // ============================================================================
+// LLM Enhancement: Topic Detection (V68)
+// ============================================================================
+
+/// Result of LLM-enhanced topic detection.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmTopicResult {
+    /// Detected topic name.
+    pub topic: String,
+    /// Relevance score (0.0 to 1.0).
+    pub relevance: f64,
+}
+
+impl TopicDetector {
+    /// Build a prompt for LLM-based topic detection.
+    ///
+    /// Returns None if there are no messages to analyze.
+    pub fn build_topics_prompt(messages: &[ChatMessage]) -> Option<String> {
+        if messages.is_empty() {
+            return None;
+        }
+
+        let mut prompt = String::from(
+            "List the main topics discussed in the following messages. \
+             Return JSON: [{\"topic\":\"X\",\"relevance\":0.8}]\n\n",
+        );
+
+        for (i, msg) in messages.iter().enumerate().take(30) {
+            prompt.push_str(&format!(
+                "{}. [{}] {}\n",
+                i + 1,
+                msg.role,
+                crate::llm_enhance::prompt_wrap(&msg.content)
+            ));
+        }
+
+        if messages.len() > 30 {
+            prompt.push_str(&format!("... and {} more messages.\n", messages.len() - 30));
+        }
+
+        Some(prompt)
+    }
+
+    /// Parse LLM response for topic detection.
+    pub fn parse_topics_response(response: &str) -> Vec<LlmTopicResult> {
+        if let Some(json_str) = crate::llm_enhance::extract_json(response) {
+            if let Ok(topics) = serde_json::from_str::<Vec<LlmTopicResult>>(json_str) {
+                return topics;
+            }
+        }
+        Vec::new()
+    }
+
+    /// Detect topics with optional LLM enhancement.
+    ///
+    /// When `llm_enhanced` is true and an LLM is provided, uses the LLM to
+    /// discover topics beyond keyword matching. Falls back to heuristic if
+    /// LLM fails.
+    pub fn detect_topics_with_llm(
+        &self,
+        messages: &[ChatMessage],
+        llm_enhanced: bool,
+        llm: Option<&dyn crate::llm_enhance::LlmEnhancer>,
+    ) -> Vec<Topic> {
+        let heuristic = self.detect_topics(messages);
+
+        if !llm_enhanced {
+            return heuristic;
+        }
+
+        if let Some(enhancer) = llm {
+            if enhancer.is_available() {
+                if let Some(prompt) = Self::build_topics_prompt(messages) {
+                    if let Ok(response) = enhancer.generate(&prompt, 500) {
+                        let llm_topics = Self::parse_topics_response(&response);
+                        if !llm_topics.is_empty() {
+                            // Merge: LLM topics first, then heuristic ones not already covered
+                            let mut merged: Vec<Topic> = llm_topics
+                                .into_iter()
+                                .map(|t| Topic {
+                                    name: t.topic,
+                                    relevance: t.relevance as f32,
+                                    keywords: Vec::new(),
+                                    message_indices: Vec::new(),
+                                })
+                                .collect();
+
+                            for ht in &heuristic {
+                                if !merged.iter().any(|m| m.name.to_lowercase() == ht.name.to_lowercase()) {
+                                    merged.push(ht.clone());
+                                }
+                            }
+
+                            return merged;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback to heuristic
+        heuristic
+    }
+}
+
+// ============================================================================
+// LLM Enhancement: Conversation Sentiment Trend (V68)
+// ============================================================================
+
+/// Result of LLM-based sentiment trend analysis.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SentimentTrendAnalysis {
+    /// The overall trend: "improving", "stable", or "declining".
+    pub trend: String,
+    /// A summary of the emotional progression.
+    pub summary: String,
+}
+
+/// Configuration for sentiment trend analysis.
+#[derive(Debug, Clone)]
+pub struct SentimentTrendConfig {
+    /// Use LLM to analyze the emotional trend of a conversation.
+    /// When false (default), uses heuristic score comparison.
+    pub llm_enhanced: bool,
+}
+
+impl Default for SentimentTrendConfig {
+    fn default() -> Self {
+        Self {
+            llm_enhanced: false,
+        }
+    }
+}
+
+impl SentimentAnalyzer {
+    /// Build a prompt for LLM-based sentiment trend analysis.
+    ///
+    /// Returns None if LLM enhancement is disabled or messages are empty.
+    pub fn build_sentiment_trend_prompt(
+        &self,
+        messages: &[ChatMessage],
+        llm_enhanced: bool,
+    ) -> Option<String> {
+        if !llm_enhanced || messages.is_empty() {
+            return None;
+        }
+
+        let mut prompt = String::from(
+            "Summarize the emotional trend of this conversation. \
+             Return JSON: {\"trend\":\"improving|stable|declining\",\"summary\":\"...\"}\n\n",
+        );
+
+        for (i, msg) in messages.iter().enumerate().take(30) {
+            prompt.push_str(&format!(
+                "{}. [{}] {}\n",
+                i + 1,
+                msg.role,
+                crate::llm_enhance::prompt_wrap(&msg.content)
+            ));
+        }
+
+        if messages.len() > 30 {
+            prompt.push_str(&format!("... and {} more messages.\n", messages.len() - 30));
+        }
+
+        Some(prompt)
+    }
+
+    /// Parse LLM response for sentiment trend analysis.
+    pub fn parse_sentiment_trend_response(response: &str) -> Option<SentimentTrendAnalysis> {
+        if let Some(json_str) = crate::llm_enhance::extract_json(response) {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
+                let trend = val
+                    .get("trend")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("stable");
+                let summary = val
+                    .get("summary")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("No trend data available.");
+                return Some(SentimentTrendAnalysis {
+                    trend: trend.to_string(),
+                    summary: summary.to_string(),
+                });
+            }
+        }
+        None
+    }
+
+    /// Analyze the sentiment trend of a conversation with optional LLM enhancement.
+    ///
+    /// If `llm` is Some and `llm_enhanced` is true, uses LLM for nuanced
+    /// trend analysis. Otherwise uses heuristic score comparison.
+    pub fn analyze_sentiment_trend_with_llm(
+        &self,
+        messages: &[ChatMessage],
+        llm_enhanced: bool,
+        llm: Option<&dyn crate::llm_enhance::LlmEnhancer>,
+    ) -> SentimentTrendAnalysis {
+        // Heuristic baseline: compare first-half vs second-half average scores
+        let scores: Vec<f32> = messages
+            .iter()
+            .map(|m| self.analyze_message(&m.content).score)
+            .collect();
+
+        let heuristic = if scores.len() < 2 {
+            SentimentTrendAnalysis {
+                trend: "stable".to_string(),
+                summary: "Not enough data for trend analysis.".to_string(),
+            }
+        } else {
+            let mid = scores.len() / 2;
+            let first_half: f32 = scores[..mid].iter().sum::<f32>() / mid as f32;
+            let second_half: f32 = scores[mid..].iter().sum::<f32>() / (scores.len() - mid) as f32;
+            let diff = second_half - first_half;
+
+            let trend = if diff > 0.15 {
+                "improving"
+            } else if diff < -0.15 {
+                "declining"
+            } else {
+                "stable"
+            };
+
+            SentimentTrendAnalysis {
+                trend: trend.to_string(),
+                summary: format!(
+                    "Sentiment moved from {:.2} to {:.2} ({})",
+                    first_half, second_half, trend
+                ),
+            }
+        };
+
+        // Try LLM enhancement
+        if let Some(enhancer) = llm {
+            if llm_enhanced && enhancer.is_available() {
+                if let Some(prompt) = self.build_sentiment_trend_prompt(messages, llm_enhanced) {
+                    if let Ok(response) = enhancer.generate(&prompt, 300) {
+                        if let Some(analysis) =
+                            Self::parse_sentiment_trend_response(&response)
+                        {
+                            return analysis;
+                        }
+                    }
+                }
+            }
+        }
+
+        heuristic
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -2219,5 +2471,97 @@ mod tests {
         assert!(sentiment.score > 0.0, "Blended score should be positive");
         assert!(!emoticon_analysis.matches.is_empty());
         assert!(emoticon_analysis.overall_sentiment > 0.0);
+    }
+
+    // ── V68: LLM Enhancement tests for Topic Detection ──────────────
+
+    #[test]
+    fn test_detect_topics_with_llm_mock() {
+        let detector = TopicDetector::new();
+        let messages = vec![
+            ChatMessage::user("Let's discuss machine learning algorithms"),
+            ChatMessage::assistant("Sure, deep learning and neural networks are popular."),
+        ];
+        let mock = crate::llm_enhance::MockLlm::new(
+            r#"[{"topic":"Machine Learning","relevance":0.95},{"topic":"Neural Networks","relevance":0.8}]"#,
+        );
+        let topics = detector.detect_topics_with_llm(&messages, true, Some(&mock));
+        assert!(!topics.is_empty());
+        assert!(topics.iter().any(|t| t.name == "Machine Learning"));
+    }
+
+    #[test]
+    fn test_detect_topics_with_llm_fallback() {
+        let detector = TopicDetector::new();
+        let messages = vec![
+            ChatMessage::user("Tell me about programming and algorithms"),
+            ChatMessage::assistant("Programming involves writing code and algorithms."),
+        ];
+        let failing = crate::llm_enhance::FailingMockLlm;
+        let topics = detector.detect_topics_with_llm(&messages, true, Some(&failing));
+        // Should fall back to heuristic (not crash)
+        // Heuristic may or may not find topics, but should not panic
+        let _ = topics;
+    }
+
+    #[test]
+    fn test_detect_topics_with_llm_disabled() {
+        let detector = TopicDetector::new();
+        let messages = vec![
+            ChatMessage::user("How does the weather look today?"),
+        ];
+        let mock = crate::llm_enhance::MockLlm::new(
+            r#"[{"topic":"Weather","relevance":0.9}]"#,
+        );
+        // With llm_enhanced=false, should NOT use mock
+        let topics = detector.detect_topics_with_llm(&messages, false, Some(&mock));
+        // Should return heuristic result (no "Weather" from LLM)
+        assert!(topics.iter().all(|t| t.name != "Weather"));
+    }
+
+    // ── V68: LLM Enhancement tests for Sentiment Trend ──────────────
+
+    #[test]
+    fn test_analyze_sentiment_trend_heuristic_without_llm() {
+        let analyzer = SentimentAnalyzer::new();
+        let messages = vec![
+            ChatMessage::user("This is terrible and broken."),
+            ChatMessage::assistant("I'm sorry to hear that."),
+            ChatMessage::user("Actually, thanks! You fixed it. Great job!"),
+            ChatMessage::assistant("Happy to help!"),
+        ];
+        let result = analyzer.analyze_sentiment_trend_with_llm(&messages, false, None);
+        // First half is negative, second half positive → should be "improving"
+        assert_eq!(result.trend, "improving", "Expected improving, got: {}", result.trend);
+        assert!(!result.summary.is_empty());
+    }
+
+    #[test]
+    fn test_analyze_sentiment_trend_with_mock_llm() {
+        let analyzer = SentimentAnalyzer::new();
+        let messages = vec![
+            ChatMessage::user("Everything is fine."),
+            ChatMessage::assistant("Good to hear."),
+        ];
+        let mock = crate::llm_enhance::MockLlm::new(
+            "{\"trend\":\"stable\",\"summary\":\"The conversation maintained a neutral tone throughout.\"}",
+        );
+        let result = analyzer.analyze_sentiment_trend_with_llm(&messages, true, Some(&mock));
+        assert_eq!(result.trend, "stable", "Expected LLM trend, got: {}", result.trend);
+        assert!(result.summary.contains("neutral tone"));
+    }
+
+    #[test]
+    fn test_analyze_sentiment_trend_llm_fallback_on_failure() {
+        let analyzer = SentimentAnalyzer::new();
+        let messages = vec![
+            ChatMessage::user("Hello"),
+            ChatMessage::assistant("Hi there"),
+        ];
+        let failing = crate::llm_enhance::FailingMockLlm;
+        let result = analyzer.analyze_sentiment_trend_with_llm(&messages, true, Some(&failing));
+        // Should fall back to heuristic (not crash)
+        assert!(!result.trend.is_empty());
+        assert!(!result.summary.is_empty());
     }
 }

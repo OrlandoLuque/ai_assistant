@@ -1844,6 +1844,118 @@ fn chunk_document(source: &str, content: &str) -> Vec<KnowledgeChunk> {
     chunks
 }
 
+// ============================================================================
+// LLM Enhancement: Document Chunk Boundary Suggestion (V68)
+// ============================================================================
+
+/// Result of LLM-enhanced chunk boundary suggestion.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LlmChunkBoundaries {
+    /// Suggested split points as character offsets.
+    pub boundaries: Vec<usize>,
+}
+
+/// Build a prompt for LLM-based chunk boundary suggestion.
+///
+/// Returns None if the document is empty.
+pub fn build_chunk_boundaries_prompt(document: &str) -> Option<String> {
+    if document.is_empty() {
+        return None;
+    }
+
+    // Truncate to first ~3000 chars to avoid huge prompts
+    let snippet = if document.len() > 3000 {
+        &document[..3000]
+    } else {
+        document
+    };
+
+    Some(format!(
+        "Given this document, suggest optimal split points for semantic chunking. \
+         Return JSON: {{\"boundaries\":[100,250,400]}} (character offsets)\n\n\
+         Document ({} chars total, showing first {}):\n{}",
+        document.len(),
+        snippet.len(),
+        crate::llm_enhance::prompt_wrap(snippet)
+    ))
+}
+
+/// Parse LLM response for chunk boundaries.
+pub fn parse_chunk_boundaries_response(response: &str) -> Option<LlmChunkBoundaries> {
+    if let Some(json_str) = crate::llm_enhance::extract_json(response) {
+        if let Ok(result) = serde_json::from_str::<LlmChunkBoundaries>(json_str) {
+            return Some(result);
+        }
+    }
+    None
+}
+
+/// Suggest chunk boundaries with optional LLM enhancement.
+///
+/// When `llm_enhanced` is true, asks the LLM for semantic split points.
+/// Falls back to heuristic chunking via `chunk_document()` if LLM fails.
+pub fn suggest_chunk_boundaries_with_llm(
+    source: &str,
+    content: &str,
+    llm_enhanced: bool,
+    llm: Option<&dyn crate::llm_enhance::LlmEnhancer>,
+) -> Vec<KnowledgeChunk> {
+    if !llm_enhanced {
+        return chunk_document(source, content);
+    }
+
+    if let Some(enhancer) = llm {
+        if enhancer.is_available() {
+            if let Some(prompt) = build_chunk_boundaries_prompt(content) {
+                if let Ok(response) = enhancer.generate(&prompt, 300) {
+                    if let Some(boundaries) = parse_chunk_boundaries_response(&response) {
+                        if !boundaries.boundaries.is_empty() {
+                            // Build chunks from boundaries
+                            let mut chunks = Vec::new();
+                            let mut prev = 0;
+                            for &boundary in &boundaries.boundaries {
+                                let boundary = boundary.min(content.len());
+                                if boundary > prev {
+                                    let slice = &content[prev..boundary];
+                                    if !slice.trim().is_empty() {
+                                        chunks.push(KnowledgeChunk {
+                                            id: 0,
+                                            source: source.to_string(),
+                                            section: String::new(),
+                                            content: slice.trim().to_string(),
+                                            token_count: crate::context::estimate_tokens(slice),
+                                        });
+                                    }
+                                }
+                                prev = boundary;
+                            }
+                            // Last chunk
+                            if prev < content.len() {
+                                let slice = &content[prev..];
+                                if !slice.trim().is_empty() {
+                                    chunks.push(KnowledgeChunk {
+                                        id: 0,
+                                        source: source.to_string(),
+                                        section: String::new(),
+                                        content: slice.trim().to_string(),
+                                        token_count: crate::context::estimate_tokens(slice),
+                                    });
+                                }
+                            }
+                            if !chunks.is_empty() {
+                                return chunks;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Fallback to heuristic
+    chunk_document(source, content)
+}
+
 /// Prepare a search query for FTS5
 fn prepare_fts_query(query: &str) -> String {
     // Split into words, filter short words, add wildcards for prefix matching
@@ -3929,5 +4041,40 @@ Total gastado: $175
         // Results should be KnowledgeChunk (not HybridKnowledgeResult)
         assert!(!results[0].content.is_empty());
         cleanup_db(&path);
+    }
+
+    // ── V68: LLM Enhancement tests for Document Chunking ────────────
+
+    #[test]
+    fn test_suggest_chunk_boundaries_with_llm_mock() {
+        let mock = crate::llm_enhance::MockLlm::new(
+            r#"{"boundaries":[50,100]}"#,
+        );
+        let content = "A".repeat(50) + &"B".repeat(50) + &"C".repeat(50);
+        let chunks = suggest_chunk_boundaries_with_llm("test.md", &content, true, Some(&mock));
+        assert!(!chunks.is_empty());
+        // Should have 3 chunks: [0..50], [50..100], [100..150]
+        assert_eq!(chunks.len(), 3);
+    }
+
+    #[test]
+    fn test_suggest_chunk_boundaries_with_llm_fallback() {
+        let failing = crate::llm_enhance::FailingMockLlm;
+        let content = "# Header\nSome content here.";
+        let chunks = suggest_chunk_boundaries_with_llm("test.md", content, true, Some(&failing));
+        // Should fall back to heuristic chunking
+        assert!(!chunks.is_empty());
+    }
+
+    #[test]
+    fn test_suggest_chunk_boundaries_with_llm_disabled() {
+        let mock = crate::llm_enhance::MockLlm::new(
+            r#"{"boundaries":[5]}"#,
+        );
+        let content = "# Title\nContent here.";
+        let chunks_disabled = suggest_chunk_boundaries_with_llm("test.md", content, false, Some(&mock));
+        let chunks_heuristic = chunk_document("test.md", content);
+        // When disabled, should match heuristic exactly
+        assert_eq!(chunks_disabled.len(), chunks_heuristic.len());
     }
 }

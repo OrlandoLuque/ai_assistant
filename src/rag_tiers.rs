@@ -1925,6 +1925,116 @@ impl RagTierStore {
 }
 
 // ============================================================================
+// LLM Enhancement: RAG Tier Auto-Selection (V68)
+// ============================================================================
+
+/// Result of LLM-enhanced RAG tier suggestion.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LlmTierSuggestion {
+    /// Suggested tier name.
+    pub tier: String,
+    /// Reason for the suggestion.
+    pub reason: String,
+}
+
+/// Build a prompt for LLM-based RAG tier suggestion.
+pub fn build_tier_suggestion_prompt(query: &str) -> String {
+    format!(
+        "Given this query, recommend the optimal RAG tier. \
+         Return JSON: {{\"tier\":\"fast|semantic|enhanced|thorough\",\"reason\":\"...\"}}\n\n\
+         Query: {}",
+        crate::llm_enhance::prompt_wrap(query)
+    )
+}
+
+/// Parse LLM response for tier suggestion.
+pub fn parse_tier_suggestion_response(response: &str) -> Option<LlmTierSuggestion> {
+    if let Some(json_str) = crate::llm_enhance::extract_json(response) {
+        if let Ok(result) = serde_json::from_str::<LlmTierSuggestion>(json_str) {
+            return Some(result);
+        }
+    }
+    None
+}
+
+/// Map LLM tier string to RagTier enum.
+fn tier_from_llm_str(s: &str) -> RagTier {
+    match s.to_lowercase().as_str() {
+        "disabled" | "none" => RagTier::Disabled,
+        "fast" | "keyword" => RagTier::Fast,
+        "semantic" | "vector" => RagTier::Semantic,
+        "enhanced" | "balanced" => RagTier::Enhanced,
+        "thorough" | "deep" => RagTier::Thorough,
+        "agentic" | "agent" => RagTier::Agentic,
+        "graph" | "knowledge_graph" => RagTier::Graph,
+        "full" | "all" => RagTier::Full,
+        _ => RagTier::Fast,
+    }
+}
+
+/// Heuristic tier suggestion based on query characteristics.
+fn suggest_tier_heuristic(query: &str) -> RagTier {
+    let lower = query.to_lowercase();
+    let word_count = query.split_whitespace().count();
+
+    // Complex queries -> thorough
+    if word_count > 30
+        || lower.contains("compare")
+        || lower.contains("analyze in detail")
+        || lower.contains("comprehensive")
+    {
+        return RagTier::Thorough;
+    }
+
+    // Relationship queries -> enhanced
+    if lower.contains("how does")
+        || lower.contains("relationship")
+        || lower.contains("explain")
+        || lower.contains("why")
+    {
+        return RagTier::Enhanced;
+    }
+
+    // Semantic queries
+    if word_count > 8 || lower.contains("similar to") || lower.contains("like") {
+        return RagTier::Semantic;
+    }
+
+    // Simple keyword queries
+    RagTier::Fast
+}
+
+/// Suggest optimal RAG tier with optional LLM enhancement.
+///
+/// When `llm_enhanced` is true, consults the LLM for a more nuanced
+/// tier recommendation. Falls back to heuristic if LLM fails.
+pub fn suggest_tier_with_llm(
+    query: &str,
+    llm_enhanced: bool,
+    llm: Option<&dyn crate::llm_enhance::LlmEnhancer>,
+) -> (RagTier, Option<LlmTierSuggestion>) {
+    let heuristic = suggest_tier_heuristic(query);
+
+    if !llm_enhanced {
+        return (heuristic, None);
+    }
+
+    if let Some(enhancer) = llm {
+        if enhancer.is_available() {
+            let prompt = build_tier_suggestion_prompt(query);
+            if let Ok(response) = enhancer.generate(&prompt, 200) {
+                if let Some(suggestion) = parse_tier_suggestion_response(&response) {
+                    let tier = tier_from_llm_str(&suggestion.tier);
+                    return (tier, Some(suggestion));
+                }
+            }
+        }
+    }
+
+    (heuristic, None)
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -2655,5 +2765,51 @@ mod tests {
         let imported = store2.import(&json).unwrap();
         assert_eq!(imported, 1);
         assert!(store2.get("MyTier").is_some());
+    }
+
+    // ── V68: LLM Enhancement tests for RAG Tier Suggestion ──────────
+
+    #[test]
+    fn test_suggest_tier_with_llm_mock() {
+        let mock = crate::llm_enhance::MockLlm::new(
+            r#"{"tier":"thorough","reason":"Complex multi-faceted query"}"#,
+        );
+        let (tier, suggestion) = suggest_tier_with_llm(
+            "Compare and contrast X and Y in detail",
+            true,
+            Some(&mock),
+        );
+        assert_eq!(tier, RagTier::Thorough);
+        assert!(suggestion.is_some());
+        assert_eq!(suggestion.unwrap().tier, "thorough");
+    }
+
+    #[test]
+    fn test_suggest_tier_with_llm_fallback() {
+        let failing = crate::llm_enhance::FailingMockLlm;
+        let (tier, suggestion) = suggest_tier_with_llm(
+            "What is Rust?",
+            true,
+            Some(&failing),
+        );
+        // Should fall back to heuristic
+        assert!(suggestion.is_none());
+        // Heuristic should return something reasonable
+        let _ = tier;
+    }
+
+    #[test]
+    fn test_suggest_tier_with_llm_disabled() {
+        let mock = crate::llm_enhance::MockLlm::new(
+            r#"{"tier":"full","reason":"Use everything"}"#,
+        );
+        let (tier, suggestion) = suggest_tier_with_llm(
+            "hello",
+            false,
+            Some(&mock),
+        );
+        // Should use heuristic, not LLM
+        assert!(suggestion.is_none());
+        assert_ne!(tier, RagTier::Full); // Heuristic would not suggest Full for "hello"
     }
 }

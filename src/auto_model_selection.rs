@@ -1294,6 +1294,86 @@ impl CacheablePrompt {
     }
 }
 
+// ============================================================================
+// LLM Enhancement: Task Classification (V68)
+// ============================================================================
+
+/// Result of LLM-enhanced task classification.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LlmTaskClassification {
+    /// Detected task type string.
+    pub task: String,
+    /// Complexity level.
+    pub complexity: String,
+}
+
+impl TaskType {
+    /// Build a prompt for LLM-based task classification.
+    pub fn build_classification_prompt(query: &str) -> String {
+        format!(
+            "Classify this query's task type. Return JSON: \
+             {{\"task\":\"code|math|creative|question|general\",\"complexity\":\"low|medium|high\"}}\n\n\
+             Query: {}",
+            crate::llm_enhance::prompt_wrap(query)
+        )
+    }
+
+    /// Parse LLM response for task classification.
+    pub fn parse_classification_response(response: &str) -> Option<LlmTaskClassification> {
+        if let Some(json_str) = crate::llm_enhance::extract_json(response) {
+            if let Ok(result) = serde_json::from_str::<LlmTaskClassification>(json_str) {
+                return Some(result);
+            }
+        }
+        None
+    }
+
+    /// Map LLM task string to TaskType.
+    fn from_llm_task_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "code" | "coding" => TaskType::Coding,
+            "math" | "mathematics" => TaskType::Math,
+            "creative" | "writing" => TaskType::Creative,
+            "question" | "qa" => TaskType::QA,
+            "translation" | "translate" => TaskType::Translation,
+            "summarization" | "summary" => TaskType::Summarization,
+            "classification" | "classify" => TaskType::Classification,
+            "analysis" | "data" => TaskType::DataAnalysis,
+            _ => TaskType::General,
+        }
+    }
+
+    /// Classify task type with optional LLM enhancement.
+    ///
+    /// When `llm_enhanced` is true, sends the prompt to the LLM for
+    /// classification. Falls back to heuristic if LLM fails.
+    pub fn classify_task_with_llm(
+        prompt: &str,
+        llm_enhanced: bool,
+        llm: Option<&dyn crate::llm_enhance::LlmEnhancer>,
+    ) -> (Self, Option<LlmTaskClassification>) {
+        let heuristic = Self::from_prompt(prompt);
+
+        if !llm_enhanced {
+            return (heuristic, None);
+        }
+
+        if let Some(enhancer) = llm {
+            if enhancer.is_available() {
+                let llm_prompt = Self::build_classification_prompt(prompt);
+                if let Ok(response) = enhancer.generate(&llm_prompt, 200) {
+                    if let Some(classification) = Self::parse_classification_response(&response) {
+                        let task_type = Self::from_llm_task_str(&classification.task);
+                        return (task_type, Some(classification));
+                    }
+                }
+            }
+        }
+
+        (heuristic, None)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1796,5 +1876,43 @@ mod tests {
             .add_dynamic("User query.");
         let blocks = prompt.to_anthropic_cache_control();
         assert_eq!(blocks.len(), 2);
+    }
+
+    // ── V68: LLM Enhancement tests for Task Classification ──────────
+
+    #[test]
+    fn test_classify_task_with_llm_mock() {
+        let mock = crate::llm_enhance::MockLlm::new(
+            r#"{"task":"code","complexity":"high"}"#,
+        );
+        let (task, classification) =
+            TaskType::classify_task_with_llm("Build a REST API in Rust", true, Some(&mock));
+        assert_eq!(task, TaskType::Coding);
+        assert!(classification.is_some());
+        let cls = classification.unwrap();
+        assert_eq!(cls.task, "code");
+        assert_eq!(cls.complexity, "high");
+    }
+
+    #[test]
+    fn test_classify_task_with_llm_fallback() {
+        let failing = crate::llm_enhance::FailingMockLlm;
+        let (task, classification) =
+            TaskType::classify_task_with_llm("Calculate 2+2", true, Some(&failing));
+        // Falls back to heuristic
+        assert_eq!(task, TaskType::Math);
+        assert!(classification.is_none());
+    }
+
+    #[test]
+    fn test_classify_task_with_llm_disabled() {
+        let mock = crate::llm_enhance::MockLlm::new(
+            r#"{"task":"creative","complexity":"low"}"#,
+        );
+        let (task, classification) =
+            TaskType::classify_task_with_llm("Write code that sorts", false, Some(&mock));
+        // Should use heuristic, not LLM
+        assert_eq!(task, TaskType::Coding);
+        assert!(classification.is_none());
     }
 }

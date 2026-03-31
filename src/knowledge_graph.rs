@@ -2591,6 +2591,91 @@ impl KnowledgeGraphStore {
 }
 
 // ============================================================================
+// LLM Enhancement: Knowledge Graph Relation Inference (V68)
+// ============================================================================
+
+/// A single inferred relation from the LLM.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LlmInferredRelation {
+    /// Source entity name.
+    pub from: String,
+    /// Target entity name.
+    pub to: String,
+    /// Relation type (e.g., "uses", "contains", "related_to").
+    pub relation: String,
+}
+
+/// Build a prompt for LLM-based relation inference between entities.
+pub fn build_relation_inference_prompt(entities: &[&str]) -> Option<String> {
+    if entities.is_empty() {
+        return None;
+    }
+
+    let entity_list = entities
+        .iter()
+        .map(|e| format!("\"{}\"", e))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    Some(format!(
+        "Given entities [{}], what relationships exist between them? \
+         Return JSON: [{{\"from\":\"A\",\"to\":\"B\",\"relation\":\"uses\"}}]\n\n\
+         Entities: {}",
+        entity_list,
+        crate::llm_enhance::prompt_wrap(&entity_list)
+    ))
+}
+
+/// Parse LLM response for inferred relations.
+pub fn parse_relation_inference_response(response: &str) -> Vec<LlmInferredRelation> {
+    if let Some(json_str) = crate::llm_enhance::extract_json(response) {
+        if let Ok(relations) = serde_json::from_str::<Vec<LlmInferredRelation>>(json_str) {
+            return relations;
+        }
+    }
+    Vec::new()
+}
+
+/// Infer relations between entities with optional LLM enhancement.
+///
+/// When `llm_enhanced` is true, asks the LLM to identify relationships
+/// between the given entity names. Returns the inferred relations (or empty if
+/// disabled/failing).
+pub fn infer_relations_with_llm(
+    entities: &[&str],
+    llm_enhanced: bool,
+    llm: Option<&dyn crate::llm_enhance::LlmEnhancer>,
+) -> Vec<LlmInferredRelation> {
+    if !llm_enhanced || entities.len() < 2 {
+        return Vec::new();
+    }
+
+    if let Some(enhancer) = llm {
+        if enhancer.is_available() {
+            if let Some(prompt) = build_relation_inference_prompt(entities) {
+                if let Ok(response) = enhancer.generate(&prompt, 500) {
+                    let relations = parse_relation_inference_response(&response);
+                    // Filter out relations that reference entities not in our set
+                    let entity_set: std::collections::HashSet<String> = entities
+                        .iter()
+                        .map(|e| e.to_lowercase())
+                        .collect();
+                    return relations
+                        .into_iter()
+                        .filter(|r| {
+                            entity_set.contains(&r.from.to_lowercase())
+                                && entity_set.contains(&r.to.to_lowercase())
+                        })
+                        .collect();
+                }
+            }
+        }
+    }
+
+    Vec::new()
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -4137,5 +4222,40 @@ mod tests {
         assert_eq!(stats.total_relations, 0);
         assert_eq!(stats.total_chunks, 0);
         assert_eq!(stats.total_mentions, 0);
+    }
+
+    // ── V68: LLM Enhancement tests for KG Relation Inference ────────
+
+    #[test]
+    fn test_infer_relations_with_llm_mock() {
+        let mock = crate::llm_enhance::MockLlm::new(
+            r#"[{"from":"Rust","to":"LLVM","relation":"uses"},{"from":"Rust","to":"Cargo","relation":"has_tool"}]"#,
+        );
+        let entities = vec!["Rust", "LLVM", "Cargo"];
+        let relations = infer_relations_with_llm(&entities, true, Some(&mock));
+        assert_eq!(relations.len(), 2);
+        assert_eq!(relations[0].from, "Rust");
+        assert_eq!(relations[0].to, "LLVM");
+        assert_eq!(relations[0].relation, "uses");
+    }
+
+    #[test]
+    fn test_infer_relations_with_llm_fallback() {
+        let failing = crate::llm_enhance::FailingMockLlm;
+        let entities = vec!["A", "B", "C"];
+        let relations = infer_relations_with_llm(&entities, true, Some(&failing));
+        // Should return empty (not crash)
+        assert!(relations.is_empty());
+    }
+
+    #[test]
+    fn test_infer_relations_with_llm_disabled() {
+        let mock = crate::llm_enhance::MockLlm::new(
+            r#"[{"from":"X","to":"Y","relation":"related"}]"#,
+        );
+        let entities = vec!["X", "Y"];
+        let relations = infer_relations_with_llm(&entities, false, Some(&mock));
+        // Should not use LLM when disabled
+        assert!(relations.is_empty());
     }
 }
