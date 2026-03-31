@@ -10270,3 +10270,94 @@ let result = compactor.compact_with_llm(messages, Some(&mock));
 | Agent Decomposition | `decompose_task_with_llm()` | Task → steps with complexity |
 | Sentiment Trend | `analyze_sentiment_trend_with_llm()` | Improving/stable/declining |
 | Multi-Agent Consensus | `synthesize_responses_with_llm()` | Best answer from multiple agents |
+
+## 186. ai_setup — Configuration & Management Tool
+
+### Quick Start
+
+```bash
+# Check what's available on your system
+ai_setup check
+
+# Interactive setup wizard
+ai_setup init
+
+# Validate your config
+ai_setup validate
+
+# Start a node
+ai_setup start
+
+# Check status
+ai_setup status
+```
+
+### Configuration Management
+
+```bash
+# Show config (secrets redacted)
+ai_setup config show
+
+# Get/set specific values
+ai_setup config get provider.model
+ai_setup config set temperature 0.5
+
+# Compare configs
+ai_setup config diff config-prod.toml config-dev.toml
+
+# Export/import
+ai_setup export --format json config-export.json
+ai_setup import config-from-colleague.toml
+```
+
+### Docker Operations
+
+```bash
+# Build Docker image
+ai_setup docker build
+
+# Start 3-node cluster with Redis
+ai_setup docker up --profile redis
+
+# Check container status
+ai_setup docker status
+
+# View logs
+ai_setup docker logs node1 --tail 50
+
+# Stop everything
+ai_setup docker down
+```
+
+### Install Prerequisites
+
+```bash
+# Install Ollama
+ai_setup install ollama
+
+# Pull a model
+ai_setup install model llama3.2
+
+# Docker instructions
+ai_setup install docker
+```
+
+### Backup & Restore
+
+```bash
+# Create backup
+ai_setup backup
+
+# Restore from backup
+ai_setup restore ai_assistant_backup_2026-04-01.tar.gz
+```
+
+### GUI Version
+
+```bash
+# Launch graphical setup tool
+cargo run --bin ai_setup_gui --features gui
+```
+
+The GUI has 6 tabs: Setup (environment scan), Config (editor), Nodes (management),
+Docker (containers), Models (Ollama), Backup (archive).

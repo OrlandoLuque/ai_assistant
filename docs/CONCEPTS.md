@@ -4335,3 +4335,11 @@ Seventeen modules enhanced with optional LLM calls: (1) Conversation compaction 
 ## 245. Multilingual Heuristics & Enhanced Emotion Detection
 
 Entity extraction, intent classification, and emotion detection now support Spanish alongside English. Entity: "mi nombre es", "me llamo", "prefiero", "recuerda que", Spanish weekdays/relative dates. Intent: 15 categories with Spanish keywords including previously-empty Opinion ("creo que", "I think") and Chitchat ("qué tal", "how are you"). Emotion: triple punctuation (!!! → intensity boost, ??? → confused boost), CAPS detection (>80% uppercase → angry boost), emoji map (12 emojis → categories), negation handling ("not angry" halves confidence), Spanish emotion words ("feliz", "triste", "enfadado"). Embedding-based topic clustering via `cluster_topics_by_embedding()` uses LocalEmbedder TF-IDF with cosine similarity grouping, no LLM needed.
+
+## 246. Setup & Management Module
+
+`src/setup/` provides shared infrastructure for configuration management, prerequisite detection, Docker operations, node management, and backup/restore. Five sub-modules: `prereq.rs` (check_prerequisites with Butler integration, platform-specific install commands for Ollama/Docker/models), `config_ops.rs` (show/get/set with hot-reload classification, diff, export TOML/JSON, import with validation), `docker_ops.rs` (docker CLI wrapper: build/compose up/down/status/logs, ContainerStatus parsing), `node_manager.rs` (start/stop/status with PID tracking and health checks), `backup.rs` (gzip archive create/restore with path traversal protection).
+
+## 247. ai_setup CLI & GUI
+
+Two binaries sharing the `setup` module: `ai_setup` (CLI with 14 subcommands: init wizard, check prerequisites, validate config, version info, config operations, Docker management, backup/restore, install prerequisites) and `ai_setup_gui` (egui desktop app with 6 tabs: Setup/Config/Nodes/Docker/Models/Backup). The init wizard uses Butler::scan() to detect environment and suggest optimal config. Config set classifies changes as hot-reloadable vs restart-required. Docker commands shell out to docker/docker-compose CLI. Backup uses flate2 gzip with versioned archive format.
