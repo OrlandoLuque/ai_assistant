@@ -233,26 +233,58 @@ impl MemoryExtractor {
         // since we do not pull in the `regex` crate in this module.
         match &rule.extraction_type {
             ExtractionRuleType::NamePattern => {
-                // "my name is X"
+                // "my name is X" / "mi nombre es X" / "me llamo X" / "soy X"
                 let text_lower = text.to_lowercase();
-                if let Some(pos) = text_lower.find("my name is ") {
-                    let after = &text[pos + 11..];
-                    let name: String = after
-                        .chars()
-                        .take_while(|c| c.is_alphanumeric() || *c == '-' || *c == '\'')
-                        .collect();
-                    if !name.is_empty() {
-                        return Some(MemoryExtraction::EntityUpdate {
-                            entity_name: "user".to_string(),
-                            attribute: "name".to_string(),
-                            value: name,
-                        });
+
+                // English + Spanish name prefixes
+                let name_prefixes: &[(&str, usize)] = &[
+                    ("my name is ", 11),
+                    ("mi nombre es ", 14),
+                    ("me llamo ", 9),
+                ];
+                for &(prefix, skip) in name_prefixes {
+                    if let Some(pos) = text_lower.find(prefix) {
+                        let after = &text[pos + skip..];
+                        let name: String = after
+                            .chars()
+                            .take_while(|c| c.is_alphanumeric() || *c == '-' || *c == '\'')
+                            .collect();
+                        if !name.is_empty() {
+                            return Some(MemoryExtraction::EntityUpdate {
+                                entity_name: "user".to_string(),
+                                attribute: "name".to_string(),
+                                value: name,
+                            });
+                        }
                     }
                 }
+
+                // Spanish: "soy X" — only when followed by a capitalized word
+                if let Some(pos) = text_lower.find("soy ") {
+                    let after = &text[pos + 4..];
+                    if let Some(first_char) = after.chars().next() {
+                        if first_char.is_uppercase() {
+                            let name: String = after
+                                .chars()
+                                .take_while(|c| c.is_alphanumeric() || *c == '-' || *c == '\'')
+                                .collect();
+                            if !name.is_empty() {
+                                return Some(MemoryExtraction::EntityUpdate {
+                                    entity_name: "user".to_string(),
+                                    attribute: "name".to_string(),
+                                    value: name,
+                                });
+                            }
+                        }
+                    }
+                }
+
                 None
             }
             ExtractionRuleType::PreferencePattern => {
                 let text_lower = text.to_lowercase();
+
+                // English: "I prefer X [over Y]"
                 if let Some(pos) = text_lower.find("i prefer ") {
                     let after = &text[pos + 9..];
                     let after_trimmed = after.trim();
@@ -281,27 +313,64 @@ impl MemoryExtractor {
                         }
                     }
                 }
+
+                // Spanish preference patterns: "prefiero X", "me gusta X", "no me gusta X"
+                let es_pref_patterns: &[(&str, usize, bool)] = &[
+                    ("no me gusta ", 12, true),   // negative preference (check first)
+                    ("prefiero ", 9, false),
+                    ("me gusta ", 9, false),
+                ];
+                for &(prefix, skip, is_negative) in es_pref_patterns {
+                    if let Some(pos) = text_lower.find(prefix) {
+                        let after = &text[pos + skip..];
+                        let preferred: String = after
+                            .trim()
+                            .chars()
+                            .take_while(|c| *c != '.' && *c != '!' && *c != '?')
+                            .collect();
+                        let preferred = preferred.trim().to_string();
+                        if !preferred.is_empty() {
+                            let value = if is_negative {
+                                format!("dislikes {}", preferred)
+                            } else {
+                                preferred.clone()
+                            };
+                            return Some(MemoryExtraction::Preference {
+                                key: format!("preference:{}", preferred.to_lowercase()),
+                                value,
+                            });
+                        }
+                    }
+                }
+
                 None
             }
             ExtractionRuleType::FactPattern => {
                 let text_lower = text.to_lowercase();
-                // "remember that X"
-                if let Some(pos) = text_lower.find("remember that ") {
-                    let content = text[pos + 14..].trim();
-                    if !content.is_empty() {
-                        let now = chrono::Utc::now();
-                        return Some(MemoryExtraction::NewFact {
-                            fact: SemanticFact {
-                                id: uuid::Uuid::new_v4().to_string(),
-                                subject: "user".to_string(),
-                                predicate: "stated".to_string(),
-                                object: content.to_string(),
-                                confidence: rule.confidence,
-                                source_episodes: Vec::new(),
-                                created_at: now,
-                                last_confirmed: now,
-                            },
-                        });
+                // "remember that X" / "recuerda que X" / "ten en cuenta que X"
+                let fact_prefixes: &[(&str, usize)] = &[
+                    ("remember that ", 14),
+                    ("recuerda que ", 13),
+                    ("ten en cuenta que ", 18),
+                ];
+                for &(prefix, skip) in fact_prefixes {
+                    if let Some(pos) = text_lower.find(prefix) {
+                        let content = text[pos + skip..].trim();
+                        if !content.is_empty() {
+                            let now = chrono::Utc::now();
+                            return Some(MemoryExtraction::NewFact {
+                                fact: SemanticFact {
+                                    id: uuid::Uuid::new_v4().to_string(),
+                                    subject: "user".to_string(),
+                                    predicate: "stated".to_string(),
+                                    object: content.to_string(),
+                                    confidence: rule.confidence,
+                                    source_episodes: Vec::new(),
+                                    created_at: now,
+                                    last_confirmed: now,
+                                },
+                            });
+                        }
                     }
                 }
                 // "X is Y" / "X are Y"
@@ -362,8 +431,10 @@ impl MemoryExtractor {
                     }
                     i += 1;
                 }
-                // Weekday pattern
+                // Weekday pattern (English + Spanish)
                 let text_lower = text.to_lowercase();
+
+                // English weekdays with "on" prefix
                 for day in &[
                     "monday",
                     "tuesday",
@@ -390,6 +461,61 @@ impl MemoryExtractor {
                         });
                     }
                 }
+
+                // Spanish weekdays (standalone, no prefix needed)
+                let es_days: &[(&str, &str)] = &[
+                    ("lunes", "lunes"),
+                    ("martes", "martes"),
+                    ("miércoles", "miércoles"),
+                    ("jueves", "jueves"),
+                    ("viernes", "viernes"),
+                    ("sábado", "sábado"),
+                    ("domingo", "domingo"),
+                ];
+                for &(day_lower, day_label) in es_days {
+                    if text_lower.contains(day_lower) {
+                        let now = chrono::Utc::now();
+                        return Some(MemoryExtraction::NewFact {
+                            fact: SemanticFact {
+                                id: uuid::Uuid::new_v4().to_string(),
+                                subject: "date_reference".to_string(),
+                                predicate: "mentioned".to_string(),
+                                object: day_label.to_string(),
+                                confidence: rule.confidence,
+                                source_episodes: Vec::new(),
+                                created_at: now,
+                                last_confirmed: now,
+                            },
+                        });
+                    }
+                }
+
+                // Spanish relative dates and phrases
+                let es_relative: &[(&str, &str)] = &[
+                    ("la semana que viene", "next week"),
+                    ("el mes que viene", "next month"),
+                    ("mañana", "tomorrow"),
+                    ("ayer", "yesterday"),
+                    ("hoy", "today"),
+                ];
+                for &(phrase, label) in es_relative {
+                    if text_lower.contains(phrase) {
+                        let now = chrono::Utc::now();
+                        return Some(MemoryExtraction::NewFact {
+                            fact: SemanticFact {
+                                id: uuid::Uuid::new_v4().to_string(),
+                                subject: "date_reference".to_string(),
+                                predicate: "mentioned".to_string(),
+                                object: label.to_string(),
+                                confidence: rule.confidence,
+                                source_episodes: Vec::new(),
+                                created_at: now,
+                                last_confirmed: now,
+                            },
+                        });
+                    }
+                }
+
                 None
             }
             ExtractionRuleType::EntityPattern => {
@@ -466,7 +592,13 @@ impl MemoryExtractor {
 
         Some(format!(
             "Extract named entities from this text. Return JSON array: \
-             [{{\"name\":\"X\",\"type\":\"person|organization|location|date|concept\"}}]\n\n{}",
+             [{{\"name\":\"X\",\"type\":\"person|organization|location|date|concept\"}}]\n\n\
+             Examples:\n\
+             Input: \"Alice works at Google in New York.\"\n\
+             Output: [{{\"name\":\"Alice\",\"type\":\"person\"}},{{\"name\":\"Google\",\"type\":\"organization\"}},{{\"name\":\"New York\",\"type\":\"location\"}}]\n\n\
+             Input: \"The meeting is on 2026-03-15 about machine learning.\"\n\
+             Output: [{{\"name\":\"2026-03-15\",\"type\":\"date\"}},{{\"name\":\"machine learning\",\"type\":\"concept\"}}]\n\n\
+             Now extract entities from this:\n{}",
             crate::llm_enhance::prompt_wrap(text)
         ))
     }
@@ -631,5 +763,82 @@ mod tests {
         let response = "Not valid JSON at all";
         let entities = MemoryExtractor::parse_entity_response(response);
         assert!(entities.is_empty());
+    }
+
+    // ── V69 Phase B: Multilingual extraction tests ──────────────────
+
+    #[test]
+    fn test_spanish_name_extraction() {
+        let extractor = MemoryExtractor::with_defaults();
+
+        // "mi nombre es X"
+        let results = extractor.extract("mi nombre es Carlos");
+        assert!(
+            results.iter().any(|e| matches!(e,
+                MemoryExtraction::EntityUpdate { value, attribute, .. }
+                if value == "Carlos" && attribute == "name"
+            )),
+            "Should extract 'Carlos' from 'mi nombre es Carlos', got: {:?}",
+            results
+        );
+
+        // "me llamo X"
+        let results2 = extractor.extract("me llamo Ana");
+        assert!(
+            results2.iter().any(|e| matches!(e,
+                MemoryExtraction::EntityUpdate { value, attribute, .. }
+                if value == "Ana" && attribute == "name"
+            )),
+            "Should extract 'Ana' from 'me llamo Ana', got: {:?}",
+            results2
+        );
+    }
+
+    #[test]
+    fn test_spanish_preference_extraction() {
+        let extractor = MemoryExtractor::with_defaults();
+
+        // "prefiero X"
+        let results = extractor.extract("prefiero el modo oscuro");
+        assert!(
+            results.iter().any(|e| matches!(e, MemoryExtraction::Preference { .. })),
+            "Should extract preference from 'prefiero el modo oscuro', got: {:?}",
+            results
+        );
+
+        // "no me gusta X"
+        let results2 = extractor.extract("no me gusta la verbosidad");
+        assert!(
+            results2.iter().any(|e| matches!(e, MemoryExtraction::Preference { value, .. } if value.contains("dislikes"))),
+            "Should extract negative preference from 'no me gusta', got: {:?}",
+            results2
+        );
+    }
+
+    #[test]
+    fn test_spanish_date_extraction() {
+        let extractor = MemoryExtractor::with_defaults();
+
+        // Spanish weekday
+        let results = extractor.extract("La reunión es el lunes");
+        assert!(
+            results.iter().any(|e| matches!(e,
+                MemoryExtraction::NewFact { fact }
+                if fact.subject == "date_reference" && fact.object == "lunes"
+            )),
+            "Should extract 'lunes' as date reference, got: {:?}",
+            results
+        );
+
+        // Spanish relative date
+        let results2 = extractor.extract("Lo haré mañana");
+        assert!(
+            results2.iter().any(|e| matches!(e,
+                MemoryExtraction::NewFact { fact }
+                if fact.subject == "date_reference" && fact.object == "tomorrow"
+            )),
+            "Should extract 'mañana' as 'tomorrow', got: {:?}",
+            results2
+        );
     }
 }

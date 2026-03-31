@@ -336,7 +336,13 @@ impl ConversationCompactor {
 
         let mut prompt = String::from(
             "Summarize the following conversation messages into a concise paragraph. \
-             Preserve key facts, decisions, and context. Output JSON: {\"summary\": \"...\"}.\n\n",
+             Preserve key facts, decisions, and context. Output JSON: {\"summary\": \"...\"}.\n\n\
+             Examples:\n\
+             Input: 1. [user] What time is the meeting? 2. [assistant] The meeting is at 3pm in room 204.\n\
+             Output: {\"summary\": \"User asked about meeting time; it is scheduled for 3pm in room 204.\"}\n\n\
+             Input: 1. [user] I want to switch to the Pro plan. 2. [assistant] Done, your plan is now Pro. 3. [user] Thanks!\n\
+             Output: {\"summary\": \"User upgraded to the Pro plan and confirmed the change.\"}\n\n\
+             Now summarize this:\n",
         );
 
         for (i, msg) in removed.iter().enumerate().take(20) {

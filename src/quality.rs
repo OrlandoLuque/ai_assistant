@@ -658,6 +658,12 @@ impl QualityAnalyzer {
         Some(format!(
             "Rate this response on relevance, coherence, completeness (0.0-1.0). \
              Return JSON: {{\"relevance\":0.8,\"coherence\":0.9,\"completeness\":0.7}}\n\n\
+             Examples:\n\
+             Query: \"What is Rust?\" Response: \"Rust is a systems programming language focused on safety.\"\n\
+             Output: {{\"relevance\": 0.95, \"coherence\": 0.9, \"completeness\": 0.6}}\n\n\
+             Query: \"Explain photosynthesis\" Response: \"Plants are green.\"\n\
+             Output: {{\"relevance\": 0.5, \"coherence\": 0.8, \"completeness\": 0.2}}\n\n\
+             Now rate this:\n\
              Query: {}\n\nResponse: {}",
             crate::llm_enhance::prompt_wrap(query),
             crate::llm_enhance::prompt_wrap(response)
