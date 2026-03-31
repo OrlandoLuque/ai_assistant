@@ -239,7 +239,7 @@ impl MemoryExtractor {
                 // English + Spanish name prefixes
                 let name_prefixes: &[(&str, usize)] = &[
                     ("my name is ", 11),
-                    ("mi nombre es ", 14),
+                    ("mi nombre es ", 13),
                     ("me llamo ", 9),
                 ];
                 for &(prefix, skip) in name_prefixes {

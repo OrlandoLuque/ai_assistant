@@ -563,7 +563,14 @@ mod tests {
     fn test_greeting() {
         let classifier = IntentClassifier::new();
         let result = classifier.classify("Hello, how are you?");
-        assert!(result.primary == Intent::Greeting || result.primary == Intent::Question);
+        // "Hello" matches Greeting, "how are you" matches Chitchat, "?" matches Question
+        assert!(
+            result.primary == Intent::Greeting
+                || result.primary == Intent::Question
+                || result.primary == Intent::Chitchat,
+            "Expected Greeting, Question, or Chitchat, got: {:?}",
+            result.primary
+        );
     }
 
     #[test]

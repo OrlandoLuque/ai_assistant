@@ -933,6 +933,7 @@ pub use analysis::{
     ConversationSentimentAnalysis, EmojiCategory, EmoticonAnalysis, EmoticonDetector,
     EmoticonMatch, Sentiment, SentimentAnalysis, SentimentAnalyzer, SentimentTrend,
     SessionSummarizer, SessionSummary, SummaryConfig, Topic, TopicDetector,
+    cluster_topics_by_embedding,
 };
 
 #[cfg(feature = "analytics")]

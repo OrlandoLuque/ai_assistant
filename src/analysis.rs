@@ -817,6 +817,104 @@ impl TopicDetector {
 }
 
 // ============================================================================
+// Embedding-based Topic Clustering (V69 Phase B)
+// ============================================================================
+
+/// Cluster messages by embedding similarity using the local TF-IDF embedder.
+///
+/// Groups messages whose pairwise cosine similarity exceeds `threshold`.
+/// Each cluster is labelled by the top-3 most frequent non-stopword terms.
+///
+/// Returns an empty Vec if fewer than 3 messages are provided.
+pub fn cluster_topics_by_embedding(messages: &[&str], threshold: f32) -> Vec<(String, Vec<usize>)> {
+    if messages.len() < 3 {
+        return Vec::new();
+    }
+
+    // Train the local embedder on the messages
+    let config = crate::embeddings::EmbeddingConfig {
+        dimensions: 128,
+        min_word_freq: 1,
+        max_vocab_size: 5000,
+        use_subwords: true,
+        ngram_range: (1, 2),
+    };
+    let mut embedder = crate::embeddings::LocalEmbedder::new(config);
+    embedder.train(messages);
+
+    // Embed all messages
+    let embeddings: Vec<Vec<f32>> = messages.iter().map(|m| embedder.embed(m)).collect();
+
+    // Greedy single-linkage clustering: assign each message to the first
+    // cluster it is similar enough to, or start a new cluster.
+    let mut clusters: Vec<Vec<usize>> = Vec::new();
+
+    for i in 0..messages.len() {
+        let mut assigned = false;
+        for cluster in &mut clusters {
+            // Check similarity against any member of the cluster
+            let similar_to_any = cluster.iter().any(|&j| {
+                crate::embeddings::LocalEmbedder::cosine_similarity(&embeddings[i], &embeddings[j])
+                    > threshold
+            });
+            if similar_to_any {
+                cluster.push(i);
+                assigned = true;
+                break;
+            }
+        }
+        if !assigned {
+            clusters.push(vec![i]);
+        }
+    }
+
+    // Stop words for label generation
+    let stop_words: std::collections::HashSet<&str> = [
+        "the", "a", "an", "is", "are", "was", "were", "be", "been", "have", "has",
+        "had", "do", "does", "did", "will", "would", "could", "should", "may", "might",
+        "to", "of", "in", "for", "on", "with", "at", "by", "from", "as", "into",
+        "and", "but", "if", "or", "so", "than", "too", "very", "just", "not", "no",
+        "this", "that", "it", "its", "i", "you", "he", "she", "we", "they", "my",
+        "your", "his", "her", "our", "their", "me", "us", "el", "la", "los", "las",
+        "un", "una", "de", "en", "con", "por", "para", "que", "es",
+    ]
+    .iter()
+    .copied()
+    .collect();
+
+    // Label each cluster by its top-3 non-stopword terms
+    let mut result = Vec::new();
+    for cluster in clusters {
+        let mut word_counts: HashMap<String, usize> = HashMap::new();
+        for &idx in &cluster {
+            for word in messages[idx]
+                .to_lowercase()
+                .split(|c: char| !c.is_alphanumeric())
+                .filter(|w| w.len() > 2 && !stop_words.contains(w))
+            {
+                *word_counts.entry(word.to_string()).or_insert(0) += 1;
+            }
+        }
+        let mut sorted_words: Vec<_> = word_counts.into_iter().collect();
+        sorted_words.sort_by(|a, b| b.1.cmp(&a.1));
+        let label: String = sorted_words
+            .iter()
+            .take(3)
+            .map(|(w, _)| w.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let label = if label.is_empty() {
+            "unknown".to_string()
+        } else {
+            label
+        };
+        result.push((label, cluster));
+    }
+
+    result
+}
+
+// ============================================================================
 // Auto-Summarization
 // ============================================================================
 
@@ -2563,5 +2661,74 @@ mod tests {
         // Should fall back to heuristic (not crash)
         assert!(!result.trend.is_empty());
         assert!(!result.summary.is_empty());
+    }
+
+    // ── V69 Phase B: Embedding-based topic clustering tests ─────────
+
+    #[test]
+    fn test_cluster_topics_basic() {
+        let messages: Vec<&str> = vec![
+            "Rust programming language is fast and safe",
+            "I love writing Rust code with cargo",
+            "The Rust compiler catches many bugs at compile time",
+            "I had pizza and pasta for dinner last night",
+            "Italian food is delicious, especially lasagna",
+        ];
+        let clusters = cluster_topics_by_embedding(&messages, 0.1);
+        assert!(
+            !clusters.is_empty(),
+            "Should produce at least one cluster for 5 messages"
+        );
+        // All message indices should be accounted for
+        let mut all_indices: Vec<usize> = clusters
+            .iter()
+            .flat_map(|(_, indices)| indices.iter().copied())
+            .collect();
+        all_indices.sort();
+        assert_eq!(
+            all_indices,
+            vec![0, 1, 2, 3, 4],
+            "All message indices should appear exactly once"
+        );
+        // Each cluster should have a non-empty label
+        for (label, _) in &clusters {
+            assert!(!label.is_empty(), "Cluster label should not be empty");
+        }
+    }
+
+    #[test]
+    fn test_cluster_topics_below_minimum() {
+        // Fewer than 3 messages should return empty
+        let messages: Vec<&str> = vec!["Hello", "World"];
+        let clusters = cluster_topics_by_embedding(&messages, 0.5);
+        assert!(
+            clusters.is_empty(),
+            "Fewer than 3 messages should return empty, got: {:?}",
+            clusters
+        );
+
+        // Empty input
+        let empty: Vec<&str> = vec![];
+        let clusters_empty = cluster_topics_by_embedding(&empty, 0.5);
+        assert!(clusters_empty.is_empty());
+    }
+
+    #[test]
+    fn test_cluster_topics_single_topic() {
+        let messages: Vec<&str> = vec![
+            "Machine learning uses neural networks for prediction",
+            "Deep learning neural networks learn from training data",
+            "Training a neural network requires labeled datasets",
+        ];
+        // With a low threshold, all 3 related messages should cluster together
+        let clusters = cluster_topics_by_embedding(&messages, 0.05);
+        assert!(
+            !clusters.is_empty(),
+            "Should produce at least one cluster"
+        );
+        // With very related messages, we expect a single cluster
+        // (though the algorithm may split if similarity is below threshold)
+        let total_messages: usize = clusters.iter().map(|(_, v)| v.len()).sum();
+        assert_eq!(total_messages, 3, "All 3 messages should be clustered");
     }
 }

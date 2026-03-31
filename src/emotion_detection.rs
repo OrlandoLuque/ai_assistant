@@ -236,26 +236,143 @@ impl EmotionDetector for KeywordEmotionDetector {
     fn detect_from_text(&self, text: &str) -> Result<EmotionState, String> {
         let lower = text.to_lowercase();
 
+        // ── Punctuation boosters ────────────────────────────────────
+        let mut intensity_boost = 0.0f32;
+        let mut confused_boost = 0.0f32;
+        let mut angry_boost = 0.0f32;
+
+        // Triple exclamation → boost intensity
+        let exclamation_count = lower.matches('!').count();
+        if exclamation_count >= 3 {
+            intensity_boost += 0.2;
+        }
+
+        // Triple question → boost confused
+        let question_count = lower.matches('?').count();
+        if question_count >= 3 {
+            confused_boost += 0.15;
+        }
+
+        // ── CAPS detection ──────────────────────────────────────────
+        let alpha_count = text.chars().filter(|c| c.is_alphabetic()).count();
+        let upper_count = text.chars().filter(|c| c.is_uppercase()).count();
+        let upper_ratio = upper_count as f32 / alpha_count.max(1) as f32;
+        if upper_ratio > 0.8 && text.len() > 5 {
+            // Mostly CAPS → boost angry/frustrated
+            angry_boost += 0.15;
+        }
+
+        // ── Keyword patterns (English + Spanish) ────────────────────
         let patterns: Vec<(EmotionCategory, &[&str], f32)> = vec![
-            (EmotionCategory::Angry, &["angry", "furious", "outraged", "hate", "terrible", "worst", "damn", "hell"], 0.7),
-            (EmotionCategory::Frustrated, &["frustrated", "annoying", "stuck", "doesn't work", "broken", "ugh", "can't", "impossible"], 0.65),
-            (EmotionCategory::Sad, &["sad", "depressed", "unhappy", "disappointed", "sorry", "unfortunately", "miss", "lonely"], 0.65),
-            (EmotionCategory::Happy, &["happy", "great", "awesome", "wonderful", "love", "excellent", "amazing", "perfect", "thanks"], 0.6),
-            (EmotionCategory::Excited, &["excited", "incredible", "fantastic", "wow", "can't wait", "!!", "omg"], 0.6),
-            (EmotionCategory::Confused, &["confused", "don't understand", "what do you mean", "unclear", "lost", "huh", "?"], 0.55),
-            (EmotionCategory::Fearful, &["scared", "afraid", "worried", "anxious", "nervous", "concerned", "fear"], 0.6),
+            (EmotionCategory::Angry, &[
+                "angry", "furious", "outraged", "hate", "terrible", "worst", "damn", "hell",
+                // Spanish
+                "enfadado", "furioso", "cabreado",
+            ], 0.7),
+            (EmotionCategory::Frustrated, &[
+                "frustrated", "annoying", "stuck", "doesn't work", "broken", "ugh", "can't", "impossible",
+                // Spanish
+                "frustrado", "harto", "cansado de",
+            ], 0.65),
+            (EmotionCategory::Sad, &[
+                "sad", "depressed", "unhappy", "disappointed", "sorry", "unfortunately", "miss", "lonely",
+                // Spanish
+                "triste", "apenado", "desanimado",
+            ], 0.65),
+            (EmotionCategory::Happy, &[
+                "happy", "great", "awesome", "wonderful", "love", "excellent", "amazing", "perfect", "thanks",
+                // Spanish
+                "feliz", "contento", "genial", "estupendo",
+            ], 0.6),
+            (EmotionCategory::Excited, &[
+                "excited", "incredible", "fantastic", "wow", "can't wait", "!!", "omg",
+                // Spanish
+                "emocionado", "entusiasmado", "incre\u{00ed}ble",
+            ], 0.6),
+            (EmotionCategory::Confused, &[
+                "confused", "don't understand", "what do you mean", "unclear", "lost", "huh", "?",
+                // Spanish
+                "confundido", "perdido", "no entiendo",
+            ], 0.55),
+            (EmotionCategory::Fearful, &[
+                "scared", "afraid", "worried", "anxious", "nervous", "concerned", "fear",
+            ], 0.6),
+            (EmotionCategory::Calm, &[
+                // Spanish
+                "tranquilo", "relajado", "en paz",
+            ], 0.55),
         ];
 
         let mut best = EmotionCategory::Neutral;
         let mut best_score = 0.0f32;
 
+        // ── Negation handling ───────────────────────────────────────
+        let negation_prefixes = ["not ", "don't ", "no ", "never ", "isn't ", "aren't "];
+        let has_negation = negation_prefixes.iter().any(|neg| lower.contains(neg));
+
         for (category, keywords, base_confidence) in &patterns {
             let matches = keywords.iter().filter(|kw| lower.contains(*kw)).count();
             if matches > 0 {
-                let score = base_confidence + (matches as f32 - 1.0) * 0.1;
+                let mut score = base_confidence + (matches as f32 - 1.0) * 0.1;
+
+                // Apply category-specific boosts
+                match category {
+                    EmotionCategory::Angry | EmotionCategory::Frustrated => {
+                        score += angry_boost;
+                    }
+                    EmotionCategory::Confused => {
+                        score += confused_boost;
+                    }
+                    _ => {}
+                }
+
+                // Apply intensity boost from punctuation
+                score += intensity_boost;
+
+                // Negation reduces confidence: if a negation appears before
+                // the emotion keyword, dampen the score
+                if has_negation {
+                    // Check if any keyword is preceded by a negation
+                    let negated_keyword = keywords.iter().any(|kw| {
+                        negation_prefixes.iter().any(|neg| {
+                            let pattern = format!("{}{}", neg, kw);
+                            lower.contains(&pattern)
+                        })
+                    });
+                    if negated_keyword {
+                        score *= 0.5;
+                    }
+                }
+
                 if score > best_score {
                     best = *category;
                     best_score = score;
+                }
+            }
+        }
+
+        // ── Emoji emotion detection ─────────────────────────────────
+        let emoji_emotions: &[(&str, EmotionCategory, f32)] = &[
+            ("\u{1f60a}", EmotionCategory::Happy, 0.6),     // 😊
+            ("\u{1f604}", EmotionCategory::Happy, 0.7),     // 😄
+            ("\u{1f602}", EmotionCategory::Happy, 0.5),     // 😂
+            ("\u{1f622}", EmotionCategory::Sad, 0.7),       // 😢
+            ("\u{1f62d}", EmotionCategory::Sad, 0.8),       // 😭
+            ("\u{1f621}", EmotionCategory::Angry, 0.8),     // 😡
+            ("\u{1f620}", EmotionCategory::Angry, 0.7),     // 😠
+            ("\u{1f914}", EmotionCategory::Confused, 0.6),  // 🤔
+            ("\u{1f60c}", EmotionCategory::Calm, 0.6),      // 😌
+            ("\u{1f631}", EmotionCategory::Fearful, 0.7),   // 😱
+            ("\u{1f389}", EmotionCategory::Excited, 0.7),   // 🎉
+            ("\u{1f634}", EmotionCategory::Bored, 0.6),     // 😴
+        ];
+        for &(emoji, category, conf) in emoji_emotions {
+            if text.contains(emoji) {
+                // Emoji score competes with keyword score
+                let emoji_score = conf + intensity_boost;
+                if emoji_score > best_score {
+                    best = category;
+                    best_score = emoji_score;
                 }
             }
         }
@@ -590,5 +707,84 @@ mod tests {
         let intent = classifier.classify_intent_with_llm("How does this work?", Some(&failing));
         // Should fall back to heuristic (not crash)
         assert_eq!(intent.intent, "question");
+    }
+
+    // ── V69 Phase B: Enhanced emotion detection tests ───────────────
+
+    #[test]
+    fn test_triple_exclamation_boost() {
+        let detector = KeywordEmotionDetector::new();
+        // Triple exclamation with happy keywords should boost confidence
+        let result_normal = detector.detect_from_text("This is great").unwrap();
+        let result_exclaim = detector.detect_from_text("This is great!!!").unwrap();
+        assert!(
+            result_exclaim.confidence >= result_normal.confidence,
+            "Triple exclamation should boost confidence: normal={}, exclaim={}",
+            result_normal.confidence, result_exclaim.confidence
+        );
+    }
+
+    #[test]
+    fn test_caps_angry_boost() {
+        let detector = KeywordEmotionDetector::new();
+        let result = detector.detect_from_text("THIS IS TERRIBLE AND BROKEN").unwrap();
+        // Should detect anger/frustration with CAPS boost
+        assert!(
+            result.category == EmotionCategory::Angry || result.category == EmotionCategory::Frustrated,
+            "CAPS text with angry keywords should detect anger/frustration, got: {:?}",
+            result.category
+        );
+        assert!(
+            result.confidence > 0.6,
+            "CAPS should boost confidence above 0.6, got: {}",
+            result.confidence
+        );
+    }
+
+    #[test]
+    fn test_emoji_emotion_detection() {
+        let detector = KeywordEmotionDetector::new();
+        // Sad emoji should override neutral text
+        let result = detector.detect_from_text("okay \u{1f622}").unwrap(); // 😢
+        assert_eq!(
+            result.category, EmotionCategory::Sad,
+            "Sad emoji should be detected, got: {:?}",
+            result.category
+        );
+        assert!(result.confidence > 0.5);
+    }
+
+    #[test]
+    fn test_negation_reduces_confidence() {
+        let detector = KeywordEmotionDetector::new();
+        let result_happy = detector.detect_from_text("I am happy").unwrap();
+        let result_not_happy = detector.detect_from_text("I am not happy").unwrap();
+        // Negation should reduce the happy score
+        assert!(
+            result_not_happy.confidence < result_happy.confidence
+                || result_not_happy.category != EmotionCategory::Happy,
+            "Negation should reduce happy confidence or change category: happy={:.2} ({:?}), not_happy={:.2} ({:?})",
+            result_happy.confidence, result_happy.category,
+            result_not_happy.confidence, result_not_happy.category
+        );
+    }
+
+    #[test]
+    fn test_spanish_emotion_words() {
+        let detector = KeywordEmotionDetector::new();
+
+        let result = detector.detect_from_text("estoy muy triste y desanimado").unwrap();
+        assert_eq!(
+            result.category, EmotionCategory::Sad,
+            "Spanish sad words should be detected, got: {:?}",
+            result.category
+        );
+
+        let result2 = detector.detect_from_text("estoy feliz y contento").unwrap();
+        assert_eq!(
+            result2.category, EmotionCategory::Happy,
+            "Spanish happy words should be detected, got: {:?}",
+            result2.category
+        );
     }
 }
