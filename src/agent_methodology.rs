@@ -511,6 +511,162 @@ impl std::fmt::Display for WorkflowPhase {
 }
 
 // ============================================================================
+// LLM Enhancement: Task Decomposition (V68)
+// ============================================================================
+
+/// A single step from LLM-based task decomposition.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskStep {
+    /// Description of the step.
+    pub description: String,
+    /// Estimated complexity.
+    pub estimated_complexity: String,
+}
+
+/// Result of task decomposition.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskDecomposition {
+    /// The decomposed steps.
+    pub steps: Vec<TaskStep>,
+}
+
+/// Configuration for task decomposition.
+#[derive(Debug, Clone)]
+pub struct TaskDecompositionConfig {
+    /// Use LLM to decompose tasks into steps.
+    /// When false (default), uses heuristic sentence-splitting.
+    pub llm_enhanced: bool,
+}
+
+impl Default for TaskDecompositionConfig {
+    fn default() -> Self {
+        Self {
+            llm_enhanced: false,
+        }
+    }
+}
+
+/// Decomposes tasks into steps, optionally enhanced by LLM.
+pub struct TaskDecomposer {
+    pub config: TaskDecompositionConfig,
+}
+
+impl TaskDecomposer {
+    pub fn new(config: TaskDecompositionConfig) -> Self {
+        Self { config }
+    }
+
+    /// Build a prompt for LLM-based task decomposition.
+    ///
+    /// Returns None if LLM enhancement is disabled.
+    pub fn build_decomposition_prompt(&self, task: &str) -> Option<String> {
+        if !self.config.llm_enhanced {
+            return None;
+        }
+
+        let prompt = format!(
+            "Break this task into steps. \
+             Return JSON: {{\"steps\":[{{\"description\":\"...\",\"estimated_complexity\":\"low|medium|high\"}}]}}\n\n\
+             Task: {}",
+            crate::llm_enhance::prompt_wrap(task)
+        );
+
+        Some(prompt)
+    }
+
+    /// Parse LLM response for task decomposition.
+    pub fn parse_decomposition_response(response: &str) -> Option<TaskDecomposition> {
+        if let Some(json_str) = crate::llm_enhance::extract_json(response) {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
+                if let Some(steps_arr) = val.get("steps").and_then(|v| v.as_array()) {
+                    let steps: Vec<TaskStep> = steps_arr
+                        .iter()
+                        .filter_map(|s| {
+                            let desc = s.get("description").and_then(|d| d.as_str())?;
+                            let complexity = s
+                                .get("estimated_complexity")
+                                .and_then(|c| c.as_str())
+                                .unwrap_or("medium");
+                            Some(TaskStep {
+                                description: desc.to_string(),
+                                estimated_complexity: complexity.to_string(),
+                            })
+                        })
+                        .collect();
+                    if !steps.is_empty() {
+                        return Some(TaskDecomposition { steps });
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Decompose a task into steps with optional LLM enhancement.
+    ///
+    /// If `llm` is Some and config.llm_enhanced is true, uses LLM for
+    /// intelligent decomposition. Otherwise uses simple sentence splitting.
+    pub fn decompose_task_with_llm(
+        &self,
+        task: &str,
+        llm: Option<&dyn crate::llm_enhance::LlmEnhancer>,
+    ) -> TaskDecomposition {
+        // Heuristic baseline: split by sentences/periods/semicolons
+        let sentences: Vec<&str> = task
+            .split(|c: char| c == '.' || c == ';' || c == '\n')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        let heuristic_steps: Vec<TaskStep> = if sentences.len() <= 1 {
+            vec![TaskStep {
+                description: task.to_string(),
+                estimated_complexity: "medium".to_string(),
+            }]
+        } else {
+            sentences
+                .iter()
+                .map(|s| TaskStep {
+                    description: s.to_string(),
+                    estimated_complexity: if s.len() > 100 {
+                        "high".to_string()
+                    } else if s.len() > 40 {
+                        "medium".to_string()
+                    } else {
+                        "low".to_string()
+                    },
+                })
+                .collect()
+        };
+
+        let heuristic = TaskDecomposition {
+            steps: heuristic_steps,
+        };
+
+        // Try LLM enhancement
+        if let Some(enhancer) = llm {
+            if self.config.llm_enhanced && enhancer.is_available() {
+                if let Some(prompt) = self.build_decomposition_prompt(task) {
+                    if let Ok(response) = enhancer.generate(&prompt, 500) {
+                        if let Some(decomposition) = Self::parse_decomposition_response(&response) {
+                            return decomposition;
+                        }
+                    }
+                }
+            }
+        }
+
+        heuristic
+    }
+}
+
+impl Default for TaskDecomposer {
+    fn default() -> Self {
+        Self::new(TaskDecompositionConfig::default())
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -618,5 +774,55 @@ mod tests {
         assert_eq!(m.approach, TaskApproach::PlanFirst);
         assert_eq!(m.reasoning, ReasoningStrategy::StepBack);
         assert!(m.immutable_after_start);
+    }
+
+    // ── V68: LLM Enhancement tests ──────────────────────────────────
+
+    #[test]
+    fn test_decompose_task_heuristic_without_llm() {
+        let config = TaskDecompositionConfig {
+            llm_enhanced: false,
+        };
+        let decomposer = TaskDecomposer::new(config);
+        let result = decomposer.decompose_task_with_llm(
+            "Analyze the data. Build a report. Send it to the team",
+            None,
+        );
+        assert_eq!(result.steps.len(), 3);
+        assert!(result.steps[0].description.contains("Analyze"));
+    }
+
+    #[test]
+    fn test_decompose_task_with_mock_llm() {
+        let config = TaskDecompositionConfig {
+            llm_enhanced: true,
+        };
+        let decomposer = TaskDecomposer::new(config);
+        let mock = crate::llm_enhance::MockLlm::new(
+            "{\"steps\":[{\"description\":\"Gather requirements\",\"estimated_complexity\":\"low\"},{\"description\":\"Implement solution\",\"estimated_complexity\":\"high\"}]}",
+        );
+        let result = decomposer.decompose_task_with_llm(
+            "Build a web application",
+            Some(&mock),
+        );
+        assert_eq!(result.steps.len(), 2, "Expected 2 LLM steps, got: {}", result.steps.len());
+        assert!(result.steps[0].description.contains("Gather"));
+        assert_eq!(result.steps[1].estimated_complexity, "high");
+    }
+
+    #[test]
+    fn test_decompose_task_llm_fallback_on_failure() {
+        let config = TaskDecompositionConfig {
+            llm_enhanced: true,
+        };
+        let decomposer = TaskDecomposer::new(config);
+        let failing = crate::llm_enhance::FailingMockLlm;
+        let result = decomposer.decompose_task_with_llm(
+            "Do something complex",
+            Some(&failing),
+        );
+        // Should fall back to heuristic (not crash)
+        assert!(!result.steps.is_empty());
+        assert!(result.steps[0].description.contains("Do something complex"));
     }
 }

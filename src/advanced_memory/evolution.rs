@@ -42,6 +42,9 @@ pub struct EvolutionConfig {
     pub auto_create_threshold: usize,
     /// Maximum number of procedures to track (default: 500).
     pub max_procedures: usize,
+    /// Use LLM to analyze procedure failures and suggest improvements.
+    /// When false (default), uses heuristic confidence adjustments only.
+    pub llm_enhanced: bool,
 }
 
 impl Default for EvolutionConfig {
@@ -52,6 +55,7 @@ impl Default for EvolutionConfig {
             min_confidence_to_keep: 0.2,
             auto_create_threshold: 3,
             max_procedures: 500,
+            llm_enhanced: false,
         }
     }
 }
@@ -218,5 +222,203 @@ impl ProcedureEvolver {
             avg_confidence: 0.0, // Confidence lives in ProceduralStore, not here
             procedures_tracked: tracked.len(),
         }
+    }
+}
+
+// ============================================================================
+// LLM Enhancement: Failure Analysis (V68)
+// ============================================================================
+
+/// Result of LLM-based failure analysis for a procedure.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FailureAnalysis {
+    /// Root cause identified by the LLM.
+    pub cause: String,
+    /// Suggested improvement.
+    pub suggestion: String,
+    /// Recommended confidence adjustment (e.g., -0.1).
+    pub confidence_adjustment: f64,
+}
+
+impl ProcedureEvolver {
+    /// Build a prompt for LLM-based failure analysis.
+    ///
+    /// Returns None if LLM enhancement is disabled or there are no failure feedbacks.
+    pub fn build_failure_analysis_prompt(
+        &self,
+        procedure_id: &str,
+        context: &str,
+    ) -> Option<String> {
+        if !self.config.llm_enhanced {
+            return None;
+        }
+
+        let failures: Vec<_> = self
+            .feedback_log
+            .iter()
+            .filter(|fb| {
+                fb.procedure_id == procedure_id
+                    && matches!(fb.outcome, FeedbackOutcome::Failure)
+            })
+            .collect();
+
+        if failures.is_empty() {
+            return None;
+        }
+
+        let mut prompt = String::from(
+            "A procedure failed. Analyze why and suggest improvement. \
+             Return JSON: {\"cause\":\"...\",\"suggestion\":\"...\",\"confidence_adjustment\":-0.1}\n\n",
+        );
+
+        prompt.push_str(&format!("Procedure ID: {}\n", procedure_id));
+        prompt.push_str(&format!(
+            "Context: {}\n",
+            crate::llm_enhance::prompt_wrap(context)
+        ));
+        prompt.push_str(&format!("Failure count: {}\n", failures.len()));
+
+        for (i, fb) in failures.iter().enumerate().take(10) {
+            prompt.push_str(&format!(
+                "{}. [{}] {}\n",
+                i + 1,
+                fb.timestamp.format("%Y-%m-%d %H:%M"),
+                crate::llm_enhance::prompt_wrap(&fb.context)
+            ));
+        }
+
+        Some(prompt)
+    }
+
+    /// Parse LLM response for failure analysis.
+    pub fn parse_failure_analysis_response(response: &str) -> Option<FailureAnalysis> {
+        if let Some(json_str) = crate::llm_enhance::extract_json(response) {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
+                let cause = val.get("cause").and_then(|s| s.as_str()).unwrap_or("unknown");
+                let suggestion = val
+                    .get("suggestion")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("no suggestion");
+                let confidence_adjustment = val
+                    .get("confidence_adjustment")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(-0.1);
+                return Some(FailureAnalysis {
+                    cause: cause.to_string(),
+                    suggestion: suggestion.to_string(),
+                    confidence_adjustment: confidence_adjustment.clamp(-0.5, 0.0),
+                });
+            }
+        }
+        None
+    }
+
+    /// Analyze a procedure failure with optional LLM enhancement.
+    ///
+    /// If `llm` is Some and config.llm_enhanced is true, uses LLM for root-cause
+    /// analysis. Otherwise returns a heuristic-based FailureAnalysis.
+    pub fn analyze_failure_with_llm(
+        &self,
+        procedure_id: &str,
+        context: &str,
+        llm: Option<&dyn crate::llm_enhance::LlmEnhancer>,
+    ) -> FailureAnalysis {
+        // Heuristic baseline
+        let failure_count = self
+            .feedback_log
+            .iter()
+            .filter(|fb| {
+                fb.procedure_id == procedure_id
+                    && matches!(fb.outcome, FeedbackOutcome::Failure)
+            })
+            .count();
+
+        let heuristic = FailureAnalysis {
+            cause: format!("Procedure failed {} time(s)", failure_count),
+            suggestion: "Review procedure steps and adjust parameters".to_string(),
+            confidence_adjustment: -(failure_count as f64 * 0.05).min(0.3),
+        };
+
+        // Try LLM enhancement
+        if let Some(enhancer) = llm {
+            if self.config.llm_enhanced && enhancer.is_available() {
+                if let Some(prompt) = self.build_failure_analysis_prompt(procedure_id, context) {
+                    if let Ok(response) = enhancer.generate(&prompt, 300) {
+                        if let Some(analysis) = Self::parse_failure_analysis_response(&response) {
+                            return analysis;
+                        }
+                    }
+                }
+            }
+        }
+
+        heuristic
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_feedback(proc_id: &str, outcome: FeedbackOutcome) -> ProcedureFeedback {
+        ProcedureFeedback {
+            procedure_id: proc_id.to_string(),
+            outcome,
+            context: "test context".to_string(),
+            timestamp: chrono::Utc::now(),
+        }
+    }
+
+    #[test]
+    fn test_analyze_failure_heuristic_without_llm() {
+        let config = EvolutionConfig {
+            llm_enhanced: false,
+            ..Default::default()
+        };
+        let mut evolver = ProcedureEvolver::new(config);
+        evolver.record_feedback(make_feedback("proc-1", FeedbackOutcome::Failure));
+        evolver.record_feedback(make_feedback("proc-1", FeedbackOutcome::Failure));
+
+        let analysis = evolver.analyze_failure_with_llm("proc-1", "test", None);
+        assert!(analysis.cause.contains("2 time(s)"));
+        assert!(analysis.confidence_adjustment < 0.0);
+    }
+
+    #[test]
+    fn test_analyze_failure_with_mock_llm() {
+        let config = EvolutionConfig {
+            llm_enhanced: true,
+            ..Default::default()
+        };
+        let mut evolver = ProcedureEvolver::new(config);
+        evolver.record_feedback(make_feedback("proc-1", FeedbackOutcome::Failure));
+
+        let mock = crate::llm_enhance::MockLlm::new(
+            "{\"cause\":\"timeout in step 3\",\"suggestion\":\"increase timeout\",\"confidence_adjustment\":-0.15}",
+        );
+        let analysis = evolver.analyze_failure_with_llm("proc-1", "step 3 timed out", Some(&mock));
+        assert!(analysis.cause.contains("timeout"), "Expected LLM cause, got: {}", analysis.cause);
+        assert!(analysis.suggestion.contains("increase timeout"));
+        assert!((analysis.confidence_adjustment - (-0.15)).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_analyze_failure_llm_fallback_on_failure() {
+        let config = EvolutionConfig {
+            llm_enhanced: true,
+            ..Default::default()
+        };
+        let mut evolver = ProcedureEvolver::new(config);
+        evolver.record_feedback(make_feedback("proc-1", FeedbackOutcome::Failure));
+
+        let failing = crate::llm_enhance::FailingMockLlm;
+        let analysis = evolver.analyze_failure_with_llm("proc-1", "context", Some(&failing));
+        // Should fall back to heuristic (not crash)
+        assert!(analysis.cause.contains("1 time(s)"));
+        assert!(analysis.confidence_adjustment < 0.0);
     }
 }

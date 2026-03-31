@@ -1955,6 +1955,144 @@ impl Default for HandoffManager {
     }
 }
 
+// ============================================================================
+// LLM Enhancement: Multi-Agent Response Synthesis (V68)
+// ============================================================================
+
+/// Result of LLM-based response synthesis from multiple agents.
+#[derive(Debug, Clone)]
+pub struct ResponseSynthesis {
+    /// The synthesized best answer.
+    pub synthesis: String,
+    /// Confidence in the synthesis (0.0 to 1.0).
+    pub confidence: f64,
+}
+
+/// Configuration for multi-agent response synthesis.
+#[derive(Debug, Clone)]
+pub struct SynthesisConfig {
+    /// Use LLM to synthesize responses from multiple agents.
+    /// When false (default), uses simple heuristic (longest response wins).
+    pub llm_enhanced: bool,
+}
+
+impl Default for SynthesisConfig {
+    fn default() -> Self {
+        Self {
+            llm_enhanced: false,
+        }
+    }
+}
+
+/// Synthesizes responses from multiple agents, optionally enhanced by LLM.
+pub struct ResponseSynthesizer {
+    pub config: SynthesisConfig,
+}
+
+impl ResponseSynthesizer {
+    pub fn new(config: SynthesisConfig) -> Self {
+        Self { config }
+    }
+
+    /// Build a prompt for LLM-based response synthesis.
+    ///
+    /// Returns None if LLM enhancement is disabled or responses are empty.
+    pub fn build_synthesis_prompt(&self, responses: &[(&str, &str)]) -> Option<String> {
+        if !self.config.llm_enhanced || responses.is_empty() {
+            return None;
+        }
+
+        let mut prompt = String::from(
+            "Multiple agents gave these responses. Synthesize the best answer. \
+             Return JSON: {\"synthesis\":\"...\",\"confidence\":0.85}\n\n",
+        );
+
+        for (i, (agent_name, response)) in responses.iter().enumerate() {
+            prompt.push_str(&format!(
+                "Agent {} ({}): {}\n",
+                i + 1,
+                agent_name,
+                crate::llm_enhance::prompt_wrap(response)
+            ));
+        }
+
+        Some(prompt)
+    }
+
+    /// Parse LLM response for synthesis extraction.
+    pub fn parse_synthesis_response(response: &str) -> Option<ResponseSynthesis> {
+        if let Some(json_str) = crate::llm_enhance::extract_json(response) {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
+                let synthesis = val
+                    .get("synthesis")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("");
+                let confidence = val
+                    .get("confidence")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.5);
+                if !synthesis.is_empty() {
+                    return Some(ResponseSynthesis {
+                        synthesis: synthesis.to_string(),
+                        confidence: confidence.clamp(0.0, 1.0),
+                    });
+                }
+            }
+        }
+        None
+    }
+
+    /// Synthesize responses from multiple agents with optional LLM enhancement.
+    ///
+    /// `responses` is a slice of (agent_name, response_text) pairs.
+    ///
+    /// If `llm` is Some and config.llm_enhanced is true, uses LLM for
+    /// intelligent synthesis. Otherwise uses heuristic (longest response).
+    pub fn synthesize_responses_with_llm(
+        &self,
+        responses: &[(&str, &str)],
+        llm: Option<&dyn crate::llm_enhance::LlmEnhancer>,
+    ) -> ResponseSynthesis {
+        // Heuristic baseline: pick the longest response as the most comprehensive
+        let heuristic = if responses.is_empty() {
+            ResponseSynthesis {
+                synthesis: String::new(),
+                confidence: 0.0,
+            }
+        } else {
+            let best = responses
+                .iter()
+                .max_by_key(|(_, r)| r.len())
+                .unwrap_or(&("", ""));
+            ResponseSynthesis {
+                synthesis: best.1.to_string(),
+                confidence: if responses.len() == 1 { 0.7 } else { 0.5 },
+            }
+        };
+
+        // Try LLM enhancement
+        if let Some(enhancer) = llm {
+            if self.config.llm_enhanced && enhancer.is_available() {
+                if let Some(prompt) = self.build_synthesis_prompt(responses) {
+                    if let Ok(response) = enhancer.generate(&prompt, 500) {
+                        if let Some(synthesis) = Self::parse_synthesis_response(&response) {
+                            return synthesis;
+                        }
+                    }
+                }
+            }
+        }
+
+        heuristic
+    }
+}
+
+impl Default for ResponseSynthesizer {
+    fn default() -> Self {
+        Self::new(SynthesisConfig::default())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3251,6 +3389,59 @@ mod tests {
         let result = runner.run("single agent task").unwrap();
         assert_eq!(result.messages.len(), 1);
         assert_eq!(result.terminated_by, "single_agent");
+    }
+
+    // ── V68: LLM Enhancement tests for Response Synthesis ──────────────
+
+    #[test]
+    fn test_synthesize_responses_heuristic_without_llm() {
+        let config = SynthesisConfig {
+            llm_enhanced: false,
+        };
+        let synthesizer = ResponseSynthesizer::new(config);
+        let responses = vec![
+            ("Agent-A", "Short answer."),
+            ("Agent-B", "A much longer and more detailed answer with context and explanation."),
+        ];
+        let result = synthesizer.synthesize_responses_with_llm(&responses, None);
+        // Heuristic picks longest
+        assert!(result.synthesis.contains("longer and more detailed"));
+        assert!(result.confidence > 0.0);
+    }
+
+    #[test]
+    fn test_synthesize_responses_with_mock_llm() {
+        let config = SynthesisConfig {
+            llm_enhanced: true,
+        };
+        let synthesizer = ResponseSynthesizer::new(config);
+        let mock = crate::llm_enhance::MockLlm::new(
+            "{\"synthesis\":\"Combined insight from both agents: the optimal approach is X.\",\"confidence\":0.92}",
+        );
+        let responses = vec![
+            ("Analyst", "Approach X is efficient."),
+            ("Reviewer", "Approach X has good coverage."),
+        ];
+        let result = synthesizer.synthesize_responses_with_llm(&responses, Some(&mock));
+        assert!(result.synthesis.contains("Combined insight"), "Expected LLM synthesis, got: {}", result.synthesis);
+        assert!((result.confidence - 0.92).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_synthesize_responses_llm_fallback_on_failure() {
+        let config = SynthesisConfig {
+            llm_enhanced: true,
+        };
+        let synthesizer = ResponseSynthesizer::new(config);
+        let failing = crate::llm_enhance::FailingMockLlm;
+        let responses = vec![
+            ("Agent-A", "Response A"),
+            ("Agent-B", "Response B is longer here"),
+        ];
+        let result = synthesizer.synthesize_responses_with_llm(&responses, Some(&failing));
+        // Should fall back to heuristic (not crash)
+        assert!(!result.synthesis.is_empty());
+        assert!(result.synthesis.contains("Response B"));
     }
 
     // =========================================================================

@@ -713,6 +713,163 @@ pub fn register_home_management_tools(
 }
 
 // ============================================================================
+// LLM Enhancement: Natural Language Home Command Interpretation (V68)
+// ============================================================================
+
+/// Result of LLM-based home command interpretation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HomeCommandInterpretation {
+    /// The action to perform (e.g., "turn_on", "turn_off", "set_temperature").
+    pub action: String,
+    /// The target entity (e.g., "light.living_room").
+    pub target: String,
+    /// Optional value for the action (e.g., temperature, brightness).
+    pub value: Option<serde_json::Value>,
+}
+
+/// Configuration for home command interpretation.
+#[derive(Debug, Clone)]
+pub struct HomeCommandConfig {
+    /// Use LLM to interpret natural language home commands.
+    /// When false (default), uses keyword-based parsing.
+    pub llm_enhanced: bool,
+}
+
+impl Default for HomeCommandConfig {
+    fn default() -> Self {
+        Self {
+            llm_enhanced: false,
+        }
+    }
+}
+
+/// Interprets natural language home commands, optionally enhanced by LLM.
+pub struct HomeCommandInterpreter {
+    pub config: HomeCommandConfig,
+}
+
+impl HomeCommandInterpreter {
+    pub fn new(config: HomeCommandConfig) -> Self {
+        Self { config }
+    }
+
+    /// Build a prompt for LLM-based command interpretation.
+    ///
+    /// Returns None if LLM enhancement is disabled.
+    pub fn build_command_prompt(&self, command: &str) -> Option<String> {
+        if !self.config.llm_enhanced {
+            return None;
+        }
+
+        let prompt = format!(
+            "Interpret this natural language home command. \
+             Return JSON: {{\"action\":\"turn_on|turn_off|set_temperature|...\",\
+             \"target\":\"light.living_room\",\"value\":null}}\n\n\
+             Command: {}",
+            crate::llm_enhance::prompt_wrap(command)
+        );
+
+        Some(prompt)
+    }
+
+    /// Parse LLM response for home command interpretation.
+    pub fn parse_command_response(response: &str) -> Option<HomeCommandInterpretation> {
+        if let Some(json_str) = crate::llm_enhance::extract_json(response) {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
+                let action = val
+                    .get("action")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("unknown");
+                let target = val
+                    .get("target")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("unknown");
+                let value = val.get("value").cloned();
+                return Some(HomeCommandInterpretation {
+                    action: action.to_string(),
+                    target: target.to_string(),
+                    value: if value == Some(serde_json::Value::Null) {
+                        None
+                    } else {
+                        value
+                    },
+                });
+            }
+        }
+        None
+    }
+
+    /// Interpret a natural language home command with optional LLM enhancement.
+    ///
+    /// If `llm` is Some and config.llm_enhanced is true, uses LLM for
+    /// nuanced interpretation. Otherwise uses keyword heuristics.
+    pub fn interpret_home_command_with_llm(
+        &self,
+        command: &str,
+        llm: Option<&dyn crate::llm_enhance::LlmEnhancer>,
+    ) -> HomeCommandInterpretation {
+        // Heuristic baseline
+        let lower = command.to_lowercase();
+        let heuristic_action = if lower.contains("turn on") || lower.contains("switch on")
+            || lower.contains("enciende") || lower.contains("encender")
+        {
+            "turn_on"
+        } else if lower.contains("turn off") || lower.contains("switch off")
+            || lower.contains("apaga") || lower.contains("apagar")
+        {
+            "turn_off"
+        } else if lower.contains("temperature") || lower.contains("temp")
+            || lower.contains("temperatura")
+        {
+            "set_temperature"
+        } else if lower.contains("dim") || lower.contains("brightness") {
+            "set_brightness"
+        } else {
+            "toggle"
+        };
+
+        let heuristic_target = if lower.contains("living") || lower.contains("salon")
+            || lower.contains("salón")
+        {
+            "light.living_room"
+        } else if lower.contains("bedroom") || lower.contains("dormitorio") {
+            "light.bedroom"
+        } else if lower.contains("kitchen") || lower.contains("cocina") {
+            "light.kitchen"
+        } else {
+            "light.unknown"
+        };
+
+        let heuristic = HomeCommandInterpretation {
+            action: heuristic_action.to_string(),
+            target: heuristic_target.to_string(),
+            value: None,
+        };
+
+        // Try LLM enhancement
+        if let Some(enhancer) = llm {
+            if self.config.llm_enhanced && enhancer.is_available() {
+                if let Some(prompt) = self.build_command_prompt(command) {
+                    if let Ok(response) = enhancer.generate(&prompt, 200) {
+                        if let Some(interpretation) = Self::parse_command_response(&response) {
+                            return interpretation;
+                        }
+                    }
+                }
+            }
+        }
+
+        heuristic
+    }
+}
+
+impl Default for HomeCommandInterpreter {
+    fn default() -> Self {
+        Self::new(HomeCommandConfig::default())
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -926,5 +1083,53 @@ mod tests {
         assert!(validate_service_name("set_temperature").is_ok());
         assert!(validate_service_name("").is_err());
         assert!(validate_service_name("turn_on; rm -rf /").is_err());
+    }
+
+    // ── V68: LLM Enhancement tests ──────────────────────────────────
+
+    #[test]
+    fn test_interpret_command_heuristic_without_llm() {
+        let config = HomeCommandConfig {
+            llm_enhanced: false,
+        };
+        let interpreter = HomeCommandInterpreter::new(config);
+        let result = interpreter.interpret_home_command_with_llm("Turn on the living room light", None);
+        assert_eq!(result.action, "turn_on");
+        assert_eq!(result.target, "light.living_room");
+        assert!(result.value.is_none());
+    }
+
+    #[test]
+    fn test_interpret_command_with_mock_llm() {
+        let config = HomeCommandConfig {
+            llm_enhanced: true,
+        };
+        let interpreter = HomeCommandInterpreter::new(config);
+        let mock = crate::llm_enhance::MockLlm::new(
+            "{\"action\":\"set_temperature\",\"target\":\"climate.bedroom\",\"value\":22}",
+        );
+        let result = interpreter.interpret_home_command_with_llm(
+            "Set the bedroom to 22 degrees",
+            Some(&mock),
+        );
+        assert_eq!(result.action, "set_temperature", "Expected LLM action, got: {}", result.action);
+        assert_eq!(result.target, "climate.bedroom");
+        assert!(result.value.is_some());
+    }
+
+    #[test]
+    fn test_interpret_command_llm_fallback_on_failure() {
+        let config = HomeCommandConfig {
+            llm_enhanced: true,
+        };
+        let interpreter = HomeCommandInterpreter::new(config);
+        let failing = crate::llm_enhance::FailingMockLlm;
+        let result = interpreter.interpret_home_command_with_llm(
+            "Turn off the kitchen light",
+            Some(&failing),
+        );
+        // Should fall back to heuristic (not crash)
+        assert_eq!(result.action, "turn_off");
+        assert_eq!(result.target, "light.kitchen");
     }
 }

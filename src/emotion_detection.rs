@@ -307,6 +307,153 @@ impl std::fmt::Display for AudioEvent {
 }
 
 // ============================================================================
+// LLM Enhancement: Speaker Intent Classification (V68)
+// ============================================================================
+
+/// Speaker intent beyond emotion (classified by LLM).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpeakerIntent {
+    /// The classified intent.
+    pub intent: String,
+    /// Urgency level.
+    pub urgency: String,
+}
+
+/// Configuration for intent classification.
+#[derive(Debug, Clone)]
+pub struct IntentClassifierConfig {
+    /// Use LLM to classify speaker intent beyond basic emotion detection.
+    /// When false (default), uses heuristic keyword-based classification.
+    pub llm_enhanced: bool,
+}
+
+impl Default for IntentClassifierConfig {
+    fn default() -> Self {
+        Self {
+            llm_enhanced: false,
+        }
+    }
+}
+
+/// Classifies speaker intent from text, optionally enhanced by LLM.
+pub struct IntentClassifier {
+    pub config: IntentClassifierConfig,
+}
+
+impl IntentClassifier {
+    pub fn new(config: IntentClassifierConfig) -> Self {
+        Self { config }
+    }
+
+    /// Build a prompt for LLM-based intent classification.
+    ///
+    /// Returns None if LLM enhancement is disabled.
+    pub fn build_intent_prompt(&self, text: &str) -> Option<String> {
+        if !self.config.llm_enhanced {
+            return None;
+        }
+
+        let prompt = format!(
+            "Beyond emotion, classify the speaker's intent. \
+             Return JSON: {{\"intent\":\"question|command|information|request\",\"urgency\":\"low|medium|high\"}}\n\n\
+             Text: {}",
+            crate::llm_enhance::prompt_wrap(text)
+        );
+
+        Some(prompt)
+    }
+
+    /// Parse LLM response for intent classification.
+    pub fn parse_intent_response(response: &str) -> Option<SpeakerIntent> {
+        if let Some(json_str) = crate::llm_enhance::extract_json(response) {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
+                let intent = val
+                    .get("intent")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("information");
+                let urgency = val
+                    .get("urgency")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("low");
+                return Some(SpeakerIntent {
+                    intent: intent.to_string(),
+                    urgency: urgency.to_string(),
+                });
+            }
+        }
+        None
+    }
+
+    /// Classify speaker intent with optional LLM enhancement.
+    ///
+    /// If `llm` is Some and config.llm_enhanced is true, uses LLM for
+    /// nuanced intent classification. Otherwise uses keyword heuristics.
+    pub fn classify_intent_with_llm(
+        &self,
+        text: &str,
+        llm: Option<&dyn crate::llm_enhance::LlmEnhancer>,
+    ) -> SpeakerIntent {
+        // Heuristic baseline
+        let lower = text.to_lowercase();
+        let heuristic_intent = if lower.contains('?') || lower.starts_with("what")
+            || lower.starts_with("how") || lower.starts_with("why")
+            || lower.starts_with("when") || lower.starts_with("where")
+            || lower.starts_with("who") || lower.starts_with("is ")
+        {
+            "question"
+        } else if lower.starts_with("please") || lower.contains("could you")
+            || lower.contains("can you") || lower.contains("would you")
+        {
+            "request"
+        } else if lower.starts_with("do ") || lower.starts_with("run ")
+            || lower.starts_with("stop") || lower.starts_with("start")
+            || lower.starts_with("set ") || lower.starts_with("turn")
+        {
+            "command"
+        } else {
+            "information"
+        };
+
+        let heuristic_urgency = if lower.contains("urgent") || lower.contains("asap")
+            || lower.contains("immediately") || lower.contains("now")
+            || lower.contains('!')
+        {
+            "high"
+        } else if lower.contains("when you can") || lower.contains("no rush") {
+            "low"
+        } else {
+            "medium"
+        };
+
+        let heuristic = SpeakerIntent {
+            intent: heuristic_intent.to_string(),
+            urgency: heuristic_urgency.to_string(),
+        };
+
+        // Try LLM enhancement
+        if let Some(enhancer) = llm {
+            if self.config.llm_enhanced && enhancer.is_available() {
+                if let Some(prompt) = self.build_intent_prompt(text) {
+                    if let Ok(response) = enhancer.generate(&prompt, 200) {
+                        if let Some(intent) = Self::parse_intent_response(&response) {
+                            return intent;
+                        }
+                    }
+                }
+            }
+        }
+
+        heuristic
+    }
+}
+
+impl Default for IntentClassifier {
+    fn default() -> Self {
+        Self::new(IntentClassifierConfig::default())
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -404,5 +551,44 @@ mod tests {
     fn test_emotion_category_display() {
         assert_eq!(EmotionCategory::Frustrated.to_string(), "frustrated");
         assert_eq!(EmotionCategory::Excited.to_string(), "excited");
+    }
+
+    // ── V68: LLM Enhancement tests ──────────────────────────────────
+
+    #[test]
+    fn test_classify_intent_heuristic_without_llm() {
+        let config = IntentClassifierConfig {
+            llm_enhanced: false,
+        };
+        let classifier = IntentClassifier::new(config);
+        let intent = classifier.classify_intent_with_llm("What is the weather?", None);
+        assert_eq!(intent.intent, "question");
+        assert_eq!(intent.urgency, "medium");
+    }
+
+    #[test]
+    fn test_classify_intent_with_mock_llm() {
+        let config = IntentClassifierConfig {
+            llm_enhanced: true,
+        };
+        let classifier = IntentClassifier::new(config);
+        let mock = crate::llm_enhance::MockLlm::new(
+            "{\"intent\":\"command\",\"urgency\":\"high\"}",
+        );
+        let intent = classifier.classify_intent_with_llm("Turn off the lights now!", Some(&mock));
+        assert_eq!(intent.intent, "command", "Expected LLM intent, got: {}", intent.intent);
+        assert_eq!(intent.urgency, "high");
+    }
+
+    #[test]
+    fn test_classify_intent_llm_fallback_on_failure() {
+        let config = IntentClassifierConfig {
+            llm_enhanced: true,
+        };
+        let classifier = IntentClassifier::new(config);
+        let failing = crate::llm_enhance::FailingMockLlm;
+        let intent = classifier.classify_intent_with_llm("How does this work?", Some(&failing));
+        // Should fall back to heuristic (not crash)
+        assert_eq!(intent.intent, "question");
     }
 }
