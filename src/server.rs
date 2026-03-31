@@ -2662,6 +2662,7 @@ fn handle_openai_chat_completions(
             preserve_recent: cconf.preserve_recent,
             preserve_first: cconf.preserve_first,
             min_importance: cconf.min_importance,
+            llm_enhanced: false,
         });
     }
 
@@ -2904,6 +2905,7 @@ fn handle_openai_chat_completions_stream(
             preserve_recent: cconf.preserve_recent,
             preserve_first: cconf.preserve_first,
             min_importance: cconf.min_importance,
+            llm_enhanced: false,
         });
     }
 

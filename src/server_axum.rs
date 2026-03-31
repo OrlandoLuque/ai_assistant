@@ -1552,6 +1552,7 @@ fn apply_enrichment_config(
             preserve_recent: cconf.preserve_recent,
             preserve_first: cconf.preserve_first,
             min_importance: cconf.min_importance,
+            llm_enhanced: false,
         });
     }
     if enrichment.thinking.enabled {
@@ -3378,6 +3379,7 @@ mod tests {
                 preserve_recent: 5,
                 preserve_first: 2,
                 min_importance: 0.5,
+            llm_enhanced: false,
             },
             ..Default::default()
         };

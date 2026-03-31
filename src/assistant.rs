@@ -5479,6 +5479,7 @@ mod tests {
             preserve_recent: 2,
             preserve_first: 1,
             min_importance: 0.9,
+            llm_enhanced: false,
         });
 
         // Add 20 messages
@@ -6165,6 +6166,7 @@ mod tests {
             preserve_recent: 5,
             preserve_first: 2,
             min_importance: 0.5,
+            llm_enhanced: false,
         };
         ai.set_compaction_config(config);
         assert_eq!(ai.compaction_config.max_messages, 50);
