@@ -457,6 +457,11 @@ name = "ai_virtual_mic"
 path = "src/bin/ai_virtual_mic.rs"
 required-features = ["audio-io"]
 
+[[bin]]
+name = "ai_setup"
+path = "src/bin/ai_setup.rs"
+required-features = ["full"]
+
 [[example]]
 name = "autonomous_agent"
 required-features = ["autonomous"]
