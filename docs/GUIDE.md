@@ -10212,3 +10212,61 @@ cargo run --bin ai_virtual_mic --features audio-io
 | `voice_clone_create` | Create cloned voice (ElevenLabs/XTTS) |
 | `voice_clone_synthesize` | Synthesize with cloned voice |
 | `voice_clone_list` | List cloned voice profiles |
+
+## 185. LLM Enhancement — Optional Module Improvement
+
+```rust
+use ai_assistant::{LlmEnhancer, MockLlm, LlmEnhancementConfig};
+
+// The LlmEnhancer trait — implement for your LLM provider
+struct MyLlm;
+impl LlmEnhancer for MyLlm {
+    fn generate(&self, prompt: &str, max_tokens: usize) -> Result<String, String> {
+        // Call your LLM provider here
+        Ok("response".to_string())
+    }
+    fn model_name(&self) -> &str { "my-model" }
+}
+
+// Enable LLM enhancement on any module
+// Example: conversation compaction with LLM summarization
+use ai_assistant::conversation_compaction::{CompactionConfig, ConversationCompactor};
+
+let config = CompactionConfig {
+    llm_enhanced: true,  // Enable LLM enhancement
+    ..Default::default()
+};
+let compactor = ConversationCompactor::new(config);
+
+// With LLM: gets abstractive summary
+let result = compactor.compact_with_llm(messages, Some(&MyLlm));
+
+// Without LLM: falls back to heuristic (counts + topics)
+let result = compactor.compact_with_llm(messages, None);
+
+// For testing: use MockLlm
+let mock = MockLlm::new("{\"summary\": \"Test summary\"}");
+let result = compactor.compact_with_llm(messages, Some(&mock));
+```
+
+### All 17 LLM-Enhanced Modules
+
+| Module | Method | What it does with LLM |
+|--------|--------|-----------------------|
+| Conversation Compaction | `compact_with_llm()` | Abstractive summary of removed messages |
+| Entity Extraction | `extract_entities_with_llm()` | NER: person, org, location, date, concept |
+| Intent Classification | `classify_with_llm()` | Semantic intent + confidence |
+| Query Expansion | `expand_with_llm_enhancer()` | LLM paraphrasing for RAG queries |
+| Response Quality | `analyze_with_llm()` | Relevance, coherence, completeness scores |
+| Topic Detection | `detect_topics_with_llm()` | Semantic topic classification |
+| Auto-Model Selection | `classify_task_with_llm()` | Task type + complexity |
+| Guardrail Evaluation | `detect_with_llm()` | Injection detection (defense-in-depth) |
+| RAG Tier Selection | `suggest_tier_with_llm()` | Query → optimal tier recommendation |
+| Document Chunking | `suggest_chunk_boundaries_with_llm()` | Semantic split points |
+| KG Enrichment | `infer_relations_with_llm()` | Entity relationship inference |
+| Procedural Evolution | `analyze_failure_with_llm()` | Failure analysis + suggestions |
+| Speaker Intent | `classify_intent_with_llm()` | Intent + urgency beyond emotion |
+| Home Automation | `interpret_home_command_with_llm()` | "Make it warmer" → climate command |
+| Agent Decomposition | `decompose_task_with_llm()` | Task → steps with complexity |
+| Sentiment Trend | `analyze_sentiment_trend_with_llm()` | Improving/stable/declining |
+| Multi-Agent Consensus | `synthesize_responses_with_llm()` | Best answer from multiple agents |
