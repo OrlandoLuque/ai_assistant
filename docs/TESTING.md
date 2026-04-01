@@ -6,7 +6,7 @@ The project has two testing layers:
 
 | Layer | Tests | Run Command |
 |-------|-------|-------------|
-| Unit tests (`#[test]`) | 7,312 | `cargo test --lib --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite,chaos-testing"` |
+| Unit tests (`#[test]`) | 7,335 | `cargo test --lib --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite,chaos-testing"` |
 | Integration tests | 38 | `cargo test --test integration_tests --features full` |
 | Test harness (CLI) | ~436 | `cargo run --bin ai_test_harness -- --all` (sin P2P) |
 | Distributed networking tests | 115 | `cargo test --features "full,distributed-network"` |
@@ -15,7 +15,7 @@ The project has two testing layers:
 | Test harness P2P categories | 16 | `cargo run --bin ai_test_harness --features "full,p2p" -- --category=p2p_nat` |
 | Benchmarks | 42 | `cargo bench --bench core_benchmarks --features full` |
 
-**Total: 7,312 tests** (lib tests, verified with `cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite,chaos-testing" --lib`)
+**Total: 7,335 tests** (lib tests, verified with `cargo test --features "full,autonomous,scheduler,butler,browser,distributed-agents,containers,audio,workflows,prompt-signatures,a2a,voice-agent,media-generation,distillation,constrained-decoding,hitl,webrtc,devtools,eval-suite,chaos-testing" --lib`)
 
 ## Quick Start
 
@@ -511,10 +511,11 @@ The harness exits with code 1 if any test fails, making it suitable for CI pipel
 | v63 (MCP Task Tools + Home Automation) | 7,113 | +22 | 2026-03-26 |
 | v64 (Universal Events + MQTT + OpenHAB + CoAP + IoT) | 7,179 | +66 | 2026-03-26 |
 | v66 (Topic-Aware RAG Relevance) | 7,198 | +19 | 2026-03-26 |
-| v67 (Audio Pipeline + Voice Cloning + Agent Mode) | 7,312 | +42 | 2026-03-27 |
-| v68 (LLM-Enhanced Pipeline — 17 modules) | 7,312 | +69 | 2026-03-31 |
-| v69 (Enhanced Heuristics + LLM Optimization) | 7,312 | +24 | 2026-03-31 |
-| v70 (ai_setup CLI + GUI — Config & Node Management) | 7,312 | +13 | 2026-04-01 |
+| v67 (Audio Pipeline + Voice Cloning + Agent Mode) | 7,335 | +42 | 2026-03-27 |
+| v68 (LLM-Enhanced Pipeline — 17 modules) | 7,335 | +69 | 2026-03-31 |
+| v69 (Enhanced Heuristics + LLM Optimization) | 7,335 | +24 | 2026-03-31 |
+| v70 (ai_setup CLI + GUI — Config & Node Management) | 7,335 | +13 | 2026-04-01 |
+| v71 (ai_optimize — ML Configuration Optimizer) | 7,335 | +23 | 2026-04-01 |
 
 > **Note on v37 count**: Test count reflects current `--lib` run. Some tests from v28-v36 were
 > in integration tests or feature combinations not included in the standard lib test run.
