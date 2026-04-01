@@ -10361,3 +10361,67 @@ cargo run --bin ai_setup_gui --features gui
 
 The GUI has 6 tabs: Setup (environment scan), Config (editor), Nodes (management),
 Docker (containers), Models (Ollama), Backup (archive).
+
+## 187. ai_optimize — ML Configuration Optimizer
+
+### Quick Start
+
+```bash
+# Run 10 optimization rounds (auto-selects phase)
+ai_optimize run --rounds 10
+
+# Check current best config and phase
+ai_optimize status
+
+# Generate HTML report with charts
+ai_optimize report --html optimization_report.html
+
+# List all configuration arms being tested
+ai_optimize arms
+
+# Reset and start fresh
+ai_optimize reset
+```
+
+### How It Works
+
+The optimizer searches the FULL configuration space automatically:
+
+**Phase 1 — Ablation**: Starts with all features ON, disables one at a time,
+measures impact. Identifies which features actually help vs hurt quality.
+
+**Phase 2 — Bayesian Search**: Explores combinations of important features.
+A surrogate model (KNN) predicts scores for untested configs. Expected
+Improvement acquisition picks the most promising next config to test.
+
+**Phase 3 — Fine-tuning**: Fixes the best feature combination, optimizes
+continuous parameters (temperature, max_tokens) using Thompson Sampling.
+
+### Optimization Goals
+
+```bash
+# Best quality regardless of cost
+ai_optimize run --goal best-quality
+
+# Cheapest model with quality >= 0.8
+ai_optimize run --goal cheapest --threshold 0.8
+
+# Fastest model with quality >= 0.7
+ai_optimize run --goal fastest --threshold 0.7
+
+# Custom weights
+ai_optimize run --goal custom --quality-w 0.5 --latency-w 0.3 --cost-w 0.2
+```
+
+### Benchmark Modes
+
+- **Quality mode** (parallel): Measures correctness/relevance. Safe to run models in parallel.
+- **Latency mode** (sequential): Measures timing. Runs one model at a time to avoid GPU contention.
+
+### Code Changes
+
+When code changes between runs (bug fixes, new features):
+- Git commit hash tracked automatically
+- Old results decayed (increased uncertainty)
+- Optimizer re-explores with fresh data
+- Regressions detected and reported

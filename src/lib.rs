@@ -420,7 +420,8 @@ pub use audio_model_registry::{
 };
 
 pub use config_optimizer::{
-    compute_reward, config_distance, get_code_version, AblationResult, ConfigArm, ConfigOptimizer,
+    compute_reward, config_distance, get_code_version,
+    AblationResult as ConfigAblationResult, ConfigArm, ConfigOptimizer,
     ConfigPoint, ConfigValue, EvaluationResult, OptimizationGoal, OptimizationPhase,
     OptimizerConfig as ConfigOptimizerConfig, SurrogateModel,
 };

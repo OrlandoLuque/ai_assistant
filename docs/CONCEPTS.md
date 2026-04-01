@@ -4343,3 +4343,11 @@ Entity extraction, intent classification, and emotion detection now support Span
 ## 247. ai_setup CLI & GUI
 
 Two binaries sharing the `setup` module: `ai_setup` (CLI with 14 subcommands: init wizard, check prerequisites, validate config, version info, config operations, Docker management, backup/restore, install prerequisites) and `ai_setup_gui` (egui desktop app with 6 tabs: Setup/Config/Nodes/Docker/Models/Backup). The init wizard uses Butler::scan() to detect environment and suggest optimal config. Config set classifies changes as hot-reloadable vs restart-required. Docker commands shell out to docker/docker-compose CLI. Backup uses flate2 gzip with versioned archive format.
+
+## 248. Configuration Optimizer — ML-Based Config Search
+
+`ConfigOptimizer` finds the optimal configuration across the full parameter space (39 RAG features, 17 LLM enhancements, models, providers, temperature, etc.) using a 3-phase approach: (1) Ablation — start with all features ON, disable one at a time, measure impact, rank by importance. (2) Bayesian Optimization — KNN-based surrogate model predicts score for untested combos, Expected Improvement acquisition selects next config to try. (3) Fine-tuning — bandit (Thompson Sampling with decay) optimizes continuous params within best feature combo. Non-stationarity handled by decay_factor (0.95), version tagging (code changes trigger extra decay), and sliding window. Two benchmark modes: quality (parallel, measures correctness) and latency (sequential isolation, measures timing). LLM response cache with mode-aware separation (quality metrics never contaminate latency metrics). Multi-sample before caching (3 runs → median).
+
+## 249. Optimization Reports & Visualization
+
+`ai_optimize report --html` generates standalone HTML with Chart.js: feature importance bars, score evolution over rounds, quality-vs-latency scatter with Pareto frontier, cost-vs-quality scatter, feature interaction heatmap, model comparison grouped bars. SQLite stores all evaluations, ablation results, best configs per version. JSON state file for optimizer persistence. `OptimizationGoal` enum: BestQuality, CheapestAboveThreshold, FastestAboveThreshold, Balanced, Custom weights.
