@@ -193,6 +193,7 @@ pub mod event_source;
 pub mod topic_matcher;
 pub mod audio_filter;
 pub mod audio_model_registry;
+pub mod config_optimizer;
 pub mod llm_enhance;
 pub mod mcp_voice_tools;
 #[cfg(feature = "audio")]
@@ -416,6 +417,12 @@ pub use audio_filter::{
 
 pub use audio_model_registry::{
     AudioModelCategory, AudioModelInfo, AudioModelRegistry, ModelStatus,
+};
+
+pub use config_optimizer::{
+    compute_reward, config_distance, get_code_version, AblationResult, ConfigArm, ConfigOptimizer,
+    ConfigPoint, ConfigValue, EvaluationResult, OptimizationGoal, OptimizationPhase,
+    OptimizerConfig as ConfigOptimizerConfig, SurrogateModel,
 };
 
 pub use llm_enhance::{
