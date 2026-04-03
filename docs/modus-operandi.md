@@ -196,6 +196,16 @@ cargo check --features "full,autonomous,scheduler,butler,browser,distributed-age
 | `src/audio_model_registry.rs` | Audio model catalog, download, SHA-256 verification |
 | `src/mcp_voice_tools.rs` | 8 MCP tools for speaker enrollment + voice cloning |
 | `src/bin/ai_virtual_mic.rs` | Real-time voice transform binary (4 modes) |
+| `src/pii_tokenizer.rs` | Reversible PII masking (mask/unmask) |
+| `src/credit_system.rs` | Credit economy (escrow, maturity, epochs, pool) |
+| `src/dynamic_pricing.rs` | Load/idle/market-aware auto-pricing |
+| `src/collusion_detection.rs` | Transaction graph fraud analysis |
+| `src/gpu_sharing.rs` | GPU sharing protocol (receipts, routing, challenges) |
+| `src/config_optimizer.rs` | ML config optimization (ablation, Bayesian, bandit) |
+| `src/bin/ai_gpu_share.rs` | GPU sharing network binary |
+| `src/bin/ai_optimize.rs` | Configuration optimizer binary |
+| `src/bin/ai_setup.rs` | Setup/management CLI |
+| `src/bin/ai_setup_gui.rs` | Setup/management GUI |
 | `Cargo.toml` | Feature flags + dependencies |
 | `src/unified_persistence.rs` | UnifiedDb, SqliteSessionStore, SqliteMemoryStore |
 | `docs/IMPROVEMENTS_V43.md` | V43 — FreshContext + Fallback Chains |

@@ -9453,3 +9453,106 @@ User content → prompt_wrap() → delimited block
 Guardrail enhancement uses defense-in-depth:
 - LLM can UPGRADE: safe → detected (more restrictive)
 - LLM can NOT downgrade: detected → safe (never less restrictive)
+
+## 64. ML Configuration Optimizer Architecture (V71)
+
+### 3-Phase Optimization
+
+```
+Phase 1: ABLATION
+  Baseline (all ON) → disable feature A → measure → disable B → measure → ...
+  → Ranked importance: [feature_3: +0.15, feature_7: +0.08, ...]
+
+Phase 2: BAYESIAN SEARCH
+  KNN surrogate model → Expected Improvement acquisition
+  → Test combo {A=on, B=off, C=on} → score 0.87
+  → Update surrogate → suggest next combo → ...
+  → Best combo found after ~50 evaluations
+
+Phase 3: FINE-TUNING
+  Fix best combo → Thompson Sampling per model
+  → Optimize: temperature, max_tokens, relevance threshold
+  → Final optimal config
+```
+
+### Benchmark Modes (no contamination)
+
+```
+Quality mode (parallel):     Latency mode (sequential):
+┌─────┐ ┌─────┐ ┌─────┐    ┌─────┐
+│ M1  │ │ M2  │ │ M3  │    │ M1  │ alone → 45ms
+└──┬──┘ └──┬──┘ └──┬──┘    └─────┘
+   │       │       │        ┌─────┐
+   └───────┴───────┘        │ M2  │ alone → 62ms
+   Correctness only         └─────┘
+   (timing unreliable)       Timing accurate
+```
+
+## 65. GPU Sharing Network Architecture (V73)
+
+### Protocol Flow (escrow-based)
+
+```
+Requester              Network              Provider           Auditor
+   │                     │                     │                  │
+   ├── Request ─────────>│                     │                  │
+   │   + escrow locked   ├── forward ─────────>│                  │
+   │   + commitment      │                     │                  │
+   │                     │<── Accept ──────────│                  │
+   │                     │   + provider_nonce  │                  │
+   │                     │                     │                  │
+   │                     │    [GPU compute]    │                  │
+   │                     │                     │                  │
+   │<── Result ──────────│<── Result + proof ──│                  │
+   │                     │                     │                  │
+   ├── Reveal nonce ────>│                     │                  │
+   │                     │── receipt_id = hash(nonce_r + nonce_p) │
+   │                     │                     │                  │
+   │                     │── Select auditor ──────────────────────>│
+   │                     │                     │                  │
+   │                     │<── Audit: verified ─────────────────────│
+   │                     │                     │                  │
+   │  -credits           │  +credits (mature)  │   +fee (pool)   │
+```
+
+### Credit Economy
+
+```
+GPU work ──> Provider earns 95% ──> spends on network ──> cycle
+                │
+                └── 5% fee ──> Pool ──> grants (new nodes)
+                                   ──> micro-grants (gateways)
+                                   ──> auditor rewards
+
+Progressive fee on earnings:
+  balance < 500:  5% (normal)
+  balance < 2000: 8%
+  balance < 5000: 12%
+  balance > 5000: 20% (desincentivizes hoarding)
+```
+
+### Anti-Fraud Layers
+
+```
+Layer 1: Triple-signed receipts (provider + requester + auditor)
+Layer 2: Commit-reveal nonces (auditor unpredictable)
+Layer 3: Colusion detection (graph analysis)
+Layer 4: GPU fingerprinting (1 GPU = 1 node)
+Layer 5: Progressive fees (hoarding unprofitable)
+Layer 6: Epoch checkpoints (Merkle-root receipt compression)
+```
+
+### Privacy (PiiTokenizer)
+
+```
+Local node:  "Querido Alfredo, reserva en Madrid"
+                ↓ mask()
+Sent to net: "Querido [nombre1], reserva en [ciudad1]"
+                ↓ LLM processes
+Response:    "[nombre1], tu reserva en [ciudad1] confirmada"
+                ↓ unmask()
+User sees:   "Alfredo, tu reserva en Madrid confirmada"
+
+Token map NEVER leaves local node.
+Triple encryption: QUIC/TLS + AES session key + PII tokenization.
+```
