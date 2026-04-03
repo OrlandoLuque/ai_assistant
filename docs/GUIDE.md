@@ -10425,3 +10425,66 @@ When code changes between runs (bug fixes, new features):
 - Old results decayed (increased uncertainty)
 - Optimizer re-explores with fresh data
 - Regressions detected and reported
+
+## 188. ai_gpu_share — Distributed GPU Sharing Network
+
+### Quick Start: Provider (earn credits)
+
+```bash
+ai_setup install model llama3.2       # pull a model
+ai_gpu_share start --provider          # share your GPU
+```
+
+### Quick Start: Consumer (use the network)
+
+```bash
+ai_gpu_share start --gateway           # gateway at localhost:8090
+
+# Use with any OpenAI-compatible app:
+curl http://localhost:8090/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "llama3.2", "messages": [{"role": "user", "content": "Hello"}]}'
+```
+
+### Both Provider + Consumer (default)
+
+```bash
+ai_gpu_share start                     # provide + consume
+# Local model = free, network model = costs credits
+```
+
+### Monitoring
+
+```bash
+ai_gpu_share credits                   # balance, pending, earned/spent
+ai_gpu_share models                    # available models on network
+ai_gpu_share peers                     # connected nodes
+ai_gpu_share status                    # full dashboard
+```
+
+### Privacy: PII Tokenization
+
+Personal data is automatically masked before sending to remote nodes:
+```
+Your prompt:  "Hi Alfredo, confirm my booking in Madrid"
+Sent to node: "Hi [nombre1], confirm my booking in [ciudad1]"
+Response:     "Hi [nombre1], your [ciudad1] booking is confirmed"
+You see:      "Hi Alfredo, your Madrid booking is confirmed"
+```
+
+### Routing Strategies
+
+Set via config or per-request header `X-GPU-Share-Route`:
+- `local_only` — never use network (max privacy)
+- `local_priority` — wait for local GPU, network as fallback (default)
+- `network_only` — always use network
+- `auto` — decides based on queue + credits + prompt size
+
+### Backup Identity
+
+```bash
+ai_gpu_share backup-keys               # export identity (3 files, 96 bytes)
+ai_gpu_share restore --keys /backup/   # restore on new hardware
+```
+
+Your credits and reputation live on the network — you only need your private key to access them.

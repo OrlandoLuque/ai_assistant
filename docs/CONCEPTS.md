@@ -4351,3 +4351,15 @@ Two binaries sharing the `setup` module: `ai_setup` (CLI with 14 subcommands: in
 ## 249. Optimization Reports & Visualization
 
 `ai_optimize report --html` generates standalone HTML with Chart.js: feature importance bars, score evolution over rounds, quality-vs-latency scatter with Pareto frontier, cost-vs-quality scatter, feature interaction heatmap, model comparison grouped bars. SQLite stores all evaluations, ablation results, best configs per version. JSON state file for optimizer persistence. `OptimizationGoal` enum: BestQuality, CheapestAboveThreshold, FastestAboveThreshold, Balanced, Custom weights.
+
+## 250. GPU Sharing Network — Distributed LLM Inference
+
+SETI-style P2P network where nodes share GPU for LLM inference. Earn credits by running others' queries, spend credits to use the network. Core protocol: escrow-based (credits locked before computation, released on verified delivery). Triple-signed receipts (provider + requester + DHT-selected auditor) prevent fraud. Commit-reveal nonces make auditor selection unpredictable. PiiTokenizer masks personal data before sending prompts to remote nodes (reversible: unmask on response return). Provider selection is value-based (quality/credit ratio), not speed-absolute, so slow+cheap nodes compete with fast+expensive ones.
+
+## 251. Credit Economy & Anti-Fraud
+
+Credits backed by real GPU work (no creation from nothing). 5% transaction fee feeds network pool for grants and auditor rewards. Progressive earning fee (5-20%) desincentivizes hoarding. Grant is gradual (50 on join + earn over 7 days). Escrow via dedicated PNCounter: credits locked during transaction, released to provider or refunded to requester based on audit. Epoch checkpoints consolidate receipts every 24h into Merkle-root-compressed summaries. CollusionDetector analyzes transaction graph for suspicious patterns (partner diversity, reciprocity ratio). GPU fingerprinting prevents Sybil (1 GPU = 1 node).
+
+## 252. PiiTokenizer — Reversible PII Masking
+
+Standalone crate module (not GPU-sharing specific). Detects PII via regex patterns (email, phone, names, addresses, dates, credit cards) and replaces with numbered placeholders: "Alfredo" → "[nombre1]", "alfredo@mail.com" → "[email1]". Token map kept locally, never sent over network. After LLM processes masked prompt and returns response with placeholders, unmask() restores real values. Four privacy levels: None, Tokenize (default), Aggressive, Paranoid. Reusable across GPU sharing, server endpoints, MCP tools, voice pipeline.
