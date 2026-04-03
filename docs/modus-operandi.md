@@ -49,7 +49,8 @@ Continúa con el desarrollo del proyecto. Lee docs/modus-operandi.md y el últim
 - **V70**: COMPLETE — ai_setup: Configuration & Node Management (setup module with 5 sub-modules, CLI binary with 14 subcommands, GUI binary with 6 tabs, init wizard, Docker management, hot-reload config, backup/restore, prerequisite detection/install)
 - **V71**: COMPLETE — ai_optimize: ML Configuration Optimizer (ablation + Bayesian + bandit)
 - **V73**: COMPLETE — GPU Sharing Network (PiiTokenizer, credit system, dynamic pricing, collusion detection, compute proof, gpu_sharing protocol, ai_gpu_share binary)
-- **Latest**: V73 — GPU Sharing Network (COMPLETE)
+- **V73 Wiring Audit**: COMPLETE — Full wiring audit (MCP home tools registered, Docker feature gate fixed, GPU sharing integrated with credit/pricing/collusion subsystems, LLM enhancer hook in AiAssistant, setup re-exports, PiiTokenizer auto-enabled for cloud)
+- **Latest**: V73 — GPU Sharing Network + Wiring Audit (COMPLETE)
 - **Test count**: 7,387 lib tests (0 failures) + 39 harness precision + 18 fallback resilience + 8 conversation quality scored tests
 - **Source files**: 360 .rs files, ~410K LOC
 - **Feature flags**: 60 (+1: gpu-sharing)
