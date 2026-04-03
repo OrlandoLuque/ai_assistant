@@ -47,9 +47,12 @@ Continúa con el desarrollo del proyecto. Lee docs/modus-operandi.md y el últim
 - **V68**: COMPLETE — LLM-Enhanced Pipeline (17 modules with optional LLM enhancement: conversation compaction, entity extraction, intent classification, query expansion, response quality, topic detection, auto-model selection, guardrail evaluation, RAG tier auto-selection, document chunking, KG enrichment, procedural evolution, speaker intent, home automation intent, agent task decomposition, sentiment trend, multi-agent consensus + LlmEnhancer trait + MockLlm + MockSpeechProvider)
 - **V69**: COMPLETE — Enhanced Heuristics + LLM Pipeline Optimization (CachedLlmEnhancer, progressive enhancement, cost tracking, prompt batching, few-shot examples, multilingual entity/intent/emotion ES, emoji/CAPS/negation detection, opinion+chitchat intents, embedding-based topic clustering)
 - **V70**: COMPLETE — ai_setup: Configuration & Node Management (setup module with 5 sub-modules, CLI binary with 14 subcommands, GUI binary with 6 tabs, init wizard, Docker management, hot-reload config, backup/restore, prerequisite detection/install)
-- **Latest**: V70 — ai_setup CLI + GUI (COMPLETE)
-- **Test count**: 7,312+ lib tests (0 failures) + 39 harness precision + 18 fallback resilience + 8 conversation quality scored tests
-- **Source files**: 353 .rs files, ~404K LOC
+- **V71**: COMPLETE — ai_optimize: ML Configuration Optimizer (ablation + Bayesian + bandit)
+- **V73**: COMPLETE — GPU Sharing Network (PiiTokenizer, credit system, dynamic pricing, collusion detection, compute proof, gpu_sharing protocol, ai_gpu_share binary)
+- **Latest**: V73 — GPU Sharing Network (COMPLETE)
+- **Test count**: 7,387 lib tests (0 failures) + 39 harness precision + 18 fallback resilience + 8 conversation quality scored tests
+- **Source files**: 360 .rs files, ~410K LOC
+- **Feature flags**: 60 (+1: gpu-sharing)
 - **Feature flags**: 59 (+4: home-automation, coap, precise-tokens, audio-io)
 - **Status**: Experimental — compiles and passes tests, but not validated in production
 - **Website**: Separated to `ai_assistant-website` repo (GitHub Pages ready)

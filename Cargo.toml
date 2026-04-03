@@ -3,7 +3,7 @@
 
 [package]
 name = "ai_assistant"
-version = "0.2.6"
+version = "0.2.7"
 edition = "2021"
 authors = ["Orlando Jose Luque Moraira (Lander)"]
 description = "Reusable AI assistant library for local LLM integration (Ollama, LM Studio, etc.)"
@@ -91,6 +91,10 @@ p2p = ["distributed"]
 # Merkle sync, node security (mutual TLS), replication, LAN discovery.
 # Not in 'full' by default due to heavy deps (quinn/rustls). Opt-in: --features distributed-network
 distributed-network = ["distributed", "dep:quinn", "dep:rustls", "dep:rcgen", "dep:sha2", "dep:tokio", "dep:bincode", "dep:getrandom"]
+
+# GPU sharing: distributed LLM inference network (provider, gateway, or both).
+# Not in 'full' by default — requires distributed-network. Opt-in: --features gpu-sharing
+gpu-sharing = ["distributed-network"]
 
 # TLS support for the embedded HTTP server (HTTPS via rustls).
 # Not in 'full' — opt-in only. Requires PEM cert/key files.
@@ -465,6 +469,11 @@ required-features = ["full"]
 [[bin]]
 name = "ai_optimize"
 path = "src/bin/ai_optimize.rs"
+required-features = ["full"]
+
+[[bin]]
+name = "ai_gpu_share"
+path = "src/bin/ai_gpu_share.rs"
 required-features = ["full"]
 
 [[bin]]
