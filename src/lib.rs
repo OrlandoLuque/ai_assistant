@@ -675,6 +675,20 @@ pub use merkle_sync::{AntiEntropySync, MerkleProof, MerkleTree, MerkleSyncDelta}
 pub use node_security::{CertificateManager, ChallengeResponse, JoinToken, NodeIdentity};
 
 // =============================================================================
+// GPU SHARING NETWORK (distributed LLM inference mesh)
+// =============================================================================
+
+pub mod gpu_sharing;
+
+pub use gpu_sharing::{
+    AuditResult as GpuAuditResult, CommitRevealState, GpuBenchmarkChallenge, GpuCapability,
+    GpuChallengeResult, GpuNetworkConfig, GpuSharingConfig, InferenceRequest as GpuInferenceRequest,
+    InferenceResponse as GpuInferenceResponse, ModelOffer, NodeCapabilityAd, PricingConfig,
+    ProviderSelector, RequestGoal, RouteDecision, RoutingConfig, RoutingStrategy,
+    SharingMode, TransactionReceipt, route_request,
+};
+
+// =============================================================================
 // P2P NETWORKING (optional)
 // =============================================================================
 
@@ -1634,6 +1648,9 @@ pub mod agent_graph;
 pub mod answer_extraction;
 pub mod api_key_rotation;
 pub mod code_editing;
+pub mod collusion_detection;
+pub mod compute_proof;
+pub mod credit_system;
 
 // REPL/CLI engine
 pub mod repl;
@@ -1649,6 +1666,7 @@ pub mod cost_integration;
 pub mod dag_executor;
 pub mod decision_tree;
 pub mod distributed_rate_limit;
+pub mod dynamic_pricing;
 pub mod edit_operations;
 pub mod entities;
 pub mod entity_enrichment;
@@ -1674,6 +1692,7 @@ pub use multimodal_rag::{
 
 pub mod openapi_export;
 pub mod patch_application;
+pub mod pii_tokenizer;
 pub mod prefetch;
 pub mod priority_queue;
 pub mod prompt_optimizer;
@@ -1934,6 +1953,18 @@ pub use text_transform::{TextTransformer, Transform, TransformPipeline, Transfor
 
 pub use code_editing::{
     CodeEditor, CodeSearch, EditCategory, EditSuggestion, LanguageConfig, SearchScope,
+};
+
+pub use collusion_detection::{CollusionDetector, CollusionReport};
+
+pub use compute_proof::ComputeProof;
+
+pub use credit_system::{CreditManager, EpochCheckpoint, EpochManager, NetworkPool, PendingCredit};
+
+pub use dynamic_pricing::DynamicPricer;
+
+pub use pii_tokenizer::{
+    PiiCategory, PiiTokenMap, PiiTokenizer, TokenizerConfig, TokenizerPrivacyLevel,
 };
 
 pub use translation_analysis::{
