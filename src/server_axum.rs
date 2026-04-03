@@ -2233,7 +2233,7 @@ fn build_unified_mcp_server() -> Arc<std::sync::RwLock<crate::mcp_protocol::McpS
     let mut tool_count = 0u32;
 
     // ── Docker/Container tools ──────────────────────────────────────
-    #[cfg(feature = "containers")]
+    #[cfg(all(feature = "containers", feature = "tools"))]
     {
         use crate::container_executor::{ContainerConfig, ContainerExecutor};
         if ContainerExecutor::is_docker_available() {
@@ -2264,6 +2264,20 @@ fn build_unified_mcp_server() -> Arc<std::sync::RwLock<crate::mcp_protocol::McpS
             tool_count += 3;
             log::info!("MCP: +3 Voice cloning tools (ElevenLabs)");
         }
+    }
+
+    // ── Home automation tools ────────────────────────────────────────
+    #[cfg(all(feature = "tools", feature = "home-automation"))]
+    {
+        // Home automation tools need a HomeBackend — use HomeAssistantBackend with default config
+        let ha_config = crate::mcp_home_tools::HomeConfig::default();
+        let ha_backend: std::sync::Arc<std::sync::Mutex<dyn crate::mcp_home_tools::HomeBackend>> =
+            std::sync::Arc::new(std::sync::Mutex::new(
+                crate::mcp_home_tools::HomeAssistantBackend::new(&ha_config),
+            ));
+        crate::mcp_home_tools::register_home_tools(&mut mcp, ha_backend);
+        tool_count += 10;
+        log::info!("MCP: +10 Home automation tools");
     }
 
     // Note: Agent management tools (mcp_agent_tools) require an AgentPool

@@ -195,6 +195,7 @@ pub mod audio_filter;
 pub mod audio_model_registry;
 pub mod config_optimizer;
 pub mod llm_enhance;
+#[cfg(feature = "tools")]
 pub mod mcp_voice_tools;
 #[cfg(feature = "audio")]
 pub mod mock_speech;
@@ -682,10 +683,10 @@ pub mod gpu_sharing;
 
 pub use gpu_sharing::{
     AuditResult as GpuAuditResult, CommitRevealState, GpuBenchmarkChallenge, GpuCapability,
-    GpuChallengeResult, GpuNetworkConfig, GpuSharingConfig, InferenceRequest as GpuInferenceRequest,
-    InferenceResponse as GpuInferenceResponse, ModelOffer, NodeCapabilityAd, PricingConfig,
-    ProviderSelector, RequestGoal, RouteDecision, RoutingConfig, RoutingStrategy,
-    SharingMode, TransactionReceipt, route_request,
+    GpuChallengeResult, GpuNetworkConfig, GpuSharingConfig, GpuSharingNode,
+    InferenceRequest as GpuInferenceRequest, InferenceResponse as GpuInferenceResponse,
+    ModelOffer, NodeCapabilityAd, PricingConfig, ProviderSelector, RequestGoal, RouteDecision,
+    RoutingConfig, RoutingStrategy, SharingMode, TransactionReceipt, route_request,
 };
 
 // =============================================================================
@@ -1639,6 +1640,9 @@ pub mod widgets;
 // =============================================================================
 
 pub mod setup;
+pub use setup::{
+    backup, config_ops, docker_ops, node_manager, prereq,
+};
 
 // =============================================================================
 // ADDITIONAL MODULES (always available, lightweight)

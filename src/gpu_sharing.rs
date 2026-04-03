@@ -29,6 +29,10 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::credit_system::CreditManager;
+use crate::dynamic_pricing::DynamicPricer;
+use crate::collusion_detection::CollusionDetector;
+
 // ============================================================================
 // Configuration
 // ============================================================================
@@ -752,6 +756,71 @@ pub fn route_request(
 }
 
 // ============================================================================
+// Integrated GPU Sharing Node
+// ============================================================================
+
+/// Type alias for compute proofs used in inference verification.
+pub type InferenceProof = crate::compute_proof::ComputeProof;
+
+/// Complete GPU sharing node state combining all subsystems.
+///
+/// Composes `CreditManager`, `DynamicPricer`, `CollusionDetector`, and
+/// `ComputeProof` into a single coherent node that can participate in the
+/// GPU sharing network.
+pub struct GpuSharingNode {
+    /// Node configuration.
+    pub config: GpuSharingConfig,
+    /// Credit balance and escrow manager for this node.
+    pub credits: CreditManager,
+    /// Dynamic pricer tracking supply/demand for pricing adjustments.
+    pub pricer: DynamicPricer,
+    /// Collusion detector monitoring transaction patterns.
+    pub collusion: CollusionDetector,
+    /// Advertised capabilities (set when the node joins the network).
+    pub capabilities: Option<NodeCapabilityAd>,
+    /// Currently active inference requests.
+    pub active_requests: Vec<InferenceRequest>,
+    /// Transaction receipts pending maturity.
+    pub receipts_pending: Vec<TransactionReceipt>,
+}
+
+impl GpuSharingNode {
+    /// Create a new GPU sharing node with the given config and node ID.
+    pub fn new(config: GpuSharingConfig, node_id: &str) -> Self {
+        let pricer = DynamicPricer::new(
+            config.pricing.base_price,
+            config.pricing.min_price,
+            config.pricing.max_price,
+        );
+        Self {
+            config,
+            credits: CreditManager::new(node_id),
+            pricer,
+            collusion: CollusionDetector::new(10000),
+            capabilities: None,
+            active_requests: Vec::new(),
+            receipts_pending: Vec::new(),
+        }
+    }
+
+    /// Get the current dynamic price per 1K tokens.
+    pub fn current_price(&self) -> f64 {
+        self.pricer.current_price()
+    }
+
+    /// Check whether this node can afford a transaction of the given cost.
+    pub fn can_afford(&self, cost: f64) -> bool {
+        self.credits.effective_balance() >= cost
+    }
+
+    /// Record a transaction for collusion monitoring.
+    pub fn record_transaction(&mut self, from: &str, to: &str, _amount: f64, _receipt_id: &str) {
+        self.collusion.record_transaction(from, to);
+        // Credits handled via escrow in CreditManager
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -1103,5 +1172,33 @@ mod tests {
         let large = GpuBenchmarkChallenge::generate(24576);
         assert!(small.matrix_size <= large.matrix_size);
         assert!(small.expected_min_gflops <= large.expected_min_gflops);
+    }
+
+    // ── GpuSharingNode tests ───────────────────────────────────────
+
+    #[test]
+    fn test_gpu_sharing_node_creation() {
+        let config = GpuSharingConfig::default();
+        let node = GpuSharingNode::new(config, "test-node-1");
+
+        // Default dynamic pricing: base_price = 1.0
+        assert!((node.current_price() - 1.0).abs() < f64::EPSILON);
+        // Fresh node starts with 0 balance
+        assert!(!node.can_afford(1.0));
+        // No capabilities advertised yet
+        assert!(node.capabilities.is_none());
+        assert!(node.active_requests.is_empty());
+        assert!(node.receipts_pending.is_empty());
+    }
+
+    #[test]
+    fn test_gpu_sharing_node_record_transaction() {
+        let config = GpuSharingConfig::default();
+        let mut node = GpuSharingNode::new(config, "test-node-2");
+
+        // Recording a transaction should not panic
+        node.record_transaction("node-a", "node-b", 5.0, "rcpt-test");
+        // Collusion detector should have tracked the transaction pair
+        // (internal state — we just verify it doesn't panic)
     }
 }

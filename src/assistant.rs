@@ -476,6 +476,11 @@ pub struct AiAssistant {
     /// IDs of procedures that were injected in the current turn (for outcome tracking).
     #[cfg(feature = "advanced-memory")]
     active_procedure_ids: Vec<String>,
+
+    /// Optional LLM enhancer for improving pipeline quality.
+    /// When set, modules like intent classification, entity extraction,
+    /// and response quality scoring can use LLM calls for better results.
+    llm_enhancer: Option<Box<dyn crate::llm_enhance::LlmEnhancer>>,
 }
 
 impl Default for AiAssistant {
@@ -672,6 +677,8 @@ impl AiAssistant {
             procedure_evolver: None,
             #[cfg(feature = "advanced-memory")]
             active_procedure_ids: Vec::new(),
+
+            llm_enhancer: None,
         }
     }
 
@@ -703,6 +710,18 @@ impl AiAssistant {
     /// Set a custom adaptive thinking configuration.
     pub fn set_adaptive_thinking(&mut self, config: AdaptiveThinkingConfig) {
         self.adaptive_thinking = config;
+    }
+
+    /// Set an optional LLM enhancer for improving pipeline quality.
+    /// When set, modules like intent classification, entity extraction,
+    /// and response quality scoring will use LLM calls for better results.
+    pub fn set_llm_enhancer(&mut self, enhancer: Box<dyn crate::llm_enhance::LlmEnhancer>) {
+        self.llm_enhancer = Some(enhancer);
+    }
+
+    /// Get a reference to the current LLM enhancer, if set.
+    pub fn llm_enhancer(&self) -> Option<&dyn crate::llm_enhance::LlmEnhancer> {
+        self.llm_enhancer.as_deref()
     }
 
     /// Classify a query and return the thinking strategy (for inspection/debugging).
