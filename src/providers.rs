@@ -678,6 +678,26 @@ pub fn generate_response(
     conversation: &[ChatMessage],
     system_prompt: &str,
 ) -> Result<String> {
+    // PII protection: mask personal data before sending to cloud providers.
+    // Local providers (Ollama, LM Studio, etc.) are NOT masked — data stays local.
+    let mut pii_map = crate::pii_tokenizer::PiiTokenMap::new();
+    let pii_conversation: Vec<ChatMessage>;
+    let conversation = if config.provider.is_cloud() {
+        let mut tokenizer = crate::pii_tokenizer::PiiTokenizer::with_default();
+        pii_conversation = conversation.iter().map(|msg| {
+            let (masked_content, map) = tokenizer.mask(&msg.content);
+            pii_map.extend(map);
+            ChatMessage {
+                role: msg.role.clone(),
+                content: masked_content,
+                ..msg.clone()
+            }
+        }).collect();
+        pii_conversation.as_slice()
+    } else {
+        conversation
+    };
+
     let start = std::time::Instant::now();
     log::info!(
         "[llm] provider={:?} model={} request_start streaming=false",
@@ -742,7 +762,12 @@ pub fn generate_response(
         }
     }
 
-    result
+    // PII protection: unmask response (restore real values from placeholders)
+    if !pii_map.is_empty() {
+        result.map(|response| crate::pii_tokenizer::PiiTokenizer::unmask(&response, &pii_map))
+    } else {
+        result
+    }
 }
 
 // ============================================================================
