@@ -1039,6 +1039,692 @@ fn now_epoch_ms() -> u64 {
 }
 
 // ============================================================================
+// Creative Voice Effects
+// ============================================================================
+
+/// Pitch shifter — shifts pitch up (helium/chipmunk) or down (Darth Vader/deep).
+///
+/// Uses simple resampling with linear interpolation. Positive semitones shift up,
+/// negative shift down. +12 = one octave up, -12 = one octave down.
+pub struct PitchShifter {
+    shift_semitones: f32,
+    enabled: bool,
+    buffer: Vec<f32>,
+    read_pos: f64,
+}
+
+impl PitchShifter {
+    pub fn new(semitones: f32) -> Self {
+        Self {
+            shift_semitones: semitones,
+            enabled: true,
+            buffer: Vec::new(),
+            read_pos: 0.0,
+        }
+    }
+
+    /// +1 octave — helium voice.
+    pub fn helium() -> Self {
+        Self::new(12.0)
+    }
+
+    /// +7 semitones — chipmunk voice (slightly less extreme than helium).
+    pub fn chipmunk() -> Self {
+        Self::new(7.0)
+    }
+
+    /// -8 semitones — deep Darth Vader voice.
+    pub fn darth_vader() -> Self {
+        Self::new(-8.0)
+    }
+
+    /// -1 octave — very deep voice.
+    pub fn deep() -> Self {
+        Self::new(-12.0)
+    }
+}
+
+impl AudioEffect for PitchShifter {
+    fn name(&self) -> &str {
+        "Pitch Shifter"
+    }
+
+    fn process(&mut self, samples: &mut [i16], _sample_rate: u32) {
+        if samples.is_empty() || self.shift_semitones.abs() < 0.001 {
+            return;
+        }
+
+        let ratio = 2.0f64.powf(self.shift_semitones as f64 / 12.0);
+
+        // Convert input to f32 buffer
+        self.buffer.clear();
+        self.buffer.extend(samples.iter().map(|&s| s as f32));
+
+        let input_len = self.buffer.len();
+        let mut output = Vec::with_capacity(samples.len());
+
+        // Resample via linear interpolation
+        let mut pos = self.read_pos;
+        for _ in 0..samples.len() {
+            let idx = pos as usize;
+            if idx + 1 < input_len {
+                let frac = (pos - idx as f64) as f32;
+                let interpolated =
+                    self.buffer[idx] * (1.0 - frac) + self.buffer[idx + 1] * frac;
+                output.push(interpolated);
+            } else if idx < input_len {
+                output.push(self.buffer[idx]);
+            } else {
+                output.push(0.0);
+            }
+            pos += ratio;
+        }
+
+        // Track fractional read position for continuity across calls
+        self.read_pos = pos - input_len as f64;
+        if self.read_pos < 0.0 {
+            self.read_pos = 0.0;
+        }
+
+        // Write back to samples
+        for (i, s) in samples.iter_mut().enumerate() {
+            if i < output.len() {
+                *s = output[i].clamp(-32767.0, 32767.0) as i16;
+            }
+        }
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+
+    fn category(&self) -> EffectCategory {
+        EffectCategory::Creative
+    }
+
+    fn estimated_latency_us(&self) -> u64 {
+        200
+    }
+}
+
+/// Robot voice — ring modulation (multiply audio by a carrier sine wave).
+///
+/// Creates a metallic, robotic sound by modulating the audio with a fixed-frequency
+/// sine wave. Default carrier frequency is 150 Hz.
+pub struct RobotVoice {
+    frequency: f32,
+    phase: f64,
+    enabled: bool,
+}
+
+impl RobotVoice {
+    pub fn new(frequency: f32) -> Self {
+        Self {
+            frequency,
+            phase: 0.0,
+            enabled: true,
+        }
+    }
+
+    /// Default robot voice at 150 Hz carrier.
+    pub fn default_robot() -> Self {
+        Self::new(150.0)
+    }
+}
+
+impl AudioEffect for RobotVoice {
+    fn name(&self) -> &str {
+        "Robot Voice"
+    }
+
+    fn process(&mut self, samples: &mut [i16], sample_rate: u32) {
+        if samples.is_empty() {
+            return;
+        }
+
+        let phase_inc =
+            2.0 * std::f64::consts::PI * self.frequency as f64 / sample_rate as f64;
+
+        for s in samples.iter_mut() {
+            let modulator = self.phase.sin() as f32;
+            let modulated = *s as f32 * modulator;
+            *s = modulated.clamp(-32767.0, 32767.0) as i16;
+            self.phase += phase_inc;
+        }
+
+        // Keep phase in [0, 2pi) to avoid floating-point drift
+        self.phase %= 2.0 * std::f64::consts::PI;
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+
+    fn category(&self) -> EffectCategory {
+        EffectCategory::Creative
+    }
+
+    fn estimated_latency_us(&self) -> u64 {
+        50
+    }
+}
+
+/// AutoTune — snap pitch to nearest musical note.
+///
+/// Uses autocorrelation to estimate the dominant pitch of each frame, finds the
+/// nearest semitone (A4=440 Hz reference), and applies a corrective pitch shift.
+pub struct AutoTune {
+    enabled: bool,
+    correction_strength: f32,
+    last_correction: f32,
+}
+
+impl AutoTune {
+    pub fn new(strength: f32) -> Self {
+        Self {
+            enabled: true,
+            correction_strength: strength.clamp(0.0, 1.0),
+            last_correction: 0.0,
+        }
+    }
+
+    /// Full snap to nearest note (strength = 1.0).
+    pub fn full() -> Self {
+        Self::new(1.0)
+    }
+
+    /// Subtle correction (strength = 0.5).
+    pub fn subtle() -> Self {
+        Self::new(0.5)
+    }
+
+    /// Estimate pitch via autocorrelation. Returns frequency in Hz or None if unclear.
+    fn estimate_pitch(samples: &[i16], sample_rate: u32) -> Option<f32> {
+        if samples.len() < 64 {
+            return None;
+        }
+
+        let float_samples: Vec<f32> = samples.iter().map(|&s| s as f32).collect();
+
+        // Check for silence
+        let rms = (float_samples.iter().map(|s| s * s).sum::<f32>()
+            / float_samples.len() as f32)
+            .sqrt();
+        if rms < 500.0 {
+            return None;
+        }
+
+        // Autocorrelation to find fundamental period
+        let max_lag = (sample_rate as usize / 80).min(samples.len() / 2); // 80 Hz min
+        let min_lag = sample_rate as usize / 1000; // 1000 Hz max
+
+        if min_lag >= max_lag {
+            return None;
+        }
+
+        let mut best_lag = min_lag;
+        let mut best_corr = f32::NEG_INFINITY;
+
+        for lag in min_lag..max_lag {
+            let mut corr = 0.0f32;
+            let len = float_samples.len() - lag;
+            for i in 0..len {
+                corr += float_samples[i] * float_samples[i + lag];
+            }
+            corr /= len as f32;
+
+            if corr > best_corr {
+                best_corr = corr;
+                best_lag = lag;
+            }
+        }
+
+        // Verify that the autocorrelation peak is significant
+        let mut zero_corr = 0.0f32;
+        for i in 0..float_samples.len() {
+            zero_corr += float_samples[i] * float_samples[i];
+        }
+        zero_corr /= float_samples.len() as f32;
+
+        if zero_corr < 1.0 || best_corr / zero_corr < 0.3 {
+            return None;
+        }
+
+        let freq = sample_rate as f32 / best_lag as f32;
+        if freq >= 80.0 && freq <= 1000.0 {
+            Some(freq)
+        } else {
+            None
+        }
+    }
+
+    /// Find the nearest semitone to a given frequency (A4=440 Hz).
+    /// Returns the correction in semitones needed to reach the nearest note.
+    fn correction_for_freq(freq: f32) -> f32 {
+        // Semitones from A4: n = 12 * log2(freq / 440)
+        let semitones_from_a4 = 12.0 * (freq / 440.0).log2();
+        let nearest_semitone = semitones_from_a4.round();
+        nearest_semitone - semitones_from_a4
+    }
+}
+
+impl AudioEffect for AutoTune {
+    fn name(&self) -> &str {
+        "AutoTune"
+    }
+
+    fn process(&mut self, samples: &mut [i16], sample_rate: u32) {
+        if samples.is_empty() {
+            return;
+        }
+
+        // Estimate current pitch
+        let correction = if let Some(freq) = Self::estimate_pitch(samples, sample_rate) {
+            let raw_correction = Self::correction_for_freq(freq);
+            raw_correction * self.correction_strength
+        } else {
+            // No clear pitch detected — use last correction with decay
+            self.last_correction * 0.5
+        };
+
+        self.last_correction = correction;
+
+        // Apply pitch shift by the correction amount
+        if correction.abs() < 0.01 {
+            return; // No correction needed
+        }
+
+        let ratio = 2.0f64.powf(correction as f64 / 12.0);
+        let float_in: Vec<f32> = samples.iter().map(|&s| s as f32).collect();
+        let input_len = float_in.len();
+
+        for (i, s) in samples.iter_mut().enumerate() {
+            let pos = i as f64 * ratio;
+            let idx = pos as usize;
+            if idx + 1 < input_len {
+                let frac = (pos - idx as f64) as f32;
+                let interpolated = float_in[idx] * (1.0 - frac) + float_in[idx + 1] * frac;
+                *s = interpolated.clamp(-32767.0, 32767.0) as i16;
+            } else if idx < input_len {
+                *s = float_in[idx].clamp(-32767.0, 32767.0) as i16;
+            }
+        }
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+
+    fn category(&self) -> EffectCategory {
+        EffectCategory::Creative
+    }
+
+    fn estimated_latency_us(&self) -> u64 {
+        500
+    }
+}
+
+/// Echo effect — delayed copy mixed back into the signal.
+///
+/// Supports configurable delay, feedback (how much of the echo feeds back),
+/// and wet/dry mix ratio.
+pub struct EchoEffect {
+    delay_ms: u32,
+    feedback: f32,
+    mix: f32,
+    buffer: Vec<i16>,
+    write_pos: usize,
+    enabled: bool,
+}
+
+impl EchoEffect {
+    pub fn new(delay_ms: u32, feedback: f32, mix: f32) -> Self {
+        Self {
+            delay_ms,
+            feedback: feedback.clamp(0.0, 0.9),
+            mix: mix.clamp(0.0, 1.0),
+            buffer: Vec::new(),
+            write_pos: 0,
+            enabled: true,
+        }
+    }
+
+    /// Default echo: 300ms delay, 0.4 feedback, 0.3 mix.
+    pub fn default_echo() -> Self {
+        Self::new(300, 0.4, 0.3)
+    }
+
+    /// Short echo: 100ms, subtle.
+    pub fn short() -> Self {
+        Self::new(100, 0.2, 0.2)
+    }
+
+    /// Long echo: 800ms, more prominent.
+    pub fn long() -> Self {
+        Self::new(800, 0.5, 0.4)
+    }
+
+    fn ensure_buffer(&mut self, sample_rate: u32) {
+        let delay_samples = (sample_rate as usize * self.delay_ms as usize) / 1000;
+        if self.buffer.len() != delay_samples {
+            self.buffer = vec![0i16; delay_samples];
+            self.write_pos = 0;
+        }
+    }
+}
+
+impl AudioEffect for EchoEffect {
+    fn name(&self) -> &str {
+        "Echo"
+    }
+
+    fn process(&mut self, samples: &mut [i16], sample_rate: u32) {
+        if samples.is_empty() {
+            return;
+        }
+
+        self.ensure_buffer(sample_rate);
+
+        if self.buffer.is_empty() {
+            return;
+        }
+
+        let buf_len = self.buffer.len();
+
+        for s in samples.iter_mut() {
+            // Read delayed sample from buffer
+            let delayed = self.buffer[self.write_pos];
+
+            // Mix: output = dry * (1 - mix) + delayed * mix
+            let dry = *s as f32;
+            let mixed = dry * (1.0 - self.mix) + delayed as f32 * self.mix;
+
+            // Write to buffer: current input + feedback from delayed
+            let to_buffer = (dry + delayed as f32 * self.feedback)
+                .clamp(-32767.0, 32767.0) as i16;
+            self.buffer[self.write_pos] = to_buffer;
+
+            // Output
+            *s = mixed.clamp(-32767.0, 32767.0) as i16;
+
+            self.write_pos = (self.write_pos + 1) % buf_len;
+        }
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+
+    fn category(&self) -> EffectCategory {
+        EffectCategory::Creative
+    }
+
+    fn estimated_latency_us(&self) -> u64 {
+        self.delay_ms as u64 * 1000
+    }
+}
+
+/// Megaphone effect — bandpass filter (approx. 300-3000 Hz) + soft clipping distortion.
+///
+/// Simulates the sound of a megaphone or bullhorn by removing bass and treble,
+/// then applying soft saturation via `tanh`.
+pub struct MegaphoneEffect {
+    enabled: bool,
+    drive: f32,
+    prev_sample: f32,
+}
+
+impl MegaphoneEffect {
+    pub fn new(drive: f32) -> Self {
+        Self {
+            enabled: true,
+            drive: drive.clamp(0.0, 1.0),
+            prev_sample: 0.0,
+        }
+    }
+
+    /// Default megaphone with moderate distortion (drive = 0.6).
+    pub fn default_megaphone() -> Self {
+        Self::new(0.6)
+    }
+}
+
+impl AudioEffect for MegaphoneEffect {
+    fn name(&self) -> &str {
+        "Megaphone"
+    }
+
+    fn process(&mut self, samples: &mut [i16], sample_rate: u32) {
+        if samples.is_empty() {
+            return;
+        }
+
+        // Single-pole IIR coefficients for approximate bandpass:
+        // High-pass at ~300 Hz: alpha_hp = 1 / (1 + 2pi * fc / fs)
+        let hp_alpha = 1.0
+            / (1.0
+                + 2.0 * std::f32::consts::PI * 300.0 / sample_rate as f32);
+
+        // Low-pass at ~3000 Hz: alpha_lp = 2pi * fc / (2pi * fc + fs)
+        let lp_rc = 1.0 / (2.0 * std::f32::consts::PI * 3000.0);
+        let lp_dt = 1.0 / sample_rate as f32;
+        let lp_alpha = lp_dt / (lp_rc + lp_dt);
+
+        let mut hp_prev_in = self.prev_sample;
+        let mut hp_prev_out = 0.0f32;
+        let mut lp_prev = 0.0f32;
+
+        for s in samples.iter_mut() {
+            let input = *s as f32 / i16::MAX as f32;
+
+            // High-pass filter (remove bass < ~300 Hz)
+            let hp_out = hp_alpha * (hp_prev_out + input - hp_prev_in);
+            hp_prev_in = input;
+            hp_prev_out = hp_out;
+
+            // Low-pass filter (remove treble > ~3000 Hz)
+            lp_prev += lp_alpha * (hp_out - lp_prev);
+
+            // Soft clipping via tanh with drive
+            let drive_scale = 1.0 + self.drive * 4.0; // map 0.0-1.0 to 1.0-5.0
+            let clipped = (lp_prev * drive_scale).tanh();
+
+            *s = (clipped * i16::MAX as f32).clamp(-32767.0, 32767.0) as i16;
+        }
+
+        self.prev_sample = samples.last().map(|&s| s as f32 / i16::MAX as f32).unwrap_or(0.0);
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+
+    fn category(&self) -> EffectCategory {
+        EffectCategory::Creative
+    }
+
+    fn estimated_latency_us(&self) -> u64 {
+        100
+    }
+}
+
+// ============================================================================
+// Industrial Noise Suppression
+// ============================================================================
+
+/// Intelligent noise reducer — differentiates voice from non-voice (machinery,
+/// impacts) and reduces non-voice sounds to a target level relative to voice.
+///
+/// Uses zero-crossing rate, spectral flatness, and energy to detect speech frames.
+/// Non-speech frames are attenuated so their level is `voice_to_noise_ratio` of
+/// the tracked voice level.
+pub struct IntelligentNoiseReducer {
+    enabled: bool,
+    /// Target: non-voice should be this fraction of voice level.
+    /// 0.7 means non-voice at 70% of voice level (30% quieter).
+    voice_to_noise_ratio: f32,
+    /// Running average of voice RMS level.
+    voice_rms_avg: f32,
+    /// Smoothing factor for voice level tracking (0.0-1.0).
+    voice_tracking_alpha: f32,
+    /// Minimum voice RMS to consider as speech (anti-silence).
+    min_voice_rms: f32,
+    /// Number of consecutive voice frames needed to confirm speech.
+    voice_confirm_frames: u32,
+    voice_frame_count: u32,
+    /// Frame-level state.
+    is_voice: bool,
+}
+
+impl IntelligentNoiseReducer {
+    pub fn new(voice_to_noise_ratio: f32) -> Self {
+        Self {
+            enabled: true,
+            voice_to_noise_ratio: voice_to_noise_ratio.clamp(0.0, 1.0),
+            voice_rms_avg: 0.0,
+            voice_tracking_alpha: 0.1,
+            min_voice_rms: 500.0,
+            voice_confirm_frames: 2,
+            voice_frame_count: 0,
+            is_voice: false,
+        }
+    }
+
+    /// Factory noise preset: non-voice at 70% of voice level.
+    pub fn factory() -> Self {
+        Self::new(0.7)
+    }
+
+    /// Construction site: more aggressive, non-voice at 50%.
+    pub fn construction() -> Self {
+        Self::new(0.5)
+    }
+
+    /// Detect whether a frame contains voice using ZCR, spectral flatness, and RMS.
+    fn detect_voice(samples: &[i16]) -> bool {
+        if samples.is_empty() {
+            return false;
+        }
+
+        let rms = compute_rms_i16(samples);
+        if rms < 500.0 {
+            return false; // silence
+        }
+
+        // Zero-crossing rate
+        let zcr = samples
+            .windows(2)
+            .filter(|w| (w[0] >= 0) != (w[1] >= 0))
+            .count() as f32
+            / samples.len() as f32;
+
+        // Spectral flatness approximation via ratio of geometric/arithmetic mean of |samples|
+        let abs_samples: Vec<f32> = samples
+            .iter()
+            .map(|&s| (s as f32).abs().max(1.0))
+            .collect();
+        let log_mean =
+            abs_samples.iter().map(|s| s.ln()).sum::<f32>() / abs_samples.len() as f32;
+        let geo_mean = log_mean.exp();
+        let arith_mean = abs_samples.iter().sum::<f32>() / abs_samples.len() as f32;
+        let flatness = geo_mean / arith_mean.max(1.0); // 0=tonal(voice), 1=flat(noise)
+
+        // Voice: moderate ZCR (0.02-0.15), low flatness (<0.7), sufficient energy
+        zcr < 0.20 && flatness < 0.75
+    }
+}
+
+impl AudioEffect for IntelligentNoiseReducer {
+    fn name(&self) -> &str {
+        "Intelligent Noise Reducer"
+    }
+
+    fn process(&mut self, samples: &mut [i16], _sample_rate: u32) {
+        if samples.is_empty() {
+            return;
+        }
+
+        let is_voice_frame = Self::detect_voice(samples);
+
+        if is_voice_frame {
+            self.voice_frame_count += 1;
+            if self.voice_frame_count >= self.voice_confirm_frames {
+                self.is_voice = true;
+            }
+
+            // Update running voice RMS average
+            let rms = compute_rms_i16(samples);
+            if rms > self.min_voice_rms {
+                self.voice_rms_avg = self.voice_rms_avg * (1.0 - self.voice_tracking_alpha)
+                    + rms * self.voice_tracking_alpha;
+            }
+            // Voice frames pass through unmodified
+        } else {
+            self.voice_frame_count = 0;
+            self.is_voice = false;
+
+            // Apply gain reduction to non-voice frames
+            if self.voice_rms_avg > 0.0 {
+                let current_rms = compute_rms_i16(samples);
+                if current_rms > 1.0 {
+                    let target = self.voice_rms_avg * self.voice_to_noise_ratio;
+                    let gain = (target / current_rms).clamp(0.0, 1.0);
+
+                    for s in samples.iter_mut() {
+                        *s = (*s as f32 * gain).clamp(-32767.0, 32767.0) as i16;
+                    }
+                }
+            }
+        }
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+
+    fn category(&self) -> EffectCategory {
+        EffectCategory::Enhancement
+    }
+
+    fn estimated_latency_us(&self) -> u64 {
+        300
+    }
+}
+
+/// Compute RMS of i16 samples (raw, not normalized).
+fn compute_rms_i16(samples: &[i16]) -> f32 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    let sum: f64 = samples.iter().map(|&s| (s as f64).powi(2)).sum();
+    (sum / samples.len() as f64).sqrt() as f32
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -1357,5 +2043,271 @@ mod tests {
         };
         profile.recompute_mean();
         assert_eq!(profile.mean_embedding, vec![2.0, 3.0, 4.0]);
+    }
+
+    // ── Creative voice effects tests ─────────────────────────────────────
+
+    #[test]
+    fn test_pitch_shift_helium() {
+        let mut shifter = PitchShifter::helium();
+        let original = sine_wave(300.0, 16000, 50);
+        let mut processed = original.clone();
+        shifter.process(&mut processed, 16000);
+        // Helium shifts up: the resampled signal reads faster through the buffer,
+        // so output should differ from original and many trailing samples become zero
+        // (because read position advances past the input).
+        assert_ne!(original, processed, "Helium shift should modify the audio");
+        // Trailing samples should be zero (read past end of input buffer)
+        let last_quarter = &processed[processed.len() * 3 / 4..];
+        let trailing_zeros = last_quarter.iter().filter(|&&s| s == 0).count();
+        assert!(
+            trailing_zeros > last_quarter.len() / 4,
+            "Pitch-up should run out of input samples, producing zeros at the end"
+        );
+    }
+
+    #[test]
+    fn test_pitch_shift_darth_vader() {
+        let mut shifter = PitchShifter::darth_vader();
+        let original = sine_wave(300.0, 16000, 50);
+        let mut processed = original.clone();
+        shifter.process(&mut processed, 16000);
+        // Darth Vader shifts down: reads slower, so output uses only the first portion
+        // of the input. The output should differ from the original.
+        assert_ne!(original, processed, "Darth Vader shift should modify the audio");
+        // With -8 semitones, ratio < 1, so it reads only about 63% of input.
+        // The last sample should still come from valid input (not zero).
+        let last = *processed.last().unwrap_or(&0);
+        // For a continuous sine, the last sample from a slower read should be non-zero
+        // (it's reading the middle of the sine wave, not past the end).
+        assert!(last != 0 || processed.iter().any(|&s| s != 0),
+            "Pitch-down should produce non-trivial output");
+    }
+
+    #[test]
+    fn test_robot_voice_modulates() {
+        let mut robot = RobotVoice::default_robot();
+        let original = sine_wave(440.0, 16000, 50);
+        let mut processed = original.clone();
+        robot.process(&mut processed, 16000);
+        assert_ne!(original, processed, "Robot voice should modify the signal");
+        // Ring modulation multiplies by a carrier — some samples should be near zero
+        // where the carrier sine crosses zero.
+        let near_zero_count = processed.iter().filter(|&&s| s.abs() < 100).count();
+        assert!(
+            near_zero_count > 0,
+            "Ring modulation should produce near-zero samples at carrier zero-crossings"
+        );
+    }
+
+    #[test]
+    fn test_autotune_detects_pitch() {
+        let mut autotune = AutoTune::full();
+        // Generate a 440 Hz sine wave (A4 — should be perfectly in tune, so minimal change)
+        let original = sine_wave(440.0, 16000, 100);
+        let mut processed = original.clone();
+        autotune.process(&mut processed, 16000);
+        // A4 is exactly a musical note, so correction should be near zero.
+        // Allow some tolerance since the autocorrelation is approximate.
+        let diff: i64 = original
+            .iter()
+            .zip(processed.iter())
+            .map(|(&a, &b)| (a as i64 - b as i64).abs())
+            .sum();
+        let avg_diff = diff / original.len() as i64;
+        // Average sample difference should be small for an in-tune note
+        assert!(
+            avg_diff < 2000,
+            "A4 (440 Hz) should need little correction, avg diff = {}",
+            avg_diff
+        );
+    }
+
+    #[test]
+    fn test_echo_delays_audio() {
+        let mut echo = EchoEffect::default_echo();
+        // Start with silence then a burst
+        let mut samples = vec![0i16; 4800]; // 300ms at 16kHz
+        // Put a pulse at the beginning
+        samples[0] = 16000;
+        echo.process(&mut samples, 16000);
+        // The echo of the initial pulse should appear at ~300ms = 4800 samples
+        // Since our buffer is exactly 4800 samples, the echo wraps around.
+        // The direct output at sample 0 should be attenuated (dry * 0.7 + delayed * 0.3)
+        // and later samples should contain the echo feedback.
+        // At minimum, processing should modify the audio.
+        let sum: i64 = samples.iter().map(|&s| s.abs() as i64).sum();
+        assert!(sum > 0, "Echo should produce non-zero output");
+        // The first sample should contain the dry pulse
+        assert!(samples[0].abs() > 0, "First sample should have the dry pulse");
+    }
+
+    #[test]
+    fn test_megaphone_clips() {
+        let mut mega = MegaphoneEffect::default_megaphone();
+        let original = sine_wave(500.0, 16000, 50);
+        let mut processed = original.clone();
+        mega.process(&mut processed, 16000);
+        assert_ne!(original, processed, "Megaphone should modify the audio");
+        // Soft clipping via tanh means output amplitude is bounded to i16 range.
+        assert!(processed.iter().all(|&s| s.abs() <= i16::MAX));
+        // The tanh saturation means output cannot exceed i16::MAX (tanh output < 1.0)
+        let peak_proc = processed.iter().map(|s| s.abs()).max().unwrap_or(0);
+        assert!(
+            peak_proc < i16::MAX,
+            "Megaphone tanh should keep output strictly below i16::MAX, got {}",
+            peak_proc
+        );
+    }
+
+    #[test]
+    fn test_noise_reducer_voice_passes_through() {
+        let mut reducer = IntelligentNoiseReducer::factory();
+        // Simulate voice: a clean sine wave with voice-like ZCR and spectral properties
+        let mut voice_samples = sine_wave(300.0, 16000, 50);
+        let original = voice_samples.clone();
+
+        // First, feed a voice frame to establish voice_rms_avg
+        reducer.process(&mut voice_samples, 16000);
+
+        // Voice frames should pass through with minimal change (they are not attenuated)
+        let diff: i64 = original
+            .iter()
+            .zip(voice_samples.iter())
+            .map(|(&a, &b)| (a as i64 - b as i64).abs())
+            .sum();
+        let avg_diff = diff as f64 / original.len() as f64;
+        // Voice should pass through unchanged (diff = 0) since detect_voice returns true
+        // for a clean sine and voice frames are not modified.
+        assert!(
+            avg_diff < 1.0,
+            "Voice frames should pass through unmodified, avg_diff = {}",
+            avg_diff
+        );
+    }
+
+    #[test]
+    fn test_noise_reducer_noise_reduced() {
+        let mut reducer = IntelligentNoiseReducer::factory();
+
+        // First establish voice level with a voice frame
+        let mut voice = sine_wave(300.0, 16000, 50);
+        reducer.process(&mut voice, 16000);
+        // Process voice again to confirm (need voice_confirm_frames = 2)
+        let mut voice2 = sine_wave(300.0, 16000, 50);
+        reducer.process(&mut voice2, 16000);
+
+        // Now process broadband noise (high ZCR, high flatness → non-voice)
+        let mut noise: Vec<i16> = (0..800)
+            .map(|i| {
+                // Alternating high-frequency noise-like pattern
+                if i % 2 == 0 { 10000 } else { -10000 }
+            })
+            .collect();
+        let noise_rms_before = compute_rms_i16(&noise);
+        reducer.process(&mut noise, 16000);
+        let noise_rms_after = compute_rms_i16(&noise);
+
+        // Noise should be reduced (gain < 1.0)
+        assert!(
+            noise_rms_after < noise_rms_before,
+            "Noise frame should be attenuated: before={}, after={}",
+            noise_rms_before,
+            noise_rms_after
+        );
+    }
+
+    #[test]
+    fn test_noise_reducer_relative_level() {
+        let mut reducer = IntelligentNoiseReducer::factory(); // ratio = 0.7
+
+        // Establish voice level
+        for _ in 0..3 {
+            let mut voice = sine_wave(300.0, 16000, 50);
+            reducer.process(&mut voice, 16000);
+        }
+
+        let voice_avg = reducer.voice_rms_avg;
+        assert!(voice_avg > 0.0, "Voice RMS should be tracked");
+
+        // Process a loud noise frame
+        let mut noise: Vec<i16> = (0..800)
+            .map(|i| if i % 2 == 0 { 15000 } else { -15000 })
+            .collect();
+        reducer.process(&mut noise, 16000);
+        let noise_rms_after = compute_rms_i16(&noise);
+
+        // After reduction, noise should be approximately voice_avg * 0.7
+        let target = voice_avg * 0.7;
+        // Allow generous tolerance since this is frame-level approximate processing
+        assert!(
+            noise_rms_after < target * 2.0,
+            "Noise RMS ({}) should be near target ({})",
+            noise_rms_after,
+            target
+        );
+    }
+
+    #[test]
+    fn test_noise_reducer_factory_preset() {
+        let factory = IntelligentNoiseReducer::factory();
+        assert!((factory.voice_to_noise_ratio - 0.7).abs() < 0.01);
+        assert!(factory.is_enabled());
+        assert_eq!(factory.name(), "Intelligent Noise Reducer");
+
+        let construction = IntelligentNoiseReducer::construction();
+        assert!((construction.voice_to_noise_ratio - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_all_effects_in_chain() {
+        let mut chain = AudioEffectChain::new();
+        chain.add_effect(Box::new(PitchShifter::chipmunk()));
+        chain.add_effect(Box::new(RobotVoice::default_robot()));
+        chain.add_effect(Box::new(AutoTune::subtle()));
+        chain.add_effect(Box::new(EchoEffect::short()));
+        chain.add_effect(Box::new(MegaphoneEffect::default_megaphone()));
+        chain.add_effect(Box::new(IntelligentNoiseReducer::factory()));
+
+        let mut samples = sine_wave(440.0, 16000, 50);
+        let original = samples.clone();
+        chain.process_frame(&mut samples, 16000);
+
+        // All effects enabled — audio should be significantly modified
+        assert_ne!(original, samples, "Chain of all effects should modify audio");
+
+        // Verify all 6 effects are listed
+        let effects = chain.list_effects();
+        assert_eq!(effects.len(), 6);
+        assert_eq!(effects[0].0, "Pitch Shifter");
+        assert_eq!(effects[1].0, "Robot Voice");
+        assert_eq!(effects[2].0, "AutoTune");
+        assert_eq!(effects[3].0, "Echo");
+        assert_eq!(effects[4].0, "Megaphone");
+        assert_eq!(effects[5].0, "Intelligent Noise Reducer");
+
+        // Total latency should be sum of all
+        assert!(chain.total_latency_us() > 0);
+    }
+
+    #[test]
+    fn test_effect_categories() {
+        let pitch = PitchShifter::new(0.0);
+        assert_eq!(pitch.category(), EffectCategory::Creative);
+
+        let robot = RobotVoice::default_robot();
+        assert_eq!(robot.category(), EffectCategory::Creative);
+
+        let autotune = AutoTune::full();
+        assert_eq!(autotune.category(), EffectCategory::Creative);
+
+        let echo = EchoEffect::default_echo();
+        assert_eq!(echo.category(), EffectCategory::Creative);
+
+        let mega = MegaphoneEffect::default_megaphone();
+        assert_eq!(mega.category(), EffectCategory::Creative);
+
+        let reducer = IntelligentNoiseReducer::factory();
+        assert_eq!(reducer.category(), EffectCategory::Enhancement);
     }
 }

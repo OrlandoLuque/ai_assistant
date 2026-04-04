@@ -411,9 +411,11 @@ pub use topic_matcher::{
 
 pub use audio_filter::{
     AcousticEchoCanceller, ActiveSpeakerInfo, AudioEffect, AudioEffectChain, AudioSeparator,
-    AutoGainControl, Compressor, DiarizationResult, DiarizedSpeaker, Distortion, EffectCategory,
-    MfccSpeakerVerifier, NoiseGate, NoiseSuppressor, Reverb, SeparatedTrack, SpeakerDiarizer,
-    SpeakerGate, SpeakerIdentification, SpeakerProfile, SpeakerVerifier, VoiceEmbedding,
+    AutoGainControl, AutoTune, Compressor, DiarizationResult, DiarizedSpeaker, Distortion,
+    EchoEffect, EffectCategory, IntelligentNoiseReducer, MegaphoneEffect, MfccSpeakerVerifier,
+    NoiseGate, NoiseSuppressor, PitchShifter, Reverb, RobotVoice, SeparatedTrack,
+    SpeakerDiarizer, SpeakerGate, SpeakerIdentification, SpeakerProfile, SpeakerVerifier,
+    VoiceEmbedding,
 };
 
 pub use audio_model_registry::{
