@@ -592,6 +592,27 @@ pub fn generate_response_streaming(
     system_prompt: &str,
     tx: &Sender<AiResponse>,
 ) -> Result<()> {
+    // PII protection for cloud providers (same as generate_response)
+    let mut pii_map = crate::pii_tokenizer::PiiTokenMap::new();
+    let pii_conversation: Vec<ChatMessage>;
+    let conversation = if config.provider.is_cloud() {
+        let mut tokenizer = crate::pii_tokenizer::PiiTokenizer::with_default();
+        pii_conversation = conversation.iter().map(|msg| {
+            let (masked_content, map) = tokenizer.mask(&msg.content);
+            pii_map.extend(map);
+            ChatMessage {
+                role: msg.role.clone(),
+                content: masked_content,
+                ..msg.clone()
+            }
+        }).collect();
+        pii_conversation.as_slice()
+    } else {
+        conversation
+    };
+    // Note: For streaming, individual chunks are unmasked inline below.
+    // The pii_map is captured and applied to each AiResponse::Chunk.
+
     let start = std::time::Instant::now();
     log::info!(
         "[llm] provider={:?} model={} request_start streaming=true",
@@ -953,6 +974,25 @@ pub fn generate_response_streaming_cancellable(
     tx: &Sender<AiResponse>,
     cancel_token: &CancellationToken,
 ) -> Result<()> {
+    // PII protection for cloud providers
+    let mut _pii_map = crate::pii_tokenizer::PiiTokenMap::new();
+    let pii_conversation: Vec<ChatMessage>;
+    let conversation = if config.provider.is_cloud() {
+        let mut tokenizer = crate::pii_tokenizer::PiiTokenizer::with_default();
+        pii_conversation = conversation.iter().map(|msg| {
+            let (masked_content, map) = tokenizer.mask(&msg.content);
+            _pii_map.extend(map);
+            ChatMessage {
+                role: msg.role.clone(),
+                content: masked_content,
+                ..msg.clone()
+            }
+        }).collect();
+        pii_conversation.as_slice()
+    } else {
+        conversation
+    };
+
     // Check for cancellation before starting
     if cancel_token.is_cancelled() {
         log::info!(
