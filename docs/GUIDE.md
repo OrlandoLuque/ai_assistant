@@ -10488,3 +10488,59 @@ ai_gpu_share restore --keys /backup/   # restore on new hardware
 ```
 
 Your credits and reputation live on the network — you only need your private key to access them.
+
+## 189. Audio Effects — Creative + Industrial Noise
+
+### Creative Voice Effects
+
+```rust
+use ai_assistant::{AudioEffectChain, PitchShifter, RobotVoice, AutoTune, EchoEffect, MegaphoneEffect};
+
+let mut chain = AudioEffectChain::new();
+
+// Helium voice (+12 semitones)
+chain.add_effect(Box::new(PitchShifter::helium()));
+
+// Darth Vader (-8 semitones)  
+chain.add_effect(Box::new(PitchShifter::darth_vader()));
+
+// Robot voice (ring modulation)
+chain.add_effect(Box::new(RobotVoice::default_robot()));
+
+// AutoTune (snap to nearest note)
+chain.add_effect(Box::new(AutoTune::full()));
+
+// Echo (300ms delay, 40% feedback)
+chain.add_effect(Box::new(EchoEffect::default_echo()));
+
+// Megaphone (bandpass + distortion)
+chain.add_effect(Box::new(MegaphoneEffect::default_megaphone()));
+
+// Process audio
+chain.process_frame(&mut samples, 16000);
+```
+
+### Industrial Noise Suppression
+
+For someone working in a factory — reduces machinery/impact noise while preserving voice:
+
+```rust
+use ai_assistant::{AudioEffectChain, IntelligentNoiseReducer};
+
+let mut chain = AudioEffectChain::new();
+
+// Factory preset: non-voice sounds at 70% of voice level
+chain.add_effect(Box::new(IntelligentNoiseReducer::factory()));
+
+// Construction preset: more aggressive, 50% of voice level
+// chain.add_effect(Box::new(IntelligentNoiseReducer::construction()));
+
+chain.process_frame(&mut samples, 16000);
+// Voice passes through normally
+// Machinery/impacts reduced to 70% of voice level
+```
+
+The noise reducer detects voice vs non-voice using:
+- Zero-crossing rate (voice has regular crossings, noise is chaotic)
+- Spectral flatness (voice has harmonic peaks, noise is spectrally flat)
+- Energy tracking (adapts to voice level over time)

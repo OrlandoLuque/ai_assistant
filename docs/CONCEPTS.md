@@ -4363,3 +4363,11 @@ Credits backed by real GPU work (no creation from nothing). 5% transaction fee f
 ## 252. PiiTokenizer — Reversible PII Masking
 
 Standalone crate module (not GPU-sharing specific). Detects PII via regex patterns (email, phone, names, addresses, dates, credit cards) and replaces with numbered placeholders: "Alfredo" → "[nombre1]", "alfredo@mail.com" → "[email1]". Token map kept locally, never sent over network. After LLM processes masked prompt and returns response with placeholders, unmask() restores real values. Four privacy levels: None, Tokenize (default), Aggressive, Paranoid. Reusable across GPU sharing, server endpoints, MCP tools, voice pipeline.
+
+## 253. Creative Voice Effects
+
+Six new audio effects implementing the `AudioEffect` trait, pluggable into `AudioEffectChain`: `PitchShifter` (helium +12 semitones, chipmunk +7, Darth Vader -8, deep -12 — uses resampling with linear interpolation), `RobotVoice` (ring modulation at configurable carrier frequency, default 150Hz), `AutoTune` (pitch detection via autocorrelation + snap to nearest musical semitone, configurable correction strength), `EchoEffect` (circular buffer delay with feedback and dry/wet mix), `MegaphoneEffect` (bandpass filter 300-3000Hz approximation + soft-clip distortion via tanh), all with factory presets and latency estimates.
+
+## 254. Intelligent Industrial Noise Suppression
+
+`IntelligentNoiseReducer` differentiates voice from non-voice sounds (factory machinery, impacts, continuous noise) using three per-frame features: RMS energy, zero-crossing rate (voice has lower ZCR than noise), and spectral flatness approximation (voice has harmonic peaks, noise is spectrally flat). Non-voice frames are gain-reduced to a configurable fraction of the tracked voice level — e.g., `factory()` preset sets non-voice to 70% of voice level (if voice is 10dB, noise becomes 7dB). Voice level tracked via exponential moving average across frames. Presets: `factory()` (70%), `construction()` (50%). Implements `AudioEffect` trait — pluggable into any `AudioEffectChain`.
