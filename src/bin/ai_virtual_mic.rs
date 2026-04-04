@@ -307,16 +307,35 @@ struct AgentState {
 // Audio Device Info
 // ============================================================================
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+enum DeviceKind {
+    /// Physical microphone or line-in capture device.
+    Microphone,
+    /// WASAPI loopback: captures what is being played on an output device
+    /// (virtual speaker). On Windows, cpal transparently opens output devices
+    /// in loopback mode when used as inputs.
+    Loopback,
+}
+
 #[derive(Clone)]
 struct DeviceInfo {
     name: String,
+    /// Stable identifier within the host (index in input_devices or output_devices).
     index: usize,
     config_desc: String,
+    kind: DeviceKind,
 }
 
+/// Enumerate all available audio INPUT sources:
+/// - Physical mics (from `host.input_devices()`).
+/// - Output devices as WASAPI loopback (from `host.output_devices()`),
+///   so the user can capture audio playing on any speaker / virtual cable.
+///
+/// The result is microphones first, then loopback entries. The `index`
+/// field refers to the position inside each respective host list.
 fn list_input_devices() -> Vec<DeviceInfo> {
     let host = cpal::default_host();
-    host.input_devices()
+    let mut list: Vec<DeviceInfo> = host.input_devices()
         .map(|devs| {
             devs.enumerate()
                 .map(|(i, d)| {
@@ -325,11 +344,29 @@ fn list_input_devices() -> Vec<DeviceInfo> {
                         .default_input_config()
                         .map(|c| format!("{}Hz {}ch", c.sample_rate().0, c.channels()))
                         .unwrap_or_else(|_| "N/A".to_string());
-                    DeviceInfo { name, index: i, config_desc: desc }
+                    DeviceInfo { name, index: i, config_desc: desc, kind: DeviceKind::Microphone }
                 })
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+
+    // Append output devices as loopback sources (capture-what-you-hear).
+    if let Ok(outs) = host.output_devices() {
+        for (i, d) in outs.enumerate() {
+            let name = d.name().unwrap_or_else(|_| "Unknown".to_string());
+            let desc = d
+                .default_output_config()
+                .map(|c| format!("{}Hz {}ch loopback", c.sample_rate().0, c.channels()))
+                .unwrap_or_else(|_| "loopback".to_string());
+            list.push(DeviceInfo {
+                name: format!("[loopback] {}", name),
+                index: i,
+                config_desc: desc,
+                kind: DeviceKind::Loopback,
+            });
+        }
+    }
+    list
 }
 
 fn list_output_devices() -> Vec<DeviceInfo> {
@@ -343,7 +380,7 @@ fn list_output_devices() -> Vec<DeviceInfo> {
                         .default_output_config()
                         .map(|c| format!("{}Hz {}ch", c.sample_rate().0, c.channels()))
                         .unwrap_or_else(|_| "N/A".to_string());
-                    DeviceInfo { name, index: i, config_desc: desc }
+                    DeviceInfo { name, index: i, config_desc: desc, kind: DeviceKind::Microphone }
                 })
                 .collect()
         })
@@ -615,15 +652,34 @@ impl VirtualMicApp {
         }
 
         let host = cpal::default_host();
-        let input_device = match host.input_devices() {
-            Ok(mut devs) => devs.nth(self.selected_input),
-            Err(e) => { self.status_message = format!("Error: {}", e); return; }
+        // Resolve the selected entry against either input_devices (mic) or
+        // output_devices (loopback). cpal on Windows transparently enables
+        // WASAPI loopback when we build an input stream on an output device.
+        let source = match self.input_devices.get(self.selected_input) {
+            Some(d) => d.clone(),
+            None => { self.status_message = "No input device selected".to_string(); return; }
+        };
+        let input_device = match source.kind {
+            DeviceKind::Microphone => match host.input_devices() {
+                Ok(mut devs) => devs.nth(source.index),
+                Err(e) => { self.status_message = format!("Error: {}", e); return; }
+            },
+            DeviceKind::Loopback => match host.output_devices() {
+                Ok(mut devs) => devs.nth(source.index),
+                Err(e) => { self.status_message = format!("Error: {}", e); return; }
+            },
         };
         let input_device = match input_device {
             Some(d) => d,
             None => { self.status_message = "No input device found".to_string(); return; }
         };
-        let input_config = match input_device.default_input_config() {
+        // For loopback we need the OUTPUT config (cpal will open it in loopback
+        // mode when we call build_input_stream on it).
+        let input_config = match source.kind {
+            DeviceKind::Microphone => input_device.default_input_config(),
+            DeviceKind::Loopback => input_device.default_output_config(),
+        };
+        let input_config = match input_config {
             Ok(c) => c,
             Err(e) => { self.status_message = format!("No config: {}", e); return; }
         };
@@ -1129,9 +1185,13 @@ impl VirtualMicApp {
 
         self.is_running.store(true, Ordering::Relaxed);
         self._input_stream = input_stream;
+        let kind_label = match source.kind {
+            DeviceKind::Microphone => "mic",
+            DeviceKind::Loopback => "loopback",
+        };
         self.status_message = format!(
-            "Running: {} @ {}Hz {}ch",
-            input_device.name().unwrap_or_default(), sample_rate, channels
+            "Running: {} [{}] @ {}Hz {}ch",
+            input_device.name().unwrap_or_default(), kind_label, sample_rate, channels
         );
     }
 
@@ -2074,17 +2134,39 @@ impl eframe::App for VirtualMicApp {
             ui.add_space(8.0);
             ui.heading("Input Device");
             egui::ComboBox::from_id_source("input_dev")
-                .width(250.0)
+                .width(280.0)
                 .selected_text(
                     self.input_devices.get(self.selected_input)
-                        .map(|d| format!("{} ({})", d.name, d.config_desc))
+                        .map(|d| {
+                            let icon = if d.kind == DeviceKind::Loopback { "🔊" } else { "🎤" };
+                            format!("{} {} ({})", icon, d.name, d.config_desc)
+                        })
                         .unwrap_or_else(|| "None".to_string()),
                 )
                 .show_ui(ui, |ui| {
+                    // Group: microphones first, then loopback sources with a separator.
+                    let mut shown_loopback_header = false;
                     for (i, dev) in self.input_devices.iter().enumerate() {
-                        ui.selectable_value(&mut self.selected_input, i, format!("{} ({})", dev.name, dev.config_desc));
+                        if dev.kind == DeviceKind::Loopback && !shown_loopback_header {
+                            ui.separator();
+                            ui.small("Capture what plays on a speaker (WASAPI loopback):");
+                            shown_loopback_header = true;
+                        }
+                        let icon = if dev.kind == DeviceKind::Loopback { "🔊" } else { "🎤" };
+                        ui.selectable_value(
+                            &mut self.selected_input,
+                            i,
+                            format!("{} {} ({})", icon, dev.name, dev.config_desc),
+                        );
                     }
-                });
+                })
+                .response
+                .on_hover_text(
+                    "Microphones capture from a physical input.\n\
+                     Loopback (🔊) captures the audio being played on a speaker — useful for \
+                     recording system sound, routing a virtual cable, or piping other apps \
+                     through the effect chain."
+                );
 
             ui.add_space(4.0);
             ui.heading("Output Device");
