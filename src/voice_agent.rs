@@ -1189,12 +1189,18 @@ mod inner {
             let emotion_context = self.run_emotion_detection(&transcript);
             latency.emotion_ms = emotion_start.elapsed().as_millis() as u64;
 
+            // ── Stage 2b: Sanitize STT output (prevent prompt injection via speech) ──
+            let sanitized_transcript = {
+                use crate::llm_enhance::prompt_wrap;
+                prompt_wrap(&transcript)
+            };
+
             // ── Stage 3: LLM ──────────────────────────────────────────────
             let llm_start = std::time::Instant::now();
             let llm_input = if emotion_context.is_empty() {
-                transcript.clone()
+                sanitized_transcript
             } else {
-                format!("[{}] {}", emotion_context, transcript)
+                format!("[{}] {}", emotion_context, sanitized_transcript)
             };
             let agent_response = self.run_llm(&llm_input)?;
             latency.llm_ms = llm_start.elapsed().as_millis() as u64;
