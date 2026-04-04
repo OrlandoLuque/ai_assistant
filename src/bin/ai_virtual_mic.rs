@@ -11,7 +11,8 @@
 use ai_assistant::{
     AiAssistant, AiConfig, AiProvider, AiResponse,
     AudioEffectChain, AudioModelCategory, AudioModelInfo, AudioModelRegistry, AutoGainControl,
-    DiarizationResult, MfccSpeakerVerifier, ModelStatus, NoiseGate, SpeakerDiarizer,
+    AutoTune, DiarizationResult, EchoEffect, IntelligentNoiseReducer, MegaphoneEffect,
+    MfccSpeakerVerifier, ModelStatus, NoiseGate, PitchShifter, RobotVoice, SpeakerDiarizer,
     SpeakerGate, SpeakerIdentification, SpeakerVerifier,
     // Speech providers for STT/TTS
     create_speech_provider, SpeechProvider, SynthesisOptions,
@@ -441,6 +442,16 @@ struct VirtualMicApp {
     noise_gate_threshold: f32,
     agc_enabled: bool,
     agc_target: f32,
+    // Creative effects
+    pitch_shift_enabled: bool,
+    pitch_shift_semitones: f32,
+    robot_voice_enabled: bool,
+    autotune_enabled: bool,
+    echo_enabled: bool,
+    megaphone_enabled: bool,
+    // Industrial noise suppression
+    noise_reducer_enabled: bool,
+    noise_reducer_ratio: f32,
 
     // Models
     model_registry: AudioModelRegistry,
@@ -491,6 +502,14 @@ impl VirtualMicApp {
             noise_gate_threshold: -50.0,
             agc_enabled: true,
             agc_target: -18.0,
+            pitch_shift_enabled: false,
+            pitch_shift_semitones: 0.0,
+            robot_voice_enabled: false,
+            autotune_enabled: false,
+            echo_enabled: false,
+            megaphone_enabled: false,
+            noise_reducer_enabled: false,
+            noise_reducer_ratio: 0.7,
             model_registry: AudioModelRegistry::new(),
             active_stt_model: None,
             active_tts_model: None,
@@ -643,6 +662,24 @@ impl VirtualMicApp {
         }
         if self.agc_enabled {
             effect_chain.add_effect(Box::new(AutoGainControl::new(self.agc_target)));
+        }
+        if self.noise_reducer_enabled {
+            effect_chain.add_effect(Box::new(IntelligentNoiseReducer::new(self.noise_reducer_ratio)));
+        }
+        if self.pitch_shift_enabled && self.pitch_shift_semitones.abs() > 0.1 {
+            effect_chain.add_effect(Box::new(PitchShifter::new(self.pitch_shift_semitones)));
+        }
+        if self.robot_voice_enabled {
+            effect_chain.add_effect(Box::new(RobotVoice::default_robot()));
+        }
+        if self.autotune_enabled {
+            effect_chain.add_effect(Box::new(AutoTune::full()));
+        }
+        if self.echo_enabled {
+            effect_chain.add_effect(Box::new(EchoEffect::default_echo()));
+        }
+        if self.megaphone_enabled {
+            effect_chain.add_effect(Box::new(MegaphoneEffect::default_megaphone()));
         }
         let effect_chain = Arc::new(Mutex::new(effect_chain));
         let mode = self.mode;
@@ -1811,6 +1848,14 @@ impl VirtualMicApp {
             "noise_gate_threshold": self.noise_gate_threshold,
             "agc_enabled": self.agc_enabled,
             "agc_target": self.agc_target,
+            "pitch_shift_enabled": self.pitch_shift_enabled,
+            "pitch_shift_semitones": self.pitch_shift_semitones,
+            "robot_voice_enabled": self.robot_voice_enabled,
+            "autotune_enabled": self.autotune_enabled,
+            "echo_enabled": self.echo_enabled,
+            "megaphone_enabled": self.megaphone_enabled,
+            "noise_reducer_enabled": self.noise_reducer_enabled,
+            "noise_reducer_ratio": self.noise_reducer_ratio,
             "use_diarization": self.use_diarization,
             "agent": self.agent.config,
         });
@@ -1847,6 +1892,30 @@ impl VirtualMicApp {
                 }
                 if let Some(v) = cfg.get("agc_target").and_then(|v| v.as_f64()) {
                     self.agc_target = v as f32;
+                }
+                if let Some(v) = cfg.get("pitch_shift_enabled").and_then(|v| v.as_bool()) {
+                    self.pitch_shift_enabled = v;
+                }
+                if let Some(v) = cfg.get("pitch_shift_semitones").and_then(|v| v.as_f64()) {
+                    self.pitch_shift_semitones = v as f32;
+                }
+                if let Some(v) = cfg.get("robot_voice_enabled").and_then(|v| v.as_bool()) {
+                    self.robot_voice_enabled = v;
+                }
+                if let Some(v) = cfg.get("autotune_enabled").and_then(|v| v.as_bool()) {
+                    self.autotune_enabled = v;
+                }
+                if let Some(v) = cfg.get("echo_enabled").and_then(|v| v.as_bool()) {
+                    self.echo_enabled = v;
+                }
+                if let Some(v) = cfg.get("megaphone_enabled").and_then(|v| v.as_bool()) {
+                    self.megaphone_enabled = v;
+                }
+                if let Some(v) = cfg.get("noise_reducer_enabled").and_then(|v| v.as_bool()) {
+                    self.noise_reducer_enabled = v;
+                }
+                if let Some(v) = cfg.get("noise_reducer_ratio").and_then(|v| v.as_f64()) {
+                    self.noise_reducer_ratio = v as f32;
                 }
                 if let Some(v) = cfg.get("use_diarization").and_then(|v| v.as_bool()) {
                     self.use_diarization = v;
@@ -2064,6 +2133,26 @@ impl eframe::App for VirtualMicApp {
             if self.agc_enabled {
                 ui.add(egui::Slider::new(&mut self.agc_target, -30.0..=-6.0).text("Target dB"));
             }
+            ui.checkbox(&mut self.noise_reducer_enabled, "Industrial Noise Reducer");
+            if self.noise_reducer_enabled {
+                ui.add(egui::Slider::new(&mut self.noise_reducer_ratio, 0.3..=0.9).text("Voice/Noise ratio"));
+            }
+            ui.separator();
+            ui.small("Creative Effects:");
+            ui.checkbox(&mut self.pitch_shift_enabled, "Pitch Shift");
+            if self.pitch_shift_enabled {
+                ui.add(egui::Slider::new(&mut self.pitch_shift_semitones, -12.0..=12.0).text("Semitones"));
+                ui.horizontal(|ui| {
+                    if ui.small_button("Helium").clicked() { self.pitch_shift_semitones = 12.0; }
+                    if ui.small_button("Chipmunk").clicked() { self.pitch_shift_semitones = 7.0; }
+                    if ui.small_button("Vader").clicked() { self.pitch_shift_semitones = -8.0; }
+                    if ui.small_button("Deep").clicked() { self.pitch_shift_semitones = -12.0; }
+                });
+            }
+            ui.checkbox(&mut self.robot_voice_enabled, "Robot Voice");
+            ui.checkbox(&mut self.autotune_enabled, "AutoTune");
+            ui.checkbox(&mut self.echo_enabled, "Echo");
+            ui.checkbox(&mut self.megaphone_enabled, "Megaphone");
 
         });
 
