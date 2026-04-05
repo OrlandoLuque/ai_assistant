@@ -307,7 +307,7 @@ struct AgentState {
 // Audio Device Info
 // ============================================================================
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, serde::Serialize, serde::Deserialize)]
 enum DeviceKind {
     /// Physical microphone or line-in capture device.
     Microphone,
@@ -511,6 +511,11 @@ struct VirtualMicApp {
     /// Shared conversation updated by processing thread (Agent mode)
     agent_conversation_shared: Arc<Mutex<Vec<ChatMessage>>>,
 
+    // Input level probes (per-source real-time dB meter for the input dropdown)
+    probes_active: bool,
+    probe_levels: Arc<Mutex<std::collections::HashMap<(DeviceKind, usize), f32>>>,
+    _probe_streams: Vec<cpal::Stream>,
+
     // UI
     bottom_tab: Option<BottomTab>,
     status_message: String,
@@ -558,6 +563,9 @@ impl VirtualMicApp {
             enrollment_seconds: 0.0,
             is_enrolling: Arc::new(AtomicBool::new(false)),
             enrollment_buffer: Arc::new(Mutex::new(Vec::new())),
+            probes_active: false,
+            probe_levels: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            _probe_streams: Vec::new(),
             agent_conversation_shared: Arc::new(Mutex::new(Vec::new())),
             agent: AgentState {
                 config: AgentConfig::default(),
@@ -1204,8 +1212,71 @@ impl VirtualMicApp {
     }
 
     fn refresh_devices(&mut self) {
+        let was_probing = self.probes_active;
+        self.stop_probes();
         self.input_devices = list_input_devices();
         self.output_devices = list_output_devices();
+        if was_probing { self.start_probes(); }
+    }
+
+    /// Spawn a small probe stream for every input source so the GUI can show
+    /// a live dB meter next to each entry. Uses WASAPI shared mode so it
+    /// coexists with the main capture stream.
+    fn start_probes(&mut self) {
+        self.stop_probes();
+        let host = cpal::default_host();
+        let levels = self.probe_levels.clone();
+        let mut streams = Vec::new();
+
+        for dev in self.input_devices.clone() {
+            let key = (dev.kind, dev.index);
+            // Open the right host device
+            let device = match dev.kind {
+                DeviceKind::Microphone => host.input_devices().ok()
+                    .and_then(|mut d| d.nth(dev.index)),
+                DeviceKind::Loopback => host.output_devices().ok()
+                    .and_then(|mut d| d.nth(dev.index)),
+            };
+            let Some(device) = device else { continue };
+            let cfg = match dev.kind {
+                DeviceKind::Microphone => device.default_input_config(),
+                DeviceKind::Loopback => device.default_output_config(),
+            };
+            let Ok(cfg) = cfg else { continue };
+            let stream_cfg = cfg.config();
+            let levels_cb = levels.clone();
+            let stream_res = device.build_input_stream(
+                &stream_cfg,
+                move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                    if data.is_empty() { return; }
+                    // RMS → dB, EMA smoothing
+                    let sum_sq: f32 = data.iter().map(|&s| s * s).sum();
+                    let rms = (sum_sq / data.len() as f32).sqrt();
+                    let db = if rms > 1e-6 { 20.0 * rms.log10() } else { -80.0 };
+                    if let Ok(mut map) = levels_cb.lock() {
+                        let entry = map.entry(key).or_insert(-80.0);
+                        // Smooth: 70% old, 30% new; peaks snap up quickly
+                        *entry = if db > *entry { db } else { *entry * 0.7 + db * 0.3 };
+                    }
+                },
+                |_err| {},
+                None,
+            );
+            if let Ok(s) = stream_res {
+                let _ = s.play();
+                streams.push(s);
+            }
+        }
+        self._probe_streams = streams;
+        self.probes_active = true;
+    }
+
+    fn stop_probes(&mut self) {
+        self._probe_streams.clear();
+        self.probes_active = false;
+        if let Ok(mut map) = self.probe_levels.lock() {
+            map.clear();
+        }
     }
 
     fn start_enrollment(&mut self) {
@@ -2132,14 +2203,38 @@ impl eframe::App for VirtualMicApp {
 
             // Devices
             ui.add_space(8.0);
-            ui.heading("Input Device");
+            ui.horizontal(|ui| {
+                ui.heading("Input Device");
+                let probe_btn = if self.probes_active { "🎚 Hide levels" } else { "🎚 Show levels" };
+                if ui.small_button(probe_btn)
+                    .on_hover_text(
+                        "Live dB meter next to each source. Lets you see which \
+                         device is receiving the sound you want to hook into."
+                    ).clicked()
+                {
+                    if self.probes_active { self.stop_probes(); } else { self.start_probes(); }
+                }
+            });
+            // Snapshot levels once per frame for stable rendering
+            let levels_snapshot: std::collections::HashMap<(DeviceKind, usize), f32> = if self.probes_active {
+                self.probe_levels.lock().map(|m| m.clone()).unwrap_or_default()
+            } else { std::collections::HashMap::new() };
+            let fmt_level = |dev: &DeviceInfo, levels: &std::collections::HashMap<(DeviceKind, usize), f32>| -> String {
+                if let Some(&db) = levels.get(&(dev.kind, dev.index)) {
+                    // Compact 10-cell bar, -60dB..0dB
+                    let n = (((db + 60.0) / 60.0).clamp(0.0, 1.0) * 10.0) as usize;
+                    let bar: String = (0..10).map(|i| if i < n { '▮' } else { '▯' }).collect();
+                    format!("  {} {:>5.1}dB", bar, db)
+                } else { String::new() }
+            };
             egui::ComboBox::from_id_source("input_dev")
-                .width(280.0)
+                .width(360.0)
                 .selected_text(
                     self.input_devices.get(self.selected_input)
                         .map(|d| {
                             let icon = if d.kind == DeviceKind::Loopback { "🔊" } else { "🎤" };
-                            format!("{} {} ({})", icon, d.name, d.config_desc)
+                            let lvl = fmt_level(d, &levels_snapshot);
+                            format!("{} {} ({}){}", icon, d.name, d.config_desc, lvl)
                         })
                         .unwrap_or_else(|| "None".to_string()),
                 )
@@ -2153,10 +2248,11 @@ impl eframe::App for VirtualMicApp {
                             shown_loopback_header = true;
                         }
                         let icon = if dev.kind == DeviceKind::Loopback { "🔊" } else { "🎤" };
+                        let lvl = fmt_level(dev, &levels_snapshot);
                         ui.selectable_value(
                             &mut self.selected_input,
                             i,
-                            format!("{} {} ({})", icon, dev.name, dev.config_desc),
+                            format!("{} {} ({}){}", icon, dev.name, dev.config_desc, lvl),
                         );
                     }
                 })
@@ -2167,6 +2263,8 @@ impl eframe::App for VirtualMicApp {
                      recording system sound, routing a virtual cable, or piping other apps \
                      through the effect chain."
                 );
+            // Repaint fast while probes are active so meters update smoothly
+            if self.probes_active { ctx.request_repaint_after(std::time::Duration::from_millis(80)); }
 
             ui.add_space(4.0);
             ui.heading("Output Device");
