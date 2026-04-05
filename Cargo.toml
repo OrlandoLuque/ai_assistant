@@ -464,6 +464,10 @@ path = "src/bin/ai_virtual_mic.rs"
 required-features = ["audio-io"]
 
 [[bin]]
+name = "ai_virtual_mic_host"
+path = "src/bin/ai_virtual_mic_host.rs"
+
+[[bin]]
 name = "ai_setup"
 path = "src/bin/ai_setup.rs"
 required-features = ["full"]

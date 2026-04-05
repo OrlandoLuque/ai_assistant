@@ -195,6 +195,7 @@ pub mod audio_filter;
 pub mod audio_model_registry;
 pub mod audio_priority_protocol;
 pub mod group_queue_runtime;
+pub mod group_queue_host;
 pub mod config_optimizer;
 pub mod llm_enhance;
 #[cfg(feature = "tools")]

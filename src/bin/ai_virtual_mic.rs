@@ -24,6 +24,7 @@ use ai_assistant::audio_priority_protocol::{
 use ai_assistant::group_queue_runtime::{
     CaptureMode, GroupQueueRuntime, RuntimeConfig, RuntimeStatus,
 };
+use ai_assistant::group_queue_host::GroupQueueHostClient;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use eframe::egui;
@@ -512,6 +513,12 @@ struct GroupQueueState {
     hotkey_thread_started: bool,
     /// Last observed runtime status for GUI.
     last_status: RuntimeStatus,
+    /// Optional network client connected to a GroupQueue host.
+    host_client: Option<Arc<GroupQueueHostClient>>,
+    /// Host address input in GUI (e.g. "192.168.1.10:9876").
+    host_addr_input: String,
+    /// Display name sent on join.
+    host_display_name: String,
 }
 
 impl GroupQueueState {
@@ -523,10 +530,18 @@ impl GroupQueueState {
             override_held: Arc::new(AtomicBool::new(false)),
             hotkey_thread_started: false,
             last_status: RuntimeStatus::Disabled,
+            host_client: None,
+            host_addr_input: "127.0.0.1:9876".into(),
+            host_display_name: "Lander".into(),
         }
     }
 
     fn build_table(&self) -> PriorityTable {
+        // If a host is connected & active, use its authoritative table.
+        if let Some(client) = &self.host_client {
+            let s = client.status();
+            if s.connected { return client.snapshot_table(); }
+        }
         match self.ui_cfg.preset {
             GqPreset::Flat => PriorityTable::flat(self.ui_cfg.slot_count),
             GqPreset::Squad(callouts) => PriorityTable::squad(self.ui_cfg.slot_count, callouts),
@@ -534,17 +549,36 @@ impl GroupQueueState {
         }
     }
 
+    /// Effective slot for this client: the host-assigned slot if connected,
+    /// otherwise the user's manual choice.
+    fn effective_slot(&self) -> u8 {
+        if let Some(client) = &self.host_client {
+            let s = client.status();
+            if s.connected { if let Some(slot) = s.my_slot { return slot.as_u8(); } }
+        }
+        self.ui_cfg.my_slot
+    }
+
+    /// Effective slot count: host-advertised if connected, otherwise local.
+    fn effective_slot_count(&self) -> u8 {
+        if let Some(client) = &self.host_client {
+            let s = client.status();
+            if s.connected { return s.slot_count; }
+        }
+        self.ui_cfg.slot_count
+    }
+
     fn build_runtime_config(&self, enabled: bool, sample_rate: u32) -> RuntimeConfig {
         let mut proto = ProtocolConfig::default();
         proto.sample_rate = sample_rate;
-        proto.slot_count = self.ui_cfg.slot_count;
+        proto.slot_count = self.effective_slot_count();
         proto.silence_timeout_ms = self.ui_cfg.silence_timeout_ms;
         proto.min_message_ms = self.ui_cfg.min_message_ms;
         proto.max_message_ms = self.ui_cfg.max_message_ms;
         proto.max_queue = self.ui_cfg.max_queue;
         RuntimeConfig {
             enabled,
-            my_slot: SlotId(self.ui_cfg.my_slot.min(SlotId::MAX)),
+            my_slot: SlotId(self.effective_slot().min(SlotId::MAX)),
             capture_mode: match self.ui_cfg.capture_mode.as_str() {
                 "ptt" => CaptureMode::PushToTalk,
                 "override" => CaptureMode::OverridePtt,
@@ -1436,18 +1470,48 @@ impl VirtualMicApp {
         let rt = runtime.clone();
         let ptt = self.group_queue.ptt_held.clone();
         let ovr = self.group_queue.override_held.clone();
+        let host_client = self.group_queue.host_client.clone();
+        let current_slot = SlotId(self.group_queue.effective_slot().min(SlotId::MAX));
         std::thread::spawn(move || {
             let frame_samples = 480; // 10ms @ 48k
             let tick_samples = 4800; // 100ms @ 48k for tick_output
             let mut vad_buf = Vec::with_capacity(frame_samples);
             let mut tick_out = vec![0.0f32; tick_samples];
             let mut last_tick = std::time::Instant::now();
+            let mut last_host_sync = std::time::Instant::now();
+            let mut last_known_slot = current_slot;
             while running.load(Ordering::Relaxed) {
                 // Poll PTT / Override flags
                 {
                     let mut g = rt.lock().unwrap_or_else(|e| e.into_inner());
                     g.set_ptt(ptt.load(Ordering::Relaxed));
                     g.set_override(ovr.load(Ordering::Relaxed));
+                }
+
+                // Sync priority table from host (every 500ms)
+                let now_sync = std::time::Instant::now();
+                if let Some(hc) = &host_client {
+                    if now_sync.duration_since(last_host_sync) >= std::time::Duration::from_millis(500) {
+                        let status = hc.status();
+                        if status.connected {
+                            if let Some(assigned) = status.my_slot {
+                                let new_table = hc.snapshot_table();
+                                let mut g = rt.lock().unwrap_or_else(|e| e.into_inner());
+                                let current_cfg = g.config().clone();
+                                // Only reconfigure if slot changed
+                                if assigned != last_known_slot {
+                                    let mut new_cfg = current_cfg;
+                                    new_cfg.my_slot = assigned;
+                                    g.reconfigure(new_cfg, new_table);
+                                    last_known_slot = assigned;
+                                } else {
+                                    // Just update the table in place by reconfiguring with same cfg
+                                    g.reconfigure(current_cfg, new_table);
+                                }
+                            }
+                        }
+                        last_host_sync = now_sync;
+                    }
                 }
 
                 // Pull mic samples
@@ -2067,6 +2131,46 @@ impl VirtualMicApp {
         ui.horizontal(|ui| {
             ui.label("Max queue size:");
             ui.add(egui::Slider::new(&mut gq.ui_cfg.max_queue, 1..=20));
+        });
+
+        ui.separator();
+
+        // Host connection
+        ui.heading("Network Host");
+        ui.small("Connect to an ai_virtual_mic_host to receive slot assignment + priorities.");
+        let gq = &mut self.group_queue;
+        ui.horizontal(|ui| {
+            ui.label("Host:");
+            ui.text_edit_singleline(&mut gq.host_addr_input);
+        });
+        ui.horizontal(|ui| {
+            ui.label("My name:");
+            ui.text_edit_singleline(&mut gq.host_display_name);
+        });
+        let connected = gq.host_client.as_ref().map(|c| c.status().connected).unwrap_or(false);
+        ui.horizontal(|ui| {
+            if !connected {
+                if ui.button("Connect to host").clicked() {
+                    if let Ok(addr) = gq.host_addr_input.parse::<std::net::SocketAddr>() {
+                        let client = Arc::new(GroupQueueHostClient::new());
+                        client.connect(addr, gq.host_display_name.clone());
+                        gq.host_client = Some(client);
+                    }
+                }
+            } else if ui.button("Disconnect").clicked() {
+                if let Some(c) = gq.host_client.take() { c.shutdown(); }
+            }
+            if let Some(c) = &gq.host_client {
+                let status = c.status();
+                let label = if status.connected {
+                    format!("✅ slot {} · {}", status.my_slot.map(|s| s.as_u8()).unwrap_or(0), status.preset)
+                } else if let Some(err) = &status.error {
+                    format!("❌ {}", err)
+                } else {
+                    "…".into()
+                };
+                ui.label(label);
+            }
         });
 
         ui.separator();
