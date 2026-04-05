@@ -18,6 +18,12 @@ use ai_assistant::{
     create_speech_provider, SpeechProvider, SynthesisOptions,
     AudioFormat as SpeechAudioFormat,
 };
+use ai_assistant::audio_priority_protocol::{
+    InterruptPolicy, PriorityTable, ProtocolConfig, ResumeStrategy, SlotId,
+};
+use ai_assistant::group_queue_runtime::{
+    CaptureMode, GroupQueueRuntime, RuntimeConfig, RuntimeStatus,
+};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use eframe::egui;
@@ -39,6 +45,7 @@ enum Mode {
     Transform,
     Direct,
     Agent,
+    GroupQueue,
 }
 
 impl Mode {
@@ -49,6 +56,7 @@ impl Mode {
             Self::Transform => "Transform",
             Self::Direct => "Direct Output",
             Self::Agent => "Agent",
+            Self::GroupQueue => "Group Queue",
         }
     }
 
@@ -59,11 +67,12 @@ impl Mode {
             Self::Transform => "Mic -> Effects -> STT -> Mood -> TTS (voice clone) -> Virtual Mic",
             Self::Direct => "Same as Transform but output to normal speaker",
             Self::Agent => "Mic -> STT -> Mood -> AI Agent (RAG) -> Mood -> TTS -> Output",
+            Self::GroupQueue => "Multi-user priority queue via inaudible acoustic beacons",
         }
     }
 
     fn all() -> &'static [Mode] {
-        &[Mode::Monitor, Mode::Passthrough, Mode::Transform, Mode::Direct, Mode::Agent]
+        &[Mode::Monitor, Mode::Passthrough, Mode::Transform, Mode::Direct, Mode::Agent, Mode::GroupQueue]
     }
 }
 
@@ -438,6 +447,7 @@ enum BottomTab {
     Models,
     Speakers,
     AgentConfig,
+    GroupQueue,
 }
 
 // ============================================================================
@@ -450,6 +460,110 @@ struct DownloadProgress {
     total_bytes: u64,
     finished: Arc<AtomicBool>,
     error: Arc<Mutex<Option<String>>>,
+}
+
+// ============================================================================
+// Group Queue UI state
+// ============================================================================
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+enum GqPreset { Flat, Squad(u8), Meeting }
+
+impl Default for GqPreset { fn default() -> Self { GqPreset::Flat } }
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+struct GroupQueueUiConfig {
+    my_slot: u8,
+    slot_count: u8,
+    capture_mode: String,     // "vad" / "ptt" / "override" / "continuous"
+    interrupt_policy: String, // "hard" / "soft" / "finish"
+    resume_strategy: String,  // "restart" / "continue" / "continue5s"
+    silence_timeout_ms: u64,
+    min_message_ms: u64,
+    max_message_ms: u64,
+    max_queue: usize,
+    preset: GqPreset,
+    loopback_input_index: Option<usize>,
+}
+
+impl Default for GroupQueueUiConfig {
+    fn default() -> Self {
+        Self {
+            my_slot: 0, slot_count: 8,
+            capture_mode: "vad".into(),
+            interrupt_policy: "soft".into(),
+            resume_strategy: "continue5s".into(),
+            silence_timeout_ms: 1500, min_message_ms: 300, max_message_ms: 60_000,
+            max_queue: 5,
+            preset: GqPreset::Flat,
+            loopback_input_index: None,
+        }
+    }
+}
+
+struct GroupQueueState {
+    ui_cfg: GroupQueueUiConfig,
+    runtime: Option<Arc<Mutex<GroupQueueRuntime>>>,
+    /// PTT-down flag shared with the hotkey thread.
+    ptt_held: Arc<AtomicBool>,
+    /// Override-down flag shared with the hotkey thread.
+    override_held: Arc<AtomicBool>,
+    /// Whether hotkey thread is running.
+    hotkey_thread_started: bool,
+    /// Last observed runtime status for GUI.
+    last_status: RuntimeStatus,
+}
+
+impl GroupQueueState {
+    fn new() -> Self {
+        Self {
+            ui_cfg: GroupQueueUiConfig::default(),
+            runtime: None,
+            ptt_held: Arc::new(AtomicBool::new(false)),
+            override_held: Arc::new(AtomicBool::new(false)),
+            hotkey_thread_started: false,
+            last_status: RuntimeStatus::Disabled,
+        }
+    }
+
+    fn build_table(&self) -> PriorityTable {
+        match self.ui_cfg.preset {
+            GqPreset::Flat => PriorityTable::flat(self.ui_cfg.slot_count),
+            GqPreset::Squad(callouts) => PriorityTable::squad(self.ui_cfg.slot_count, callouts),
+            GqPreset::Meeting => PriorityTable::meeting(self.ui_cfg.slot_count),
+        }
+    }
+
+    fn build_runtime_config(&self, enabled: bool, sample_rate: u32) -> RuntimeConfig {
+        let mut proto = ProtocolConfig::default();
+        proto.sample_rate = sample_rate;
+        proto.slot_count = self.ui_cfg.slot_count;
+        proto.silence_timeout_ms = self.ui_cfg.silence_timeout_ms;
+        proto.min_message_ms = self.ui_cfg.min_message_ms;
+        proto.max_message_ms = self.ui_cfg.max_message_ms;
+        proto.max_queue = self.ui_cfg.max_queue;
+        RuntimeConfig {
+            enabled,
+            my_slot: SlotId(self.ui_cfg.my_slot.min(SlotId::MAX)),
+            capture_mode: match self.ui_cfg.capture_mode.as_str() {
+                "ptt" => CaptureMode::PushToTalk,
+                "override" => CaptureMode::OverridePtt,
+                "continuous" => CaptureMode::Continuous,
+                _ => CaptureMode::Vad,
+            },
+            interrupt_policy: match self.ui_cfg.interrupt_policy.as_str() {
+                "hard" => InterruptPolicy::Hard,
+                "finish" => InterruptPolicy::Finish,
+                _ => InterruptPolicy::Soft,
+            },
+            resume_strategy: match self.ui_cfg.resume_strategy.as_str() {
+                "restart" => ResumeStrategy::Restart,
+                "continue" => ResumeStrategy::Continue,
+                _ => ResumeStrategy::Continue5s,
+            },
+            protocol: proto,
+        }
+    }
 }
 
 // ============================================================================
@@ -516,6 +630,9 @@ struct VirtualMicApp {
     probe_levels: Arc<Mutex<std::collections::HashMap<(DeviceKind, usize), f32>>>,
     _probe_streams: Vec<cpal::Stream>,
 
+    // Group Queue (acoustic priority protocol)
+    group_queue: GroupQueueState,
+
     // UI
     bottom_tab: Option<BottomTab>,
     status_message: String,
@@ -566,6 +683,7 @@ impl VirtualMicApp {
             probes_active: false,
             probe_levels: Arc::new(Mutex::new(std::collections::HashMap::new())),
             _probe_streams: Vec::new(),
+            group_queue: GroupQueueState::new(),
             agent_conversation_shared: Arc::new(Mutex::new(Vec::new())),
             agent: AgentState {
                 config: AgentConfig::default(),
@@ -656,6 +774,10 @@ impl VirtualMicApp {
 
     fn start_audio(&mut self) {
         if self.is_running.load(Ordering::Relaxed) {
+            return;
+        }
+        if self.mode == Mode::GroupQueue {
+            self.start_audio_group_queue();
             return;
         }
 
@@ -1207,8 +1329,211 @@ impl VirtualMicApp {
         self.is_running.store(false, Ordering::Relaxed);
         self._input_stream = None;
         self._output_stream = None;
+        // GroupQueue: drop runtime to release resources
+        self.group_queue.runtime = None;
+        self.group_queue.ptt_held.store(false, Ordering::Relaxed);
+        self.group_queue.override_held.store(false, Ordering::Relaxed);
         self.status_message = "Stopped.".to_string();
         self.save_config();
+    }
+
+    /// Dedicated audio pipeline for the GroupQueue mode: mic → VAD → runtime
+    /// → mixed output (voice + beacons). Loopback input (if configured) feeds
+    /// the decoder for peer detection.
+    fn start_audio_group_queue(&mut self) {
+        let host = cpal::default_host();
+
+        // Mic input
+        let source = match self.input_devices.get(self.selected_input) {
+            Some(d) => d.clone(),
+            None => { self.status_message = "No input device selected".to_string(); return; }
+        };
+        let input_device = match source.kind {
+            DeviceKind::Microphone => host.input_devices().ok().and_then(|mut d| d.nth(source.index)),
+            DeviceKind::Loopback   => host.output_devices().ok().and_then(|mut d| d.nth(source.index)),
+        };
+        let Some(input_device) = input_device else {
+            self.status_message = "Input device unavailable".into(); return;
+        };
+        let in_cfg = match source.kind {
+            DeviceKind::Microphone => input_device.default_input_config(),
+            DeviceKind::Loopback   => input_device.default_output_config(),
+        };
+        let Ok(in_cfg) = in_cfg else {
+            self.status_message = "No input config".into(); return;
+        };
+        let sample_rate = in_cfg.sample_rate().0;
+        let channels = in_cfg.channels() as usize;
+
+        // Build runtime
+        let runtime_cfg = self.group_queue.build_runtime_config(true, sample_rate);
+        let table = self.group_queue.build_table();
+        let runtime = Arc::new(Mutex::new(GroupQueueRuntime::new(runtime_cfg, table)));
+        self.group_queue.runtime = Some(runtime.clone());
+
+        // Mic ring
+        let rb = HeapRb::<f32>::new((sample_rate as usize) * 2);
+        let (mut producer, mut consumer) = rb.split();
+        let input_stream = input_device.build_input_stream(
+            &in_cfg.config(),
+            move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                // Downmix to mono if multi-channel
+                if channels == 1 {
+                    for &s in data { let _ = producer.try_push(s); }
+                } else {
+                    for frame in data.chunks(channels) {
+                        let avg = frame.iter().sum::<f32>() / channels as f32;
+                        let _ = producer.try_push(avg);
+                    }
+                }
+            },
+            |err| eprintln!("GroupQueue input error: {}", err),
+            None,
+        ).ok();
+        if let Some(ref s) = input_stream { let _ = s.play(); }
+
+        // Output
+        let out_device = host.output_devices().ok().and_then(|mut d| d.nth(self.selected_output));
+        let Some(out_dev) = out_device else {
+            self.status_message = "No output device".into(); return;
+        };
+        let out_cfg = match out_dev.default_output_config() {
+            Ok(c) => c,
+            Err(_) => { self.status_message = "No output config".into(); return; }
+        };
+        let out_sr = out_cfg.sample_rate().0;
+        let out_channels = out_cfg.channels() as usize;
+        let out_rb = HeapRb::<f32>::new((out_sr as usize) * 2);
+        let (out_producer, mut out_consumer) = out_rb.split();
+        let out_producer = Arc::new(Mutex::new(out_producer));
+        let out_producer_cb = out_producer.clone();
+        let output_stream = out_dev.build_output_stream(
+            &out_cfg.config(),
+            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                if out_channels == 1 {
+                    for s in data.iter_mut() { *s = out_consumer.try_pop().unwrap_or(0.0); }
+                } else {
+                    for frame in data.chunks_mut(out_channels) {
+                        let mono = out_consumer.try_pop().unwrap_or(0.0);
+                        for ch in frame.iter_mut() { *ch = mono; }
+                    }
+                }
+            },
+            |err| eprintln!("GroupQueue output error: {}", err),
+            None,
+        ).ok();
+        if let Some(ref s) = output_stream { let _ = s.play(); }
+
+        // Hotkey thread (only starts once; shared flags)
+        if !self.group_queue.hotkey_thread_started {
+            self.start_hotkey_thread();
+            self.group_queue.hotkey_thread_started = true;
+        }
+
+        // Processing thread: VAD + runtime tick
+        let running = self.is_running.clone();
+        let audio_state = self.audio_state.clone();
+        let rt = runtime.clone();
+        let ptt = self.group_queue.ptt_held.clone();
+        let ovr = self.group_queue.override_held.clone();
+        std::thread::spawn(move || {
+            let frame_samples = 480; // 10ms @ 48k
+            let tick_samples = 4800; // 100ms @ 48k for tick_output
+            let mut vad_buf = Vec::with_capacity(frame_samples);
+            let mut tick_out = vec![0.0f32; tick_samples];
+            let mut last_tick = std::time::Instant::now();
+            while running.load(Ordering::Relaxed) {
+                // Poll PTT / Override flags
+                {
+                    let mut g = rt.lock().unwrap_or_else(|e| e.into_inner());
+                    g.set_ptt(ptt.load(Ordering::Relaxed));
+                    g.set_override(ovr.load(Ordering::Relaxed));
+                }
+
+                // Pull mic samples
+                while let Some(s) = consumer.try_pop() {
+                    vad_buf.push(s);
+                    if vad_buf.len() >= frame_samples {
+                        // Simple RMS VAD
+                        let rms: f32 = (vad_buf.iter().map(|x| x*x).sum::<f32>() / vad_buf.len() as f32).sqrt();
+                        let db = if rms > 1e-6 { 20.0 * rms.log10() } else { -80.0 };
+                        let is_voice = db > -45.0;
+                        {
+                            let mut g = rt.lock().unwrap_or_else(|e| e.into_inner());
+                            let now = std::time::Instant::now();
+                            if let Some(live) = g.process_mic(&vad_buf, is_voice, now) {
+                                // Override-PTT live audio — push directly to output
+                                if let Ok(mut prod) = out_producer.lock() {
+                                    for &s in &live { let _ = prod.try_push(s); }
+                                }
+                            }
+                        }
+                        // Update GUI VU
+                        if let Ok(mut st) = audio_state.lock() {
+                            st.rms = rms;
+                            st.db = db;
+                            st.is_speech = is_voice;
+                            st.frames_processed += 1;
+                        }
+                        vad_buf.clear();
+                    }
+                }
+
+                // Tick output every ~100ms for beacons + player samples
+                let now = std::time::Instant::now();
+                if now.duration_since(last_tick) >= std::time::Duration::from_millis(100) {
+                    {
+                        let mut g = rt.lock().unwrap_or_else(|e| e.into_inner());
+                        g.tick_output(&mut tick_out, now);
+                    }
+                    if let Ok(mut prod) = out_producer.lock() {
+                        for &s in &tick_out { let _ = prod.try_push(s); }
+                    }
+                    last_tick = now;
+                }
+
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        });
+
+        self.is_running.store(true, Ordering::Relaxed);
+        self._input_stream = input_stream;
+        self._output_stream = output_stream;
+        self.status_message = format!(
+            "GroupQueue running: slot {} · {}Hz ({} → {})",
+            self.group_queue.ui_cfg.my_slot, sample_rate,
+            input_device.name().unwrap_or_default(), out_dev.name().unwrap_or_default()
+        );
+    }
+
+    /// Spawn a background thread listening for global hotkeys (F9 = PTT,
+    /// Shift+F9 = Override PTT). Uses global-hotkey crate which wraps
+    /// RegisterHotKey — EAC/BattlEye-safe (no input hooks, no injection).
+    fn start_hotkey_thread(&self) {
+        let ptt = self.group_queue.ptt_held.clone();
+        let ovr = self.group_queue.override_held.clone();
+        std::thread::spawn(move || {
+            use global_hotkey::{GlobalHotKeyManager, GlobalHotKeyEvent, hotkey::{Code, HotKey, Modifiers}};
+            let manager = match GlobalHotKeyManager::new() {
+                Ok(m) => m,
+                Err(e) => { eprintln!("Hotkey manager init failed: {}", e); return; }
+            };
+            let ptt_key = HotKey::new(None, Code::F9);
+            let ovr_key = HotKey::new(Some(Modifiers::SHIFT), Code::F9);
+            if let Err(e) = manager.register(ptt_key) { eprintln!("PTT register failed: {}", e); }
+            if let Err(e) = manager.register(ovr_key) { eprintln!("Override register failed: {}", e); }
+            let receiver = GlobalHotKeyEvent::receiver();
+            loop {
+                if let Ok(event) = receiver.recv_timeout(std::time::Duration::from_millis(100)) {
+                    let state_pressed = event.state == global_hotkey::HotKeyState::Pressed;
+                    if event.id == ptt_key.id() {
+                        ptt.store(state_pressed, Ordering::Relaxed);
+                    } else if event.id == ovr_key.id() {
+                        ovr.store(state_pressed, Ordering::Relaxed);
+                    }
+                }
+            }
+        });
     }
 
     fn refresh_devices(&mut self) {
@@ -1653,6 +1978,124 @@ impl VirtualMicApp {
     // ========================================================================
     // Agent Config Panel (bottom tab)
     // ========================================================================
+
+    fn render_group_queue_panel(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Group Queue — Acoustic Priority Protocol");
+        ui.small("Coordinate multiple voice clients via inaudible beacons (15.0-16.6 kHz).");
+        ui.separator();
+
+        let gq = &mut self.group_queue;
+
+        // Slot + count
+        ui.horizontal(|ui| {
+            ui.label("Slot count:");
+            ui.add(egui::Slider::new(&mut gq.ui_cfg.slot_count, 2..=8));
+            ui.label("My slot:");
+            egui::ComboBox::from_id_source("gq_my_slot")
+                .width(80.0)
+                .selected_text(format!("{}", gq.ui_cfg.my_slot))
+                .show_ui(ui, |ui| {
+                    for s in 0..gq.ui_cfg.slot_count { ui.selectable_value(&mut gq.ui_cfg.my_slot, s, format!("{}", s)); }
+                });
+            if gq.ui_cfg.my_slot >= gq.ui_cfg.slot_count { gq.ui_cfg.my_slot = 0; }
+        });
+
+        // Preset
+        ui.horizontal(|ui| {
+            ui.label("Preset:");
+            egui::ComboBox::from_id_source("gq_preset")
+                .width(140.0)
+                .selected_text(match gq.ui_cfg.preset { GqPreset::Flat => "Flat", GqPreset::Squad(_) => "Squad", GqPreset::Meeting => "Meeting" })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut gq.ui_cfg.preset, GqPreset::Flat, "Flat (all equal)");
+                    ui.selectable_value(&mut gq.ui_cfg.preset, GqPreset::Squad(2), "Squad (2 leaders + callouts)");
+                    ui.selectable_value(&mut gq.ui_cfg.preset, GqPreset::Meeting, "Meeting (slot 0 = presenter)");
+                });
+            if let GqPreset::Squad(ref mut callouts) = gq.ui_cfg.preset {
+                ui.label("callouts:");
+                ui.add(egui::Slider::new(callouts, 0..=4));
+            }
+        });
+        // Show my priority + override capability
+        let table = gq.build_table();
+        let my_slot_id = SlotId(gq.ui_cfg.my_slot.min(SlotId::MAX));
+        let my_prio = table.priority_of(my_slot_id);
+        let my_override = table.can_override(my_slot_id);
+        ui.small(format!("→ Your priority: P{} {}", my_prio.as_u8(),
+            if my_override { "· can override" } else { "" }));
+        ui.separator();
+
+        // Capture mode
+        ui.label("Capture mode:");
+        ui.horizontal(|ui| {
+            ui.radio_value(&mut gq.ui_cfg.capture_mode, "vad".into(), "VAD")
+                .on_hover_text("Auto-record by voice activity; finalize on silence");
+            ui.radio_value(&mut gq.ui_cfg.capture_mode, "ptt".into(), "PTT")
+                .on_hover_text("Record only while PTT key held (F9)");
+            ui.radio_value(&mut gq.ui_cfg.capture_mode, "override".into(), "Override PTT")
+                .on_hover_text("Live transmit, bypass queue (requires can_override)");
+            ui.radio_value(&mut gq.ui_cfg.capture_mode, "continuous".into(), "Continuous")
+                .on_hover_text("Record everything, chunked by max_message_ms");
+        });
+
+        // Interrupt policy
+        ui.label("When interrupted by higher priority:");
+        ui.horizontal(|ui| {
+            ui.radio_value(&mut gq.ui_cfg.interrupt_policy, "hard".into(), "Hard (cut now)");
+            ui.radio_value(&mut gq.ui_cfg.interrupt_policy, "soft".into(), "Soft (at silence)");
+            ui.radio_value(&mut gq.ui_cfg.interrupt_policy, "finish".into(), "Finish (let end)");
+        });
+
+        // Resume strategy
+        ui.label("Resume interrupted message:");
+        ui.horizontal(|ui| {
+            ui.radio_value(&mut gq.ui_cfg.resume_strategy, "restart".into(), "Restart");
+            ui.radio_value(&mut gq.ui_cfg.resume_strategy, "continue".into(), "Continue");
+            ui.radio_value(&mut gq.ui_cfg.resume_strategy, "continue5s".into(), "−5s");
+        });
+
+        ui.separator();
+
+        // Timing sliders
+        ui.horizontal(|ui| {
+            ui.label("Silence timeout:");
+            let mut secs = gq.ui_cfg.silence_timeout_ms as f32 / 1000.0;
+            if ui.add(egui::Slider::new(&mut secs, 0.5..=5.0).text("s").fixed_decimals(1)).changed() {
+                gq.ui_cfg.silence_timeout_ms = (secs * 1000.0) as u64;
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label("Max queue size:");
+            ui.add(egui::Slider::new(&mut gq.ui_cfg.max_queue, 1..=20));
+        });
+
+        ui.separator();
+
+        // Hotkey info
+        ui.small("Hotkeys: F9 = Push-To-Talk, Shift+F9 = Override PTT");
+        ui.small("(Uses RegisterHotKey → EAC/BattlEye-safe, no keyboard injection)");
+
+        ui.separator();
+
+        // Status + queue view
+        if let Some(rt) = gq.runtime.clone() {
+            let rt = rt.lock().unwrap();
+            ui.heading("Status");
+            ui.label(format!("State: {:?}", rt.status()));
+            ui.label(format!("Queue: {} pending", rt.queue_len()));
+            ui.separator();
+            ui.heading("Peers");
+            let peers = rt.peers_snapshot();
+            for p in peers {
+                let icon = if p.transmitting { "🔴" } else if p.connected { "🟢" } else { "⚪" };
+                let is_me = p.slot == my_slot_id;
+                let me_mark = if is_me { " (YOU)" } else { "" };
+                ui.label(format!("{} Slot {} · P{} · {}{}", icon, p.slot.as_u8(), p.priority.as_u8(), p.display_name, me_mark));
+            }
+        } else {
+            ui.small("(Runtime inactive — switch Mode to 'Group Queue' and Start)");
+        }
+    }
 
     fn render_agent_config_panel(&mut self, ui: &mut egui::Ui) {
         ui.heading("Agent Configuration");
@@ -2149,6 +2592,9 @@ impl eframe::App for VirtualMicApp {
                     if ui.selectable_label(self.bottom_tab == Some(BottomTab::AgentConfig), "Agent").clicked() {
                         self.bottom_tab = if self.bottom_tab == Some(BottomTab::AgentConfig) { None } else { Some(BottomTab::AgentConfig) };
                     }
+                    if ui.selectable_label(self.bottom_tab == Some(BottomTab::GroupQueue), "Group Queue").clicked() {
+                        self.bottom_tab = if self.bottom_tab == Some(BottomTab::GroupQueue) { None } else { Some(BottomTab::GroupQueue) };
+                    }
                     if has_tab {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui.small_button("Close").clicked() {
@@ -2164,6 +2610,7 @@ impl eframe::App for VirtualMicApp {
                         Some(BottomTab::Models) => self.render_models_panel(ui),
                         Some(BottomTab::Speakers) => self.render_speakers_panel(ui),
                         Some(BottomTab::AgentConfig) => self.render_agent_config_panel(ui),
+                        Some(BottomTab::GroupQueue) => self.render_group_queue_panel(ui),
                         None => {}
                     }
                 }

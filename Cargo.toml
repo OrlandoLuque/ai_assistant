@@ -211,7 +211,7 @@ voice-agent = ["dep:tokio"]
 
 # Real audio I/O: microphone capture, speaker output, sample rate conversion, ring buffer
 # Not in 'full' by default — heavy platform deps (WASAPI/ALSA/CoreAudio). Opt-in: --features audio-io
-audio-io = ["dep:cpal", "dep:hound", "dep:rubato", "dep:ringbuf", "dep:eframe", "egui-widgets", "audio", "voice-agent"]
+audio-io = ["dep:cpal", "dep:hound", "dep:rubato", "dep:ringbuf", "dep:eframe", "dep:global-hotkey", "egui-widgets", "audio", "voice-agent"]
 
 # Media generation: image (DALL-E, SD, Flux) and video (Runway, Sora) generation
 # Not in 'full' by default — involves external API calls. Opt-in: --features media-generation
@@ -368,6 +368,8 @@ hound = { version = "3.5", optional = true }
 rubato = { version = "0.16", optional = true }
 # Optional lock-free ring buffer for real-time audio threads
 ringbuf = { version = "0.4", optional = true }
+# Optional global-hotkey for PTT (EAC-safe: uses RegisterHotKey, no input hooking)
+global-hotkey = { version = "0.6", optional = true }
 # Optional eframe for GUI application (desktop window with egui)
 eframe = { version = "0.27", optional = true, default-features = false, features = ["default_fonts", "glow"] }
 # Optional native file dialog (open/save file pickers)
