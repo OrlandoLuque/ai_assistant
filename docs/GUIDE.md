@@ -10544,3 +10544,54 @@ The noise reducer detects voice vs non-voice using:
 - Zero-crossing rate (voice has regular crossings, noise is chaotic)
 - Spectral flatness (voice has harmonic peaks, noise is spectrally flat)
 - Energy tracking (adapts to voice level over time)
+
+## 190. Group Queue — Multi-User Audio Priority Protocol
+
+Coordinate multiple `ai_virtual_mic` clients sharing a voice channel (Discord, in-game, Zoom).
+Each client owns a beacon slot (15.0–16.6 kHz) and signals its state via inaudible tones.
+
+### Quick Start (LAN)
+
+```bash
+# On host machine (one person):
+cargo run --bin ai_virtual_mic_host -- --preset squad --callouts 2 --slots 8
+# → Listening on 0.0.0.0:9876
+
+# On each client machine:
+cargo run --features audio-io --bin ai_virtual_mic
+# 1. Set Mode → "Group Queue"
+# 2. Tab "Group Queue" → Host: "192.168.1.10:9876" → My name → Connect
+# 3. Click Start
+```
+
+### Capture Modes
+
+| Mode | Behaviour | Key |
+|------|-----------|-----|
+| **VAD** | Auto-record on voice; finalize after configurable silence (0.5–5 s) | — |
+| **Push-To-Talk** | Record only while key held; queue on release | F9 |
+| **Override PTT** | Live bypass, interrupt lower-priority speakers (host-authorized) | Shift+F9 |
+| **Continuous** | Record everything, chunk every 60 s | — |
+
+### Interrupt Policies
+
+| Policy | When higher priority starts |
+|--------|---------------------------|
+| **Hard** | Cut immediately |
+| **Soft** | Cut at next silence in current message |
+| **Finish** | Let current message end |
+
+After interruption, resume from: Restart / Continue / Continue−5s.
+
+### Priority Presets
+
+```bash
+ai_virtual_mic_host --preset flat     # All slots P5, no override
+ai_virtual_mic_host --preset squad    # Slots 0-1 P10+override, 2-4 P7, rest P3
+ai_virtual_mic_host --preset meeting  # Slot 0 P10+override (presenter), rest P3
+```
+
+### Standalone Mode (no host)
+
+In the Group Queue tab, pick slot and preset manually (honour-system).
+Table stays local — no network required. Beacons still coordinate via audio.
