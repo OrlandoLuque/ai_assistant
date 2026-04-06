@@ -110,8 +110,8 @@ const STOP_WORDS: &[&str] = &[
     "For", "Not", "You", "All", "Any", "Are", "Can", "Had", "Has", "Her", "Him", "His", "Its",
     "Let", "May", "Nor", "Off", "One", "Out", "Put", "Run", "Say", "Too", "Two", "Was", "Way",
     "Who", "Yes", "Yet", // Spanish common words
-    "El", "La", "Los", "Las", "Un", "Una", "Del", "Al", "Con", "Sin", "Por", "Para", "Como", "Pero",
-    "Que", "Es", "En", "De", "No", "Se",
+    "El", "La", "Los", "Las", "Un", "Una", "Del", "Al", "Con", "Sin", "Por", "Para", "Como",
+    "Pero", "Que", "Es", "En", "De", "No", "Se",
 ];
 
 // ---------------------------------------------------------------------------
