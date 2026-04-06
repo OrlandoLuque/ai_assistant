@@ -89,7 +89,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.90.0
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.features }}
+          key: feature-${{ hashFiles('Cargo.lock') }}-${{ strategy.job-index }}
       - name: Check ${{ matrix.features }}
         run: cargo check --features "${{ matrix.features }}"
       - name: Test ${{ matrix.features }}
@@ -119,15 +119,16 @@ jobs:
     if: github.event_name == 'push'
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.90.0
+      - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
       - name: Run benchmarks
-        run: cargo bench --features full -- --output-format bencher | tee output.txt
+        run: cargo +nightly bench --features full -- --output-format bencher | tee output.txt
       - name: Store benchmark results
         uses: benchmark-action/github-action-benchmark@v1
         with:
           tool: 'cargo'
           output-file-path: output.txt
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           alert-threshold: '200%'
           comment-on-alert: true
           fail-on-alert: false
