@@ -236,7 +236,7 @@ pub mod structured;
 pub mod templates;
 pub mod tool_safety;
 pub mod topic_matcher;
-#[cfg(feature = "server-axum")]
+pub mod video_filter;
 pub mod virtual_model;
 pub mod wasm;
 pub mod wasm_hooks;

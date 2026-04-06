@@ -213,6 +213,10 @@ voice-agent = ["dep:tokio"]
 # Not in 'full' by default — heavy platform deps (WASAPI/ALSA/CoreAudio). Opt-in: --features audio-io
 audio-io = ["dep:cpal", "dep:hound", "dep:rubato", "dep:ringbuf", "dep:eframe", "dep:global-hotkey", "egui-widgets", "audio", "voice-agent"]
 
+# Virtual webcam: capture, video effects, virtual cam output, GUI
+# Not in 'full' by default — heavy platform deps (MSMF/V4L2/AVFoundation). Opt-in: --features video-io
+video-io = ["dep:nokhwa", "dep:eframe", "dep:global-hotkey", "dep:ringbuf", "egui-widgets"]
+
 # Media generation: image (DALL-E, SD, Flux) and video (Runway, Sora) generation
 # Not in 'full' by default — involves external API calls. Opt-in: --features media-generation
 media-generation = []
@@ -284,7 +288,7 @@ gui-pro = [
 
 # axum-based HTTP server: production-ready async, HTTP/2, native WS/SSE, tower middleware
 # Not in 'full' — opt-in. Replaces std::net::TcpListener server with axum framework.
-server-axum = ["dep:axum", "dep:axum-extra", "dep:tower", "dep:tower-http", "dep:dashmap", "dep:tokio", "dep:async-stream", "dep:futures-core", "dep:reqwest"]
+server-axum = ["dep:axum", "dep:axum-extra", "dep:tower", "dep:tower-http", "dep:tokio", "dep:async-stream", "dep:futures-core", "dep:reqwest"]
 
 # axum TLS (HTTPS via rustls, separate from server-tls which is for the std server)
 server-axum-tls = ["server-axum", "dep:axum-server", "dep:rustls", "dep:rustls-pemfile"]
@@ -374,6 +378,8 @@ global-hotkey = { version = "0.6", optional = true }
 eframe = { version = "0.27", optional = true, default-features = false, features = ["default_fonts", "glow"] }
 # Optional native file dialog (open/save file pickers)
 rfd = { version = "0.15", optional = true }
+# Optional webcam capture (cross-platform: MSMF/V4L2/AVFoundation)
+nokhwa = { version = "0.10", optional = true, default-features = false, features = ["input-msmf"] }
 # Optional graph data structure and algorithms (for knowledge graph visualization)
 petgraph = { version = "0.6", optional = true }
 
@@ -387,7 +393,7 @@ tower = { version = "0.5", optional = true, features = ["full"] }
 # Tower HTTP middleware (CORS, compression, request ID, rate limiting, body limits)
 tower-http = { version = "0.6", optional = true, features = ["cors", "compression-gzip", "limit", "request-id", "trace", "timeout"] }
 # DashMap concurrent HashMap (lock-free per-shard access for sessions, rate limits)
-dashmap = { version = "6", optional = true }
+dashmap = { version = "6" }
 # axum TLS server (HTTPS via rustls)
 axum-server = { version = "0.8", optional = true, features = ["tls-rustls"] }
 # OpenAPI documentation generation from code annotations
@@ -466,6 +472,11 @@ required-features = ["audio-io"]
 [[bin]]
 name = "ai_virtual_mic_host"
 path = "src/bin/ai_virtual_mic_host.rs"
+
+[[bin]]
+name = "ai_virtual_cam"
+path = "src/bin/ai_virtual_cam.rs"
+required-features = ["video-io"]
 
 [[bin]]
 name = "ai_setup"
